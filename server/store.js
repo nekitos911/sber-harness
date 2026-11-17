@@ -6,6 +6,8 @@ import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 
 const DEBOUNCE_MS = 200; // contract: <= 250 ms
+const RETRY_MS = 1000; // a failed write (file held by another process) is retried
+const MAX_LOADED = 50; // transcripts kept in memory (LRU); one with a running turn always stays
 export const TERM_LOG_MAX = 2 * 1024 * 1024;
 
 const BAK_EVERY_MS = 10000; // the .bak is the last good copy, refreshed at most this often (big transcripts stream)
@@ -82,7 +84,7 @@ export function createStore(dataDir) {
   let closed = false;
 
   const fileFor = (key) => {
-    if (key === 'db') return [dbFile, () => JSON.stringify(db, null, 1)];
+    if (key === 'db') return [dbFile, () => JSON.stringify(db)]; // compact: rewritten often while agents stream
     const [kind, sid] = key.split(':');
     if (kind === 't') return [path.join(dataDir, 'transcripts', `${sid}.json`), () => transcriptJson(transcripts.get(sid) || [])];
     return [path.join(dataDir, 'terms', `${sid}.log`), () => termLogs.get(sid) || ''];
@@ -91,15 +93,19 @@ export function createStore(dataDir) {
   function flush() {
     clearTimeout(timer);
     timer = null;
-    for (const key of dirty) {
+    let failed = false;
+    for (const key of [...dirty]) {
       const [file, data] = fileFor(key);
       try {
         writeAtomic(file, data(), !key.startsWith('term:'));
+        dirty.delete(key);
       } catch (e) {
+        failed = true; // stays dirty (e.g. an antivirus holds the file): written on the retry
         console.error(`[store] write ${file} failed: ${e.message}`);
       }
     }
-    dirty.clear();
+    if (failed && !closed) timer = setTimeout(flush, RETRY_MS);
+    evict();
   }
 
   function mark(key) {
@@ -108,9 +114,28 @@ export function createStore(dataDir) {
     timer ||= setTimeout(flush, DEBOUNCE_MS);
   }
 
+  let keepLoaded = () => false; // sessions.js: a transcript with a running turn is never evicted
   function messages(sid) {
-    if (!transcripts.has(sid)) transcripts.set(sid, readJson(path.join(dataDir, 'transcripts', `${sid}.json`), [], restoredNotice));
-    return transcripts.get(sid);
+    let list = transcripts.get(sid);
+    if (list) {
+      transcripts.delete(sid); // Map order = least recently used first
+    } else {
+      list = readJson(path.join(dataDir, 'transcripts', `${sid}.json`), [], restoredNotice);
+      setTimeout(evict, 0).unref?.(); // not now: the caller holds this list
+    }
+    transcripts.set(sid, list);
+    return list;
+  }
+
+  /** At most MAX_LOADED transcripts stay in memory: the least recently used, saved and idle ones go. */
+  function evict() {
+    let over = transcripts.size - MAX_LOADED;
+    for (const sid of transcripts.keys()) {
+      if (over <= 0) break;
+      if (dirty.has(`t:${sid}`) || keepLoaded(sid)) continue;
+      transcripts.delete(sid);
+      over--;
+    }
   }
 
   const onExit = () => flush();
@@ -123,6 +148,8 @@ export function createStore(dataDir) {
     dataDir,
     save: () => mark('db'),
     set onNotice(fn) { onNotice = fn; },
+    set keepLoaded(fn) { keepLoaded = fn; },
+    loadedTranscripts: () => transcripts.size,
     flush,
     messages,
     putMessage(sid, msg) {

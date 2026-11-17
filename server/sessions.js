@@ -135,6 +135,7 @@ const brief = (input) => {
 export function createSessions({ config, store, bus, getUrl, catalog = null, crashed = false }) {
   const db = store.db;
   const rt = new Map(); // sid -> runtime state (not persisted)
+  store.keepLoaded = (sid) => !!rt.get(sid)?.running; // a streaming turn keeps its transcript in memory
   // agents.<id>.transport "acp": long-lived agent processes; session.warm = its process is loaded
   const acp = createAcp({
     onWarm(sid, warm) {
@@ -154,7 +155,10 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
 
   function runtime(sid) {
     if (!rt.has(sid)) {
-      const turn = store.messages(sid).reduce((m, x) => Math.max(m, x.turn || 0), 0);
+      const s = find(sid);
+      // s.turnCount: no transcript load just for the number (sessions from before it: once, then kept)
+      const turn = s?.turnCount ?? store.messages(sid).reduce((m, x) => Math.max(m, x.turn || 0), 0);
+      if (s) s.turnCount = turn;
       rt.set(sid, { queue: [], running: false, handle: null, turn, flags: {}, cur: null, pty: null, previewAt: 0, registrySig: '' });
     }
     return rt.get(sid);
@@ -636,22 +640,18 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     }
   }
 
-  /** Questions / permission requests of a session that is archived (and its cards in the parent) never stay open. */
+  /** Questions / permission requests of a session that is archived never stay open (its cards in the parent do). */
   function cancelPending(x) {
-    const parent = x.parentId && find(x.parentId);
-    for (const [owner, own] of [[x, true], [parent, false]]) {
-      if (!owner) continue;
-      for (const m of store.messages(owner.id)) {
-        const open = (m.kind === 'permission' && !m.permission?.resolved && (own || m.permission?.fromSubSessionId === x.id))
-          || (own && m.kind === 'question' && !m.question?.answered);
-        if (!open) continue;
-        if (m.kind === 'permission') m.permission = { ...m.permission, resolved: 'cancelled', resolvedAt: Date.now(), answered: true };
-        else m.question = { ...m.question, answered: true, resolved: 'cancelled' };
-        updateMessage(owner, m);
-      }
-      if (own && x.waitingFor) x.waitingFor = null;
-      if (!own && owner.waitingFor === 'permission' && !store.messages(owner.id).some((m) => m.kind === 'permission' && !m.permission?.resolved)) setWaiting(owner, null);
+    // only cards inside x: a sub-agent's card re-emitted in the parent stays open (granted there, it applies to the
+    // parent's next turn)
+    for (const m of store.messages(x.id)) {
+      const open = (m.kind === 'permission' && !m.permission?.resolved) || (m.kind === 'question' && !m.question?.answered);
+      if (!open) continue;
+      if (m.kind === 'permission') m.permission = { ...m.permission, resolved: 'cancelled', resolvedAt: Date.now(), answered: true };
+      else m.question = { ...m.question, answered: true, resolved: 'cancelled' };
+      updateMessage(x, m);
     }
+    if (x.waitingFor) x.waitingFor = null;
   }
 
   /** A built-in sub-agent's chat is archived once it settles (orchestration.subagentRetention "archive"). */
@@ -696,6 +696,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     r.lastItems = items;
     r.running = true;
     r.turn += 1;
+    s.turnCount = r.turn;
     r.flags = {};
     s.turnFlags = {};
     r.cur = { assistant: null, thought: null, raw: null, tools: new Map(), subTools: new Map(), gotText: false };
@@ -803,6 +804,10 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
 
   function saveOffset(s, off) {
     s.turnOffset = off;
+    const r = runtime(s.id);
+    // shortcut: a crash may re-read <= 2 s of events on re-attach; persist offsets elsewhere if that ever matters
+    if (Date.now() - (r.offsetSavedAt || 0) < 2000) return;
+    r.offsetSavedAt = Date.now();
     store.save(); // debounced; no WS frame for this
   }
 
@@ -1247,12 +1252,12 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
       if (p.transport === 'acp') {
         // the agent holds its session/request_permission until this answer
         if (!acp.answer(sid, permissionId, optionId)) fail(409, 'агент больше не ждёт этого ответа');
-        msg.permission = { ...p, resolved: optionId, resolvedAt: Date.now(), answered: true };
+        msg.permission = { ...p, resolved: optionId, choice: optionId, resolvedAt: Date.now(), answered: true };
         updateMessage(s, msg);
         setWaiting(s, null);
         return s;
       }
-      msg.permission = { ...p, resolved: optionId, resolvedAt: Date.now(), answered: true };
+      msg.permission = { ...p, resolved: optionId, choice: optionId, resolvedAt: Date.now(), answered: true };
       updateMessage(s, msg);
       const what = `${p.tool}${p.input != null ? ` ${inputSummary(p.input)}` : ''}`;
       let text;
@@ -1286,7 +1291,15 @@ ${note.trim()}` : text });
         r.pty.write(`${text}\r`);
         return { queued: false };
       }
-      if (s.waitingFor === 'answer' || s.waitingFor === 'permission') s.waitingFor = null; // answered (by anyone)
+      const asked = s.waitingFor === 'answer';
+      if (asked || s.waitingFor === 'permission') s.waitingFor = null; // answered (by anyone)
+      // the open question card of the CLI gets the answer (the Inbox tells answered from cancelled by it)
+      const q = store.messages(sid).findLast((m) => m.kind === 'question' && !m.question?.answered);
+      if (q) {
+        q.question = { ...q.question, answered: true, answer: text.replace(/^Ответ на вопрос «.*?»: /s, '').trim(), answeredAt: Date.now() };
+        updateMessage(s, q);
+      }
+      if (q || asked) hooks.questionAnswered?.(s); // its notification is answered (and read) too
       if (s.interrupted) s.interrupted = null; // continued
       s.queue.push({ id: newId('q'), from, text, at: Date.now(), ...(options ? { options } : {}) });
       if (!r.running) {

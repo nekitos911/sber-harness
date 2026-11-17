@@ -6,6 +6,9 @@ import { CODE_ROOT, expandHome } from './config.js';
 import * as git from './git.js';
 import { jobStep } from './jobs.js';
 import { newId } from './sessions.js';
+import { launchers } from './launchers.js';
+
+const GENERIC_REWORK = '{key} {title}: нужны правки: {notes}'; // agents without a task command (/full-task)
 
 const fail = (status, message) => { throw Object.assign(new Error(message), { status }); };
 const HARNESS_CLI = path.join(CODE_ROOT, 'mcp', 'harness-mcp.js');
@@ -151,9 +154,17 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
 
   /** «Доработка» prompt: agents.<id>.reworkPromptTemplate ({notes} = the user's text as is). */
   function reworkPrompt(task, s, notes) {
-    const tpl = config.agents[s.agent]?.reworkPromptTemplate || '{key} {title}: нужны правки: {notes}';
-    return render(tpl, promptVars(task, s, notes.trim()));
+    return render(reworkTemplate(s.agent), promptVars(task, s, notes.trim()));
   }
+
+  /** The agent's effective «Доработка» template: its config, its launcher's default (gigacode: /full-task), generic. */
+  function reworkTemplate(agent) {
+    const a = config.agents[agent];
+    return a?.reworkPromptTemplate || launchers[a?.launcher]?.defaults.reworkPromptTemplate || GENERIC_REWORK;
+  }
+
+  /** Presets for the «Доработка» popover: the effective default first. */
+  const reworkPresets = (agent) => [...new Set([reworkTemplate(agent), ...(config.agents[agent]?.reworkPromptPresets || []), GENERIC_REWORK])];
 
   function promptVars(task, s, notes) {
     const agentCfg = config.agents[s.agent] || {};
@@ -727,6 +738,14 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
   }
 
   sessions.hooks.preamble = preamble;
+  // a question answered in its chat: its Inbox entry is answered and read (no stale «ждёт ответа»)
+  sessions.hooks.questionAnswered = (s) => {
+    for (const n of db.notifications.filter((x) => x.kind === 'question' && x.sessionId === s.id && !x.answered)) {
+      Object.assign(n, { answered: true, read: true });
+      bus.send({ t: 'notify', n });
+    }
+    store.save();
+  };
   sessions.hooks.notify = notify;
   sessions.hooks.sessionChanged = syncAgentState;
   sessions.hooks.turnEnded = turnEnded;
@@ -1095,6 +1114,8 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
     resumeReviews,
     gitSuggest,
     promptTemplate,
+    reworkTemplate,
+    reworkPresets,
     port: (taskId, target, o) => port(tasks.get(taskId), target, o, null),
     waitRun,
     /** MCP tool list; the built-in-compatible `agent` alias only in orchestration.subagents "harness" mode */

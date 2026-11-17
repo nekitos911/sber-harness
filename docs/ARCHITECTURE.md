@@ -584,7 +584,10 @@ runs implementer/reviewer sub-agents with cross-model review and writes a ledger
 - Rework (the user's FOLLOW_UP form `/full-task <url> Задача готова, но нужны правки: <text>`):
   `POST /api/tasks/:id/rework { notes, agent? }` (flag `rework`). Prompt = `agents.<id>.reworkPromptTemplate` (gigacode
   `"/full-task {taskUrl} Задача готова, но нужны правки: {notes}"`, generic default `"{key} {title}: нужны правки: {notes}"`;
-  `{notes}` is the text as typed, single-pass rendering; settable in /api/settings, must contain `{notes}`). Target: the
+  `{notes}` is the text as typed, single-pass rendering; settable in /api/settings, must contain `{notes}`; the gigacode
+  launcher default is the /full-task form even without a config value). `/api/settings` → `agents.<id>.reworkPromptPresets`:
+  the effective default FIRST, then `agents.<id>.reworkPromptPresets` from the config, then the generic template
+  (deduplicated); PUT accepts `reworkPromptPresets` (strings with `{notes}`). Target: the
   task's non-archived worker (`assigneeSessionId`) → delivered (queued if running; `--resume` continues the CLI
   session); none → a new worker in the task's existing worktree (or the task branch re-checked out, never a new branch)
   with the rework prompt instead of the task prompt; never started (no branch) → 409. Effects: status → in_progress
@@ -784,18 +787,29 @@ NOT confirmed (it may print a URL / device code and wait for the browser callbac
   folder) and `system: true` for anything under the harness data folder (login terminal, model discovery, default chat
   folders): no workspace, no worktree, never grouped under a project. The startup pass recomputes all three.
   Feature flag `worktree-lazy`.
-- `PATCH /api/worktrees/meta { path, label?, note?, pinned?, sleeping? }` → meta. `sleeping: true` stops terminal PTYs
-  in that cwd (chat sessions are idle between turns anyway; a running turn is NOT killed — 409 unless `force`).
+- `PATCH /api/worktrees/meta { path, label?, note?, pinned?, sleeping? }` → meta, broadcast as `{ t: "worktree.meta" }`.
+  `sleeping: true` stops terminal PTYs in that cwd (chat sessions are idle between turns anyway; a running turn is NOT
+  killed — 409 unless `force`). "Sessions in a worktree" (here, DELETE, checkout, listing counts) = sessions whose
+  `worktreePath` is that worktree, or (no worktreePath) whose cwd is inside it — an agent in a subfolder counts.
 - `DELETE /api/workspaces/:id/worktrees { path, force?, deleteBranch?: 'no'|'safe'|'force' }`: refuses the main worktree
   (400); refuses with 409 `{ dirty, ahead, running }` when there are uncommitted changes, unpushed/unmerged commits or a
   running turn and `force` is not set; otherwise stops all sessions in that cwd (terminals closed, running turns killed),
   marks them `archived: true` (hidden from the sidebar, transcripts kept; `GET /api/state` still returns them),
-  removes the worktree safely (`git worktree remove --force` → `prune --expire now` → rename to `.stale-<ts>` → rm),
+  removes the worktree safely (`git worktree remove --force`; if git fails and still lists it — locked, … — 400 and the
+  folder is NOT touched; otherwise what is left → rename to `.stale-<ts>` → rm, then `prune --expire now`),
   then optionally `git branch -d` (`safe`) / `-D` (`force`); the task keeps its log, `task.branch` is kept for history.
-  → `{ removed: true, branchDeleted: boolean, archivedSessions: n }`.
+  → `{ removed: true, branchDeleted: boolean, archivedSessions: n }`. A failure sets `meta.lastError` (+ `meta.repo`).
+- Orphans: a folder under the repo's worktree root that git no longer lists but that has a harness meta entry (a removal
+  that failed part-way: git unregistered it, a held file kept the folder) is listed in `GET …/worktrees` as
+  `{ path, branch: null, head: null, orphan: true, meta, … }` (meta.repo attributes it under a shared worktreeRoot).
+  «Удалить папку» = `DELETE /api/workspaces/:id/worktrees { path, orphan: true }`: archives its sessions, rename + rm of
+  the folder only (no git command on it), drops the meta, prunes → `{ removed: true, orphan: true }`; 404 for a path
+  that is not such an orphan, 409 if the folder still cannot be removed (lastError set).
 - `POST /api/open { cwd, target: 'explorer' | 'ide' }`: launches the OS file manager (`explorer.exe` / `open` / `xdg-open`)
-  or `config.ide = { command, args: ["{path}"] }` (default null → the IDE item is hidden) detached, no shell, path validated
-  to be a registered workspace or one of its worktrees.
+  or `config.ide = { command, args: ["{path}"] }` (default null → the IDE item is hidden), no shell, path validated
+  to be a registered workspace or one of its worktrees. The command is resolved like an agent CLI (PATH lookup; a
+  `.cmd` launcher such as `code.cmd` → its target); a command that cannot be found or started → 400
+  «Не удалось запустить «…»: …» (never `ok: true` for a launch that failed).
 - Session field `archived: boolean`.
 
 ## Runs survive a harness restart
@@ -948,7 +962,10 @@ Secrets:
   `workspaceId` is the DEEPEST registered folder containing its cwd. Hidden = names starting with `.` or `$`.
   `recentFolders` is updated by `POST /api/workspaces { kind: 'folder' }` and by `POST /api/sessions` with an explicit
   cwd. The parent task's own extra folders: `PATCH /api/tasks/:id { includeDirs }`. Invalid `includeDirs` from the API →
-  400; auto-filled ones that no longer exist are dropped silently.
+  400; auto-filled ones that no longer exist are dropped silently, and so are stale entries when the harness itself
+  edits a session's list (a child worktree added by worker_start/worker_run, a deleted worktree removed): those never
+  fail. worker_start / worker_run never leave an orphan: a failure after the session (or worktree) was made removes it.
+  A route param with a malformed %-escape → 400.
 - `/api/settings` returns and accepts `workspaces: { root, repos }` (root: an existing absolute folder or null = auto;
   repos: string[]) and returns `rootResolved` (the projects folder in use) + `rootAuto`; saving re-registers the
   configured repos, re-runs the projects-folder detection and broadcasts `workspaces`.
@@ -1007,15 +1024,20 @@ with the whole old/new text (no minimal hunks); a Stop marks open ACP cards `res
 new message (the agent continues the same prompt) and a late answer → 409. `session.pid` stays null for ACP turns, so
 `stalled` does not apply to them. A running ACP turn at a harness restart is `interrupted` (recovery); the next message
 starts the process again with `session/load`. Warm process: `session.warm` (loaded); an idle one (no prompt, no held
-permission) is unloaded after `agents.<id>.acpIdleMin` minutes (default 30, 0 = never; PUT also accepts
-`acpIdleTimeoutMin`) and reloaded with `session/load` on the next message (a note only if the load fails); `transport`
+permission) is unloaded after `agents.<id>.acpIdleMin` minutes (default 30, 0 = never; PUT also accepts `null` = never,
+stored and returned as 0, and `acpIdleTimeoutMin`) and reloaded with `session/load` on the next message (a note only if the load fails); `transport`
 and `acpIdleMin` are in /api/settings. Model discovery of an ACP agent asks a warm process in a hidden extra session
 (no cold start); without one it runs headless as before. MCP exclusions for harness runs: `agents.<id>.mcpExclude`
 (never `harness`) written into the run settings under `agents.<id>.mcpExcludeKey` (default `mcp.excluded`, alt
 `excludeMCPServers`; VERIFY which one GigaCode honours); `GET /api/agents/:id/info` → `mcpServers: [{ name, status,
 excluded }]` from the last init for the toggles. Notes: the question card's answer is an ordinary message
 (`POST /api/sessions/:id/messages` with «Ответ на вопрос «…»: …»); any delivery to the session clears `waitingFor`
-'answer'/'permission'. A permission answer also sets `permission.resolved` (+ `resolvedAt`) on the card; a second answer →
+'answer'/'permission'; the open question card of the session gets `question.answered: true, answer, answeredAt` (the
+text after the «Ответ на вопрос «…»: » prefix) and its `question` notifications get `answered: true, read: true`
+(re-sent as `notify` frames). A permission answer also sets `permission.resolved` + `permission.choice` (the option
+id the user picked; cancelled cards have `resolved: 'cancelled'` and no choice) (+ `resolvedAt`) on the card. Archiving
+a session cancels only the cards inside it; a sub-agent's card re-emitted in the parent stays open (granted there, it
+applies to the parent's next turn). A second answer →
 409; `note` is appended to the delivered message. allow_once sets `session.approvalOnce` (consumed by the next turn).
 The mock agent has `#deny <tool>` and `#question <q> | <option> | …`.
 
@@ -1030,7 +1052,9 @@ of the project root path), or via `gigacode sessions …` (VERIFY subcommands, e
   `raw: true` (title from the file name) instead of failing.
 - `GET /api/history?cwd=` → `[{ id, agent, cwd, title (first user message, 80 chars), startedAt, updatedAt, messages,
   model, file, linkedSessionId }]` for sessions whose project path (from the record, or projectHash = sha256(path) of the
-  cwd and its worktree root) matches; cached by file mtime; `GET /api/history/:agent/:id/messages` → Messages (same
+  cwd and its worktree root) matches; cached by file mtime; read asynchronously and only from this project's
+  `<hash>/chats` folders plus folders whose records name this cwd explicitly (a per-folder index of explicit cwds,
+  rebuilt when the folder mtime changes); `GET /api/history/:agent/:id/messages` → Messages (same
   shapes as transcripts; user/assistant/thought/tool, read-only).
 - `POST /api/history/:agent/:id/continue { cwd }` → creates (or returns the existing linked) harness chat session with
   `externalSessionId = id`, that cwd and agent, transcript pre-filled from the history (marked imported), so the next
@@ -1084,9 +1108,13 @@ clears `stalled`; `lastEventAt` is not broadcast on its own (it rides on the nex
 - The turn ends for the user at `result`, not at process exit (GigaCode lingers for many seconds after `result`: MCP
   servers shutting down, chat recording, telemetry): status → idle (or done/failed as before), phase null,
   `turnClosing: true` while the process is still alive; the post-turn logic (auto-report escalation, review loop) runs
-  then. The process stays tracked: a queued message waits for its exit, at most `agents.<id>.exitGraceMs` (default 8000)
-  after `result`, then the tree is killed (guarded, killReason `post_result_linger`) and the next turn starts; the
-  linger duration is logged to `runs/<sid>/stderr.log`. Stop on a lingering process only ends it (no «Остановлено»).
+  then. The process stays tracked at most `agents.<id>.exitGraceMs` (default 8000) after `result` — whether or not a
+  message is queued — then the tree is killed (guarded, killReason `post_result_linger`); a queued message starts the
+  next turn once it exited; the linger duration is logged to `runs/<sid>/stderr.log`. Stop on a lingering process only
+  ends it (no «Остановлено»); archive / DELETE of a session whose process only lingers are not refused (it is ended).
+  `turnClosing` is reset when a turn starts and on every harness start (a lingering process is not followed across a
+  restart). An error that arrives with the result (ACP stop reason `max_tokens`, …) is still shown (error message,
+  status `error`) when the process exits.
 - `lastEventKind`: `text_delta` | `assistant_final` | `thought` | `tool_running` | `tool_done` | `result` (session frames
   are sent when it changes) — the UI says «Завершает ход…» instead of «Пишет ответ».
 
@@ -1096,8 +1124,19 @@ Durable state (all in `<dataDir>`, atomic writes):
 - `db.json` + rotating `db.json.bak` (last good copy, written before each replace); on startup a corrupt/unparsable
   `db.json` is replaced by the `.bak` with a notification «восстановлено из резервной копии»; transcripts likewise
   (`<sid>.json` + `.bak`). Debounce ≤ 250 ms; flush on every turn end, on shutdown, and synchronously on SIGINT/SIGTERM.
-- Session delivery queue is persisted (`session.queue: [{ id, from, text, at }]`, not only a count); after a restart,
-  queued deliveries of idle sessions are sent, those of re-attached running sessions wait for the turn end as before.
+- Session delivery queue is persisted (`session.queue: [{ id, from, text, at, recorded? }]`, not only a count); after a
+  restart, queued deliveries of idle sessions are sent, those of re-attached running sessions wait for the turn end.
+- A turn whose process never started (spawn error, missing cwd, unknown model, …) puts its messages back at the head of
+  the queue (`recorded: true`: already in the transcript, not repeated) and says «Сообщений в очереди: N — уйдут со
+  следующим сообщением или после смены модели.»; no automatic retry loop: the next delivery, a `PATCH { model }` or a
+  restart sends them; Stop clears them.
+- Long prompts: a prompt over ~24 000 characters (Windows caps a command line at 32 767) is written to
+  `runs/<sid>/prompts/prompt-<turn>.md`; argv gets the slash-command line (if the prompt starts with `/`, it stays
+  first) + «Полный текст сообщения: <path>» + a read-it instruction, and that folder is added to the CLI's
+  `--include-directories` for that turn (the CLI reads only inside its workspace dirs). ACP prompts are not affected.
+- Store: a failed write (file held by an antivirus) keeps its key dirty and is retried after 1 s; `db.json` is compact
+  JSON; the read position (`turnOffset`) alone saves db.json at most every 2 s (a crash may re-read ≤ 2 s of events);
+  at most 50 transcripts stay in memory (LRU; never one with a running turn); the turn counter is `session.turnCount`.
 - Re-attach identity: at spawn the harness records `pidStartedAt` (Windows: process creation time via
   `Get-CimInstance Win32_Process` / `wmic` fallback; Linux: `/proc/<pid>/stat` starttime + boot time; macOS: `ps -o lstart=`);
   implementation: the stamp at spawn is `Date.now()` on Windows/macOS (equal to the creation time within the tolerance, no
@@ -1158,7 +1197,8 @@ Durable state (all in `<dataDir>`, atomic writes):
 - `PATCH /api/sessions/:id { archived: boolean, stop?: boolean, title? }`: archiving a working session (a running turn or
   a live terminal) → 409 unless `stop: true` (stop, then archive); archived sessions stay in `/api/state` with
   `archived: true, archivedAt`; unarchive is allowed; virtual sub-agent sessions follow their parent.
-- `sessions.autoArchiveDays` (default 7, 0 = off, in /api/settings as `sessions: { autoArchiveDays }`): on startup and
+- `sessions.autoArchiveDays` (default 7, 0 = off; PUT also accepts `null` = off, stored and returned as 0; in /api/settings
+  as `sessions: { autoArchiveDays }`): on startup and
   hourly, chats that are idle (not running, `waitingFor` null, not `interrupted`, no in-progress task assigned, not a
   coordinator with live workers) and exited terminals whose `lastActivityAt` is older than N days are archived.
 - `DELETE /api/sessions/:id` refuses a working session (409) unless `?force=1`; it also removes the virtual children and

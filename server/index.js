@@ -288,7 +288,8 @@ export async function startServer(opts = {}) {
         modelGrades: a.settings?.agents?.modelGrades || {},
         allowedGrades: a.settings?.agents?.allowedGrades || [],
         taskPromptTemplate: a.taskPromptTemplate ?? null,
-        reworkPromptTemplate: a.reworkPromptTemplate ?? null,
+        reworkPromptTemplate: a.reworkPromptTemplate ?? launchers[a.launcher]?.defaults.reworkPromptTemplate ?? null,
+        reworkPromptPresets: orch.reworkPresets(id), // the effective default first
         taskPromptPresets: a.taskPromptPresets || [],
         firstEventTimeoutMs: a.firstEventTimeoutMs ?? launchers[a.launcher]?.defaults.firstEventTimeoutMs ?? null,
         authTimeoutMs: a.authTimeoutMs ?? 600000,
@@ -373,8 +374,8 @@ export async function startServer(opts = {}) {
       p.transport = a.transport;
     }
     if ('acpIdleMin' in a || 'acpIdleTimeoutMin' in a) {
-      const v = a.acpIdleMin ?? a.acpIdleTimeoutMin;
-      if (!Number.isInteger(v) || v < 0) fail(400, `${where('acpIdleMin')}: целое число минут ≥ 0 (0 — не выгружать)`);
+      const v = a.acpIdleMin ?? a.acpIdleTimeoutMin ?? 0; // null = never unload, stored as 0
+      if (!Number.isInteger(v) || v < 0) fail(400, `${where('acpIdleMin')}: целое число минут ≥ 0 или null (0/null — не выгружать)`);
       p.acpIdleMin = v;
     }
     if ('mcpExclude' in a) {
@@ -397,6 +398,10 @@ export async function startServer(opts = {}) {
       const t = a.reworkPromptTemplate;
       if (t !== null && (typeof t !== 'string' || !t.includes('{notes}'))) fail(400, `${where('reworkPromptTemplate')}: null или строка с {notes}`);
       p.reworkPromptTemplate = t || null;
+    }
+    if ('reworkPromptPresets' in a) {
+      if (!isStrList(a.reworkPromptPresets) || a.reworkPromptPresets.some((t) => !t.includes('{notes}'))) fail(400, `${where('reworkPromptPresets')}: массив строк с {notes}`);
+      p.reworkPromptPresets = a.reworkPromptPresets;
     }
     if ('taskPromptTemplate' in a) {
       if (a.taskPromptTemplate !== null && typeof a.taskPromptTemplate !== 'string') fail(400, `${where('taskPromptTemplate')}: нужна строка или null`);
@@ -589,8 +594,8 @@ export async function startServer(opts = {}) {
       patch.session = { stallSec: sec };
     }
     if (body.sessions !== undefined) {
-      const d = body.sessions?.autoArchiveDays;
-      if (!isObj(body.sessions) || Object.keys(body.sessions).some((k) => k !== 'autoArchiveDays') || !Number.isInteger(d) || d < 0) fail(400, 'sessions: { autoArchiveDays: целое число ≥ 0 (0 — выключено) }');
+      const d = body.sessions?.autoArchiveDays ?? 0; // null = off, stored as 0
+      if (!isObj(body.sessions) || Object.keys(body.sessions).some((k) => k !== 'autoArchiveDays') || !Number.isInteger(d) || d < 0) fail(400, 'sessions: { autoArchiveDays: целое число ≥ 0 или null (0/null — выключено) }');
       patch.sessions = { autoArchiveDays: d };
     }
     if (body.ide !== undefined) {
@@ -1221,10 +1226,10 @@ export async function startServer(opts = {}) {
   const linkedFor = (agent, id) => db.sessions.find((s) => s.kind === 'chat' && !s.virtual && s.agent === agent && s.externalSessionId === id)?.id ?? null;
   const historyPaths = async (cwd) => [path.resolve(cwd), (await git.worktrees(cwd).catch(() => []))[0]?.path ?? null];
   route('GET', '/api/history', async ({ query }) => history.list(await historyPaths(cwdOf(query)), linkedFor));
-  route('GET', '/api/history/:agent/:id/messages', ({ params }) => historyMessages(history.get(params.agent, params.id), params.agent));
+  route('GET', '/api/history/:agent/:id/messages', async ({ params }) => historyMessages(await history.get(params.agent, params.id), params.agent));
   route('POST', '/api/history/:agent/:id/continue', async ({ params, body }) => {
     const { cwd } = check(body, { cwd: 'string' });
-    const rec = history.get(params.agent, params.id);
+    const rec = await history.get(params.agent, params.id);
     const linked = linkedFor(params.agent, rec.id);
     if (linked) return sessions.get(linked);
     const msgs = historyMessages(rec, params.agent);

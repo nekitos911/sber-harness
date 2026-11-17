@@ -34,8 +34,11 @@ test('ask: the session waits for an answer until something is delivered to it', 
   const s = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', cwd: root, prompt: '#ask Какой порт? | 8080 | 9090' })).body;
   await idle(s.id);
   assert.equal((await session(s.id)).waitingFor, 'answer');
+  const note = () => h.api('GET', '/api/state').then((r) => r.body.notifications.find((n) => n.kind === 'question' && n.sessionId === s.id));
+  assert.deepEqual([(await note()).read, !!(await note()).answered], [false, false]);
   await h.api('POST', `/api/sessions/${s.id}/messages`, { text: '8080' });
   assert.equal((await session(s.id)).waitingFor, null);
+  assert.deepEqual([(await note()).read, (await note()).answered], [true, true], 'its Inbox entry is answered and read');
   await idle(s.id);
 });
 
@@ -49,6 +52,11 @@ test("the CLI's own question tool becomes a question card; its headless tool res
   assert.deepEqual(q.question, { id: 'q_1', text: 'Какую БД?', options: [{ label: 'Postgres' }, { label: 'Oracle' }], multiSelect: false });
   assert.ok(!msgs.some((m) => m.kind === 'tool' && m.tool.id === 'q_1'), 'no tool card for the question call');
   assert.equal((await session(s.id)).waitingFor, 'answer');
+  // answered in the chat: the card records the answer (and when)
+  await h.api('POST', `/api/sessions/${s.id}/messages`, { text: 'Ответ на вопрос «Какую БД?»: Postgres' });
+  const answered = (await messages(s.id)).find((m) => m.kind === 'question').question;
+  assert.deepEqual([answered.answered, answered.answer, typeof answered.answeredAt], [true, 'Postgres', 'number']);
+  await idle(s.id);
 });
 
 test('allow-list patterns from denied calls', () => {
@@ -110,8 +118,15 @@ test('a sub-agent denial lands in the parent chat; a repeated stderr warning is 
   const sub = (await h.api('GET', '/api/state')).body.sessions.find((x) => x.virtual && x.parentId === s.id);
   assert.deepEqual([card.permission.pattern, card.permission.fromSubSessionId, card.from], ['run_shell_command(mvn)', sub.id, sub.id]);
   assert.match(card.text, /^субагент java-reviewer: run_shell_command/);
+  // the sub-agent is retired by now: its card in the parent stays open; granted there, it applies to the parent's next turn
+  assert.equal(sub.archived, true);
+  assert.equal(card.permission.resolved, null);
+  await h.api('POST', `/api/sessions/${s.id}/permission`, { permissionId: card.permission.id, optionId: 'allow_once' });
+  await waitFor(() => runs(s.id).length === 2, { what: 'granted turn' });
+  assert.ok(allowedIn(runs(s.id)[1].argv).includes('run_shell_command(mvn)'));
+  await idle(s.id);
   await h.api('POST', `/api/sessions/${s.id}/messages`, { text: '#warn' });
-  await waitFor(async () => (await messages(s.id)).filter((m) => m.kind === 'user').length === 2, { what: 'turn 2' });
+  await waitFor(async () => (await messages(s.id)).filter((m) => m.kind === 'user').length === 3, { what: 'turn 3' });
   await idle(s.id);
   const warns = (await messages(s.id)).filter((m) => m.kind === 'system' && m.text.startsWith('⚠ Warning: MCP server'));
   assert.deepEqual([warns.length, warns[0].count], [1, 2]);

@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { globDirs, parseHistoryFile } from '../server/history.js';
+import { globDirs, parseHistoryFile, createHistory } from '../server/history.js';
 import { startTestServer, makeRepo, tmpDir, rmrf, waitFor } from './helpers.js';
 
 const FIX = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'history', 'HASH', 'chats');
@@ -78,4 +78,24 @@ test('continue: a harness chat with the imported transcript; the next message re
   const run = fs.readFileSync(argvFile, 'utf8').trim().split('\n').map((l) => JSON.parse(l)).find((r) => r.env.HARNESS_SESSION_ID === s.id);
   assert.deepEqual(run.argv.slice(run.argv.indexOf('--resume'), run.argv.indexOf('--resume') + 4), ['--resume', ID, '-p', 'продолжай']);
   await waitFor(async () => (await h.api('GET', '/api/state')).body.sessions.find((x) => x.id === s.id).status === 'idle', { what: 'idle' });
+});
+
+test('listing reads only this project\'s chats folders (others: an mtime-cached index), asynchronously', async () => {
+  const history = createHistory({ agents: { mock: { history: { dirs: [path.join(store, '*', 'chats')] } } } });
+  const reads = [];
+  const orig = fs.promises.readFile;
+  fs.promises.readFile = (file, ...rest) => { reads.push(path.basename(String(file))); return orig(file, ...rest); };
+  try {
+    const first = await history.list([path.resolve(repo)], () => null);
+    assert.ok(first.some((x) => x.id === ID));
+    reads.length = 0;
+    // another project's chat changes (its folder mtime does not): not read again for this project
+    const other = path.join(store, 'f'.repeat(64), 'chats', 'session-other.jsonl');
+    fs.writeFileSync(other, `${JSON.stringify({ sessionId: 'other-1', type: 'user', content: 'чужой проект, ещё' })}\n`);
+    fs.utimesSync(other, new Date(), new Date(Date.now() + 5000));
+    await history.list([path.resolve(repo)], () => null);
+    assert.ok(!reads.includes('session-other.jsonl'), reads.join(', '));
+  } finally {
+    fs.promises.readFile = orig;
+  }
 });

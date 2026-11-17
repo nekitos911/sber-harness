@@ -94,29 +94,45 @@ export function historyMessages(rec, agent) {
   return out.map((m) => ({ ...m, agent }));
 }
 
-/** Per-agent history readers with a file-mtime cache. */
+/** Per-agent history readers (async) with a file-mtime cache and a per-folder index of explicit cwds. */
 export function createHistory(config) {
   const cache = new Map(); // file -> { mtimeMs, rec }
+  const dirIndex = new Map(); // <hash>/chats folder -> { mtimeMs, cwds } — the explicit cwds its records name
 
-  function records(agent) {
-    const dirs = config.agents[agent]?.history?.dirs || [];
+  async function readRec(file) {
+    let st;
+    try { st = await fs.promises.stat(file); } catch { return null; }
+    let hit = cache.get(file);
+    if (!hit || hit.mtimeMs !== st.mtimeMs) {
+      let rec;
+      try { rec = parseHistoryFile(file, await fs.promises.readFile(file, 'utf8')); } catch { return null; }
+      hit = { mtimeMs: st.mtimeMs, rec: { ...rec, file, updatedAt: rec.updatedAt || st.mtimeMs } };
+      cache.set(file, hit);
+    }
+    return hit.rec;
+  }
+
+  async function dirRecords(dir) {
+    let files = [];
+    try { files = (await fs.promises.readdir(dir)).filter((f) => /\.(jsonl?|ndjson)$/i.test(f)); } catch {}
+    return (await Promise.all(files.map((name) => readRec(path.join(dir, name))))).filter(Boolean);
+  }
+
+  /** Records of `agent`; with `wanted(hash, cwds)` only the folders it accepts are read (the others: a stat). */
+  async function records(agent, wanted = null) {
     const out = [];
-    for (const dir of dirs.flatMap(globDirs)) {
-      let files = [];
-      try { files = fs.readdirSync(dir).filter((f) => /\.(jsonl?|ndjson)$/i.test(f)); } catch {}
-      for (const name of files) {
-        const file = path.join(dir, name);
+    for (const dir of (config.agents[agent]?.history?.dirs || []).flatMap(globDirs)) {
+      if (wanted) {
         let st;
-        try { st = fs.statSync(file); } catch { continue; }
-        let hit = cache.get(file);
-        if (!hit || hit.mtimeMs !== st.mtimeMs) {
-          let rec;
-          try { rec = parseHistoryFile(file, fs.readFileSync(file, 'utf8')); } catch { continue; }
-          hit = { mtimeMs: st.mtimeMs, rec: { ...rec, file, updatedAt: rec.updatedAt || st.mtimeMs } };
-          cache.set(file, hit);
+        try { st = await fs.promises.stat(dir); } catch { continue; }
+        let idx = dirIndex.get(dir);
+        if (!idx || idx.mtimeMs !== st.mtimeMs) {
+          idx = { mtimeMs: st.mtimeMs, cwds: [...new Set((await dirRecords(dir)).map((r) => r.cwd).filter(Boolean))] };
+          dirIndex.set(dir, idx);
         }
-        out.push(hit.rec);
+        if (!wanted(path.basename(path.dirname(dir)), idx.cwds)) continue;
       }
+      out.push(...(await dirRecords(dir)));
     }
     return out;
   }
@@ -140,11 +156,13 @@ export function createHistory(config) {
 
   return {
     /** Recorded sessions of `paths` (the cwd and its main worktree), newest first. */
-    list(paths, linkedFor) {
+    async list(paths, linkedFor) {
       const hashes = hashesFor(paths);
+      const ours = (cwd) => paths.some((p) => p && same(p, cwd));
       const out = [];
       for (const agent of agentsWithHistory()) {
-        for (const rec of records(agent)) {
+        // only this project's <hash>/chats folders, plus folders whose records name this cwd explicitly
+        for (const rec of await records(agent, (hash, cwds) => hashes.has(hash) || cwds.some(ours))) {
           const mine = rec.cwd ? paths.some((p) => p && same(p, rec.cwd)) : hashes.has(rec.projectHash);
           if (!mine) continue;
           const firstUser = rec.messages.find((m) => String(m.type || m.role).toLowerCase() === 'user');
@@ -158,9 +176,9 @@ export function createHistory(config) {
       }
       return out.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
     },
-    get(agent, id) {
+    async get(agent, id) {
       if (!config.agents[agent]) fail(404, `агент ${agent} не найден`);
-      return records(agent).find((r) => r.id === id) || fail(404, `сессия истории ${id} не найдена`);
+      return (await records(agent)).find((r) => r.id === id) || fail(404, `сессия истории ${id} не найдена`);
     },
   };
 }
