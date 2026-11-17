@@ -64,6 +64,11 @@ export function createSessions({ config, store, bus, getUrl, catalog = null }) {
   function emit(s) {
     store.save();
     bus.send({ t: 'session', session: s });
+    try {
+      hooks.sessionChanged?.(s); // e.g. the agent badge of the session's task
+    } catch (e) {
+      console.error('[sessions] sessionChanged hook failed:', e);
+    }
     return s;
   }
 
@@ -554,6 +559,12 @@ export function createSessions({ config, store, bus, getUrl, catalog = null }) {
     children: (sid) => db.sessions.filter((s) => s.parentId === sid),
     isRunning: (sid) => runtime(sid).running,
     subagents: (sid) => (get(sid), readRegistry(registryDir(sid), { idleWindowSec: config.session.idleWindowSec })),
+    /** An informational line in a chat that does not wake the agent. */
+    note(sid, text) {
+      return addMessage(get(sid), { kind: 'system', text });
+    },
+    /** Models a fresh discovery says are gone for this agent. */
+    unavailableModels: (agent) => catalog?.unavailable(agent) ?? new Set(),
     /** orchestration marks what happened during the current turn: 'reported' | 'communicated' */
     flag(sid, name) {
       runtime(sid).flags[name] = true;
@@ -573,7 +584,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null }) {
       const kind = o.kind || 'chat';
       if (!['chat', 'terminal'].includes(kind)) fail(400, 'kind must be "chat" or "terminal"');
       const role = o.role || 'solo';
-      if (!['solo', 'coordinator', 'worker'].includes(role)) fail(400, 'role must be solo, coordinator or worker');
+      if (!['solo', 'coordinator', 'worker', 'reviewer'].includes(role)) fail(400, 'role must be solo, coordinator, worker or reviewer');
       for (const k of ['agent', 'cwd', 'workspaceId', 'title', 'prompt', 'approvalMode', 'model', 'command', 'branch']) {
         if (o[k] != null && typeof o[k] !== 'string') fail(400, `${k} must be a string`);
       }

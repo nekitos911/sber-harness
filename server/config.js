@@ -52,7 +52,19 @@ export function loadConfig({ root = CODE_ROOT, overrides = {}, dataDir, configFi
   cfg.integrations ||= {};
   cfg.git = { defaultBase: 'main', ...cfg.git };
   cfg.session = { idleWindowSec: 90, ...cfg.session };
-  cfg.orchestration = { workerMayCommit: false, ...cfg.orchestration };
+  cfg.orchestration = { workerMayCommit: false, reviewMode: 'builtin', ...cfg.orchestration };
+  cfg.orchestration.review = { grade: 'review', approvalMode: 'plan', maxRounds: 2, agent: null, ...cfg.orchestration.review };
+  cfg.board = {
+    columns: [
+      { status: 'todo', label: 'To do', trackerStatuses: [] },
+      { status: 'in_progress', label: 'In progress', trackerStatuses: [] },
+      { status: 'review', label: 'Review', trackerStatuses: [] },
+    ],
+    onWorkerDone: 'stay',
+    moveSyncsTracker: false,
+    columnTransitions: {},
+    ...cfg.board,
+  };
   for (const a of Object.values(cfg.agents)) if (a && a.models !== undefined) a.models = normalizeModels(a.models);
   const shell = cfg.shell || {};
   if (process.platform !== 'win32' && (!shell.command || /powershell(\.exe)?$/i.test(shell.command))) {

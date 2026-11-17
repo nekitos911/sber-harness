@@ -100,7 +100,8 @@ test('coordinator spawns a worker; worker_done moves the task to review and wake
   const worker = await waitFor(async () => (await state()).sessions.find((s) => s.parentId === coord.id), { what: 'worker session' });
   assert.equal(worker.role, 'worker');
   assert.ok(worker.taskId);
-  const task = await waitFor(async () => (await state()).tasks.find((t) => t.id === worker.taskId && t.status === 'review'), { what: 'task in review' });
+  const task = await waitFor(async () => (await state()).tasks.find((t) => t.id === worker.taskId && t.agentState === 'done'), { what: 'worker done badge' });
+  assert.equal(task.status, 'in_progress', 'the card stays in its column');
   assert.equal(task.assigneeSessionId, worker.id);
   assert.ok(task.log.some((l) => /^Worker report \(done\)/.test(l.text)));
   const delivered = await waitFor(async () => (await messages(coord.id)).find((m) => m.kind === 'user' && m.from === worker.id), { what: 'delivery to parent' });

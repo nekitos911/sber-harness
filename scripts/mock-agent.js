@@ -149,7 +149,17 @@ const restText = rest.join('\n');
 const last = (re) => [...restText.matchAll(re)].pop();
 const ask = last(/#ask\s+([^\n]+)/g);
 const done = last(/#done\b([^\n]*)/g);
-if (ask) {
+// harness review loop: a reviewer answers by round (approve from round M on); a worker "fixes" findings and reports again
+const review = last(/#reviewer round=(\d+) approve-at=(\d+)/g);
+if (review) {
+  const approved = Number(review[1]) >= Number(review[2]);
+  await harness('worker_done', {
+    status: 'done',
+    summary: approved ? 'Замечаний нет.\nVERDICT: APPROVED' : `HIGH: нет проверки на null (раунд ${review[1]}).\nVERDICT: CHANGES_REQUESTED`,
+  });
+} else if (/снова вызови worker_done/.test(restText)) {
+  await harness('worker_done', { summary: 'исправлено по замечаниям ревью', status: 'done' });
+} else if (ask) {
   const [question, ...options] = ask[1].split('|').map((x) => x.trim());
   await harness('ask', { question, ...(options.length ? { options } : {}) });
 }

@@ -289,6 +289,92 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
     }
   }
 
+  // ---- harness review loop (orchestration.reviewMode "harness") ----
+
+  const reviewCfg = () => ({ grade: 'review', approvalMode: 'plan', maxRounds: 2, agent: null, ...config.orchestration?.review });
+
+  /** Verdict of a reviewer summary: an explicit VERDICT line, else CHANGES_REQUESTED when CRITICAL/HIGH findings are named. */
+  function parseVerdict(summary) {
+    const m = String(summary).match(/VERDICT:\s*(APPROVED|CHANGES_REQUESTED)/i);
+    if (m) return m[1].toUpperCase();
+    return /\b(CRITICAL|HIGH)\b/.test(summary) ? 'CHANGES_REQUESTED' : 'APPROVED';
+  }
+
+  function setReview(task, patch) {
+    const review = { ...task.review, ...patch };
+    tasks.update(task.id, { review, agentState: review.state }, 'harness');
+  }
+
+  async function startReview(task, worker, report) {
+    const rc = reviewCfg();
+    const prev = task.review?.workerSessionId === worker.id ? task.review : null;
+    const round = (prev?.round || 0) + 1;
+    const agent = rc.agent || worker.agent;
+    const agentCfg = config.agents[agent] || fail(400, `review agent "${agent}" is not configured`);
+    const gradeModel = agentCfg.settings?.agents?.modelGrades?.[rc.grade] || null;
+    const model = gradeModel && !sessions.unavailableModels(agent).has(gradeModel) ? gradeModel : null; // else the CLI default
+    const mode = rc.approvalMode && (!agentCfg.approvalModes?.length || agentCfg.approvalModes.includes(rc.approvalMode)) ? rc.approvalMode : null;
+    const key = tasks.key(task);
+    const text = render(rc.promptTemplate || '{key}: review the changes on {branch} against {base} and finish with worker_done; end the summary with VERDICT: APPROVED or VERDICT: CHANGES_REQUESTED.', {
+      key, id: task.id, title: task.title, description: task.description, branch: worker.branch || task.branch || '', base: task.targets[0],
+      cwd: worker.cwd, round, previous: prev?.findings ? `\nПредыдущие замечания (раунд ${round - 1}):\n${prev.findings}\n` : '',
+    });
+    setReview(task, { round, workerSessionId: worker.id, reviewerSessionId: prev?.reviewerSessionId ?? null, state: 'reviewing', report, findings: prev?.findings ?? null });
+    let reviewer = prev?.reviewerSessionId && sessions.find(prev.reviewerSessionId);
+    if (reviewer) {
+      sessions.deliver(reviewer.id, { from: 'harness', text: `Повторное ревью после исправлений (раунд ${round}).\n\n${text}` });
+    } else {
+      reviewer = await sessions.create({ kind: 'chat', agent, cwd: worker.cwd, role: 'reviewer', parentId: worker.id, taskId: task.id, model, approvalMode: mode, title: `Ревью ${key}`, branch: worker.branch });
+      setReview(tasks.get(task.id), { reviewerSessionId: reviewer.id });
+      sessions.deliver(reviewer.id, { from: 'harness', text });
+    }
+    tasks.addLog(task.id, 'harness', `review round ${round} started in ${reviewer.id}${model ? ` (${model})` : ''}`);
+  }
+
+  function reviewerDone(summary, reviewer) {
+    sessions.flag(reviewer.id, 'reported');
+    sessions.setStatus(reviewer.id, 'done');
+    const task = reviewer.taskId ? tasks.find(reviewer.taskId) : null;
+    const rv = task?.review;
+    if (!rv || rv.reviewerSessionId !== reviewer.id) {
+      const parent = reviewer.parentId && sessions.find(reviewer.parentId);
+      if (parent) sessions.deliver(parent.id, { from: reviewer.id, text: fromSession(reviewer, summary) });
+      return { ok: true };
+    }
+    const verdict = parseVerdict(summary);
+    const worker = sessions.find(rv.workerSessionId);
+    const coordinator = worker?.parentId && sessions.find(worker.parentId);
+    const key = tasks.key(task);
+    tasks.addLog(task.id, reviewer.id, `Review round ${rv.round}: ${verdict}`);
+    if (verdict === 'APPROVED') {
+      setReview(task, { state: 'approved', findings: summary });
+      if (worker) sessions.note(worker.id, `Ревью (раунд ${rv.round}): APPROVED\n\n${summary}`);
+      if (coordinator) sessions.deliver(coordinator.id, { from: worker.id, text: fromSession(worker, `${rv.report}\nревью: APPROVED`) });
+      notify({ kind: 'done', sessionId: worker?.id ?? reviewer.id, taskId: task.id, text: `${key}: ревью пройдено (раунд ${rv.round})` });
+      return { ok: true, verdict };
+    }
+    setReview(task, { state: 'changes_requested', findings: summary });
+    if (worker && rv.round < (reviewCfg().maxRounds || 2)) {
+      sessions.deliver(worker.id, { from: reviewer.id, text: `Ревью, раунд ${rv.round}: есть замечания.\n\n${summary}\n\nИсправь CRITICAL/HIGH и снова вызови worker_done.` });
+      return { ok: true, verdict };
+    }
+    notify({ kind: 'failed', sessionId: worker?.id ?? reviewer.id, taskId: task.id, text: `${key}: ревью не сошлось за ${rv.round} раунд(а)\n\n${summary}` });
+    // the coordinator must not wait forever: it gets the report with the open findings
+    if (coordinator) sessions.deliver(coordinator.id, { from: worker.id, text: fromSession(worker, `${rv.report}\nревью не сошлось за ${rv.round} раунд(а):\n${summary}`) });
+    return { ok: true, verdict };
+  }
+
+  /** task.agentState: what the assignee session (and the harness review) is doing, for the board badge. */
+  function syncAgentState(s) {
+    if (s.kind !== 'chat') return;
+    const task = db.tasks.find((t) => t.assigneeSessionId === s.id);
+    if (!task) return;
+    const reviewState = task.review?.workerSessionId === s.id ? task.review.state : null;
+    const state = s.status === 'running' ? 'running'
+      : reviewState || ({ idle: 'waiting', stopped: 'waiting', done: 'done', failed: 'failed', error: 'failed' }[s.status] ?? null);
+    if (task.agentState !== state) tasks.update(task.id, { agentState: state }, 'harness');
+  }
+
   // ---- preambles ----
 
   function preamble(s) {
@@ -310,6 +396,15 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
         '- Several repositories: one task per repository. Call workspace_list, then create one subtask per repo with task_create({ parent_id, workspace, ... }). Subtasks share the parent key, so every repo gets the same branch.',
         '- Several target branches (task.targets): the work happens on targets[0]; once its commits exist call task_port({ task_id, target }) for every other target. One PR per repo per target.',
         ...(parentTask ? [planSection(parentTask)] : []),
+      ].join('\n');
+    }
+    if (s.role === 'reviewer') {
+      const t = s.taskId && tasks.find(s.taskId);
+      return [
+        `[harness] You are a REVIEWER session (${s.id}) in a local multi-agent harness${t ? ` for task ${tasks.key(t)}` : ''}; the worker you review is ${s.parentId}.`,
+        `Working directory: ${s.cwd}. Read only: do not change files, do not commit or push.`,
+        'Finish with worker_done(summary, status: "done"); the summary ends with "VERDICT: APPROVED" or "VERDICT: CHANGES_REQUESTED".',
+        tools,
       ].join('\n');
     }
     if (s.role !== 'worker') return '';
@@ -349,6 +444,9 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
       '- Do only this task and only inside the working directory.',
       '- Stay on your branch: do not switch or create branches.',
       commitRule,
+      ...(config.orchestration?.reviewMode === 'harness'
+        ? ['- Ревью выполняет harness другой моделью после твоего worker_done; пропусти шаги внутреннего ревью твоей команды (не запускай встроенных субагентов-ревьюеров).']
+        : []),
       ...common,
     ].join('\n');
   }
@@ -357,6 +455,11 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
 
   function turnEnded(s, { reported, communicated, stopped, queueEmpty }) {
     if (stopped) return;
+    if (s.role === 'reviewer' && !reported && s.status !== 'error') {
+      const last = sessions.messages(s.id).filter((m) => m.kind === 'assistant').at(-1);
+      if (last?.text) reviewerDone(last.text, s);
+      return;
+    }
     if (s.status === 'error' && s.role !== 'worker') {
       notify({ kind: 'error', sessionId: s.id, taskId: s.taskId, text: `${s.title}: the agent could not run (see the chat)` });
     }
@@ -369,6 +472,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
 
   sessions.hooks.preamble = preamble;
   sessions.hooks.notify = notify;
+  sessions.hooks.sessionChanged = syncAgentState;
   sessions.hooks.turnEnded = turnEnded;
 
   // ---- tools ----
@@ -508,6 +612,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
       inputSchema: obj({ summary: str('what changed, evidence, open blockers'), status: str('done | failed', { enum: ['done', 'failed'] }) }, ['summary', 'status']),
       run: (a, c) => {
         if (!c) fail(400, 'worker_done must be called from a harness session (x-harness-session header)');
+        if (c.role === 'reviewer') return reviewerDone(a.summary, c);
         const status = a.status;
         sessions.flag(c.id, 'reported');
         sessions.setStatus(c.id, status);
@@ -517,7 +622,8 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
           savePort(task, { ...portRec, status });
           tasks.addLog(task.id, c.id, `port to ${portRec.target} ${status}: ${a.summary}`);
         } else if (task) {
-          tasks.update(task.id, { status: status === 'done' ? 'review' : 'todo' }, c.id);
+          // board.onWorkerDone "stay" (default): the card keeps its column, the agent badge shows the outcome
+          if (config.board?.onWorkerDone === 'review') tasks.update(task.id, { status: status === 'done' ? 'review' : 'todo' }, c.id);
           tasks.addLog(task.id, c.id, `Worker report (${status}): ${a.summary}`);
         }
         const ready = tasks.list({ ready: true }).filter((t) => !activeWorker(t) && !t.hidden);
@@ -527,6 +633,11 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
           `Summary: ${a.summary}`,
           `Ready tasks: ${ready.length ? ready.map((t) => `${t.id} "${t.title}"`).join(', ') : 'none'}`,
         ].join('\n');
+        if (task && !portRec && status === 'done' && c.role === 'worker' && config.orchestration?.reviewMode === 'harness') {
+          // the parent hears about it after the review verdict
+          startReview(task, c, report).catch((e) => notify({ kind: 'error', sessionId: c.id, taskId: task.id, text: `${tasks.key(task)}: не удалось запустить ревью: ${e.message}` }));
+          return { ok: true, review: 'started', taskStatus: task.status, readyTasks: ready.map((t) => t.id) };
+        }
         const parent = c.parentId && sessions.find(c.parentId);
         if (parent) sessions.deliver(parent.id, { from: c.id, text: fromSession(c, report) });
         notify({ kind: status, sessionId: c.id, taskId: task?.id ?? null, text: `${c.title}: ${a.summary}` });

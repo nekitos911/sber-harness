@@ -20,7 +20,27 @@
     "promptTemplate": "{key}: {title}\n\n{description}\n\nTarget branches: {targets}\nLink: {taskUrl}{notes}"
   },
   "session": { "idleWindowSec": 90 },
-  "orchestration": { "workerMayCommit": false },
+  "orchestration": {
+    "workerMayCommit": false,
+    "reviewMode": "builtin",
+    "review": {
+      "grade": "review",
+      "approvalMode": "plan",
+      "maxRounds": 2,
+      "agent": null,
+      "promptTemplate": "Ты — ревьюер задачи {key} «{title}» (раунд {round}). Рабочая папка: {cwd}, ветка {branch}, база {base}.\nПроверь изменения задачи: `git diff {base}...HEAD` плюс незакоммиченные правки (`git status`, `git diff`). Ничего не меняй и не коммить — только читай и запускай проверки.\n\nОписание задачи:\n{description}\n{previous}\nПеречисли замечания по важности: CRITICAL / HIGH / MEDIUM / LOW — файл, строка, что не так и как исправить.\nВ конце вызови worker_done(status: \"done\"); summary должен заканчиваться строкой\nVERDICT: APPROVED (если нет CRITICAL и HIGH) или VERDICT: CHANGES_REQUESTED."
+    }
+  },
+  "board": {
+    "columns": [
+      { "status": "todo", "label": "К работе", "trackerStatuses": ["todo"] },
+      { "status": "in_progress", "label": "В работе", "trackerStatuses": ["development", "to_code_review", "code_review", "discover_issue"] },
+      { "status": "review", "label": "Тестирование", "trackerStatuses": ["qa", "ready_for_ift", "ift", "ready_for_uat"] }
+    ],
+    "onWorkerDone": "stay",
+    "moveSyncsTracker": false,
+    "columnTransitions": {}
+  },
   "agents": {
     "gigacode": {
       "launcher": "gigacode",

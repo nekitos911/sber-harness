@@ -69,7 +69,8 @@ test('onework markdown parsers', () => {
   assert.equal(page.items.length, 5);
   const meta = parseIssueMeta(JSON.parse(fs.readFileSync(path.join(FIX, 'onework.sbertrack_getIssueMeta.json'), 'utf8')).content[0].text);
   assert.equal(meta.current, 'development');
-  assert.deepEqual(meta.transitions[0], { id: 'to_code_review', label: 'to_code_review' });
+  assert.deepEqual(meta.transitions[0], { id: 'to_code_review', label: 'to_code_review', target: 'to_code_review' });
+  assert.equal(meta.transitions.find((t) => t.target === 'qa').id, 'qa');
   assert.equal(meta.transitions.length, 8);
 });
 

@@ -98,7 +98,7 @@ test('subtasks share the root key; branch gets a suffix when taken; suggest pref
   assert.match(first.text, /^\/full-task JIRA-77 on feature\/JIRA-77/);
 
   await h.api('POST', '/api/agent/worker_done', { summary: 'Added the A endpoint', status: 'done' }, { 'x-harness-session': wA.id });
-  assert.equal((await task(subA.id)).status, 'review');
+  assert.deepEqual([(await task(subA.id)).status, (await task(subA.id)).agentState], ['in_progress', 'done'], 'board.onWorkerDone "stay": the card keeps its column');
   fs.writeFileSync(path.join(wA.cwd, 'a.txt'), 'a\n');
   gitIn(wA.cwd, 'add', 'a.txt');
   gitIn(wA.cwd, 'commit', '-q', '-m', 'JIRA-77 add a');

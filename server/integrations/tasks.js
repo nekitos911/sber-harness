@@ -9,6 +9,9 @@
  *    importChildren({ config, mcp, tasks, task }) -> { imported, updated, failed? }   decomposition children as subtasks
  *    getTransitions({ config, mcp, tasks, task }) -> { current, transitions: [{ id, label }] }
  *    transitionTask({ config, mcp, tasks, task, transition?, status?, comment? }) -> Task       (explicit user action)
+ *    syncColumn({ config, mcp, tasks, task, status }) -> { transition }   board move -> tracker (board.moveSyncsTracker):
+ *      board.columnTransitions[status] if available, else the first transition whose TARGET status is in that column's
+ *      trackerStatuses; throws (status 409) when none fits
  *      config  full harness config; reads config.integrations.tasks
  *      mcp     MCP manager (server/mcp-client.js): mcp.callTool(server, tool, args) -> raw MCP result
  *      tasks   task store (server/tasks.js): all(), create(fields, by), update(id, fields, by)
@@ -47,6 +50,15 @@ export const ONEWORK_STATUS_MAP = {
   ready_for_ift: 'review', ift: 'review', ready_for_uat: 'review', done: 'done',
 };
 export const ONEWORK_PRIORITY_MAP = { low: 'low', mid: 'medium', medium: 'medium', high: 'high' };
+
+/** Board column of a tracker status: board.columns[].trackerStatuses first, statusMap as the fallback. */
+export function statusFor(config, ext) {
+  if (ext == null) return null;
+  const col = (config.board?.columns || []).find((c) => (c.trackerStatuses || []).includes(ext));
+  if (col) return col.status;
+  const cfg = config.integrations?.tasks || {};
+  return (cfg.statusMap || (markdown(cfg) ? ONEWORK_STATUS_MAP : {}))[ext] ?? null;
+}
 
 const asStr = (v) => (v == null ? null : typeof v === 'string' ? v : typeof v === 'object' ? JSON.stringify(v) : String(v));
 const disabled = (what) => Object.assign(new Error(what), { status: 501 });
@@ -121,8 +133,8 @@ export function parseIssueMeta(text) {
   const cur = text.match(/Current Status:\s*(.*?)\s*(?:\(`([^`]+)`\))?\s*$/m);
   const transitions = [];
   for (const line of text.split(/\r?\n/)) {
-    const m = line.match(/^\s*-\s+`([^`]+)`\s*(?:→|->)\s*(.*?)\s*(?:\(`[^`]+`\))?\s*$/);
-    if (m) transitions.push({ id: m[1], label: m[2] || m[1] });
+    const m = line.match(/^\s*-\s+`([^`]+)`\s*(?:→|->)\s*(.*?)\s*(?:\(`([^`]+)`\))?\s*$/);
+    if (m) transitions.push({ id: m[1], label: m[2] || m[1], target: m[3] ?? null });
   }
   return { current: cur ? cur[2] || cur[1] : null, transitions };
 }
@@ -138,9 +150,8 @@ const toolOf = (cfg, name) => cfg.tools?.[name] || (name === 'find' ? cfg.tool :
 
 // ---- import ----
 
-function upsert(tasks, cfg, source, externalId, fields, existingOnlyIfClosed, createExtra = {}) {
-  const statusMap = cfg.statusMap || (markdown(cfg) ? ONEWORK_STATUS_MAP : {});
-  const mapped = statusMap[fields.externalStatus];
+function upsert(config, tasks, source, externalId, fields, existingOnlyIfClosed, createExtra = {}) {
+  const mapped = statusFor(config, fields.externalStatus);
   const existing = tasks.all().find((t) => t.source === source && t.externalId === externalId);
   if (existing) {
     const patch = Object.fromEntries(Object.entries(fields).filter(([, v]) => v !== undefined));
@@ -179,7 +190,7 @@ export async function importTasks({ config, mcp, tasks }) {
         priority: priorities[it.priority?.toLowerCase()] ?? null,
         externalUrl: cfg.urlTemplate ? fillTemplate(cfg.urlTemplate, { key: it.key }) : null,
       };
-      count(upsert(tasks, cfg, source, it.key, fields, closed.has(it.status.toLowerCase())));
+      count(upsert(config, tasks, source, it.key, fields, closed.has(it.status.toLowerCase())));
     }
     return counts;
   }
@@ -203,7 +214,7 @@ export async function importTasks({ config, mcp, tasks }) {
       externalStatus,
       priority: PRIORITIES.includes(priority) ? priority : null,
     };
-    count(upsert(tasks, cfg, source, externalId, fields, closed.has(String(externalStatus).toLowerCase())));
+    count(upsert(config, tasks, source, externalId, fields, closed.has(String(externalStatus).toLowerCase())));
   }
   return counts;
 }
@@ -262,7 +273,7 @@ export async function importChildren({ config, mcp, tasks, task }) {
       externalUrl: cfg.urlTemplate ? fillTemplate(cfg.urlTemplate, { key: child }) : null,
       parentId: task.id,
     };
-    const r = upsert(tasks, cfg, source, child, fields, false, { workspaceId: task.workspaceId, targets: [...task.targets] });
+    const r = upsert(config, tasks, source, child, fields, false, { workspaceId: task.workspaceId, targets: [...task.targets] });
     if (r) counts[r]++;
   }
   return failed.length ? { ...counts, failed } : counts;
@@ -273,7 +284,7 @@ export async function getTransitions({ config, mcp, tasks, task }) {
   if (!markdown(cfg)) throw disabled('Transitions are only available for the onework-markdown tracker');
   const meta = parseIssueMeta(await callText(mcp, cfg, toolOf(cfg, 'meta'), { key: trackerKey(task), include_fields: false, include_transitions: true }));
   if (meta.current && meta.current !== task.externalStatus) {
-    const mapped = (cfg.statusMap || ONEWORK_STATUS_MAP)[meta.current];
+    const mapped = statusFor(config, meta.current);
     tasks.update(task.id, { externalStatus: meta.current, ...(!task.statusManual && STATUSES.includes(mapped) ? { status: mapped } : {}) }, 'harness');
   }
   return meta;
@@ -294,10 +305,24 @@ export async function transitionTask({ config, mcp, tasks, task, transition, sta
   const target = status || transition;
   if (!target) throw Object.assign(new Error('status is required'), { status: 400 });
   await mcp.callTool(cfg.server, tool, fillTemplate(cfg.transition.args || { key: '{key}', status: '{status}' }, { key, id: task.id, status: target, comment }));
-  const mapped = cfg.statusMap?.[target];
+  const mapped = statusFor(config, target);
   return tasks.update(task.id, {
     externalStatus: target,
     ...(!task.statusManual && STATUSES.includes(mapped) ? { status: mapped } : {}),
     comment: `tracker status -> ${target}${comment ? `: ${comment}` : ''}`,
   }, 'user');
+}
+
+/** Board move -> tracker transition (opt-in board.moveSyncsTracker). Throws with the reason when nothing fits. */
+export async function syncColumn({ config, mcp, tasks, task, status }) {
+  const column = (config.board?.columns || []).find((c) => c.status === status);
+  const meta = await getTransitions({ config, mcp, tasks, task });
+  const explicit = config.board?.columnTransitions?.[status];
+  const pick = (explicit && meta.transitions.find((t) => t.id === explicit))
+    || meta.transitions.find((t) => t.target && (column?.trackerStatuses || []).includes(t.target));
+  if (!pick) {
+    throw Object.assign(new Error(`no tracker transition from "${meta.current}" leads to the column "${column?.label ?? status}" (available: ${meta.transitions.map((t) => `${t.id}→${t.target ?? '?'}`).join(', ') || 'none'})`), { status: 409 });
+  }
+  await transitionTask({ config, mcp, tasks, task: tasks.get(task.id), transition: pick.id, status: pick.target, comment: '' });
+  return { transition: pick.id };
 }

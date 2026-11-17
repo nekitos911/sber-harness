@@ -18,7 +18,7 @@ import * as wfs from './fs.js';
 import { createMcpManager, loadSecrets, secretsFile, serverDefs } from './mcp-client.js';
 import { launchers } from './launchers.js';
 import { createModelCatalog } from './models.js';
-import { importTasks, transitionTask, getExternal, getTransitions, importChildren } from './integrations/tasks.js';
+import { importTasks, transitionTask, getExternal, getTransitions, importChildren, syncColumn } from './integrations/tasks.js';
 import { createPullRequest, prStatus, refreshTaskPr } from './integrations/pr.js';
 
 const MAX_BODY = 1024 * 1024;
@@ -137,17 +137,26 @@ export async function startServer(opts = {}) {
     syncTimer.unref?.();
   }
 
-  /** integrations.tasks.onStartTransition: best effort, a failure is logged on the task and notified, never fatal. */
-  async function trackerOnStart(task) {
-    const cfg = config.integrations.tasks;
-    const transition = cfg?.onStartTransition;
-    if (!transition || !cfg.enabled || !task.externalId) return;
+  /** Tracker writes are explicit and never silent: a failure keeps the board as is, logs ⚠ on the task and notifies. */
+  async function trackerWrite(task, what, fn) {
     try {
-      await transitionTask({ config, mcp, tasks, task, transition, status: transition, comment: 'Взято в работу через harness' });
+      await fn();
     } catch (e) {
-      tasks.addLog(task.id, 'harness', `⚠ tracker transition "${transition}" failed: ${e.message}`);
-      orch.notify({ kind: 'error', taskId: task.id, text: `${tasks.key(task)}: tracker transition "${transition}" failed: ${e.message}` });
+      tasks.addLog(task.id, 'harness', `⚠ tracker ${what} failed: ${e.message}`);
+      orch.notify({ kind: 'error', taskId: task.id, text: `${tasks.key(task)}: tracker ${what} failed: ${e.message}` });
     }
+  }
+
+  const tracksTracker = (task) => !!(config.integrations.tasks?.enabled && task?.externalId);
+
+  /** "Take into work": integrations.tasks.onStartTransition (explicit id) or, with board.moveSyncsTracker, the in_progress column. */
+  async function trackerOnStart(task) {
+    if (!tracksTracker(task)) return;
+    const transition = config.integrations.tasks.onStartTransition;
+    if (transition) {
+      return trackerWrite(task, `transition "${transition}"`, () => transitionTask({ config, mcp, tasks, task, transition, status: transition, comment: 'Взято в работу через harness' }));
+    }
+    if (config.board?.moveSyncsTracker) return trackerWrite(task, 'sync to "in_progress"', () => syncColumn({ config, mcp, tasks, task, status: 'in_progress' }));
   }
 
   // ---- PR status of tasks (observe-only) ----
@@ -197,6 +206,8 @@ export async function startServer(opts = {}) {
       defaultAgent: config.defaultAgent,
       git: pick(config.git, GIT_KEYS),
       tasks: { refreshSec: t.refreshSec ?? 0 },
+      board: config.board,
+      orchestration: { reviewMode: config.orchestration.reviewMode, workerMayCommit: !!config.orchestration.workerMayCommit, review: config.orchestration.review },
       integrations: {
         tasks: { enabled: !!t.enabled, space: t.space ?? null, urlTemplate: t.urlTemplate ?? '', statusMap: t.statusMap || {}, closedStatuses: t.closedStatuses || [], onStartTransition: t.onStartTransition ?? null },
         pr: { enabled: !!pr.enabled, limits: pr.limits || null },
@@ -307,6 +318,70 @@ export async function startServer(opts = {}) {
     return out;
   }
 
+  function boardPatch(b) {
+    if (!isObj(b)) fail(400, 'board must be an object');
+    const p = {};
+    if ('columns' in b) {
+      const cols = b.columns;
+      if (!Array.isArray(cols) || !cols.length) fail(400, 'board.columns needs at least one column');
+      const seen = new Set();
+      p.columns = cols.map((c, i) => {
+        if (!isObj(c) || !STATUSES.includes(c.status)) fail(400, `board.columns[${i}].status must be one of ${STATUSES.join(', ')}`);
+        if (seen.has(c.status)) fail(400, `board.columns: status "${c.status}" is used twice`);
+        seen.add(c.status);
+        if (typeof c.label !== 'string' || !c.label.trim()) fail(400, `board.columns[${i}].label must be a non-empty string`);
+        if (c.trackerStatuses !== undefined && !isStrList(c.trackerStatuses)) fail(400, `board.columns[${i}].trackerStatuses must be an array of strings`);
+        return { status: c.status, label: c.label.trim(), trackerStatuses: c.trackerStatuses || [] };
+      });
+    }
+    if ('onWorkerDone' in b) {
+      if (!['stay', 'review'].includes(b.onWorkerDone)) fail(400, 'board.onWorkerDone must be "stay" or "review"');
+      p.onWorkerDone = b.onWorkerDone;
+    }
+    if ('moveSyncsTracker' in b) {
+      if (typeof b.moveSyncsTracker !== 'boolean') fail(400, 'board.moveSyncsTracker must be a boolean');
+      p.moveSyncsTracker = b.moveSyncsTracker;
+    }
+    if ('columnTransitions' in b) {
+      if (!isStrMap(b.columnTransitions) || Object.keys(b.columnTransitions).some((k) => !STATUSES.includes(k))) fail(400, 'board.columnTransitions maps statuses to transition ids');
+      p.columnTransitions = b.columnTransitions;
+    }
+    return p;
+  }
+
+  function orchestrationPatch(o) {
+    if (!isObj(o)) fail(400, 'orchestration must be an object');
+    const p = {};
+    if ('reviewMode' in o) {
+      if (!['builtin', 'harness'].includes(o.reviewMode)) fail(400, 'orchestration.reviewMode must be "builtin" or "harness"');
+      p.reviewMode = o.reviewMode;
+    }
+    if ('workerMayCommit' in o) {
+      if (typeof o.workerMayCommit !== 'boolean') fail(400, 'orchestration.workerMayCommit must be a boolean');
+      p.workerMayCommit = o.workerMayCommit;
+    }
+    if ('review' in o) {
+      const r = o.review;
+      if (!isObj(r)) fail(400, 'orchestration.review must be an object');
+      const rp = {};
+      for (const k of ['grade', 'approvalMode', 'promptTemplate']) {
+        if (!(k in r)) continue;
+        if (typeof r[k] !== 'string' || !r[k].trim()) fail(400, `orchestration.review.${k} must be a non-empty string`);
+        rp[k] = r[k];
+      }
+      if ('maxRounds' in r) {
+        if (!Number.isInteger(r.maxRounds) || r.maxRounds < 1 || r.maxRounds > 10) fail(400, 'orchestration.review.maxRounds must be an integer 1..10');
+        rp.maxRounds = r.maxRounds;
+      }
+      if ('agent' in r) {
+        if (r.agent !== null && !config.agents[r.agent]) fail(400, `orchestration.review.agent: unknown agent "${r.agent}"`);
+        rp.agent = r.agent;
+      }
+      p.review = rp;
+    }
+    return p;
+  }
+
   function saveSettings(body) {
     const patch = {};
     if (body.agents !== undefined) {
@@ -323,6 +398,8 @@ export async function startServer(opts = {}) {
       }
       patch.git = body.git;
     }
+    if (body.board !== undefined) patch.board = boardPatch(body.board);
+    if (body.orchestration !== undefined) patch.orchestration = orchestrationPatch(body.orchestration);
     const integrations = integrationsPatch(body);
     if (Object.keys(integrations).length) patch.integrations = integrations;
     const next = Object.fromEntries(Object.entries(patch).map(([k, v]) => [k, deepMerge(config[k], v)]));
@@ -434,7 +511,12 @@ export async function startServer(opts = {}) {
   route('DELETE', '/api/tasks/:id', ({ params }) => tasks.remove(params.id));
   route('POST', '/api/tasks/:id/move', ({ params, body }) => {
     check(body, { status: 'string', beforeId: 'string?' });
-    return tasks.move(params.id, body.status, body.beforeId || null);
+    const before = tasks.get(params.id).status;
+    const task = tasks.move(params.id, body.status, body.beforeId || null);
+    if (config.board?.moveSyncsTracker && before !== task.status && tracksTracker(task)) {
+      trackerWrite(task, `sync to "${task.status}"`, () => syncColumn({ config, mcp, tasks, task, status: task.status })); // background: the card is already moved
+    }
+    return task;
   });
   route('POST', '/api/tasks/:id/assign', ({ params, body }) => {
     check(body, { agent: 'string?', workspaceId: 'string?', cwd: 'string?', worktree: 'string?', sessionId: 'string?' });
