@@ -1,5 +1,6 @@
 import { api, ApiError, errorText, wsUrl } from './api'
 import { closeSessionTab, getState, setState, tabKey, toast, upsert, without, type WtTabs } from './store'
+import { desktopNotify } from './lib/notify'
 import type { AppState, ClientEvent, Message, ServerEvent, SubAgent, Worktree } from './types'
 
 type TermListener = (data: string, replay: boolean) => void
@@ -156,6 +157,7 @@ function apply(ev: ServerEvent) {
       break
     }
     case 'notify':
+      if (!getState().notifications.some((n) => n.id === ev.n.id)) desktopNotify(ev.n)
       setState((s) => ({ notifications: upsert(s.notifications, ev.n) }))
       break
     case 'workspaces':

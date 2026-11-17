@@ -279,3 +279,7 @@
 .agent-badge[data-tone="fail"] { background: var(--fail-soft); color: var(--lamp-fail); }
 .agent-badge:hover { filter: brightness(1.15); }
 .card-sync { justify-self: start; font-size: 11px; color: var(--ink-3); font-family: var(--font-mono); }
+.tracker-links { display: grid; gap: 4px; margin-top: 4px; }
+.tracker-links h4 { margin: 4px 0 2px; font-size: 12px; font-weight: 600; color: var(--ink-2); }
+.link-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 8px; font-size: 12.5px; }
+.tracker-links .btn { justify-self: start; margin-top: 4px; }

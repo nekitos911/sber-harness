@@ -3,6 +3,7 @@ import { ArrowDown, ArrowUp, CircleCheck, CircleX, LogIn, Plus, RefreshCw, Trian
 import { api, ApiError, errorText, qs, tryApi } from '../api'
 import { setState, toast, useStore } from '../store'
 import { adoptSession } from '../lib/actions'
+import { desktopNotifyOn, setDesktopNotify } from '../lib/notify'
 import { COLUMNS, relTime } from '../lib/format'
 import { FULL_ACCESS, GRADES, loadAgentMeta, loadSettings, modeShort, normModels, useAgentMeta } from '../lib/agents'
 import { useNow } from '../lib/useNow'
@@ -96,6 +97,7 @@ export function SettingsView() {
       <form className="settings" onSubmit={(e) => { e.preventDefault(); if (changes) void save() }}>
         <div className="settings-body">
           <AgentSection id={main} form={form} update={update} fieldError={fieldError} primary />
+          <NotifySection />
           <BoardSection form={form} update={update} />
           <OrchestrationSection form={form} update={update} />
           <TrackerSection form={form} update={update} fieldError={fieldError} />
@@ -616,6 +618,24 @@ function BoardSection({ form, update }: Omit<SectionProps, 'fieldError'>) {
         </Row>
         <Row label="Двигать задачу в трекере" hint="При переносе карточки (и при «Взять в работу»): переход подбирается автоматически из доступных в трекере.">
           <Switch label="Двигать задачу в трекере при переносе карточки" checked={!!b.moveSyncsTracker} onChange={(v) => set({ moveSyncsTracker: v })} />
+        </Row>
+      </div>
+    </section>
+  )
+}
+
+/** Local to this browser: desktop notifications for questions, results and errors while the tab is in the background. */
+function NotifySection() {
+  const [on, setOn] = useState(desktopNotifyOn)
+  const supported = 'Notification' in window
+  const denied = supported && Notification.permission === 'denied'
+  return (
+    <section className="settings-section" id="set-notify">
+      <h2>Уведомления</h2>
+      <div className="set-rows">
+        <Row label="Уведомления на рабочем столе" hint={denied ? 'Браузер запретил уведомления для этой страницы: разрешите их в настройках сайта.' : 'Вопросы агентов, готовые задачи и ошибки, пока вкладка в фоне. Хранится в этом браузере.'}>
+          <Switch label="Уведомления на рабочем столе" checked={on} disabled={!supported || denied}
+            onChange={(v) => void setDesktopNotify(v).then((res) => { setOn(res); if (v && !res) toast('Браузер не разрешил уведомления', 'error') })} />
         </Row>
       </div>
     </section>

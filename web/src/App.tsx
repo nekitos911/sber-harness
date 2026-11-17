@@ -20,6 +20,7 @@ import { ChatView } from './views/ChatView'
 import { DiffView } from './views/DiffView'
 import { WorktreeHome } from './views/WorktreeHome'
 import { useGitWatch } from './lib/git'
+import { useUnreadTitle } from './lib/notify'
 
 // Heavy editors load on first use.
 const TerminalView = lazy(() => import('./views/TerminalView'))
@@ -41,6 +42,7 @@ export function App() {
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
+  useUnreadTitle()
   // The worktree on screen keeps its git state fresh (tab badges, panel, sidebar counts).
   useGitWatch(view.kind === 'wt' ? view.cwd : null)
 

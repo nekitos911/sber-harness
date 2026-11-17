@@ -149,7 +149,7 @@ export function TaskDrawer({ task, ctx, onClose }: { task: Task; ctx: BoardCtx; 
           </Prop>
         </div>
 
-        {imported && !task.description.trim() && <ExternalCard task={task} />}
+        {imported && <ExternalCard task={task} full={!task.description.trim()} />}
         <DescriptionField task={task} />
         {trackerOn && task.externalId && <TrackerStatus task={task} />}
         <TaskPrs task={task} />
@@ -413,10 +413,10 @@ function TrackerStatus({ task }: { task: Task }) {
   )
 }
 
-interface External { fields: Record<string, unknown>; description: string }
+interface External { fields: Record<string, unknown>; description: string; links?: { type: string; from: string; to: string }[] }
 
 /** An imported task without a description: read the card from the tracker on open (newer servers). */
-function ExternalCard({ task }: { task: Task }) {
+function ExternalCard({ task, full }: { task: Task; full: boolean }) {
   const [card, setCard] = useState<External | 'loading' | { error: string }>('loading')
   useEffect(() => {
     let live = true
@@ -427,6 +427,8 @@ function ExternalCard({ task }: { task: Task }) {
     return () => { live = false }
   }, [task.id])
   if (card !== 'loading' && 'error' in card && !card.error) return null // endpoint absent on this server
+  // With a description already on the card only the links matter; fetch quietly and show nothing until they come.
+  if (!full) return card !== 'loading' && !('error' in card) && card.links?.length ? <section className="drawer-section"><TrackerLinks task={task} links={card.links} /></section> : null
   const show = (v: unknown) => (Array.isArray(v) ? v.join(', ') : v === null || v === undefined || v === '' ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v))
   return (
     <section className="drawer-section">
@@ -441,9 +443,52 @@ function ExternalCard({ task }: { task: Task }) {
             ))}
           </div>
           {card.description.trim() && <div className="md-preview"><Markdown text={card.description} /></div>}
+          {!!card.links?.length && <TrackerLinks task={task} links={card.links} />}
         </>
       )}
     </section>
+  )
+}
+
+/** «Связи» from the tracker: decomposition children first (with titles when they are on the board), then the rest. */
+function TrackerLinks({ task, links }: { task: Task; links: NonNullable<External['links']> }) {
+  const tasks = useStore((s) => s.tasks)
+  const [busy, setBusy] = useState(false)
+  const me = task.externalId
+  const kids = links.filter((l) => /decompos/i.test(l.type) && l.from === me).map((l) => l.to)
+  const other = links.filter((l) => !(/decompos/i.test(l.type) && l.from === me))
+  const onBoard = (key: string) => tasks.find((t) => t.externalId === key)
+  const missing = kids.filter((k) => !onBoard(k))
+  const importKids = async () => {
+    setBusy(true)
+    const r = await tryApi<{ imported: number; updated: number }>('POST', `/tasks/${encodeURIComponent(task.id)}/import-children`)
+    setBusy(false)
+    if (r) toast(`Подзадачи: новых ${r.imported}, обновлено ${r.updated}`, 'ok')
+  }
+  return (
+    <div className="tracker-links">
+      <h4>Связи</h4>
+      {kids.map((k) => {
+        const t = onBoard(k)
+        return (
+          <div key={k} className="link-row">
+            <span className="chip chip-mono">{k}</span>
+            <span className={t ? 'ellipsis' : 'muted'}>{t ? t.title : 'ещё не на доске'}</span>
+            <span className="muted">подзадача</span>
+          </div>
+        )
+      })}
+      {other.map((l, i) => (
+        <div key={`${l.type}-${i}`} className="link-row">
+          <span className="chip chip-mono">{l.from === me ? l.to : l.from}</span>
+          <span className="ellipsis">{onBoard(l.from === me ? l.to : l.from)?.title ?? ''}</span>
+          <span className="muted">{l.type}</span>
+        </div>
+      ))}
+      {missing.length > 0 && (
+        <button type="button" className="btn btn-sm" disabled={busy} onClick={() => void importKids()}>{busy ? 'Добавляем…' : `Добавить подзадачи на доску (${missing.length})`}</button>
+      )}
+    </div>
   )
 }
 
