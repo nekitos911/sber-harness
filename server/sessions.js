@@ -5,7 +5,7 @@ import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { CODE_ROOT } from './config.js';
 import { launchers } from './launchers.js';
-import { runTurn } from './runner.js';
+import { runTurn, isAlive } from './runner.js';
 import { secretEnv } from './mcp-client.js';
 import { readRegistry } from './registry.js';
 import * as git from './git.js';
@@ -118,13 +118,30 @@ export function createSessions({ config, store, bus, getUrl }) {
     bus.send({ t: 'subagents', sessionId: s.id, items });
   }
 
+  /** Output file of the newest turn of a session (runs/<sid>/turn-<n>.out.ndjson), or null. */
+  function latestTurnFile(sid) {
+    let best = null;
+    try {
+      for (const name of fs.readdirSync(runDir(sid))) {
+        const m = name.match(/^turn-(\d+)\.out\.ndjson$/);
+        if (m && (!best || Number(m[1]) > best.n)) best = { n: Number(m[1]), file: path.join(runDir(sid), name) };
+      }
+    } catch {}
+    return best?.file ?? null;
+  }
+
   // ---- startup recovery ----
+  const toReattach = []; // turns that kept running (or finished) while the harness was down
   for (const s of db.sessions) {
     s.queued = 0;
-    s.pid = null;
     s.tokensIn ??= 0;
     s.tokensOut ??= 0;
     s.phase = null;
+    if (s.kind === 'chat' && s.status === 'running' && s.pid && latestTurnFile(s.id)) {
+      toReattach.push(s);
+      continue;
+    }
+    s.pid = null;
     if (s.kind === 'chat' && s.status === 'running') {
       s.status = 'idle';
       addMessage(s, { kind: 'system', text: 'harness restarted, the turn was interrupted; send a message to continue (context is kept by --resume)' });
@@ -291,19 +308,66 @@ export function createSessions({ config, store, bus, getUrl }) {
         cwd: s.cwd,
         env: { ...process.env, ...agentCfg.env, ...secretEnv(config), ...exe.env, ...launcher.env(ctx), ...ctx.harnessMcp.env },
         firstEventTimeoutMs: agentCfg.firstEventTimeoutMs || launcher.defaults.firstEventTimeoutMs || 30000,
-        logFile: path.join(runDir(s.id), 'stderr.log'),
+        ...turnFiles(s, r.turn),
         onEvent: (ev) => applyEvent(s, ev),
+        onOffset: (off) => saveOffset(s, off),
       });
       r.handle = handle;
       if (r.stopRequested) handle.stop();
       s.pid = handle.pid;
+      s.turnOffset = 0;
       s.phase = 'starting'; // spawned, no output yet (GigaCode may need a minute to start its MCP servers)
       emit(s);
       res = await handle.done;
     } catch (e) {
       res = { error: e.message };
     }
-    finishTurn(s, res);
+    if (!res.detached) finishTurn(s, res);
+  }
+
+  function turnFiles(s, n) {
+    const dir = runDir(s.id);
+    return { logFile: path.join(dir, 'stderr.log'), outFile: path.join(dir, `turn-${n}.out.ndjson`), errFile: path.join(dir, `turn-${n}.err.txt`) };
+  }
+
+  function saveOffset(s, off) {
+    s.turnOffset = off;
+    store.save(); // debounced; no WS frame for this
+  }
+
+  /** Follows a turn that kept running while the harness was down (or drains the output of one that ended). */
+  function reattach(s) {
+    const r = runtime(s.id);
+    const launcher = launchers[s.launcherId];
+    const outFile = latestTurnFile(s.id);
+    if (!launcher || !outFile) {
+      Object.assign(s, { status: 'idle', pid: null });
+      addMessage(s, { kind: 'system', text: 'harness restarted, the turn was interrupted; send a message to continue (context is kept by --resume)' });
+      return emit(s);
+    }
+    r.running = true;
+    r.flags = {};
+    r.cur = { assistant: null, thought: null, raw: null, tools: new Map(), subTools: new Map(), gotText: false };
+    for (const m of store.messages(s.id)) if (m.turn === r.turn && m.kind === 'tool' && m.tool) r.cur.tools.set(m.tool.id, m);
+    const last = store.messages(s.id).at(-1);
+    if (last?.kind === 'assistant' && last.turn === r.turn) {
+      r.cur.assistant = last; // keep streaming into the same message
+      r.cur.gotText = true;
+    }
+    if (isAlive(s.pid)) addMessage(s, { kind: 'system', text: 'переподключено после перезапуска' });
+    s.phase = s.turnOffset ? 'streaming' : 'starting';
+    emit(s);
+    const n = Number(outFile.match(/turn-(\d+)\.out\.ndjson$/)[1]);
+    r.registryTimer = setInterval(() => pollRegistry(s), REGISTRY_POLL_MS);
+    const handle = runTurn({
+      launcher,
+      ...turnFiles(s, n),
+      reattach: { pid: s.pid, offset: s.turnOffset || 0 },
+      onEvent: (ev) => applyEvent(s, ev),
+      onOffset: (off) => saveOffset(s, off),
+    });
+    r.handle = handle;
+    handle.done.then((res) => { if (!res.detached) finishTurn(s, res); });
   }
 
   function finishTurn(s, res) {
@@ -329,16 +393,17 @@ export function createSessions({ config, store, bus, getUrl }) {
     } else if (!res.sawResult && res.code !== 0) {
       // a fatal CLI error leaves stdout empty and the whole story in stderr: lead with it
       const why = res.stderrTail.trim();
-      addMessage(s, { kind: 'error', text: `The agent failed (exit code ${res.code}${res.signal ? `, ${res.signal}` : ''})${why ? `:\n${why.slice(-2000)}` : '.'}` });
-      if (!res.eventCount) status = 'error';
-    } else if (!res.eventCount) {
+      const how = res.code == null ? 'The agent process ended without a result' : `The agent failed (exit code ${res.code}${res.signal ? `, ${res.signal}` : ''})`;
+      addMessage(s, { kind: 'error', text: `${how}${why ? `:\n${why.slice(-2000)}` : '.'}` });
+      if (!res.eventCount && !res.priorOutput) status = 'error';
+    } else if (!res.eventCount && !res.priorOutput) {
       // exit 0 without a single event: e.g. GigaCode's identity check fails silently (message only on stderr)
       addMessage(s, { kind: 'error', text: `The agent exited without any output.${tail(res.stderrTail)}` });
       status = 'error';
     } else if (res.stderrTail.trim()) {
       addMessage(s, { kind: 'system', text: `⚠ ${res.stderrTail.trim().slice(-2000)}` });
     }
-    Object.assign(s, { status, pid: null, phase: null, lastActivityAt: Date.now() });
+    Object.assign(s, { status, pid: null, phase: null, turnOffset: null, lastActivityAt: Date.now() });
     emit(s);
     try {
       hooks.turnEnded(s, { ...r.flags, stopped, queueEmpty: r.queue.length === 0 });
@@ -498,6 +563,7 @@ export function createSessions({ config, store, bus, getUrl }) {
         tokensIn: 0,
         tokensOut: 0,
         phase: null,
+        turnOffset: null,
         createdAt: now,
         lastActivityAt: now,
       };
@@ -648,11 +714,17 @@ export function createSessions({ config, store, bus, getUrl }) {
     },
     termReplay: (sid) => store.termLog(sid),
 
+    /** Re-attach turns that outlived the previous harness process (called once hooks are installed). */
+    resumeRuns() {
+      for (const s of toReattach.splice(0)) reattach(s);
+    },
+
+    /** Harness shutdown: agent turns keep running (re-attached on the next start); terminals are closed. */
     close() {
       for (const r of rt.values()) {
         r.queue = [];
         clearInterval(r.registryTimer);
-        r.handle?.stop();
+        r.handle?.detach();
         const p = r.pty;
         r.pty = null;
         try { p?.kill(); } catch {}

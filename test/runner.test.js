@@ -11,13 +11,18 @@ process.env.MOCK_AGENT_STATE_DIR = path.join(dir, 'mock-state');
 after(() => rmrf(dir));
 
 const launcher = launchers.mock;
+let runSeq = 0;
+const files = () => {
+  const n = ++runSeq;
+  return { logFile: path.join(dir, 'stderr.log'), outFile: path.join(dir, `turn-${n}.out.ndjson`), errFile: path.join(dir, `turn-${n}.err.txt`) };
+};
 function turn(prompt, session = {}, firstEventTimeoutMs = 10000) {
   const s = { id: 's_test', externalSessionId: null, approvalMode: null, model: null, ...session };
   const ctx = { prompt, session: s, agentCfg: { approvalMode: 'yolo' }, settingsPath: path.join(dir, 'settings.json'), harnessMcp: {}, agentMcpServers: {} };
   const events = [];
   const handle = runTurn({
     launcher, ctx, command: launcher.defaults.command, cwd: dir, env: { ...process.env },
-    firstEventTimeoutMs, logFile: path.join(dir, 'stderr.log'), onEvent: (e) => events.push(e),
+    firstEventTimeoutMs, ...files(), onEvent: (e) => events.push(e),
   });
   return { handle, events, done: handle.done.then((res) => ({ res, events })) };
 }
@@ -80,7 +85,7 @@ function scriptTurn(name, source, extra = {}) {
   const events = [];
   return runTurn({
     launcher, ctx, command: [process.execPath, file], cwd: dir, env: { ...process.env }, firstEventTimeoutMs: 10000,
-    logFile: path.join(dir, 'stderr.log'), onEvent: (e) => events.push(e), ...extra,
+    ...files(), onEvent: (e) => events.push(e), ...extra,
   }).done.then((res) => ({ res, events }));
 }
 

@@ -81,34 +81,164 @@ export function killTree(pid) {
 }
 
 const shortArg = (a) => JSON.stringify(a.length > 200 ? `${a.slice(0, 200)}...` : a);
+const TAIL_POLL_MS = 200;
+const ALIVE_POLL_MS = 1000;
+
+export function isAlive(pid) {
+  if (!pid) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return e.code === 'EPERM'; // exists, just not ours to signal
+  }
+}
+
+/** Last `bytes` of a file as text ('' when missing). */
+export function readTail(file, bytes = STDERR_TAIL) {
+  let fd;
+  try {
+    fd = fs.openSync(file, 'r');
+    const size = fs.fstatSync(fd).size;
+    const len = Math.min(size, bytes);
+    const buf = Buffer.alloc(len);
+    fs.readSync(fd, buf, 0, len, size - len);
+    return buf.toString('utf8');
+  } catch {
+    return '';
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+  }
+}
 
 /**
- * @param {{ launcher, ctx, command: string|string[]|{file,args}, cwd, env, firstEventTimeoutMs: number, logFile: string,
- *           onEvent: (ev) => void, maxLine?: number }} o
- *   Events are the launcher's NormalizedEvents plus { type: 'raw', text } for each non-JSON stdout line.
- * @returns {{ pid: number|null, stop(): void, done: Promise<{code, signal, sawResult, timedOut, stopped, error, stderrTail, eventCount}> }}
+ * Follows a growing NDJSON file from byte `offset`: complete lines go to onLine, `offset` always points at the first
+ * byte not consumed yet (the start of a partial line), so a later re-attach resumes exactly there. Lines longer than
+ * maxLine are cut with a marker and the rest of that line is skipped.
  */
-export function runTurn({ launcher, ctx, command, cwd, env, firstEventTimeoutMs, logFile, onEvent, maxLine = MAX_LINE }) {
-  const log = fs.createWriteStream(logFile, { flags: 'a' });
-  const res = { code: null, signal: null, sawResult: false, timedOut: false, stopped: false, error: null, stderrTail: '', eventCount: 0 };
-  let child;
+function tailFile(file, offset, maxLine, onLine, onOffset) {
+  let pending = Buffer.alloc(0);
+  let skipping = false;
+  let watcher = null;
+  let poll = null;
+
+  function consume(chunk) {
+    let data = pending.length ? Buffer.concat([pending, chunk]) : chunk;
+    let i;
+    while ((i = data.indexOf(10)) >= 0) {
+      const line = data.subarray(0, i);
+      data = data.subarray(i + 1);
+      offset += line.length + 1;
+      if (skipping) skipping = false;
+      else onLine(line.length > maxLine ? `${line.subarray(0, maxLine).toString('utf8')} [line truncated by harness]` : line.toString('utf8'));
+    }
+    if (!skipping && data.length > maxLine) {
+      onLine(`${data.subarray(0, maxLine).toString('utf8')} [line truncated by harness]`);
+      skipping = true;
+    }
+    if (skipping) {
+      offset += data.length;
+      data = Buffer.alloc(0);
+    }
+    pending = Buffer.from(data);
+  }
+
+  function read() {
+    let fd;
+    try {
+      fd = fs.openSync(file, 'r');
+    } catch {
+      return;
+    }
+    try {
+      const size = fs.fstatSync(fd).size;
+      let pos = offset + pending.length;
+      const before = offset;
+      while (pos < size) {
+        const buf = Buffer.alloc(Math.min(size - pos, 1 << 20));
+        const n = fs.readSync(fd, buf, 0, buf.length, pos);
+        if (n <= 0) break;
+        pos += n;
+        consume(buf.subarray(0, n));
+      }
+      if (offset !== before) onOffset?.(offset);
+    } finally {
+      fs.closeSync(fd);
+    }
+  }
+
   try {
-    if (!fs.existsSync(cwd)) throw new Error(`Working directory does not exist: ${cwd}`);
-    const { file, args: pre } = command?.file ? command : resolveCommand(command);
-    const args = [...pre, ...launcher.buildArgs(ctx)];
-    log.write(`\n=== ${new Date().toISOString()} ${shortArg(file)} ${args.map(shortArg).join(' ')}\n`);
-    child = spawn(file, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, detached: !isWin });
-  } catch (e) {
-    log.end(`[harness] ${e.message}\n`);
-    return { pid: null, stop() {}, done: Promise.resolve({ ...res, error: e.message }) };
+    watcher = fs.watch(file, () => read());
+    watcher.on('error', () => {});
+  } catch {} // the poll below is enough
+  poll = setInterval(read, TAIL_POLL_MS);
+  read();
+  return {
+    read,
+    /** reads to the end; a final line without a newline is consumed too */
+    drain() {
+      read();
+      if (pending.length && !skipping) {
+        const last = pending.toString('utf8');
+        offset += pending.length;
+        pending = Buffer.alloc(0);
+        onLine(last);
+        onOffset?.(offset);
+      }
+    },
+    close() {
+      clearInterval(poll);
+      try { watcher?.close(); } catch {}
+    },
+  };
+}
+
+/**
+ * Runs (or re-attaches to) ONE agent turn. The agent is spawned detached with stdout/stderr redirected to files
+ * (outFile / errFile), so it keeps running when the harness stops; the harness follows outFile.
+ * @param {{ launcher, ctx, command, cwd, env, firstEventTimeoutMs, logFile, outFile, errFile, onEvent, onOffset?,
+ *           maxLine?, reattach?: { pid, offset } }} o
+ *   Events are the launcher's NormalizedEvents plus { type: 'raw', text } for each non-JSON stdout line.
+ *   reattach: follow an already running turn (not our child): it ends at its `result` event or when the pid is gone;
+ *   the exit code is then unknown (null).
+ * @returns {{ pid, stop(), detach(), done: Promise<{code, signal, sawResult, timedOut, stopped, detached, error, stderrTail, eventCount}> }}
+ */
+export function runTurn({ launcher, ctx, command, cwd, env, firstEventTimeoutMs, logFile, outFile, errFile, onEvent, onOffset, maxLine = MAX_LINE, reattach = null }) {
+  const log = fs.createWriteStream(logFile, { flags: 'a' });
+  const res = { code: null, signal: null, sawResult: false, timedOut: false, stopped: false, detached: false, error: null, stderrTail: '', eventCount: 0, priorOutput: (reattach?.offset ?? 0) > 0 };
+  let child = null;
+  let pid = reattach?.pid ?? null;
+  if (!reattach) {
+    try {
+      if (!fs.existsSync(cwd)) throw new Error(`Working directory does not exist: ${cwd}`);
+      const { file, args: pre } = command?.file ? command : resolveCommand(command);
+      const args = [...pre, ...launcher.buildArgs(ctx)];
+      log.write(`\n=== ${new Date().toISOString()} ${shortArg(file)} ${args.map(shortArg).join(' ')}\n`);
+      const out = fs.openSync(outFile, 'w');
+      const err = fs.openSync(errFile, 'w');
+      try {
+        // files instead of pipes + detached: the turn outlives a harness restart
+        child = spawn(file, args, { cwd, env, stdio: ['ignore', out, err], windowsHide: true, detached: true });
+      } finally {
+        fs.closeSync(out);
+        fs.closeSync(err);
+      }
+      child.unref();
+      pid = child.pid ?? null;
+    } catch (e) {
+      log.end(`[harness] ${e.message}\n`);
+      return { pid: null, stop() {}, detach() {}, done: Promise.resolve({ ...res, error: e.message }) };
+    }
+  } else {
+    log.write(`\n=== ${new Date().toISOString()} re-attached to pid ${pid} at offset ${reattach.offset}\n`);
   }
 
   const state = {};
-  let buf = '';
-  let skipping = false; // inside the remainder of an over-long line
-  const timer = setTimeout(() => {
+  let settled = false;
+  let finish = () => {};
+  const timer = reattach ? null : setTimeout(() => {
     res.timedOut = true;
-    killTree(child.pid);
+    killTree(pid);
   }, firstEventTimeoutMs);
 
   const emit = (ev) => {
@@ -140,60 +270,52 @@ export function runTurn({ launcher, ctx, command, cwd, env, firstEventTimeoutMs,
       if (ev.type === 'result') res.sawResult = true;
       emit(ev);
     }
+    // a re-attached process is not our child: its result line ends the turn
+    if (reattach && res.sawResult) setImmediate(() => finish());
   }
 
-  child.stdout.setEncoding('utf8').on('data', (chunk) => {
-    if (skipping) {
-      const nl = chunk.indexOf('\n');
-      if (nl < 0) return;
-      skipping = false;
-      chunk = chunk.slice(nl + 1);
-    }
-    buf += chunk;
-    let i;
-    while ((i = buf.indexOf('\n')) >= 0) {
-      const line = buf.slice(0, i);
-      buf = buf.slice(i + 1);
-      handleLine(line.length > maxLine ? `${line.slice(0, maxLine)} [line truncated by harness]` : line);
-    }
-    if (buf.length > maxLine) {
-      handleLine(`${buf.slice(0, maxLine)} [line truncated by harness]`);
-      buf = '';
-      skipping = true;
-    }
-  });
-  child.stderr.setEncoding('utf8').on('data', (chunk) => {
-    log.write(chunk);
-    res.stderrTail = (res.stderrTail + chunk).slice(-STDERR_TAIL);
-  });
+  const tail = tailFile(outFile, reattach?.offset ?? 0, maxLine, handleLine, onOffset);
+  let alive = null;
 
   const done = new Promise((resolve) => {
-    let settled = false;
-    const finish = () => {
+    finish = (detached = false) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      if (!skipping) handleLine(buf);
-      buf = '';
-      log.end(`=== exit code=${res.code} signal=${res.signal}${res.timedOut ? ' (first-event timeout)' : ''}${res.stopped ? ' (stopped)' : ''}\n`);
+      clearInterval(alive);
+      if (!detached) tail.drain();
+      tail.close();
+      res.detached = detached;
+      res.stderrTail = readTail(errFile);
+      if (res.stderrTail) log.write(`[stderr]\n${res.stderrTail}\n`);
+      log.end(`=== ${detached ? 'detached (the turn keeps running)' : `exit code=${res.code} signal=${res.signal}`}${res.timedOut ? ' (first-event timeout)' : ''}${res.stopped ? ' (stopped)' : ''}\n`);
       resolve(res);
     };
-    child.on('error', (e) => {
-      res.error = e.code === 'ENOENT' ? `Cannot start agent: ${e.message}` : e.message;
-      if (!child.pid) finish();
-    });
-    child.on('close', (code, signal) => {
-      res.code = code;
-      res.signal = signal;
-      finish();
-    });
+    if (child) {
+      child.on('error', (e) => {
+        res.error = e.code === 'ENOENT' ? `Cannot start agent: ${e.message}` : e.message;
+        if (!child.pid) finish();
+      });
+      child.on('exit', (code, signal) => {
+        res.code = code;
+        res.signal = signal;
+        finish();
+      });
+    } else {
+      alive = setInterval(() => { if (!isAlive(pid)) finish(); }, ALIVE_POLL_MS);
+      if (!isAlive(pid)) setImmediate(() => finish());
+    }
   });
 
   return {
-    pid: child.pid ?? null,
+    pid,
     stop() {
       res.stopped = true;
-      killTree(child.pid);
+      killTree(pid);
+    },
+    /** stop following without touching the process (harness shutdown) */
+    detach() {
+      finish(true);
     },
     done,
   };

@@ -617,6 +617,7 @@ export async function startServer(opts = {}) {
   const actualPort = server.address().port;
   url = `http://${config.host.includes(':') ? `[${config.host}]` : config.host}:${actualPort}`;
   writeAtomic(serverJson, JSON.stringify({ url, pid: process.pid }));
+  sessions.resumeRuns(); // turns that kept running while the harness was down (needs the URL for follow-up turns)
   scheduleSync();
   // best-effort: folders renamed to *.stale-<ts> by earlier deletions (files held by antivirus/indexer)
   for (const dir of [config.dataDir, path.join(config.dataDir, 'runs'), ...db.workspaces.map((w) => git.worktreeRootFor(w.path, config.worktreeRoot))]) {
