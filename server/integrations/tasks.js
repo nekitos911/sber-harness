@@ -5,7 +5,8 @@
  *
  *  Contract (all throw an Error with status 501 when not enabled/configured):
  *    importTasks({ config, mcp, tasks }) -> { imported, updated }
- *    getExternal({ config, mcp, tasks, task }) -> { key, title, fields, description, attributes }   (lazy issue details)
+ *    getExternal({ config, mcp, tasks, task }) -> { key, title, fields, description, attributes, links }   (lazy details)
+ *    importChildren({ config, mcp, tasks, task }) -> { imported, updated, failed? }   decomposition children as subtasks
  *    getTransitions({ config, mcp, tasks, task }) -> { current, transitions: [{ id, label }] }
  *    transitionTask({ config, mcp, tasks, task, transition?, status?, comment? }) -> Task       (explicit user action)
  *      config  full harness config; reads config.integrations.tasks
@@ -23,6 +24,8 @@
  *       get:  tools.get {key} -> "- **Field**: value" list, description, "### Attributes"
  *       meta: tools.meta {key, include_fields: false, include_transitions: true} -> current status + transitions
  *       transition: tools.transition {key, transition, comment?}
+       links: tools.links {key, page_size: 100, page_number: n} while has_next (<= 5 pages) -> "<SRC> **<type>** -> <DST>";
+             `decomposition` links from this key point at its children
  *       Tool errors arrive as text ("... reported tool error ...", {"error":"..."}) and are raised as errors.
  *       externalUrl = urlTemplate with {key} (empty template -> null).
  *   - "json" (any other value): declarative mapping of a JSON tool result: itemsPath, map, statusMap, closedStatuses,
@@ -105,6 +108,15 @@ export function parseIssue(text) {
   return { key: head?.[1] ?? null, title: head?.[2]?.trim() ?? null, fields, description: desc.join('\n').trim(), attributes };
 }
 
+export function parseLinks(text) {
+  const links = [];
+  for (const line of text.split(/\r?\n/)) {
+    const m = line.match(/^\s*(?:\d+\.\s+)?(\S+)\s+\*\*([^*]+)\*\*\s*(?:->|→)\s*(\S+)\s*$/);
+    if (m) links.push({ type: m[2].trim(), from: m[1], to: m[3] });
+  }
+  return { links, hasNext: /has_next:\s*true/i.test(text) };
+}
+
 export function parseIssueMeta(text) {
   const cur = text.match(/Current Status:\s*(.*?)\s*(?:\(`([^`]+)`\))?\s*$/m);
   const transitions = [];
@@ -126,7 +138,7 @@ const toolOf = (cfg, name) => cfg.tools?.[name] || (name === 'find' ? cfg.tool :
 
 // ---- import ----
 
-function upsert(tasks, cfg, source, externalId, fields, existingOnlyIfClosed) {
+function upsert(tasks, cfg, source, externalId, fields, existingOnlyIfClosed, createExtra = {}) {
   const statusMap = cfg.statusMap || (markdown(cfg) ? ONEWORK_STATUS_MAP : {});
   const mapped = statusMap[fields.externalStatus];
   const existing = tasks.all().find((t) => t.source === source && t.externalId === externalId);
@@ -138,7 +150,7 @@ function upsert(tasks, cfg, source, externalId, fields, existingOnlyIfClosed) {
     return 'updated';
   }
   if (existingOnlyIfClosed) return null;
-  tasks.create({ ...fields, status: STATUSES.includes(mapped) ? mapped : 'todo', externalId, source }, 'harness');
+  tasks.create({ ...fields, ...createExtra, status: STATUSES.includes(mapped) ? mapped : 'todo', externalId, source }, 'harness');
   return 'imported';
 }
 
@@ -203,12 +215,57 @@ function trackerKey(task) {
   return task.externalId;
 }
 
+async function fetchLinks(mcp, cfg, key) {
+  if (!cfg.tools?.links) return [];
+  const seen = new Map();
+  for (let page = 0; page < 5; page++) {
+    const { links, hasNext } = parseLinks(await callText(mcp, cfg, cfg.tools.links, { key, page_size: 100, page_number: page }));
+    for (const l of links) seen.set(`${l.type} ${l.from} ${l.to}`, l);
+    if (!hasNext || !links.length) break;
+  }
+  return [...seen.values()];
+}
+
 export async function getExternal({ config, mcp, tasks, task }) {
   const cfg = settings(config);
   if (!markdown(cfg)) throw disabled('Issue details are only available for the onework-markdown tracker');
-  const issue = parseIssue(await callText(mcp, cfg, toolOf(cfg, 'get'), { key: trackerKey(task) }));
+  const key = trackerKey(task);
+  const issue = parseIssue(await callText(mcp, cfg, toolOf(cfg, 'get'), { key }));
   if (!task.description && issue.description) tasks.update(task.id, { description: issue.description }, 'harness');
-  return issue;
+  return { ...issue, links: await fetchLinks(mcp, cfg, key) };
+}
+
+/** Children of a tracker task (decomposition links from it) as subtasks: same workspace and targets, deduped by key. */
+export async function importChildren({ config, mcp, tasks, task }) {
+  const cfg = settings(config);
+  if (!markdown(cfg)) throw disabled('Importing children is only available for the onework-markdown tracker');
+  const key = trackerKey(task);
+  if (!cfg.tools?.links) throw disabled('integrations.tasks.tools.links is not configured');
+  const children = [...new Set((await fetchLinks(mcp, cfg, key)).filter((l) => l.type === 'decomposition' && l.from === key).map((l) => l.to))];
+  const source = task.source || cfg.source || cfg.server;
+  const priorities = cfg.priorityMap || ONEWORK_PRIORITY_MAP;
+  const counts = { imported: 0, updated: 0 };
+  const failed = [];
+  for (const child of children) {
+    let issue;
+    try {
+      issue = parseIssue(await callText(mcp, cfg, toolOf(cfg, 'get'), { key: child }));
+    } catch (e) {
+      failed.push({ key: child, error: e.message }); // one missing child must not block the others
+      continue;
+    }
+    const fields = {
+      title: issue.title || child,
+      description: issue.description,
+      externalStatus: issue.fields.Status ?? null,
+      priority: priorities[String(issue.fields.Priority ?? '').toLowerCase()] ?? null,
+      externalUrl: cfg.urlTemplate ? fillTemplate(cfg.urlTemplate, { key: child }) : null,
+      parentId: task.id,
+    };
+    const r = upsert(tasks, cfg, source, child, fields, false, { workspaceId: task.workspaceId, targets: [...task.targets] });
+    if (r) counts[r]++;
+  }
+  return failed.length ? { ...counts, failed } : counts;
 }
 
 export async function getTransitions({ config, mcp, tasks, task }) {

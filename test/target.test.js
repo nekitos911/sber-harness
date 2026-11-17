@@ -9,11 +9,11 @@ import { createMcpManager, serverDefs, toolResultValue } from '../server/mcp-cli
 import { createStore } from '../server/store.js';
 import { createBus } from '../server/bus.js';
 import { createTasks } from '../server/tasks.js';
-import { importTasks, getExternal, getTransitions, transitionTask, parseFindIssues, parseIssueMeta } from '../server/integrations/tasks.js';
-import { createPullRequest } from '../server/integrations/pr.js';
+import { importTasks, getExternal, getTransitions, transitionTask, importChildren, parseFindIssues, parseIssueMeta } from '../server/integrations/tasks.js';
+import { createPullRequest, prStatus, refreshTaskPr } from '../server/integrations/pr.js';
 import { sessionSettings } from '../server/launchers.js';
 import * as git from '../server/git.js';
-import { tmpDir, rmrf, makeRepo, gitIn } from './helpers.js';
+import { tmpDir, rmrf, makeRepo, gitIn, startTestServer } from './helpers.js';
 
 const dir = tmpDir();
 const fixtures = path.join(dir, 'fixtures');
@@ -183,4 +183,90 @@ test('inheritUserMcp copies the user mcpServers next to harness in the run setti
   const s = sessionSettings({ ...base, agentCfg: { settings: {}, inheritUserMcp: true, userSettingsPath: user } });
   assert.deepEqual(Object.keys(s.mcpServers), ['onework', 'harness']);
   assert.ok(!('permissions' in s));
+});
+
+test('PR status: open first, else the newest merged/declined for the branch; task.pr refreshed only on change', async () => {
+  const pull = (index, head, state, updated) => ({ index, title: `${head} work`, state, head: { name: head }, base: { name: 'develop' }, mergeable: null, reviewers: [{ status: 'APPROVED' }], html_url: `https://code.example/sc/PROJ/demo-service/pulls/${index}`, updated_at: updated });
+  fs.writeFileSync(path.join(fixtures, 'sourcecontrol.git_list_pull_requests.MERGED.json'), JSON.stringify({ pulls: [pull(540, 'feature/PROJ-14904', 'merged', '2026-11-10T10:00:00Z')] }));
+  fs.writeFileSync(path.join(fixtures, 'sourcecontrol.git_list_pull_requests.DECLINED.json'), JSON.stringify({ pulls: [pull(530, 'feature/PROJ-14904', 'declined', '2026-11-01T10:00:00Z')] }));
+  const cfg = config();
+  const mcp = createMcpManager(cfg);
+  const info = { project: 'PROJ', repository: 'demo-service', repo: 'PROJ/demo-service' };
+
+  const open = await prStatus({ config: cfg, mcp, branch: 'feature/PROJ-15311', ...info });
+  assert.deepEqual(open.pr, {
+    index: 561, title: 'PROJ-15311 BACK. S55. Увеличение количества символов в текстовом поле до 3000', state: 'open',
+    url: 'https://code.example/sc/PROJ/demo-service/pulls/561', mergeable: true, reviewers: [{ status: 'PENDING' }], base: 'develop',
+    updatedAt: Date.parse('2026-11-17T14:36:21Z'),
+  });
+  assert.deepEqual([(await prStatus({ config: cfg, mcp, branch: 'feature/PROJ-14904', ...info })).pr.state, (await prStatus({ config: cfg, mcp, branch: 'feature/PROJ-14904', ...info })).pr.index], ['merged', 540]);
+  assert.equal((await prStatus({ config: cfg, mcp, branch: 'feature/none', ...info })).pr, null);
+  await assert.rejects(prStatus({ config: { ...cfg, integrations: { pr: { enabled: false } } }, mcp, branch: 'x', ...info }), (e) => e.status === 501);
+
+  const repo = makeRepo(path.join(dir, 'pr repo'));
+  gitIn(repo, 'remote', 'add', 'origin', 'https://code.example/PROJ/demo-service.git');
+  const task = tasks.create({ title: 'with a PR', branch: 'feature/PROJ-15311' });
+  assert.equal(await refreshTaskPr({ config: cfg, mcp, tasks, task, cwd: repo }), true);
+  assert.deepEqual(tasks.get(task.id).pr, { index: 561, state: 'open', url: 'https://code.example/sc/PROJ/demo-service/pulls/561', updatedAt: Date.parse('2026-11-17T14:36:21Z') });
+  assert.equal(await refreshTaskPr({ config: cfg, mcp, tasks, task: tasks.get(task.id), cwd: repo }), false, 'unchanged -> no update');
+});
+
+test('onework links on the external details; decomposition children imported as subtasks', async () => {
+  fs.writeFileSync(path.join(fixtures, 'onework.sbertrack_getIssue.PROJ-15099.json'), text('# PROJ-15099 — Дочерняя: схема БД\n\n- **Status**: todo\n- **Priority**: high\n\nСоздать таблицы.\n'));
+  fs.copyFileSync(path.join(FIX, 'onework.tool-error.json'), path.join(fixtures, 'onework.sbertrack_getIssue.PROJ-14438.json'));
+  const cfg = config();
+  const mcp = createMcpManager(cfg);
+  const parent = tasks.all().find((t) => t.externalId === 'PROJ-14904');
+  tasks.update(parent.id, { workspaceId: 'w_svc', targets: ['develop', 'release/1.54.0'] });
+
+  const ext = await getExternal({ config: cfg, mcp, tasks, task: tasks.get(parent.id) });
+  assert.deepEqual(ext.links, [
+    { type: 'wiki_page_mention', from: 'PROJ-15384', to: 'PROJ-14904' },
+    { type: 'decomposition', from: 'PROJ-14904', to: 'PROJ-15099' },
+    { type: 'plain_connection', from: 'PROJ-14906', to: 'PROJ-14904' },
+    { type: 'decomposition', from: 'PROJ-14904', to: 'PROJ-14438' },
+  ]);
+
+  const r = await importChildren({ config: cfg, mcp, tasks, task: tasks.get(parent.id) });
+  assert.deepEqual([r.imported, r.updated, r.failed.map((x) => x.key)], [1, 0, ['PROJ-14438']]);
+  assert.match(r.failed[0].error, /not found \(404\)/);
+  const child = tasks.all().find((t) => t.externalId === 'PROJ-15099');
+  assert.deepEqual([child.parentId, child.workspaceId, child.targets, child.title, child.status, child.priority], [parent.id, 'w_svc', ['develop', 'release/1.54.0'], 'Дочерняя: схема БД', 'todo', 'high']);
+  assert.equal(child.description, 'Создать таблицы.');
+  assert.equal(tasks.key(child), 'PROJ-14904', 'children share the root key');
+  const again = await importChildren({ config: cfg, mcp, tasks, task: tasks.get(parent.id) });
+  assert.deepEqual([again.imported, again.updated], [0, 0]);
+});
+
+test('routes: /api/git/pr-status for the current branch (501 when disabled), /api/fs/search', async () => {
+  const repo = makeRepo(path.join(dir, 'route repo'));
+  gitIn(repo, 'remote', 'add', 'origin', 'git@code.example:PROJ/demo-service.git');
+  gitIn(repo, 'switch', '-q', '-c', 'feature/PROJ-15311');
+  fs.mkdirSync(path.join(repo, 'src', 'components'), { recursive: true });
+  for (const f of ['src/sessions.js', 'src/components/SessionList.tsx', 'src/store.js', 'notes.log']) fs.writeFileSync(path.join(repo, f), 'x\n');
+  fs.writeFileSync(path.join(repo, '.gitignore'), '*.log\n');
+  const plain = path.join(dir, 'plain folder');
+  fs.mkdirSync(path.join(plain, 'deep', 'node_modules'), { recursive: true });
+  fs.writeFileSync(path.join(plain, 'deep', 'sessions.md'), 'x');
+  fs.writeFileSync(path.join(plain, 'deep', 'node_modules', 'sessions.js'), 'x');
+
+  const h = await startTestServer({ mcpServers: { sourcecontrol: stub('sourcecontrol') }, integrations: { pr: { ...committed.integrations.pr, enabled: true } } });
+  const off = await startTestServer();
+  try {
+    const st = (await h.api('GET', `/api/git/pr-status?cwd=${encodeURIComponent(repo)}`)).body;
+    assert.deepEqual([st.pr.index, st.pr.state, st.pr.url], [561, 'open', 'https://code.example/sc/PROJ/demo-service/pulls/561']);
+    assert.equal((await off.api('GET', `/api/git/pr-status?cwd=${encodeURIComponent(repo)}`)).status, 501);
+
+    const found = (await h.api('GET', `/api/fs/search?cwd=${encodeURIComponent(repo)}&q=sesjs`)).body;
+    assert.equal(found[0].path, 'src/sessions.js');
+    assert.ok(found.every((x) => typeof x.score === 'number'));
+    const all = (await h.api('GET', `/api/fs/search?cwd=${encodeURIComponent(repo)}&q=&limit=2`)).body;
+    assert.equal(all.length, 2);
+    assert.ok(!(await h.api('GET', `/api/fs/search?cwd=${encodeURIComponent(repo)}&q=log`)).body.some((x) => x.path === 'notes.log'), 'ignored files are not offered');
+    const walked = (await h.api('GET', `/api/fs/search?cwd=${encodeURIComponent(plain)}&q=sessions`)).body;
+    assert.deepEqual(walked.map((x) => x.path), ['deep/sessions.md'], 'walk fallback skips node_modules');
+  } finally {
+    await h.close();
+    await off.close();
+  }
 });
