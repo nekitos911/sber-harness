@@ -28,7 +28,7 @@ export function InboxView() {
     <div className="inbox-view">
       <header className="view-head">
         <h1>Входящие</h1>
-        {unread > 0 && <span className="count count-run">{unread}</span>}
+        {unread > 0 && <span className="count count-signal">{unread}</span>}
         <span className="grow" />
         <button type="button" className="btn" disabled={!unread} onClick={() => void readAll()}>
           <CheckCheck />

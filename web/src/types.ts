@@ -162,6 +162,7 @@ export interface SubAgent {
 export interface AgentSettings {
   approvalMode: string | null
   approvalModes: string[]
+  models?: string[] // newer servers: models this agent offers (suggestions for the model fields)
   model: string | null
   modelGrades: { default?: string; fast?: string; review?: string; explore?: string }
   allowedGrades: string[]

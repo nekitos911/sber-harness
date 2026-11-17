@@ -10,8 +10,8 @@ const GIT_FIELDS: { key: keyof Settings['git']; label: string; hint: string }[] 
   { key: 'defaultBase', label: 'Базовая ветка', hint: 'например, develop' },
   { key: 'branchTemplate', label: 'Шаблон ветки задачи', hint: 'feature/{key}' },
   { key: 'portBranchTemplate', label: 'Шаблон ветки портирования', hint: '{branch}-{target}' },
-  { key: 'commitTitleTemplate', label: 'Заголовок коммита', hint: '{key}: {title}' },
-  { key: 'prTitleTemplate', label: 'Заголовок PR', hint: '{key}: {title}' },
+  { key: 'commitTitleTemplate', label: 'Заголовок коммита', hint: '{key} {title}' },
+  { key: 'prTitleTemplate', label: 'Заголовок PR', hint: '{key} {title}' },
 ]
 
 export function SettingsView() {
@@ -81,14 +81,18 @@ export function SettingsView() {
                   </select>
                 </Row>
                 <Row label="Модель">
-                  <input className="input mono" placeholder="по умолчанию CLI" value={a.model ?? ''} onChange={(e) => setAgent(id, { model: e.target.value || null })} />
+                  <input className="input mono" list={a.models?.length ? `models-${id}` : undefined} placeholder="по умолчанию CLI" value={a.model ?? ''} onChange={(e) => setAgent(id, { model: e.target.value || null })} />
                 </Row>
               </div>
+              {/* The agent's models as suggestions; any other name can still be typed. */}
+              {!!a.models?.length && <datalist id={`models-${id}`}>{a.models.map((m) => <option key={m} value={m} />)}</datalist>}
               <div className="settings-grid settings-grades">
                 {GRADES.map((g) => (
                   <Row key={g} label={`Модель: ${g}`}>
                     <input
                       className="input mono"
+                      list={a.models?.length ? `models-${id}` : undefined}
+                      placeholder={a.models?.length ? 'выберите или введите' : undefined}
                       value={a.modelGrades[g] ?? ''}
                       onChange={(e) => {
                         const grades = { ...a.modelGrades, [g]: e.target.value }

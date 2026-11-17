@@ -1,12 +1,12 @@
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
 import { ArrowUpToLine, ExternalLink, EyeOff, GitMerge, Lock, Play, Plus, Send, SquareArrowOutUpRight, Trash2, UserPlus, X } from 'lucide-react'
-import { tryApi } from '../../api'
+import { api, ApiError, errorText, tryApi } from '../../api'
 import { openDialog, openSession, setState, toast, upsert, useStore, without } from '../../store'
 import { COLUMNS, fullTime, PRIORITY, relTime } from '../../lib/format'
 import { isImported, pendingDeps, taskKey } from '../../lib/tasks'
 import { useNow } from '../../lib/useNow'
 import type { Session, Task, TaskPort, TaskStatus } from '../../types'
-import { Branch, StatusIcon, statusText } from '../bits'
+import { Branch, Skeleton, StatusIcon, statusText } from '../bits'
 import { Markdown } from '../Markdown'
 import { ChipsInput } from '../ChipsInput'
 import type { BoardCtx } from './TaskCard'
@@ -152,6 +152,7 @@ export function TaskDrawer({ task, ctx, onClose }: { task: Task; ctx: BoardCtx; 
           </Prop>
         </div>
 
+        {imported && !task.description.trim() && <ExternalCard task={task} />}
         <DescriptionField task={task} />
         {trackerOn && task.externalId && <TrackerStatus task={task} />}
         {task.targets.length > 1 && <Ports task={task} />}
@@ -256,7 +257,8 @@ function TargetsField({ task, onChange }: { task: Task; onChange: (t: string[]) 
   const [v, setV] = useState('')
   const input = useRef<HTMLInputElement>(null)
   const listId = useId()
-  const known = useMemo(() => [...new Set(['develop', 'main', ...allTasks.flatMap((t) => t.targets)])], [allTasks])
+  // Team branches: develop, release/1.54.0; typing "rel" offers the release/ prefix.
+  const known = useMemo(() => [...new Set(['develop', 'main', 'release/', ...allTasks.flatMap((t) => t.targets)])], [allTasks])
   const targets = task.targets
   const add = () => {
     const t = v.trim()
@@ -287,7 +289,7 @@ function TargetsField({ task, onChange }: { task: Task; onChange: (t: string[]) 
           ref={input}
           className="input mono"
           list={listId}
-          placeholder="ветка, Enter — добавить"
+          placeholder="develop или release/1.54.0, Enter — добавить"
           aria-label="Добавить целевую ветку"
           value={v}
           onChange={(e) => setV(e.target.value)}
@@ -360,34 +362,99 @@ function DepsField({ task, ctx, onChange }: { task: Task; ctx: BoardCtx; onChang
   )
 }
 
-/** Changing the tracker status is explicit; moving the card never touches the tracker. */
+interface Transitions { current: string; transitions: { id: string; label: string }[] }
+
+/**
+ * Changing the tracker status is explicit; moving the card never touches the tracker.
+ * Newer servers list the allowed transitions; older ones take a free-text status.
+ */
 function TrackerStatus({ task }: { task: Task }) {
   const tasks = useStore((s) => s.tasks)
   const known = useMemo(() => [...new Set(tasks.map((t) => t.externalStatus).filter((x): x is string => !!x))], [tasks])
+  const [list, setList] = useState<Transitions | null | 'loading'>('loading')
   const [status, setStatus] = useState('')
   const [comment, setComment] = useState('')
   const [busy, setBusy] = useState(false)
   const listId = useId()
+
+  useEffect(() => {
+    let live = true
+    api<Transitions>('GET', `/tasks/${encodeURIComponent(task.id)}/transitions`).then(
+      (r) => { if (live) setList(r?.transitions ? r : null) },
+      () => { if (live) setList(null) }, // not supported here: free-text status below
+    )
+    return () => { live = false }
+  }, [task.id, task.externalStatus])
+
+  const transitions = list && list !== 'loading' ? list.transitions : null
+  const label = transitions?.find((t) => t.id === status)?.label ?? status.trim()
   const submit = async () => {
     setBusy(true)
-    const res = await tryApi<Task | { ok: true }>('POST', `/tasks/${encodeURIComponent(task.id)}/tracker-status`, { status: status.trim(), comment: comment.trim() || undefined })
+    const body = transitions ? { transition: status, comment: comment.trim() || undefined } : { status: status.trim(), comment: comment.trim() || undefined }
+    const res = await tryApi<Task | { ok: true }>('POST', `/tasks/${encodeURIComponent(task.id)}/tracker-status`, body)
     setBusy(false)
     if (res === undefined) return
     if (res && 'id' in res) setState((s) => ({ tasks: upsert(s.tasks, res) }))
-    toast(`Статус в трекере: ${status.trim()}`, 'ok')
+    toast(`Статус в трекере: ${label}`, 'ok')
     setStatus('')
     setComment('')
   }
+  const current = (list && list !== 'loading' ? list.current : null) ?? task.externalStatus ?? 'неизвестен'
   return (
     <section className="drawer-section">
-      <h3>Статус в трекере <span className="chip chip-mono">{task.externalStatus ?? 'неизвестен'}</span></h3>
-      <p className="field-hint">Перемещение карточки по доске не меняет статус в трекере — только эта форма.</p>
+      <h3>Статус в трекере <span className="chip chip-mono">{current}</span></h3>
+      <p className="field-hint">Перемещение карточки по доске не меняет статус в трекере, только эта форма.</p>
       <div className="tracker-form">
-        <input className="input" list={listId} placeholder="Новый статус" aria-label="Новый статус в трекере" value={status} onChange={(e) => setStatus(e.target.value)} />
-        <datalist id={listId}>{known.map((k) => <option key={k} value={k} />)}</datalist>
+        {list === 'loading' ? (
+          <Skeleton rows={1} label="Загрузка переходов…" />
+        ) : transitions ? (
+          <select className="select" aria-label="Переход в трекере" value={status} onChange={(e) => setStatus(e.target.value)} disabled={!transitions.length}>
+            <option value="">{transitions.length ? 'Выберите переход…' : 'Нет доступных переходов'}</option>
+            {transitions.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
+          </select>
+        ) : (
+          <>
+            <input className="input" list={listId} placeholder="Новый статус" aria-label="Новый статус в трекере" value={status} onChange={(e) => setStatus(e.target.value)} />
+            <datalist id={listId}>{known.map((k) => <option key={k} value={k} />)}</datalist>
+          </>
+        )}
         <button type="button" className="btn" disabled={!status.trim() || busy} onClick={() => void submit()}>{busy ? 'Меняем…' : 'Изменить в трекере'}</button>
         <textarea className="textarea" rows={2} placeholder="Комментарий (необязательно)" aria-label="Комментарий к смене статуса" value={comment} onChange={(e) => setComment(e.target.value)} />
       </div>
+    </section>
+  )
+}
+
+interface External { fields: Record<string, unknown>; description: string }
+
+/** An imported task without a description: read the card from the tracker on open (newer servers). */
+function ExternalCard({ task }: { task: Task }) {
+  const [card, setCard] = useState<External | 'loading' | { error: string }>('loading')
+  useEffect(() => {
+    let live = true
+    api<External>('GET', `/tasks/${encodeURIComponent(task.id)}/external`).then(
+      (r) => { if (live) setCard(r) },
+      (e) => { if (live) setCard(e instanceof ApiError && e.status === 404 ? { error: '' } : { error: errorText(e) }) },
+    )
+    return () => { live = false }
+  }, [task.id])
+  if (card !== 'loading' && 'error' in card && !card.error) return null // endpoint absent on this server
+  const show = (v: unknown) => (Array.isArray(v) ? v.join(', ') : v === null || v === undefined || v === '' ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v))
+  return (
+    <section className="drawer-section">
+      <h3>Из трекера</h3>
+      {card === 'loading' ? <Skeleton rows={4} label="Загрузка карточки из трекера…" /> : 'error' in card ? (
+        <p className="field-error">Не удалось загрузить карточку: {card.error}</p>
+      ) : (
+        <>
+          <div className="props">
+            {Object.entries(card.fields).filter(([, v]) => show(v)).map(([k, v]) => (
+              <Prop key={k} label={k}><span className="prop-text">{show(v)}</span></Prop>
+            ))}
+          </div>
+          {card.description.trim() && <div className="md-preview"><Markdown text={card.description} /></div>}
+        </>
+      )}
     </section>
   )
 }
