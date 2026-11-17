@@ -554,6 +554,36 @@ none. `{notes}` = `" " + notes` when the user typed notes at start, else `""`.
 - Startup: sessions left `running` become `idle` with a system message ("harness restarted, the turn was interrupted;
   send a message to continue — context is kept by --resume"); orphan locks are cleared.
 
+## Review loop run by the harness (`orchestration.reviewMode: "harness"`)
+
+Does not depend on what the task command (`/full-task`) says. Config:
+```jsonc
+"orchestration": {
+  "reviewMode": "builtin",               // "builtin": the agent's own command reviews (as in the CLI); "harness": below
+  "review": { "grade": "review", "approvalMode": "plan", "maxRounds": 2, "agent": null,
+              "promptTemplate": "<default reviewer prompt with {key} {title} {description} {branch} {base} {cwd} {round} {previous}>" }
+}
+```
+1. A task worker (not a reviewer, not ephemeral) calls `worker_done(status: 'done')` → instead of finishing, the task's
+   `agentState = 'reviewing'` and the harness starts (round 1) or re-uses (round > 1) a REVIEWER session: role `reviewer`,
+   parent = the worker, same cwd, `model` = `settings.agents.modelGrades[review.grade]` of the reviewer agent (skipped when
+   unknown/unavailable → CLI default), `approvalMode = review.approvalMode` (read-only `plan`), title `Ревью <KEY>`,
+   ephemeral (no board task). Its prompt = the rendered `review.promptTemplate` (default: review `git diff <base>...HEAD`
+   plus uncommitted changes for the task; list findings with CRITICAL/HIGH/MEDIUM/LOW; end with `worker_done` whose
+   summary ends with `VERDICT: APPROVED` or `VERDICT: CHANGES_REQUESTED`). Round > 1 sends «Повторное ревью после
+   исправлений» + the previous findings to the same reviewer chat.
+2. Reviewer `worker_done` → verdict = explicit `VERDICT:` line, else CHANGES_REQUESTED if the summary contains CRITICAL
+   or HIGH, else APPROVED. APPROVED → `agentState = 'approved'`, the worker gets an informational message, the parent
+   coordinator (if any) gets the worker's original report + «ревью: APPROVED», the user a notification.
+   CHANGES_REQUESTED and round < maxRounds → `agentState = 'changes_requested'`, the findings are delivered to the worker
+   («Ревью, раунд n: … Исправь CRITICAL/HIGH и снова вызови worker_done»); round == maxRounds → notification «ревью не
+   сошлось за N раундов» with the findings, `agentState = 'changes_requested'`.
+3. In this mode the worker preamble says: «Ревью выполняет harness другой моделью после твоего worker_done; пропусти шаги
+   внутреннего ревью твоей команды (не запускай встроенных субагентов-ревьюеров)». If the agent reviews internally anyway,
+   nothing breaks — the harness review still runs.
+4. `reviewMode: "builtin"` = previous behaviour (no harness review; internal sub-agents are only visualised).
+Session role `reviewer`; reviewers are nested under their worker in the UI; their transcripts stay.
+
 ## Model catalogue that survives renames (no code changes when model ids change)
 
 - Sources, merged and deduped by id: (1) **discovered** — the harness runs the agent CLI headless with
@@ -664,6 +694,37 @@ sessions with their own chats).
   lines `N. **<KEY>** — <summary> [<status> | <priority>] @<assignee>`; closed statuses filtered on our side; no
   description in the list → `GET /api/tasks/:id/external` fetches it lazily. Tool errors arrive as text
   (`reported tool error`, `{"error":"…"}`) and become errors with the inner message.
+### Board columns follow the team workflow (configurable)
+
+The internal statuses stay the 5 semantic values (`backlog todo in_progress review done`); the board shows a configured
+subset with team labels and owns the tracker mapping. Default (the user's workflow: take → in progress → testing, and back
+for rework):
+```jsonc
+"board": {
+  "columns": [
+    { "status": "todo",        "label": "К работе",     "trackerStatuses": ["todo"] },
+    { "status": "in_progress", "label": "В работе",     "trackerStatuses": ["development", "to_code_review", "code_review", "discover_issue"] },
+    { "status": "review",      "label": "Тестирование", "trackerStatuses": ["qa", "ready_for_ift", "ift", "ready_for_uat"] }
+  ],
+  "onWorkerDone": "stay",          // "stay": the task keeps its column, card gets an agent badge; "review": move to review
+  "moveSyncsTracker": false,       // when true, dropping a card into a column (and "take into work") transitions the tracker
+  "columnTransitions": {}          // optional explicit transition id per status, e.g. { "review": "qa" }
+}
+```
+- Statuses not listed in `columns` (backlog, done by default) are hidden behind «Показать все статусы»; the import maps
+  tracker statuses through `columns[].trackerStatuses` (this replaces `integrations.tasks.statusMap`, which stays as a
+  fallback for unknown statuses → `todo`); closed statuses are not imported as before.
+- Agent badge on a task: `task.agentState: 'running' | 'waiting' | 'done' | 'failed' | 'reviewing' | 'approved' |
+  'changes_requested' | null` (derived from the assignee session and the harness review loop, broadcast with the task).
+  `worker_done` with `onWorkerDone: "stay"` keeps the column (failed no longer moves the task back to todo either).
+- Tracker sync on move (opt-in, `moveSyncsTracker`): after a move of an imported task into column C (by the user, or
+  in_progress by "take into work" — this supersedes `integrations.tasks.onStartTransition`, kept as an alias), the
+  harness loads the task's available transitions (`getIssueMeta`) and picks `columnTransitions[C.status]` if available,
+  else the first transition whose TARGET status (the parenthesised status in `- \`id\` → name (\`status\`)`) is in
+  `C.trackerStatuses`; calls `updateIssueStatus`; on "no suitable transition" or an error the board move stays, a ⚠ line
+  goes to the task log and a notification with the reason is sent (no silent tracker writes, no rollback of the card).
+- `/api/settings` exposes and accepts `board` (validated: statuses ∈ the 5 values, unique, ≥ 1 column, labels non-empty).
+
 - Periodic sync: `integrations.tasks.refreshSec` (0 = off, min 10) while at least one UI client is connected;
   only changed tasks are broadcast (signature = key + status + title). On failure the board keeps the local snapshot
   and `GET /api/state` → `integrations.tasksProblem: { error, at } | null` is shown as a banner ("tracker unavailable,
