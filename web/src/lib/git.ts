@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import { api, errorText, qs } from '../api'
-import { setState, useStore, wtKey, type GitInfo } from '../store'
+import { getState, setState, useStore, wtKey, type GitInfo } from '../store'
 import type { GitStatus } from '../types'
 import { parseDiff, type DiffFile } from './diff'
 import { normPath } from './format'
@@ -26,6 +26,11 @@ async function load(cwd: string): Promise<GitInfo> {
 /** Re-read git status + diff of a worktree; a request while one is running queues exactly one more. */
 export function refreshGit(cwd: string) {
   const k = wtKey(cwd)
+  // The projects folder and plain folders are not repositories: say so without asking git.
+  if (getState().workspaces.some((w) => (w.kind === 'root' || w.kind === 'folder') && wtKey(w.path) === k)) {
+    if (!getState().git[k]) setState((s) => ({ git: { ...s.git, [k]: { status: null, error: 'не git-репозиторий', files: null } } }))
+    return
+  }
   if (inflight.has(k)) { again.add(k); return }
   inflight.add(k)
   void load(cwd)

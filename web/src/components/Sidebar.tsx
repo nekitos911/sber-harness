@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react'
-import { Bot, ChevronDown, Ellipsis, GitPullRequest, Pin, ChevronRight, FolderGit2, FolderPlus, GitBranch, GitBranchPlus, House, Inbox, MessageSquarePlus, Moon, Search, Settings, SquareKanban, SquareTerminal, Sun } from 'lucide-react'
+import { Bot, ChevronDown, Ellipsis, Folder, GitPullRequest, Pin, ChevronRight, FolderGit2, FolderPlus, GitBranch, GitBranchPlus, House, Inbox, MessageSquarePlus, Moon, Search, Settings, SquareKanban, SquareTerminal, Sun } from 'lucide-react'
 import { openDialog, openScreen, openSession, openWorktree, setState, useActiveCwd, useStore, type Screen } from '../store'
 import { loadWorktrees } from '../ws'
 import { useCurrentTool, useStateLine } from '../lib/live'
@@ -63,7 +63,7 @@ export function Sidebar() {
       </div>
 
       <div className="tree" aria-label="Проекты и сессии">
-        {workspaces.map((ws) => (
+        {[...workspaces].sort((a, b) => Number(b.kind === 'root') - Number(a.kind === 'root')).map((ws) => (
           <ProjectNode key={ws.id} ws={ws} tree={tree} filtering={!!query.trim()} />
         ))}
         {tree.loose.length > 0 && (
@@ -184,14 +184,18 @@ function ProjectNode({ ws, tree, filtering }: { ws: Workspace; tree: Tree; filte
   if (filtering && mine.length === 0) return null
   const expanded = open || filtering
   const toggle = () => setOpen(!open)
+  // The projects folder and plain folders hold chats directly: no worktrees there.
+  const plain = ws.kind === 'root' || ws.kind === 'folder'
+  const name = ws.kind === 'root' ? `Все проекты (${basename(ws.path)})` : ws.name
 
   return (
     <div className="tree-group">
-      <div ref={projRow} className="tree-row tree-project" role="button" tabIndex={0} aria-expanded={expanded} data-tip={ws.name} data-tip-trunc onClick={toggle} onKeyDown={activate(toggle)}
+      <div ref={projRow} className="tree-row tree-project" role="button" tabIndex={0} aria-expanded={expanded} data-tip={plain ? ws.path : ws.name} data-tip-trunc onClick={toggle} onKeyDown={activate(toggle)}
         onContextMenu={(e) => { e.preventDefault(); setMenu(true) }}>
         <ChevronRight className="chev" aria-hidden />
-        <FolderGit2 aria-hidden />
-        <span className="label">{ws.name}</span>
+        {plain ? <Folder aria-hidden /> : <FolderGit2 aria-hidden />}
+        <span className="label">{name}</span>
+        {plain && <RowAction label={`Новый чат: ${name}`} icon={<MessageSquarePlus />} onClick={() => void newChat({ workspaceId: ws.id, cwd: ws.path })} />}
         <span className="actions">
           {ws.isGit && <RowAction label="Новое рабочее дерево" icon={<GitBranchPlus />} onClick={() => openDialog({ kind: 'worktree', workspaceId: ws.id })} />}
           <RowAction label="Действия с проектом" icon={<Ellipsis />} onClick={() => setMenu(true)} />
@@ -200,7 +204,8 @@ function ProjectNode({ ws, tree, filtering }: { ws: Workspace; tree: Tree; filte
       <Menu anchor={projRow} open={menu} onClose={() => setMenu(false)} items={projectMenu(ws)} label={`Проект ${ws.name}`} placement="bottom-end" />
       {!expanded && <StateSummary sessions={withKids(mine, tree.kids)} />}
       {expanded && ws.isGit && !loaded && <div className="tree-skel"><Skeleton rows={2} label="Загрузка рабочих деревьев…" /></div>}
-      {expanded && list.map((wt) => {
+      {expanded && plain && <div className="tree-plain">{mine.map((s) => <SessionNode key={s.id} s={s} kids={tree.kids} />)}</div>}
+      {expanded && !plain && list.map((wt) => {
         const here = mine.filter((s) => normPath(s.cwd) === normPath(wt.path))
         if (filtering && here.length === 0) return null
         return <WorktreeNode key={wt.path} ws={ws} wt={wt} sessions={here} kids={tree.kids} active={!!activeCwd && normPath(activeCwd) === normPath(wt.path)} />

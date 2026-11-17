@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { Bot, FileText, GitPullRequest, FolderPlus, GitBranchPlus, Inbox, MessageSquare, Moon, PanelLeft, PanelRight, Settings, SquareKanban, SquareTerminal } from 'lucide-react'
-import { getState, openDialog, openScreen, openSession, openTask, setState, useStore } from '../store'
+import { Bot, FileText, FolderOpen, GitPullRequest, FolderPlus, GitBranchPlus, Inbox, MessageSquare, Moon, PanelLeft, PanelRight, Settings, SquareKanban, SquareTerminal } from 'lucide-react'
+import { getState, hasFeature, openDialog, openScreen, openSession, openTask, setState, useStore } from '../store'
 import { StatusIcon } from './bits'
 import { currentWhere, newChat, newTerminal } from '../lib/actions'
 
@@ -27,6 +27,7 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
   const commands = useMemo<Command[]>(() => [
     { id: 'chat', label: 'Новый чат', icon: <MessageSquare />, run: () => void newChat(currentWhere()) },
     { id: 'chat-form', label: 'Новый чат с настройками…', icon: <MessageSquare />, run: () => openDialog({ kind: 'chat', ...dialogWhere() }) },
+    ...(hasFeature('folders') ? [{ id: 'chat-folder', label: 'Новый чат в папке…', icon: <FolderOpen />, run: () => openDialog({ kind: 'folder-chat' }) }] : []),
     { id: 'worktree', label: 'Новое рабочее дерево', icon: <GitBranchPlus />, run: () => openDialog({ kind: 'worktree' }) },
     { id: 'settings', label: 'Настройки', icon: <Settings />, run: () => openScreen('settings') },
     { id: 'term', label: 'Новый терминал', icon: <SquareTerminal />, run: () => { const w = currentWhere(); if (w.cwd) void newTerminal(w); else openDialog({ kind: 'terminal' }) } },

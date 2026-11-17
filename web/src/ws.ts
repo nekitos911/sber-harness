@@ -91,6 +91,7 @@ async function refreshState(): Promise<boolean> {
         agents: arr(st.agents), defaultAgent: st.defaultAgent ?? null,
         shell: st.shell?.command ?? '', integrations: st.integrations ?? { tasks: false, pr: false },
         features: Array.isArray(st.features) ? st.features : [],
+        recentFolders: arr(st.recentFolders),
         wt,
       }
     })

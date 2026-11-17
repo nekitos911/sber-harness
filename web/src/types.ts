@@ -77,7 +77,8 @@ export interface PrInfo {
   updatedAt: number
 }
 
-export interface Workspace { id: string; name: string; path: string; isGit: boolean }
+/** kind: 'root' = the projects folder (every project under it), 'folder' = any folder, absent/'repo' = a project. */
+export interface Workspace { id: string; name: string; path: string; isGit: boolean; kind?: 'root' | 'folder' | 'repo' }
 export interface WorktreeMeta { label?: string; note?: string; pinned?: boolean; sleeping?: boolean }
 /** Newer servers enrich the list with git/task/session facts (for the context menu and cleanup). */
 export interface Worktree {
@@ -108,6 +109,7 @@ export interface Session {
   lastEventAt?: number | null // last stdout event of the current turn (newer servers)
   waitingFor?: 'answer' | 'auth' | null // called `ask` and no reply yet, or needs a login (newer servers)
   stalled?: boolean // running, process alive, but silent for session.stallSec (newer servers)
+  includeDirs?: string[] // extra directories the CLI may use (--include-directories), feature include-dirs
   archived?: boolean // its worktree was removed: hidden from the sidebar, transcript kept
   virtual?: boolean // a built-in sub-agent of the parent's stream: read-only chat // newer servers: 'starting' = process up, no event yet (cold start)
   externalSessionId: string | null
@@ -218,6 +220,7 @@ export interface AppState {
   shell: { command: string }
   integrations: Integrations
   features?: string[] // optional API groups this server implements (absent on old servers: none)
+  recentFolders?: string[] // last folders chats ran in (feature folders)
 }
 
 export type SubAgentState =
@@ -258,6 +261,7 @@ export interface AgentSettings {
 }
 
 export interface Settings {
+  workspaces?: { root?: string | null } // projects folder; null = auto (deepest common parent)
   agents: Record<string, AgentSettings>
   defaultAgent: string
   git: {

@@ -1,7 +1,7 @@
 import { tryApi } from '../api'
 import { getState, openSession, setState, toast, upsert } from '../store'
 import { normPath } from './format'
-import type { Session } from '../types'
+import type { Session, Workspace } from '../types'
 
 export interface Where { workspaceId?: string | null; cwd?: string | null }
 
@@ -44,9 +44,19 @@ export function workspaceFor(cwd: string): string | null {
   return st.workspaces.find((w) => p === normPath(w.path) || p.startsWith(`${normPath(w.path)}/`))?.id ?? null
 }
 
-/** Folder for «new chat here»: the worktree on screen. */
+/** Folder for «new chat here»: the worktree or folder on screen, else the projects folder (when the server has one). */
 export function currentWhere(): { workspaceId: string | null; cwd: string | null } {
   const st = getState()
   const cwd = st.view.kind === 'wt' ? st.view.cwd : null
-  return cwd ? { workspaceId: workspaceFor(cwd), cwd } : { workspaceId: null, cwd: null }
+  if (cwd) return { workspaceId: workspaceFor(cwd), cwd }
+  const root = st.workspaces.find((w) => w.kind === 'root')
+  return root ? { workspaceId: root.id, cwd: root.path } : { workspaceId: null, cwd: null }
+}
+
+/** «Новый чат в папке…»: register the folder (non-git is fine) and start an instant chat there. */
+export async function newChatInFolder(path: string) {
+  const ws = await tryApi<Workspace>('POST', '/workspaces', { path, kind: 'folder' })
+  if (!ws) return
+  setState((st) => ({ workspaces: upsert(st.workspaces, ws) }))
+  await newChat({ workspaceId: ws.id, cwd: ws.path })
 }

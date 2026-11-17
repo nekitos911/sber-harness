@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef, useState } from 'react'
-import { ArrowLeft, ArrowRight, Command, FileText, GitCompare, MessageSquare, MessageSquarePlus, PanelLeft, PanelRight, Plus, SquareTerminal, X } from 'lucide-react'
-import { activateTab, closeTab, dirtyKey, navigate, openDialog, setState, tabKey, useStore, wtKey, type Tab } from '../store'
+import { ArrowLeft, ArrowRight, Command, FileText, FolderOpen, GitCompare, MessageSquare, MessageSquarePlus, PanelLeft, PanelRight, Plus, SquareTerminal, X } from 'lucide-react'
+import { activateTab, closeTab, dirtyKey, hasFeature, navigate, openDialog, setState, tabKey, useStore, wtKey, type Tab } from '../store'
 import { basename } from '../lib/format'
 import { useGit } from '../lib/git'
 import type { GitStatus, Session } from '../types'
@@ -127,6 +127,7 @@ function TabBar({ cwd }: { cwd: string }) {
           { label: 'Новый чат', icon: <MessageSquarePlus />, onSelect: () => void newChat(where()) },
           { label: 'Новый терминал', icon: <SquareTerminal />, onSelect: () => void newTerminal(where()) },
           { label: 'Новый чат с настройками…', icon: <MessageSquare />, onSelect: () => openDialog({ kind: 'chat', cwd, workspaceId: workspaceFor(cwd) ?? undefined }) },
+          ...(hasFeature('folders') ? [{ label: 'Новый чат в папке…', icon: <FolderOpen />, onSelect: () => openDialog({ kind: 'folder-chat' }) }] : []),
         ]}
       />
       <div className="grow" />

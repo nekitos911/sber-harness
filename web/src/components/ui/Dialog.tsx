@@ -41,6 +41,7 @@ export function Modal({ title, submitLabel, onSubmit, onClose, busy, progress, d
       <form
         onSubmit={(e) => {
           e.preventDefault()
+          e.stopPropagation() // React bubbles through portals: a picker opened from a dialog must not submit that dialog
           if (!busy && !disabled) onSubmit()
         }}
       >

@@ -177,3 +177,31 @@ button.chip[aria-pressed="true"] { background: var(--signal-soft); color: var(--
 .dialog-more > .disclosure-head .disclosure-toggle:hover { color: var(--ink); }
 .dialog-more .collapse > div { display: grid; gap: 12px; }
 .dialog-more .collapse > div > :first-child { margin-top: 8px; }
+
+/* Folder picker */
+.fp-path .input { width: 100%; }
+.fp-roots { display: flex; flex-wrap: wrap; gap: 6px; }
+.fp-roots .chip svg { width: 12px; height: 12px; }
+.fp-crumbs { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; font-size: 12.5px; }
+.fp-crumb { display: inline-flex; align-items: center; gap: 2px; }
+.fp-crumb svg { width: 12px; height: 12px; color: var(--ink-4); }
+.fp-crumb .link[aria-current] { color: var(--ink); font-weight: 600; }
+.fp-body { display: grid; grid-template-columns: 1fr; gap: 12px; }
+.fp-body:has(.fp-recent) { grid-template-columns: minmax(0, 1fr) 180px; }
+.fp-main { display: grid; gap: 6px; min-width: 0; }
+.fp-list { display: grid; align-content: start; height: 280px; overflow-y: auto; padding: 4px; border: 1px solid var(--rule); border-radius: var(--r-2); background: var(--well); }
+.fp-item { display: flex; align-items: center; gap: 8px; width: 100%; height: 28px; padding: 0 8px; border: 0; border-radius: var(--r-1); background: none; color: var(--ink); font-size: 13px; text-align: left; }
+.fp-item svg { width: 14px; height: 14px; flex-shrink: 0; color: var(--ink-3); }
+.fp-item:hover, .fp-item:focus-visible, .fp-item[aria-selected="true"]:focus { background: var(--deck-2); outline: none; }
+.fp-up { color: var(--ink-3); }
+.fp-empty { padding: 8px; font-size: 12.5px; }
+.fp-recent { display: grid; align-content: start; gap: 2px; min-width: 0; }
+.fp-recent h3 { display: flex; align-items: center; gap: 6px; margin: 0 0 4px; font-size: 11.5px; font-weight: 600; color: var(--ink-3); }
+.fp-recent h3 svg { width: 12px; height: 12px; }
+@media (max-width: 560px) { .fp-body:has(.fp-recent) { grid-template-columns: 1fr; } }
+/* Extra folders of a chat */
+.dirs-pop { display: grid; gap: 8px; width: 320px; padding: 10px; }
+.dirs-list, .chips-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.tree-plain { padding-left: 0; }
+button.link { padding: 0; border: 0; background: none; color: var(--signal); font: inherit; cursor: pointer; }
+button.link:hover { text-decoration: underline; }

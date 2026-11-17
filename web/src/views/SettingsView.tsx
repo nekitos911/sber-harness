@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { FolderPicker } from '../components/FolderPicker'
 import { ArrowDown, ArrowUp, Check, CircleCheck, Pencil, CircleX, LogIn, Plus, RefreshCw, TriangleAlert, X } from 'lucide-react'
 import { api, ApiError, errorText, qs, tryApi } from '../api'
 import { setState, toast, useFeature, useStore } from '../store'
@@ -684,8 +685,25 @@ function BoardSection({ form, update }: Omit<SectionProps, 'fieldError'>) {
 
 /** Local to this browser: desktop notifications for questions, results and errors while the tab is in the background. */
 /** Общие: default agent, notifications, theme. */
+/** Explicit path, or «Авто: <the detected projects folder>»; changed with the folder picker. */
+function ProjectsFolder({ value, onChange }: { value: string | null; onChange: (v: string | null) => void }) {
+  const auto = useStore((s) => s.workspaces.find((w) => w.kind === 'root')?.path ?? null)
+  const [picking, setPicking] = useState(false)
+  return (
+    <div className="auto-value">
+      {value
+        ? <span className="auto-text mono">{value}</span>
+        : <span className="auto-text"><span className="muted">Авто: </span><span className="mono">{auto ?? 'не определена (нужно ≥ 2 проектов)'}</span></span>}
+      <Button size="sm" variant="ghost" icon={<Pencil />} onClick={() => setPicking(true)}>Изменить</Button>
+      {value && <Button size="sm" variant="ghost" onClick={() => onChange(null)}>Авто</Button>}
+      {picking && <FolderPicker title="Папка с проектами" initial={value ?? auto} onClose={() => setPicking(false)} onPick={(p) => { setPicking(false); onChange(p) }} />}
+    </div>
+  )
+}
+
 function GeneralSection({ form, update }: Omit<SectionProps, 'fieldError'>) {
   const labels = useStore((s) => s.agents)
+  const foldersOn = useFeature('folders')
   const scheme = useStore((s) => s.scheme)
   const [on, setOn] = useState(desktopNotifyOn)
   const supported = 'Notification' in window
@@ -699,6 +717,11 @@ function GeneralSection({ form, update }: Omit<SectionProps, 'fieldError'>) {
             options={Object.keys(form.agents).filter((k) => form.agents[k].enabled !== false || k === form.defaultAgent)
               .map((k) => ({ value: k, label: labels.find((x) => x.id === k)?.label ?? k, hint: k }))} />
         </Row>
+        {foldersOn && (
+          <Row label="Папка с проектами" hint="«Все проекты» в боковой панели и место нового чата, когда ничего не выбрано.">
+            <ProjectsFolder value={form.workspaces?.root ?? null} onChange={(root) => update({ ...form, workspaces: { ...form.workspaces, root } })} />
+          </Row>
+        )}
         <Row label="Тема" hint="Хранится в этом браузере.">
           <Segmented label="Тема" value={scheme} onChange={(v) => setState({ theme: v })} options={[{ value: 'dark', label: 'Тёмная' }, { value: 'light', label: 'Светлая' }]} />
         </Row>

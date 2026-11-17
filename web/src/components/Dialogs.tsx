@@ -1,17 +1,19 @@
 import { useEffect, useMemo, useState } from 'react'
+import { FolderPlus } from 'lucide-react'
 import { api, errorText, qs, tryApi } from '../api'
-import { closeDialog, openWorktree, setState, toast, upsert, useStore, type DialogRequest } from '../store'
-import { adoptSession } from '../lib/actions'
+import { closeDialog, openWorktree, setState, toast, upsert, useFeature, useStore, type DialogRequest } from '../store'
+import { adoptSession, newChatInFolder } from '../lib/actions'
 import { loadWorktrees } from '../ws'
 import { basename, isAbsolutePath, normPath } from '../lib/format'
 import { loadDraft, saveDraft } from '../lib/draft'
 import type { GitSuggest, Session, Task, Workspace, Worktree } from '../types'
 import { Modal } from './ui/Dialog'
 import { CleanupDialog, DeleteWorktreeDialog, WorktreeInfoDialog } from './WorktreeMenu'
-import { Disclosure, Segmented, Select, SuggestInput } from './ui'
+import { Button, Chip, Disclosure, Segmented, Select, SuggestInput } from './ui'
 import { modeShort, useSettings } from '../lib/agents'
 import { pendingDeps, taskKey } from '../lib/tasks'
 import { loadPr } from '../lib/pr'
+import { FolderPicker } from './FolderPicker'
 import { endJob, startJob, useJobStep } from '../lib/jobs'
 import { Markdown } from './Markdown'
 
@@ -32,6 +34,7 @@ function DialogSwitch({ d }: { d: DialogRequest }) {
     case 'wt-delete': return <DeleteWorktreeDialog workspaceId={d.workspaceId} path={d.path} />
     case 'wt-info': return <WorktreeInfoDialog workspaceId={d.workspaceId} path={d.path} />
     case 'wt-cleanup': return <CleanupDialog workspaceId={d.workspaceId} />
+    case 'folder-chat': return <FolderPicker title="Новый чат в папке" submitLabel="Начать чат здесь" onClose={closeDialog} onPick={(p) => { closeDialog(); void newChatInFolder(p) }} />
   }
 }
 
@@ -136,10 +139,24 @@ function WhereFields({ value, onChange }: { value: Where; onChange: (w: Where) =
 
 // ---------- chat ----------
 
+type Place = 'root' | 'project' | 'folder'
+
 function ChatDialog(init: Partial<Where>) {
   const agents = useStore((s) => s.agents)
   const enabled = useMemo(() => agents.filter((a) => a.enabled), [agents])
+  const rootWs = useStore((s) => s.workspaces.find((w) => w.kind === 'root'))
+  const foldersOn = useFeature('folders')
+  const dirsOn = useFeature('include-dirs')
+  // «Где»: the projects folder unless the dialog was opened for a particular project/worktree.
+  const [place, setPlace] = useState<Place>(rootWs && !init.cwd ? 'root' : 'project')
+  const [folder, setFolder] = useState<string | null>(null)
+  const [picking, setPicking] = useState<'folder' | 'dir' | null>(null)
+  const [dirs, setDirs] = useState<string[]>([])
   const [where, setWhere] = useWhere(init)
+  const target: { cwd: string; workspaceId?: string } | null =
+    place === 'root' ? (rootWs ? { cwd: rootWs.path, workspaceId: rootWs.id } : null)
+      : place === 'folder' ? (folder ? { cwd: folder } : null)
+        : where.cwd ? { cwd: where.cwd, workspaceId: where.workspaceId || undefined } : null
   const defaultAgent = useStore((s) => s.defaultAgent)
   const [agentId, setAgentId] = useState((enabled.find((a) => a.id === defaultAgent) ?? enabled[0])?.id ?? '')
   const agent = enabled.find((a) => a.id === agentId)
@@ -155,20 +172,58 @@ function ChatDialog(init: Partial<Where>) {
       submitLabel={prompt.trim() ? 'Начать' : 'Создать'}
       busy={busy}
       progress={step}
-      disabled={!agent || !where.cwd}
+      disabled={!agent || !target}
       wide
       onClose={closeDialog}
       onSubmit={() => run(async () => {
+        let ws = target!.workspaceId
+        if (place === 'folder') { // a folder outside the projects: registered first, like «Новый чат в папке…»
+          const created = await tryApi<Workspace>('POST', '/workspaces', { path: target!.cwd, kind: 'folder' })
+          if (!created) return
+          ws = created.id
+        }
         const s = await tryApi<Session>('POST', '/sessions', {
-          kind: 'chat', agent: agentId, cwd: where.cwd, workspaceId: where.workspaceId || undefined,
+          kind: 'chat', agent: agentId, cwd: target!.cwd, workspaceId: ws,
           title: title.trim() || undefined, prompt: prompt.trim() || undefined, role, approvalMode: mode || undefined,
+          includeDirs: dirsOn && dirs.length ? dirs : undefined,
         })
         if (!s) return
         closeDialog()
         adoptSession(s)
       })}
     >
-      <WhereFields value={where} onChange={setWhere} />
+      {(rootWs || foldersOn) && (
+        <div className="field">
+          <span>Где</span>
+          <Segmented label="Где запустить чат" value={place} onChange={(v) => { setPlace(v); if (v === 'folder' && !folder) setPicking('folder') }}
+            options={[
+              ...(rootWs ? [{ value: 'root' as const, label: 'Все проекты', hint: rootWs.path }] : []),
+              { value: 'project' as const, label: 'Проект' },
+              ...(foldersOn ? [{ value: 'folder' as const, label: folder ? `Папка: ${basename(folder)}` : 'Папка…', hint: folder ?? 'Выбрать любую папку' }] : []),
+            ]} />
+          {place === 'root' && rootWs && <span className="field-hint">Агент видит все проекты в <span className="mono">{rootWs.path}</span>.</span>}
+          {place === 'folder' && folder && <span className="field-hint mono">{folder} <button type="button" className="link" onClick={() => setPicking('folder')}>изменить</button></span>}
+        </div>
+      )}
+      {place === 'project' && <WhereFields value={where} onChange={setWhere} />}
+      {dirsOn && (
+        <div className="field">
+          <span>Доп. папки</span>
+          <div className="chips-row">
+            {dirs.map((d) => <Chip key={d} mono tip={d} onRemove={() => setDirs(dirs.filter((x) => x !== d))} removeLabel={`Убрать ${d}`}>{basename(d)}</Chip>)}
+            <Button size="sm" variant="ghost" icon={<FolderPlus />} onClick={() => setPicking('dir')}>папка</Button>
+          </div>
+          <span className="field-hint">Агенту будут доступны и эти папки (как /dir add в CLI).</span>
+        </div>
+      )}
+      {picking && (
+        <FolderPicker
+          title={picking === 'folder' ? 'Где запустить чат' : 'Дополнительная папка'}
+          initial={picking === 'folder' ? folder : null}
+          onClose={() => { setPicking(null); if (place === 'folder' && !folder) setPlace(rootWs ? 'root' : 'project') }}
+          onPick={(p) => { if (picking === 'folder') setFolder(p); else if (!dirs.includes(p)) setDirs([...dirs, p]); setPicking(null) }}
+        />
+      )}
       <label className="field">
         <span>Первое сообщение</span>
         <textarea className="textarea" rows={5} autoFocus placeholder="Что нужно сделать? Можно оставить пустым." value={prompt} onChange={(e) => setPrompt(e.target.value)} />

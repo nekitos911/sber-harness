@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { ArrowDown, Check, Copy, Ellipsis, ExternalLink, KeyRound, GitCompareArrows, MessageSquare, RotateCcw, ScrollText, Square, Trash2 } from 'lucide-react'
+import { ArrowDown, Check, Copy, Ellipsis, ExternalLink, FolderPlus, KeyRound, GitCompareArrows, MessageSquare, RotateCcw, ScrollText, Square, Trash2 } from 'lucide-react'
 import { api, errorText, tryApi } from '../api'
 import { openSession, openTask, setState, showPanel, upsert, useFeature, useStore, without } from '../store'
 import { loadMessages, loadSubagents } from '../ws'
@@ -12,6 +12,8 @@ import { VerdictChip } from '../components/panel/VerdictsTab'
 import type { Message, Session } from '../types'
 import { Branch, Loading, Skeleton, StatusIcon, statusText } from '../components/bits'
 import { MenuButton } from '../components/ui/Menu'
+import { Button, Chip, Popover } from '../components/ui'
+import { FolderPicker } from '../components/FolderPicker'
 import { BranchPicker } from '../components/pickers/BranchPicker'
 import { MessageItem } from '../components/chat/MessageItem'
 import { ActivityLine, buildItems, StallBanner, ToolRun, TurnFiles, TurnHead } from '../components/chat/Turn'
@@ -221,6 +223,7 @@ export function ChatView({ id, active }: { id: string; active: boolean }) {
 
 function ChatHeader({ session, onLog, onReset, onDelete }: { session: Session; onLog: () => void; onReset: () => void; onDelete: () => void }) {
   const changed = useGit(session.cwd)?.status?.files.length ?? 0
+  const dirsOn = useFeature('include-dirs')
   const task = useStore((s) => (session.taskId ? s.tasks.find((t) => t.id === session.taskId) : undefined))
   const [title, setTitle] = useState(session.title)
   useEffect(() => setTitle(session.title), [session.title])
@@ -251,6 +254,7 @@ function ChatHeader({ session, onLog, onReset, onDelete }: { session: Session; o
         </button>
       )}
       <span className="grow" />
+      {dirsOn && !session.virtual && <IncludeDirs session={session} />}
       {session.status === 'running' && (
         <button type="button" className="btn btn-sm" onClick={() => void tryApi('POST', `/sessions/${session.id}/stop`)}>
           <Square />
@@ -273,6 +277,39 @@ function ChatHeader({ session, onLog, onReset, onDelete }: { session: Session; o
         ]}
       />
     </header>
+  )
+}
+
+/** Extra directories the CLI may use (like /dir add): chips with ×, «+ папка»; applies from the next message. */
+function IncludeDirs({ session }: { session: Session }) {
+  const dirs = session.includeDirs ?? []
+  const [open, setOpen] = useState(false)
+  const [picking, setPicking] = useState(false)
+  const anchor = useRef<HTMLButtonElement>(null)
+  const save = async (next: string[]) => {
+    const s = await tryApi<Session>('PATCH', `/sessions/${session.id}`, { includeDirs: next })
+    if (s) setState((st) => ({ sessions: upsert(st.sessions, s) }))
+  }
+  return (
+    <>
+      <button ref={anchor} type="button" className="btn btn-sm" aria-expanded={open} onClick={() => setOpen(!open)}
+        data-tip={dirs.length ? dirs.join('\n') : 'Дать агенту доступ к другим папкам'}>
+        <FolderPlus />
+        {dirs.length ? `Доп. папки: ${dirs.length}` : 'Папки'}
+      </button>
+      <Popover anchor={anchor} open={open && !picking} onClose={() => setOpen(false)} placement="bottom-end" label="Дополнительные папки" className="dirs-pop">
+        <div className="dirs-list">
+          {dirs.map((d) => <Chip key={d} mono tip={d} onRemove={() => void save(dirs.filter((x) => x !== d))} removeLabel={`Убрать ${d}`}>{basename(d)}</Chip>)}
+          {!dirs.length && <span className="muted">Только папка чата.</span>}
+        </div>
+        <Button size="sm" icon={<FolderPlus />} onClick={() => setPicking(true)}>Добавить папку</Button>
+        <p className="field-hint">Как /dir add в CLI: действует со следующего сообщения.</p>
+      </Popover>
+      {picking && (
+        <FolderPicker title="Дополнительная папка" onClose={() => setPicking(false)}
+          onPick={(p) => { setPicking(false); if (!dirs.includes(p)) void save([...dirs, p]) }} />
+      )}
+    </>
   )
 }
 
