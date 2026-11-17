@@ -1,5 +1,5 @@
 import { api, ApiError, errorText, wsUrl } from './api'
-import { closeSessionTab, getState, setState, tabKey, toast, upsert, without, type WtTabs } from './store'
+import { closeSessionTab, getState, setState, tabKey, toast, upsert, without, wtKey, type WtTabs } from './store'
 import { desktopNotify } from './lib/notify'
 import type { AppState, ClientEvent, Message, ServerEvent, SubAgent, Worktree } from './types'
 
@@ -167,6 +167,9 @@ function apply(ev: ServerEvent) {
       setState((s) => ({
         subagents: { ...s.subagents, [ev.sessionId]: { items: ev.items, problems: s.subagents[ev.sessionId]?.problems ?? [] } },
       }))
+      break
+    case 'sdd':
+      setState((s) => ({ sdd: { ...s.sdd, [wtKey(ev.cwd)]: ev.plans } }))
       break
     case 'term':
     case 'term.replay':

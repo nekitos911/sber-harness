@@ -318,3 +318,41 @@
 .board-col-statuses { grid-column: 2 / -1; }
 .board-col-transition { grid-column: 2 / -1; }
 .set-row-note { padding: 8px 0 2px; }
+
+/* ---------- /full-task verdicts ---------- */
+
+.verdict-chip { display: inline-flex; align-items: center; height: 18px; padding: 0 6px; border-radius: 3px; font-size: 10.5px; font-weight: 600; letter-spacing: 0.02em; background: var(--deck-3); color: var(--ink-3); }
+.verdict-chip[data-v="PASS"] { background: var(--done-soft); color: var(--lamp-done); }
+.verdict-chip[data-v="FAIL"] { background: var(--fail-soft); color: var(--lamp-fail); }
+.verdict-chip[data-v="ESCALATION_REQUIRED"] { background: var(--run-soft); color: var(--lamp-run); }
+.verdict-chip[data-v="INDEPENDENT_VERIFICATION_REQUIRED"] { background: color-mix(in srgb, var(--pr-merged) 16%, transparent); color: var(--pr-merged); }
+.sdd-progress { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; font-size: 12.5px; }
+.sdd-progress li { display: grid; grid-template-columns: 12px minmax(0, 1fr) auto; align-items: center; gap: 6px; }
+.sdd-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ink-4); }
+.sdd-progress li[data-s*="done" i] .sdd-dot, .sdd-progress li[data-s*="pass" i] .sdd-dot { background: var(--lamp-done); }
+.sdd-progress li[data-s*="progress" i] .sdd-dot { background: var(--lamp-run); }
+.verdict { border: 1px solid var(--rule); border-radius: var(--r-2); background: var(--deck); }
+.verdict > .disclosure-head { height: 30px; padding: 0 8px; }
+.verdict .disclosure-toggle { gap: 8px; height: 100%; }
+.verdict-body { display: grid; gap: 8px; padding: 6px 10px 10px; font-size: 12.5px; }
+.verdict-models { color: var(--ink-3); font-size: 11.5px; }
+.verdict-files { display: flex; flex-wrap: wrap; gap: 4px 10px; }
+.link-file { padding: 0; border: 0; background: none; color: var(--signal); font-size: 11.5px; }
+.link-file:hover { text-decoration: underline; }
+.verdict-cmds { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; font-size: 11.5px; }
+.verdict-cmds li { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.verdict-cmds svg { width: 12px; height: 12px; flex-shrink: 0; }
+.verdict-cmds .ok { color: var(--lamp-done); }
+.verdict-cmds .bad { color: var(--lamp-fail); }
+.verdict-q { display: grid; gap: 2px; color: var(--lamp-run); }
+.sdd-strip {
+  display: flex; align-items: center; gap: 10px; flex-shrink: 0; height: 30px; padding: 0 16px; border: 0;
+  border-bottom: 1px solid var(--rule-soft); background: var(--ground); color: var(--ink-2); font-size: 12px; text-align: left;
+}
+.sdd-strip:hover { background: var(--deck); }
+.sdd-plan { font-weight: 500; color: var(--ink); max-width: 40%; }
+.service-files { margin-top: 6px; }
+.service-files .disclosure-toggle { font-size: 12px; }
+.model-refs { display: grid; gap: 4px; }
+.model-ref { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.model-ref .mono { font-size: 11.5px; }

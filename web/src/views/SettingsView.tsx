@@ -327,6 +327,21 @@ function AgentStatus({ id }: { id: string }) {
             <dt>Команды</dt><dd>{seen.slashCommands.length ? `${seen.slashCommands.length} slash-команд` : <span className="muted">не сообщались</span>}</dd>
           </>
         )}
+        {!!meta.modelRefs?.length && (
+          <>
+            <dt>Модели в агентах и командах</dt>
+            <dd className="model-refs">
+              {meta.modelRefs.map((m) => (
+                <span key={`${m.file}:${m.model}`} className="model-ref" data-bad={m.available === false || undefined}>
+                  {m.available === false ? <TriangleAlert className="warn" aria-hidden /> : <Ok ok />}
+                  <span className="mono">{m.model}</span>
+                  <span className="muted mono ellipsis" data-tip={m.file}>{m.file}</span>
+                  {m.available === false && <span className="field-warn">недоступна: переименуйте модель в файле агента</span>}
+                </span>
+              ))}
+            </dd>
+          </>
+        )}
       </dl>
       <p className="set-note">{seen ? `По данным последней сессии, ${relTime(seen.at, now)} назад.` : 'Сессий этого агента ещё не было: MCP и команды появятся после первого запуска.'}</p>
     </div>
@@ -497,8 +512,8 @@ function OrchestrationSection({ form, update }: Omit<SectionProps, 'fieldError'>
       <h2>Оркестрация</h2>
       <div className="set-rows">
         <Row label="Ревью" wide hint={mode === 'builtin'
-          ? 'Как в CLI: /full-task сам запускает субагента-ревьюера; его шаги и вывод видны в карточке субагента в чате.'
-          : 'Через харнесс: ревью идёт отдельными чатами-исполнителями, их видно в боковой панели и в панели агентов.'}>
+          ? 'Для /full-task оставьте «Внутри агента»: команда сама делает кросс-модельное ревью (§8), харнесс показывает его в карточках субагентов и во вкладке «Вердикты».'
+          : '«Через харнесс»: для задач без такой команды. Ревью идёт отдельным чатом-ревьюером другой моделью.'}>
           <Segmented label="Режим ревью" value={mode} onChange={(v) => update({ ...form, orchestration: { ...o, reviewMode: v } })}
             options={[{ value: 'builtin', label: 'Внутри агента (как в CLI)' }, { value: 'harness', label: 'Через харнесс (отдельные чаты)' }]} />
         </Row>

@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react'
-import type { AgentInfo, AgentMeta, GitStatus, Settings, Integrations, Message, Notification, Session, SubAgent, Task, Workspace, Worktree } from './types'
+import type { AgentInfo, AgentMeta, GitStatus, SddPlan, Settings, Integrations, Message, Notification, Session, SubAgent, Task, Workspace, Worktree } from './types'
 import type { DiffFile } from './lib/diff'
 import { normPath } from './lib/format'
 import type { PrState } from './lib/pr'
@@ -44,7 +44,7 @@ interface Prefs {
   sidebar: boolean
   sidebarWidth: number
   panel: boolean
-  panelTab: 'files' | 'changes'
+  panelTab: 'files' | 'changes' | 'verdicts'
   theme: Theme | null // null = default (dark)
   drafts: Record<string, string> // unsent composer text per chat session
 }
@@ -69,6 +69,7 @@ export interface State extends Prefs {
   agentMeta: Record<string, AgentMeta | null> // null = this server has no /agents/:id/info
   settings: Settings | null // loaded on demand (pickers need grades; the settings screen edits it)
   prs: Record<string, PrState | undefined> // key = normPath(cwd): PR of the branch checked out there
+  sdd: Record<string, SddPlan[] | null> // key = normPath(cwd): /full-task plans and verdicts (null: server lacks it)
   dirty: Record<string, boolean>
   toasts: Toast[]
   focusTaskId: string | null
@@ -121,7 +122,7 @@ let state: State = {
   conn: 'connecting', loaded: false, authExpired: false, scheme: resolveScheme(prefs.theme),
   tasks: [], sessions: [], workspaces: [], notifications: [], agents: [], defaultAgent: null, shell: '',
   integrations: { tasks: false, pr: false },
-  messages: {}, subagents: {}, worktrees: {}, git: {}, agentMeta: {}, settings: null, prs: {}, dirty: {}, toasts: [], focusTaskId: null, dialog: null, back: [], forward: [],
+  messages: {}, subagents: {}, worktrees: {}, git: {}, agentMeta: {}, settings: null, prs: {}, sdd: {}, dirty: {}, toasts: [], focusTaskId: null, dialog: null, back: [], forward: [],
 }
 
 const listeners = new Set<() => void>()
@@ -283,7 +284,7 @@ export function setDirty(key: string, value: boolean) {
   setState((s) => ({ dirty: { ...s.dirty, [key]: value } }))
 }
 
-export function showPanel(tab: 'files' | 'changes') {
+export function showPanel(tab: 'files' | 'changes' | 'verdicts') {
   setState({ panel: true, panelTab: tab })
 }
 

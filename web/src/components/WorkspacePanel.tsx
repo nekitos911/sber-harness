@@ -1,5 +1,7 @@
 import { useEffect } from 'react'
-import { Files, FolderOpen, GitCompareArrows, RefreshCw, X } from 'lucide-react'
+import { Files, FolderOpen, GitCompareArrows, RefreshCw, ShieldCheck, X } from 'lucide-react'
+import { failCount, useSdd } from '../lib/sdd'
+import { VerdictsTab } from './panel/VerdictsTab'
 import { openFolder } from './WorktreeMenu'
 import { setState, useActiveCwd, useStore } from '../store'
 import { basename, normPath } from '../lib/format'
@@ -14,7 +16,9 @@ export function WorkspacePanel() {
   const tab = useStore((s) => s.panelTab)
   const project = useStore((s) => (cwd ? s.workspaces.find((w) => normPath(cwd) === normPath(w.path) || normPath(cwd).startsWith(`${normPath(w.path)}/`)) : undefined))
   const git = useGit(cwd)
-  const changed = git?.status?.files.length ?? 0
+  const changed = git?.status?.files.filter((f) => !f.service).length ?? 0
+  const plans = useSdd(cwd)
+  const fails = failCount(plans)
   const hasChanges = changed > 0
 
   // A worktree with uncommitted changes opens on «Изменения»: that is what the user came to check.
@@ -37,6 +41,13 @@ export function WorkspacePanel() {
           Изменения
           {changed > 0 && <span className="count count-run" aria-label={`изменённых файлов: ${changed}`}>{changed}</span>}
         </button>
+        {!!plans?.length && (
+          <button type="button" role="tab" className="wpanel-tab" aria-selected={tab === 'verdicts'} onClick={() => setState({ panelTab: 'verdicts' })}>
+            <ShieldCheck aria-hidden />
+            Вердикты
+            {fails > 0 && <span className="count count-fail" aria-label={`провалено шагов: ${fails}`}>{fails}</span>}
+          </button>
+        )}
         <span className="grow" />
         <button type="button" className="icon-btn" data-tip="Открыть папку" aria-label="Открыть папку в проводнике" onClick={() => openFolder(cwd)}>
           <FolderOpen />
@@ -53,7 +64,9 @@ export function WorkspacePanel() {
         {git?.status?.branch && <BranchPicker cwd={cwd} branch={git.status.branch} placement="bottom-start"><Branch name={git.status.branch} /></BranchPicker>}
       </div>
       <div className="wpanel-body" key={`${cwd}|${tab}`}>
-        {tab === 'files' ? <FilesTab key={cwd} cwd={cwd} status={git?.status ?? null} /> : <ChangesTab key={cwd} cwd={cwd} />}
+        {tab === 'files' ? <FilesTab key={cwd} cwd={cwd} status={git?.status ?? null} />
+          : tab === 'verdicts' && plans?.length ? <VerdictsTab cwd={cwd} plans={plans} />
+            : <ChangesTab key={cwd} cwd={cwd} />}
       </div>
     </aside>
   )

@@ -144,6 +144,7 @@ button.chip:hover { color: var(--ink); background: var(--deck-3); }
 }
 .count-run { background: var(--run-soft); color: var(--lamp-run); }
 .count-signal { background: var(--signal-soft); color: var(--signal); }
+.count-fail { background: var(--fail-soft); color: var(--lamp-fail); }
 
 .role { font-size: 11px; color: var(--ink-3); font-weight: 500; }
 .role[data-role="coordinator"] { color: var(--ink); }

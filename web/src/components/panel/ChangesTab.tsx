@@ -8,6 +8,7 @@ import { useNow } from '../../lib/useNow'
 import type { GitCommit, GitFile, GitSuggest } from '../../types'
 import type { DiffFile } from '../../lib/diff'
 import { DiffLines } from '../DiffLines'
+import { Disclosure } from '../ui'
 import { PrCard } from '../PrChip'
 import { openPrSettings, usePr } from '../../lib/pr'
 import { Skeleton } from '../bits'
@@ -84,7 +85,8 @@ export function ChangesTab({ cwd }: { cwd: string }) {
     setOpen(next)
   }
 
-  const files = status.files
+  const files = status.files.filter((f) => !f.service)
+  const service = status.files.filter((f) => f.service)
   const taskKey = suggest?.taskId ? suggest.key ?? suggest.taskId : null
   const totals = git?.files?.reduce((t, f) => ({ add: t.add + f.added, del: t.del + f.removed }), { add: 0, del: 0 })
 
@@ -114,6 +116,15 @@ export function ChangesTab({ cwd }: { cwd: string }) {
               <ChangeRow key={f.path} cwd={cwd} f={f} diff={diffOf(git?.files, f.path)} loaded={!!git?.files} open={open.has(f.path)} onToggle={() => toggle(f.path)} />
             ))}
           </ul>
+        )}
+        {service.length > 0 && (
+          <Disclosure className="service-files" summary={<span className="muted">Служебные, не коммитятся (.superpowers) · {service.length}</span>}>
+            <ul className="change-list">
+              {service.map((f) => (
+                <ChangeRow key={f.path} cwd={cwd} f={f} diff={diffOf(git?.files, f.path)} loaded={!!git?.files} open={open.has(f.path)} onToggle={() => toggle(f.path)} />
+              ))}
+            </ul>
+          </Disclosure>
         )}
       </section>
 

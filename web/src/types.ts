@@ -54,6 +54,15 @@ export interface BoardSettings {
 }
 export interface ReviewSettings { grade?: string; approvalMode?: string; maxRounds?: number; agent?: string | null; promptTemplate?: string }
 
+/** /full-task ledger: progress.md items and per-step verdict files. */
+export interface SddVerdict {
+  n: number; file: string
+  status: 'PASS' | 'FAIL' | 'ESCALATION_REQUIRED' | 'INDEPENDENT_VERIFICATION_REQUIRED' | null
+  filesChanged?: string[]; commands?: { cmd: string; result: string }[]; openQuestions?: string | string[] | null
+  implementerModel?: string | null; reviewerModel?: string | null; secondReviewModel?: string | null; notes?: string | null; raw: string
+}
+export interface SddPlan { name: string; dir: string; progress: { raw: string; items: { title: string; status: string }[] }; verdicts: SddVerdict[] }
+
 export interface TaskPr { index: number; state: 'open' | 'merged' | 'declined'; url: string; updatedAt: number }
 
 /** GET /api/git/pr-status: the PR whose head is the branch checked out in a worktree. */
@@ -171,6 +180,7 @@ export interface AgentMeta {
   resolved: { ok: boolean; command?: string; node?: string; entry?: string; identity: boolean; error?: string }
   auth?: 'ok' | 'required' | 'unknown'
   catalog?: { at: number | null; error?: string | null } | null
+  modelRefs?: { file: string; model: string; available: boolean | null }[]
   models?: ModelEntry[]
   seen: {
     models: string[]
@@ -258,7 +268,7 @@ export interface Settings {
   }
 }
 
-export interface GitFile { path: string; x: string; y: string; status: 'M' | 'A' | 'D' | 'R' | '?' | 'U' }
+export interface GitFile { path: string; x: string; y: string; status: 'M' | 'A' | 'D' | 'R' | '?' | 'U'; service?: boolean /* .superpowers etc.: never committed */ }
 export interface GitStatus { branch: string | null; upstream: string | null; ahead: number; behind: number; files: GitFile[] }
 export interface GitCommit { hash: string; subject: string; author: string; at: number }
 export interface GitSuggest {
@@ -281,6 +291,7 @@ export type ServerEvent =
   | { t: 'notify'; n: Notification }
   | { t: 'workspaces'; workspaces: Workspace[] }
   | { t: 'subagents'; sessionId: string; items: SubAgent[] }
+  | { t: 'sdd'; cwd: string; plans: SddPlan[] }
   | { t: 'term'; id: string; data: string }
   | { t: 'term.replay'; id: string; data: string }
 
