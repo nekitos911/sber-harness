@@ -201,7 +201,9 @@ test('worktrees: create from a base, remove a dirty one (force + prune + folder 
   fs.writeFileSync(path.join(wt.path, 'dirty.txt'), 'uncommitted\n');
   const listed = (await h.api('GET', `/api/workspaces/${wsA.id}/worktrees`)).body;
   assert.ok(listed.some((w) => w.path === wt.path && !w.main));
-  assert.equal((await h.api('DELETE', `/api/workspaces/${wsA.id}/worktrees`, { path: wt.path })).status, 200);
+  const refused = await h.api('DELETE', `/api/workspaces/${wsA.id}/worktrees`, { path: wt.path });
+  assert.deepEqual([refused.status, refused.body.dirty, refused.body.running], [409, 1, 0], 'uncommitted changes need force');
+  assert.equal((await h.api('DELETE', `/api/workspaces/${wsA.id}/worktrees`, { path: wt.path, force: true })).status, 200);
   assert.equal(fs.existsSync(wt.path), false);
   assert.ok(!gitIn(repoA, 'worktree', 'list').includes('remove-me'));
 });

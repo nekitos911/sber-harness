@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { timingSafeEqual } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { spawn as spawnProcess } from 'node:child_process';
 import { WebSocketServer } from 'ws';
 import { loadConfig, CODE_ROOT, deepMerge, readJsonFile, findLiteralSecrets, expandHome, normalizeModels } from './config.js';
 import { createStore, writeAtomic } from './store.js';
@@ -33,7 +34,7 @@ const NO_BUILD_HTML = '<!doctype html><meta charset="utf-8"><title>Harness</titl
 const GRADES = ['default', 'fast', 'review', 'explore'];
 // optional API groups this server implements (docs/ARCHITECTURE.md "Feature flags"); a flag ships with its route
 export const FEATURES = ['branches', 'fs-search', 'pr-status', 'agent-info', 'models-refresh', 'tracker-links', 'board-columns', 'review-loop',
-  'subagents', 'virtual-sessions', 'worker-run', 'skills-install', 'demo'];
+  'subagents', 'virtual-sessions', 'worker-run', 'skills-install', 'demo', 'worktree-meta', 'open'];
 const GIT_KEYS = ['defaultBase', 'branchTemplate', 'portBranchTemplate', 'commitTitleTemplate', 'prTitleTemplate'];
 const TASK_VARS = ['{taskUrl}', '{key}', '{id}', '{description}'];
 const hasTaskVar = (tpl) => TASK_VARS.some((v) => tpl.includes(v));
@@ -219,6 +220,7 @@ export async function startServer(opts = {}) {
       git: pick(config.git, GIT_KEYS),
       tasks: { refreshSec: t.refreshSec ?? 0 },
       board: config.board,
+      ide: config.ide ?? null,
       orchestration: { reviewMode: config.orchestration.reviewMode, subagents: config.orchestration.subagents, workerMayCommit: !!config.orchestration.workerMayCommit, review: config.orchestration.review },
       integrations: {
         tasks: { enabled: !!t.enabled, space: t.space ?? null, urlTemplate: t.urlTemplate ?? '', statusMap: t.statusMap || {}, closedStatuses: t.closedStatuses || [], onStartTransition: t.onStartTransition ?? null },
@@ -415,6 +417,13 @@ export async function startServer(opts = {}) {
       patch.git = body.git;
     }
     if (body.board !== undefined) patch.board = boardPatch(body.board);
+    if (body.ide !== undefined) {
+      const ide = body.ide;
+      if (ide !== null && (!isObj(ide) || typeof ide.command !== 'string' || !ide.command.trim() || (ide.args !== undefined && !isStrList(ide.args)))) {
+        fail(400, 'ide must be null or { command: string, args?: string[] } ("{path}" is replaced by the folder)');
+      }
+      patch.ide = ide && { command: ide.command.trim(), args: ide.args || ['{path}'] };
+    }
     if (body.orchestration !== undefined) patch.orchestration = orchestrationPatch(body.orchestration);
     const integrations = integrationsPatch(body);
     if (Object.keys(integrations).length) patch.integrations = integrations;
@@ -462,6 +471,67 @@ export async function startServer(opts = {}) {
       id, resolved: resolveAgentView(a), auth: meta?.auth ?? 'unknown', seen: meta ? seen : null, catalog: catalog.info(id), models: catalog.merged(id),
       commands: shippedStatus(a, 'commands'), skills: shippedStatus(a, 'skills'),
     };
+  }
+
+  // ---- worktree management ----
+  const openSpawner = opts.openSpawner || spawnProcess; // tests inject a stub instead of launching a file manager
+  const wtCache = new Map(); // path -> { at, data } (git data, a few seconds)
+  const WT_CACHE_MS = 3000;
+  const metaKey = (p) => (process.platform === 'win32' ? path.resolve(p).toLowerCase() : path.resolve(p));
+  const sessionsIn = (p) => db.sessions.filter((s) => !s.virtual && samePath(s.cwd, p));
+  const waitGone = async (pid) => {
+    for (let i = 0; i < 50; i++) {
+      try { process.kill(pid, 0); } catch { return; }
+      await new Promise((r) => setTimeout(r, 100));
+    }
+  };
+
+  function taskOf(ws, wt) {
+    return db.tasks.find((t) => wt.branch && t.branch === wt.branch && (!t.workspaceId || t.workspaceId === ws.id))
+      || sessionsIn(wt.path).map((s) => s.taskId && tasks.find(s.taskId)).find(Boolean) || null;
+  }
+
+  async function worktreeGit(ws, wt, fresh = false) {
+    const hit = wtCache.get(wt.path);
+    if (!fresh && hit && Date.now() - hit.at < WT_CACHE_MS) return hit.data;
+    const task = taskOf(ws, wt);
+    const base = task?.targets?.[0] || config.git.defaultBase;
+    const [st, baseRef] = await Promise.all([git.status(wt.path).catch(() => null), git.startPoint(ws.path, base).catch(() => null)]);
+    const ahead = baseRef && wt.head ? ((await git.revList(wt.path, `${baseRef}..HEAD`).catch(() => null)) || []).length : 0;
+    const data = { dirty: st ? st.files.length : 0, ahead, base };
+    wtCache.set(wt.path, { at: Date.now(), data });
+    return data;
+  }
+
+  async function enrichedWorktrees(ws) {
+    const list = await git.worktrees(ws.path);
+    return Promise.all(list.map(async (wt) => {
+      const info = await worktreeGit(ws, wt);
+      const task = taskOf(ws, wt);
+      const here = sessionsIn(wt.path).filter((s) => !s.archived);
+      const last = Math.max(0, ...here.map((s) => s.lastActivityAt || 0));
+      return {
+        ...wt,
+        dirty: info.dirty,
+        ahead: info.ahead,
+        taskId: task?.id ?? null,
+        taskStatus: task?.status ?? null,
+        pr: task?.pr ? { state: task.pr.state, url: task.pr.url } : null,
+        sessions: here.length,
+        running: here.filter((s) => s.status === 'running').length,
+        lastActivityAt: last || null,
+        meta: db.worktreeMeta?.[metaKey(wt.path)] || {},
+      };
+    }));
+  }
+
+  /** A registered workspace or one of its worktrees (the only folders /api/open and worktree meta accept). */
+  async function registeredFolder(p) {
+    for (const ws of db.workspaces) {
+      if (samePath(ws.path, p)) return ws;
+      if (ws.isGit && (await git.worktrees(ws.path).catch(() => [])).some((w) => samePath(w.path, p))) return ws;
+    }
+    return null;
   }
 
   // ---- routes ----
@@ -539,7 +609,7 @@ export async function startServer(opts = {}) {
     db.workspaces = db.workspaces.filter((w) => w.id !== params.id);
     emitWorkspaces();
   });
-  route('GET', '/api/workspaces/:id/worktrees', ({ params }) => git.worktrees(getWs(params.id).path));
+  route('GET', '/api/workspaces/:id/worktrees', ({ params }) => enrichedWorktrees(getWs(params.id)));
   route('POST', '/api/workspaces/:id/worktrees', async ({ params, body }) => {
     const ws = getWs(params.id);
     check(body, { name: 'string', base: 'string?' });
@@ -548,8 +618,71 @@ export async function startServer(opts = {}) {
   });
   route('DELETE', '/api/workspaces/:id/worktrees', async ({ params, body }) => {
     const ws = getWs(params.id);
-    check(body, { path: 'string', force: 'boolean?' });
-    await git.removeWorktree(ws.path, body.path);
+    check(body, { path: 'string', force: 'boolean?', deleteBranch: 'string?' });
+    if (body.deleteBranch && !['no', 'safe', 'force'].includes(body.deleteBranch)) fail(400, 'deleteBranch must be no, safe or force');
+    const wt = (await git.worktrees(ws.path)).find((w) => samePath(w.path, body.path)) || fail(404, `not a worktree of ${ws.name}: ${body.path}`);
+    if (wt.main) fail(400, 'the main worktree of a repository cannot be removed');
+    const [info] = await Promise.all([worktreeGit(ws, wt, true)]);
+    const here = sessionsIn(wt.path);
+    const running = here.filter((s) => s.status === 'running').length;
+    if ((info.dirty || info.ahead || running) && !body.force) {
+      throw Object.assign(new Error(`${wt.path}: ${info.dirty} uncommitted change(s), ${info.ahead} commit(s) not in ${info.base}, ${running} running turn(s); pass force to remove anyway`), { status: 409, details: { dirty: info.dirty, ahead: info.ahead, running } });
+    }
+    for (const s of here) {
+      if (s.status === 'running' || s.kind === 'terminal') {
+        try { sessions.stop(s.id); } catch {}
+      }
+      sessions.update(s.id, { archived: true }); // hidden from the sidebar; transcripts kept
+    }
+    await Promise.all(here.filter((s) => s.pid).map((s) => waitGone(s.pid)));
+    await git.removeWorktree(ws.path, wt.path);
+    let branchDeleted = false;
+    if (wt.branch && body.deleteBranch && body.deleteBranch !== 'no') {
+      const r = await git.git(ws.path, ['branch', body.deleteBranch === 'force' ? '-D' : '-d', wt.branch], { ok: [0, 1] });
+      branchDeleted = r.code === 0; // -d refuses an unmerged branch: kept
+    }
+    wtCache.delete(wt.path);
+    return { removed: true, branchDeleted, archivedSessions: here.length };
+  });
+  route('PATCH', '/api/worktrees/meta', async ({ body }) => {
+    check(body, { path: 'string', label: 'string?', note: 'string?', pinned: 'boolean?', sleeping: 'boolean?', force: 'boolean?' });
+    const p = path.resolve(body.path);
+    if (!(await registeredFolder(p))) fail(400, `not a registered workspace or one of its worktrees: ${body.path}`);
+    if (body.sleeping) {
+      const here = sessionsIn(p);
+      const running = here.filter((s) => s.kind === 'chat' && s.status === 'running');
+      if (running.length && !body.force) {
+        throw Object.assign(new Error(`${running.length} agent turn(s) running in this worktree; pass force to stop them`), { status: 409, details: { running: running.length } });
+      }
+      for (const s of here) if (s.kind === 'terminal' || s.status === 'running') try { sessions.stop(s.id); } catch {}
+    }
+    db.worktreeMeta ||= {};
+    const key = metaKey(p);
+    const meta = { ...db.worktreeMeta[key] };
+    for (const k of ['label', 'note', 'pinned', 'sleeping']) if (k in body) meta[k] = body[k];
+    db.worktreeMeta[key] = meta;
+    store.save();
+    return meta;
+  });
+  route('POST', '/api/open', async ({ body }) => {
+    check(body, { cwd: 'string', target: 'string' });
+    if (!['explorer', 'ide'].includes(body.target)) fail(400, 'target must be "explorer" or "ide"');
+    const p = path.resolve(body.cwd);
+    if (!(await registeredFolder(p))) fail(400, `not a registered workspace or one of its worktrees: ${body.cwd}`);
+    let command;
+    let args;
+    if (body.target === 'ide') {
+      if (!config.ide?.command) fail(400, 'no IDE configured (config.ide)');
+      command = config.ide.command;
+      args = (config.ide.args || ['{path}']).map((a) => String(a).replace(/\{path\}/g, p));
+    } else {
+      command = process.platform === 'win32' ? 'explorer.exe' : process.platform === 'darwin' ? 'open' : 'xdg-open';
+      args = [p];
+    }
+    const child = openSpawner(command, args, { detached: true, stdio: 'ignore', shell: false });
+    child.on?.('error', () => {});
+    child.unref?.();
+    return { ok: true };
   });
 
   // tasks
@@ -742,7 +875,7 @@ export async function startServer(opts = {}) {
     } catch (e) {
       const status = Number.isInteger(e.status) ? e.status : 500;
       if (!Number.isInteger(e.status)) console.error(`[harness] ${req.method} ${u.pathname}:`, e);
-      if (!res.headersSent) sendJson(res, status, { error: e.message || String(e) });
+      if (!res.headersSent) sendJson(res, status, { error: e.message || String(e), ...(e.details || {}) });
       else res.end();
     }
   });

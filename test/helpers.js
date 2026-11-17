@@ -51,7 +51,7 @@ export async function waitPidGone(pid, timeout = 10000) {
  * Starts a server on a random port with temp dataDir and a temp copy of harness.config.json (so PUT /api/settings
  * writes a temp harness.config.local.json). `api(method, path, body, headers)` -> { status, body }.
  */
-export async function startTestServer(configOverrides = {}) {
+export async function startTestServer(configOverrides = {}, serverOpts = {}) {
   const dataDir = tmpDir('харнесс данные ');
   const cfgDir = tmpDir('харнесс конфиг ');
   const configFile = path.join(cfgDir, 'harness.config.json');
@@ -59,6 +59,7 @@ export async function startTestServer(configOverrides = {}) {
   const mockState = tmpDir('harness-mock-');
   process.env.MOCK_AGENT_STATE_DIR = mockState;
   const srv = await startServer({
+    ...serverOpts,
     dataDir,
     configFile,
     port: 0,

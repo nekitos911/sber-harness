@@ -9,6 +9,7 @@
   "defaultAgent": "gigacode",
   "workspaces": { "root": null, "repos": [] },
   "worktreeRoot": null,
+  "ide": null,
   "git": {
     "defaultBase": "develop",
     "branchTemplate": "feature/{key}",
