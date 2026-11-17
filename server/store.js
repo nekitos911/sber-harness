@@ -8,11 +8,17 @@ import { randomBytes } from 'node:crypto';
 const DEBOUNCE_MS = 200; // contract: <= 250 ms
 export const TERM_LOG_MAX = 2 * 1024 * 1024;
 
+const BAK_EVERY_MS = 10000; // the .bak is the last good copy, refreshed at most this often (big transcripts stream)
+const bakAt = new Map(); // file -> last backup time
+
 export function writeAtomic(file, data, backup = false) {
   const tmp = `${file}.${process.pid}.tmp`;
   fs.writeFileSync(tmp, data);
-  if (backup) {
-    try { fs.copyFileSync(file, `${file}.bak`); } catch {}
+  if (backup && Date.now() - (bakAt.get(file) || 0) >= BAK_EVERY_MS) {
+    try {
+      fs.copyFileSync(file, `${file}.bak`);
+      bakAt.set(file, Date.now());
+    } catch {}
   }
   try {
     fs.renameSync(tmp, file);
@@ -63,6 +69,13 @@ export function createStore(dataDir) {
   }
 
   const transcripts = new Map(); // sid -> Message[]
+  // per-message JSON: a streaming update re-serializes one message, not a whole 5k-message transcript
+  const msgJson = new WeakMap(); // message object -> its JSON (dropped by putMessage)
+  const transcriptJson = (list) => `[${list.map((m) => {
+    let j = msgJson.get(m);
+    if (j === undefined) msgJson.set(m, (j = JSON.stringify(m)));
+    return j;
+  }).join(',')}]`;
   const termLogs = new Map(); // sid -> string (ring)
   const dirty = new Set(); // 'db' | 't:<sid>' | 'term:<sid>'
   let timer = null;
@@ -71,7 +84,7 @@ export function createStore(dataDir) {
   const fileFor = (key) => {
     if (key === 'db') return [dbFile, () => JSON.stringify(db, null, 1)];
     const [kind, sid] = key.split(':');
-    if (kind === 't') return [path.join(dataDir, 'transcripts', `${sid}.json`), () => JSON.stringify(transcripts.get(sid) || [])];
+    if (kind === 't') return [path.join(dataDir, 'transcripts', `${sid}.json`), () => transcriptJson(transcripts.get(sid) || [])];
     return [path.join(dataDir, 'terms', `${sid}.log`), () => termLogs.get(sid) || ''];
   };
 
@@ -114,7 +127,9 @@ export function createStore(dataDir) {
     messages,
     putMessage(sid, msg) {
       const list = messages(sid);
-      const i = list.findIndex((m) => m.id === msg.id);
+      msgJson.delete(msg); // updated in place while streaming
+      let i = list.length - 1; // updates are almost always to the newest messages
+      while (i >= 0 && list[i].id !== msg.id) i--;
       if (i >= 0) list[i] = msg;
       else list.push(msg);
       mark(`t:${sid}`);

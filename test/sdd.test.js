@@ -29,10 +29,10 @@ after(async () => {
 
 const copyFixtures = (cwd) => fs.cpSync(FIXTURES, path.join(cwd, '.superpowers', 'sdd'), { recursive: true });
 
-test('parser: ledger items, PASS verdict with models, FAIL verdict in bold/arrow form, unknown status kept raw', () => {
+test('parser: ledger items, PASS verdict with models, FAIL verdict in bold/arrow form, unknown status kept raw', async () => {
   const dir = path.join(root, 'plain');
   copyFixtures(dir);
-  const { plans } = readSdd(dir);
+  const { plans } = await readSdd(dir);
   assert.equal(plans.length, 1);
   const p = plans[0];
   assert.equal(p.name, '2026-11-17-limits');
@@ -47,7 +47,7 @@ test('parser: ledger items, PASS verdict with models, FAIL verdict in bold/arrow
   assert.equal(v2.openQuestions, 'нужен ли батч-запрос для архивных лимитов?');
   const odd = parseVerdict('Вердикт: всё хорошо\nstatus: maybe\n');
   assert.deepEqual([odd.status, odd.filesChanged, odd.raw], [null, [], 'Вердикт: всё хорошо\nstatus: maybe\n']);
-  assert.deepEqual(readSdd(path.join(root, 'нет')), { plans: [] });
+  assert.deepEqual(await readSdd(path.join(root, 'нет')), { plans: [] });
 });
 
 test('GET /api/sdd and a WS broadcast while a session in that folder runs', async () => {

@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { CODE_ROOT, expandHome } from './config.js';
 import * as git from './git.js';
+import { jobStep } from './jobs.js';
 import { newId } from './sessions.js';
 
 const fail = (status, message) => { throw Object.assign(new Error(message), { status }); };
@@ -171,6 +172,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
     if (o.worktree && !['current', 'new'].includes(o.worktree)) fail(400, 'worktree must be "current" or "new"');
     const agent = o.agent || (caller?.kind === 'chat' ? caller.agent : null) || config.defaultAgent;
     // fail fast, before any worktree or session exists
+    jobStep('Проверка агента');
     sessions.resolveAgent(agent);
     if (!o.spec) promptTemplate(agent);
     const ws = o.workspace ? workspaceRef(o.workspace) : o.workspaceId ? findWs(o.workspaceId) || fail(404, `workspace ${o.workspaceId} not found`) : findWs(task.workspaceId);
@@ -180,6 +182,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
       let branch;
       let made = null;
       if (o.worktree === 'new') {
+        jobStep('Создание worktree');
         made = await taskWorktree(task, cwd, o.branch);
         cwd = made.wt.path;
         branch = made.wt.branch;
@@ -189,6 +192,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
       const inWorktree = !!made || (await git.worktrees(cwd).catch(() => [])).some((w) => !w.main && samePath(w.path, cwd));
       const key = tasks.key(task);
       let s;
+      jobStep('Запуск сессии');
       try {
         s = await sessions.create({
           kind: 'chat', agent, cwd, workspaceId: ws?.id, title: `${key}: ${task.title}`, role: 'worker',
@@ -241,13 +245,17 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
     if (!commits.length) fail(409, `Nothing to port: ${target} already contains every change of ${task.branch}.`);
     sessions.resolveAgent(conflictAgent); // a conflict needs a worker: fail before creating the worktree
     const branch = await git.uniqueBranch(repo, git.sanitizeBranch(render(gitCfg().portBranchTemplate, { branch: task.branch, target, targetSlug: git.targetSlug(target), key: tasks.key(task) })));
+    jobStep('Создание worktree');
     const wt = await git.addWorktree(repo, { branch, start, worktreeRoot: config.worktreeRoot });
-    const status = await git.cherryPick(wt.path, commits);
+    jobStep('cherry-pick', { done: 0, total: commits.length });
+    const status = await git.cherryPick(wt.path, commits); // one sequence: --continue after a conflict picks the rest
+    if (status === 'clean') jobStep('cherry-pick', { done: commits.length, total: commits.length });
     const rec = { target, branch, cwd: wt.path, status, sessionId: null };
     savePort(task, rec);
     const by = caller?.id || 'user';
     tasks.addLog(task.id, by, `port to ${target}: ${status} (${commits.length} commit(s) on ${branch})`);
     if (status === 'conflict') {
+      jobStep('Конфликт: запуск агента');
       const s = await sessions.create({
         kind: 'chat', agent: conflictAgent, cwd: wt.path, workspaceId: ws?.id, title: `${tasks.key(task)}: port to ${target}`, role: 'worker',
         parentId: caller?.id ?? null, taskId: task.id, branch,

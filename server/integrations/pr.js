@@ -31,6 +31,7 @@
 import { toolResultValue } from '../mcp-client.js';
 import { remoteInfo } from '../git.js';
 import { getPath } from './tasks.js';
+import { jobStep } from '../jobs.js';
 
 export function fillTemplate(tpl, vars) {
   if (typeof tpl === 'string') {
@@ -60,6 +61,7 @@ export async function createPullRequest({ config, mcp, cwd, branch, base, title,
   const vars = { repo, project, repository, branch, head: branch, base: base || config.git?.defaultBase || 'main', title, body, cwd };
 
   if (cfg.listTool) {
+    jobStep('Поиск существующего PR');
     const listed = toolResultValue(await mcp.callTool(cfg.server, cfg.listTool, fillTemplate(cfg.listArgs || LIST_ARGS, vars)));
     const pulls = getPath(listed, cfg.listItemsPath ?? 'pulls');
     const same = Array.isArray(pulls) && pulls.find((p) => p?.head?.name === branch && p?.base?.name === vars.base);
@@ -67,6 +69,7 @@ export async function createPullRequest({ config, mcp, cwd, branch, base, title,
     if (url) return { url, existing: true };
   }
 
+  jobStep('Создание PR');
   const value = toolResultValue(await mcp.callTool(cfg.server, cfg.tool, fillTemplate(cfg.args || {}, vars)));
   const url = getPath(value, cfg.urlPath ?? 'url');
   if (typeof url !== 'string' || !url) {

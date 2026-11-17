@@ -3,18 +3,42 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { expandHome } from './config.js';
+import { killTree } from './runner.js';
 
 const fail = (status, message) => { throw Object.assign(new Error(message), { status }); };
 
-export function git(cwd, args, { ok = [0] } = {}) {
+// never a prompt nobody can answer: no terminal/GUI credential prompts, ssh in batch mode
+const gitEnv = () => ({
+  ...process.env,
+  GIT_TERMINAL_PROMPT: '0',
+  GCM_INTERACTIVE: 'never',
+  GIT_ASKPASS: '',
+  GIT_SSH_COMMAND: process.env.GIT_SSH_COMMAND || 'ssh -o BatchMode=yes -o ConnectTimeout=15',
+});
+const AUTH_RE = /could not read (Username|Password)|terminal prompts disabled|Authentication failed|Permission denied \(publickey|Access denied|HTTP Basic|returned error: 40[13]|Host key verification failed/i;
+
+/** timeoutSec: network operations (push/fetch/...) are killed (whole tree) after it, with a clear message. */
+export function git(cwd, args, { ok = [0], timeoutSec = 0 } = {}) {
   if (typeof cwd !== 'string' || !path.isAbsolute(cwd) || !fs.existsSync(cwd)) fail(400, `cwd must be an existing absolute directory: ${cwd}`);
   return new Promise((resolve, reject) => {
-    execFile('git', args, { cwd, maxBuffer: 64 * 1024 * 1024, windowsHide: true, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } }, (err, stdout, stderr) => {
+    let timedOut = false;
+    const child = execFile('git', args, { cwd, maxBuffer: 64 * 1024 * 1024, windowsHide: true, env: gitEnv() }, (err, stdout, stderr) => {
+      clearTimeout(timer);
+      if (timedOut) return reject(Object.assign(new Error(`Нет ответа от удалённого репозитория за ${timeoutSec} с`), { status: 504 }));
       const code = err ? err.code : 0;
       if (err && typeof code !== 'number') return reject(Object.assign(new Error(`git failed: ${err.message}`), { status: 500 }));
-      if (!ok.includes(code)) return reject(Object.assign(new Error((stderr || stdout || err.message).trim()), { status: 400 }));
+      if (!ok.includes(code)) {
+        const text = (stderr || stdout || err.message).trim();
+        if (timeoutSec && AUTH_RE.test(text)) {
+          return reject(Object.assign(new Error(`Git требует авторизацию — выполните ${args[0]} в терминале этого рабочего дерева.
+${text}`), { status: 401 }));
+        }
+        return reject(Object.assign(new Error(text), { status: 400 }));
+      }
       resolve({ code, stdout, stderr });
     });
+    // killTree: on Windows git-remote-https / ssh children would otherwise keep the pipes (and this call) open
+    const timer = timeoutSec > 0 ? setTimeout(() => { timedOut = true; killTree(child.pid); }, timeoutSec * 1000) : null;
   });
 }
 
@@ -108,9 +132,9 @@ export async function commit(cwd, message, paths, exclude = []) {
   return { hash: await out(cwd, ['rev-parse', 'HEAD']) };
 }
 
-export async function push(cwd) {
+export async function push(cwd, { timeoutSec = 120 } = {}) {
   const hasUpstream = (await git(cwd, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'], { ok: [0, 128] })).code === 0;
-  const r = await git(cwd, hasUpstream ? ['push'] : ['push', '-u', 'origin', 'HEAD']);
+  const r = await git(cwd, hasUpstream ? ['push'] : ['push', '-u', 'origin', 'HEAD'], { timeoutSec });
   return { output: `${r.stdout}${r.stderr}`.trim() };
 }
 

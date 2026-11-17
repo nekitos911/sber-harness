@@ -66,34 +66,23 @@ export function parseVerdict(raw) {
   };
 }
 
-const read = (file) => {
-  try {
-    return fs.readFileSync(file, 'utf8');
-  } catch {
-    return null;
-  }
-};
+const read = (file) => fs.promises.readFile(file, 'utf8').catch(() => null);
+const list = (dir) => fs.promises.readdir(dir, { withFileTypes: true }).catch(() => []);
 
-/** All plans under <cwd>/.superpowers/sdd (newest name last), with their progress and verdicts. */
-export function readSdd(cwd) {
+/** All plans under <cwd>/.superpowers/sdd (sorted by name), with progress and verdicts. Async: polled every 3 s. */
+export async function readSdd(cwd) {
   const root = path.join(cwd, '.superpowers', 'sdd');
-  let dirs = [];
-  try {
-    dirs = fs.readdirSync(root, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name).sort();
-  } catch {
-    return { plans: [] };
-  }
+  const dirs = (await list(root)).filter((d) => d.isDirectory()).map((d) => d.name).sort();
   return {
-    plans: dirs.map((name) => {
+    plans: await Promise.all(dirs.map(async (name) => {
       const dir = path.join(root, name);
-      const progressRaw = read(path.join(dir, 'progress.md'));
-      let files = [];
-      try { files = fs.readdirSync(path.join(dir, 'verdicts')).filter((f) => /^task-\d+\.md$/i.test(f)); } catch {}
-      const verdicts = files
+      const progressRaw = await read(path.join(dir, 'progress.md'));
+      const files = (await list(path.join(dir, 'verdicts'))).map((d) => d.name).filter((f) => /^task-\d+\.md$/i.test(f));
+      const verdicts = await Promise.all(files
         .map((file) => ({ n: Number(file.match(/\d+/)[0]), file: path.join(dir, 'verdicts', file) }))
         .sort((a, b) => a.n - b.n)
-        .map(({ n, file }) => ({ n, file, ...parseVerdict(read(file) ?? '') }));
+        .map(async ({ n, file }) => ({ n, file, ...parseVerdict((await read(file)) ?? '') })));
       return { name, dir, progress: progressRaw === null ? null : parseProgress(progressRaw), verdicts };
-    }),
+    })),
   };
 }

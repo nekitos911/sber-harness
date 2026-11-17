@@ -21,6 +21,7 @@ import { launchers } from './launchers.js';
 import { isAlive } from './runner.js';
 import { createModelCatalog, scanModelRefs } from './models.js';
 import { readSdd } from './sdd.js';
+import { runJob, jobStep, JOB_ID_RE } from './jobs.js';
 import { DEMO_PORT, demoOverrides, seedDemoRepos, seedDemoTasks } from './demo.js';
 import { importTasks, transitionTask, getExternal, getTransitions, importChildren, syncColumn } from './integrations/tasks.js';
 import { createPullRequest, prStatus, refreshTaskPr } from './integrations/pr.js';
@@ -37,6 +38,19 @@ const GRADES = ['default', 'fast', 'review', 'explore'];
 // optional API groups this server implements (docs/ARCHITECTURE.md "Feature flags"); a flag ships with its route
 export const FEATURES = ['branches', 'fs-search', 'pr-status', 'agent-info', 'models-refresh', 'tracker-links', 'board-columns', 'review-loop',
   'subagents', 'virtual-sessions', 'worker-run', 'skills-install', 'demo', 'worktree-meta', 'open', 'sdd', 'health'];
+// titles of operations the UI may follow by sending x-job-id (WS { t: 'job' } frames)
+const JOB_TITLES = {
+  'POST /api/tasks/sync': 'Синхронизация с трекером',
+  'POST /api/tasks/:id/start': 'Взять в работу',
+  'POST /api/tasks/:id/rework': 'Доработка',
+  'POST /api/tasks/:id/port': 'Перенос в другую ветку',
+  'POST /api/tasks/:id/import-children': 'Импорт подзадач',
+  'POST /api/git/pr': 'Создание PR',
+  'POST /api/git/push': 'git push',
+  'POST /api/git/checkout': 'Переключение ветки',
+  'DELETE /api/workspaces/:id/worktrees': 'Удаление рабочего дерева',
+  'POST /api/agents/:id/models/refresh': 'Обновление списка моделей',
+};
 const GIT_KEYS = ['defaultBase', 'branchTemplate', 'portBranchTemplate', 'commitTitleTemplate', 'prTitleTemplate'];
 const TASK_VARS = ['{taskUrl}', '{key}', '{id}', '{description}'];
 const hasTaskVar = (tpl) => TASK_VARS.some((v) => tpl.includes(v));
@@ -540,21 +554,27 @@ export async function startServer(opts = {}) {
 
   // ---- /full-task SDD artifacts: polled while a session in that folder runs, broadcast on change ----
   const sddSeen = new Map(); // folder key -> last JSON
-  const sddTimer = setInterval(() => {
-    if (!wss.clients.size) return;
-    const cwds = new Map(db.sessions.filter((s) => s.status === 'running' && !s.virtual && s.cwd).map((s) => [metaKey(s.cwd), s.cwd]));
-    for (const [k, cwd] of cwds) {
-      const data = readSdd(cwd);
-      const json = JSON.stringify(data);
-      if ((sddSeen.get(k) ?? '{"plans":[]}') !== json) bus.send({ t: 'sdd', cwd, ...data });
-      sddSeen.set(k, json);
+  let sddBusy = false;
+  const sddTimer = setInterval(async () => {
+    if (!wss.clients.size || sddBusy) return;
+    sddBusy = true;
+    try {
+      const cwds = new Map(db.sessions.filter((s) => s.status === 'running' && !s.virtual && s.cwd).map((s) => [metaKey(s.cwd), s.cwd]));
+      for (const [k, cwd] of cwds) {
+        const data = await readSdd(cwd);
+        const json = JSON.stringify(data);
+        if ((sddSeen.get(k) ?? '{"plans":[]}') !== json) bus.send({ t: 'sdd', cwd, ...data });
+        sddSeen.set(k, json);
+      }
+    } finally {
+      sddBusy = false;
     }
   }, 3000);
   sddTimer.unref?.();
 
   // ---- routes ----
   const routes = [];
-  const route = (method, pattern, handler) => routes.push({ method, re: new RegExp(`^${pattern.replace(/:(\w+)/g, '(?<$1>[^/]+)')}$`), handler });
+  const route = (method, pattern, handler) => routes.push({ method, re: new RegExp(`^${pattern.replace(/:(\w+)/g, '(?<$1>[^/]+)')}$`), handler, title: JOB_TITLES[`${method} ${pattern}`] || `${method} ${pattern}` });
 
   const getWs = (id) => db.workspaces.find((w) => w.id === id) || fail(404, `workspace ${id} not found`);
   const emitWorkspaces = () => {
@@ -593,6 +613,7 @@ export async function startServer(opts = {}) {
   route('POST', '/api/agents/:id/models/refresh', async ({ params }) => {
     if (!config.agents[params.id]) fail(404, `agent ${params.id} not found`);
     if (!config.agents[params.id].modelsDiscovery?.prompt) fail(400, `agents.${params.id}.modelsDiscovery.prompt is not configured`);
+    jobStep('Опрос /models');
     const c = await catalog.discover(params.id);
     return { models: catalog.merged(params.id), at: c?.at ?? null, ...(c?.error ? { error: c.error } : {}) };
   });
@@ -646,13 +667,16 @@ export async function startServer(opts = {}) {
     if ((info.dirty || info.ahead || running) && !body.force) {
       throw Object.assign(new Error(`${wt.path}: ${info.dirty} uncommitted change(s), ${info.ahead} commit(s) not in ${info.base}, ${running} running turn(s); pass force to remove anyway`), { status: 409, details: { dirty: info.dirty, ahead: info.ahead, running } });
     }
-    for (const s of here) {
+    jobStep('Остановка сессий', { done: 0, total: here.length });
+    for (const [i, s] of here.entries()) {
+      jobStep('Остановка сессий', { done: i + 1, total: here.length });
       if (s.status === 'running' || s.kind === 'terminal') {
         try { sessions.stop(s.id); } catch {}
       }
       sessions.update(s.id, { archived: true }); // hidden from the sidebar; transcripts kept
     }
     await Promise.all(here.filter((s) => s.pid).map((s) => waitGone(s.pid)));
+    jobStep('git worktree remove');
     await git.removeWorktree(ws.path, wt.path);
     let branchDeleted = false;
     if (wt.branch && body.deleteBranch && body.deleteBranch !== 'no') {
@@ -776,6 +800,7 @@ export async function startServer(opts = {}) {
     check(body, { cwd: 'string', branch: 'string', create: 'boolean?', from: 'string?' });
     const busy = db.sessions.find((s) => s.kind === 'chat' && s.status === 'running' && samePath(s.cwd, body.cwd));
     if (busy) fail(409, `An agent is working in this folder right now (${busy.title}); stop it or wait before switching branches.`);
+    jobStep(`git checkout ${body.branch}`);
     const r = await git.checkout(body.cwd, body);
     refreshBranch(body.cwd, r.branch);
     return r;
@@ -784,7 +809,11 @@ export async function startServer(opts = {}) {
     check(body, { cwd: 'string', message: 'string', paths: 'array?' });
     return git.commit(body.cwd, body.message, body.paths, config.git.excludeFromCommit);
   });
-  route('POST', '/api/git/push', ({ body }) => git.push(check(body, { cwd: 'string' }).cwd));
+  route('POST', '/api/git/push', ({ body }) => {
+    check(body, { cwd: 'string' });
+    jobStep('git push');
+    return git.push(body.cwd, { timeoutSec: config.git.networkTimeoutSec });
+  });
   route('POST', '/api/git/pr', async ({ body }) => {
     check(body, { cwd: 'string', title: 'string', body: 'string?', base: 'string?' });
     if (!config.integrations.pr?.enabled) fail(501, 'PR creation is disabled (integrations.pr.enabled)');
@@ -886,7 +915,9 @@ export async function startServer(opts = {}) {
         if (!hit) return sendJson(res, 405, { error: 'method not allowed' });
         const body = req.method === 'GET' || req.method === 'HEAD' ? {} : await readBody(req);
         const params = Object.fromEntries(Object.entries(hit.m.groups || {}).map(([k, v]) => [k, decodeURIComponent(v)]));
-        const result = await hit.r.handler({ req, body, params, query: Object.fromEntries(u.searchParams) });
+        const call = () => hit.r.handler({ req, body, params, query: Object.fromEntries(u.searchParams) });
+        const jobId = req.headers['x-job-id'];
+        const result = typeof jobId === 'string' && JOB_ID_RE.test(jobId) ? await runJob({ id: jobId, title: hit.r.title, send: bus.send }, call) : await call();
         return sendJson(res, 200, result);
       }
       if (vite) {

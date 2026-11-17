@@ -41,6 +41,7 @@
 import { toolResultValue } from '../mcp-client.js';
 import { STATUSES, PRIORITIES } from '../tasks.js';
 import { fillTemplate } from './pr.js';
+import { jobStep } from '../jobs.js';
 
 export const getPath = (obj, p) => (!p ? obj : String(p).split('.').reduce((o, k) => (o == null ? undefined : o[k]), obj));
 
@@ -178,6 +179,7 @@ export async function importTasks({ config, mcp, tasks }) {
     const limit = cfg.limit > 0 ? cfg.limit : Infinity;
     const found = new Map();
     for (let page = 0; page < MAX_PAGES && found.size < limit; page++) {
+      jobStep(`Трекер: страница ${page + 1}`);
       const { items, hasNext } = parseFindIssues(await callText(mcp, cfg, find, { ...cfg.args, space_code: cfg.space, assignee: 'me', page_size: 100, page_number: page }));
       for (const it of items) if (!found.has(it.key)) found.set(it.key, it);
       if (!hasNext || !items.length) break;
@@ -257,7 +259,8 @@ export async function importChildren({ config, mcp, tasks, task }) {
   const priorities = cfg.priorityMap || ONEWORK_PRIORITY_MAP;
   const counts = { imported: 0, updated: 0 };
   const failed = [];
-  for (const child of children) {
+  for (const [i, child] of children.entries()) {
+    jobStep(`Подзадача ${child}`, { done: i, total: children.length });
     let issue;
     try {
       issue = parseIssue(await callText(mcp, cfg, toolOf(cfg, 'get'), { key: child }));

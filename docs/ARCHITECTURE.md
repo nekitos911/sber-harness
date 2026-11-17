@@ -938,6 +938,21 @@ Durable state (all in `<dataDir>`, atomic writes):
 - UI: drafts (composer per session, commit title/body per cwd, PR dialog per cwd+base, task drawer edits) persist in
   localStorage (try/catch, cleared on send/commit); open screens/tabs/panels/scroll per worktree persist as now.
 
+## Nothing looks frozen (git prompts, network timeouts, progress)
+
+- Every git child gets `GIT_TERMINAL_PROMPT=0`, `GCM_INTERACTIVE=never`, `GIT_ASKPASS=` and `GIT_SSH_COMMAND` = the
+  existing one or `ssh -o BatchMode=yes -o ConnectTimeout=15`. Network operations (push) are killed (whole tree) after
+  `git.networkTimeoutSec` (default 120) → 504 «Нет ответа от удалённого репозитория за N с»; a credentials/ssh-key
+  failure → 401 «Git требует авторизацию — выполните push в терминале этого рабочего дерева» (+ git's text).
+- Progress without API changes: a request with header `x-job-id: <8–64 chars [\w-]>` runs as a job; the server sends
+  WS `{ t: 'job', id, title, step: null, at }` at once, `{ t: 'job', id, title, step, progress?: { done, total }, at }` at
+  meaningful steps and a final `{ t: 'job', id, title, done: true, error?, at }`. Titled operations: tracker sync (per
+  page), take into work (agent check → worktree → session), rework, port (worktree → cherry-pick 0/n…n/n → conflict
+  worker), PR create (existing PR lookup → create), push, checkout, worktree removal (sessions i/n → git), models refresh,
+  import children (per child). Steps of background work after the response are dropped.
+- Event loop: SDD polling is async; transcripts are serialized per message (a streaming update re-serializes one message,
+  not the whole transcript) and `.bak` copies are refreshed at most every 10 s; registry polling reads only small files.
+
 ## Feature flags (client/server version skew)
 
 `GET /api/state` returns `features: string[]` — the optional API groups this server implements, e.g. `sdd`, `subagents`,
