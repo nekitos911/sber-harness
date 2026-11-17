@@ -6,7 +6,7 @@ import type { Session } from '../../types'
 import { MenuButton, Select } from '../ui'
 import { MentionMirror, useComposerSuggest } from './Suggest'
 import { ModelPicker } from '../pickers/ModelPicker'
-import { FULL_ACCESS, modeShort } from '../../lib/agents'
+import { FULL_ACCESS, modeShort, useSettings } from '../../lib/agents'
 
 export function Composer({ session, active }: { session: Session; active: boolean }) {
   const agent = useStore((s) => s.agents.find((a) => a.id === session.agent))
@@ -71,6 +71,9 @@ export function Composer({ session, active }: { session: Session; active: boolea
   const setMode = (approvalMode: string) => patch({ approvalMode })
 
   const mode = session.approvalMode ?? agent?.approvalMode ?? ''
+  // The mode chip is the one place to pick the mode: its options carry the explanations (state, else settings).
+  const settings = useSettings()
+  const modeLabels = { ...settings?.agents[session.agent]?.approvalModeLabels, ...agent?.approvalModeLabels }
   const modes = agent?.approvalModes ?? (mode ? [mode] : [])
 
   return (
@@ -113,7 +116,7 @@ export function Composer({ session, active }: { session: Session; active: boolea
             value={mode}
             onChange={(m) => void setMode(m)}
             display={modeShort(mode)}
-            options={modes.map((m) => ({ value: m, label: modeShort(m), text: modeShort(m), hint: agent?.approvalModeLabels?.[m] ?? m }))}
+            options={modes.map((m) => ({ value: m, label: modeShort(m), text: modeShort(m), hint: modeLabels[m] }))}
           />
         )}
         {session.queued > 0 && <span className="chip chip-run">в очереди: {session.queued}</span>}
@@ -124,8 +127,6 @@ export function Composer({ session, active }: { session: Session; active: boolea
           label="Модель"
           value={session.model}
           onChange={(model) => void patch({ model })}
-          mode={mode || null}
-          onMode={(m) => void setMode(m)}
         />
         {running && (
           <button type="button" className="icon-btn composer-stop" onClick={stop} aria-label="Остановить агента" data-tip="Остановить">

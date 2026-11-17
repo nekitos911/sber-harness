@@ -193,7 +193,7 @@ export interface AgentMeta {
   id: string
   resolved: { ok: boolean; command?: string; node?: string; entry?: string; identity: boolean; error?: string }
   auth?: 'ok' | 'required' | 'unknown'
-  catalog?: { at: number | null; error?: string | null } | null
+  catalog?: { at: number | null; error?: string | null; running?: boolean } | null
   modelRefs?: { file: string; model: string; available: boolean | null }[]
   commands?: Record<string, 'installed' | 'missing' | 'different'>
   skills?: Record<string, 'installed' | 'missing' | 'different'>

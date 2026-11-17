@@ -19,6 +19,7 @@ import { BranchPicker } from '../components/pickers/BranchPicker'
 import { MessageItem } from '../components/chat/MessageItem'
 import { ActivityLine, buildItems, StallBanner, ToolRun, TurnFiles, TurnHead } from '../components/chat/Turn'
 import { sessionVisualState } from '../lib/sessionState'
+import { ownerWorkspace } from '../lib/actions'
 import { Composer } from '../components/chat/Composer'
 import { WorkersPanel } from '../components/chat/WorkersPanel'
 
@@ -331,15 +332,22 @@ function IncludeDirs({ session }: { session: Session }) {
 
 /** Under the composer: where this chat runs. */
 function WhereLine({ session }: { session: Session }) {
-  const ws = useStore((s) => s.workspaces.find((w) => w.id === session.workspaceId))
+  // The project is the one whose worktree the chat runs in (a folder workspace may contain other projects' worktrees).
+  const ws = useStore((s) => {
+    const byWt = Object.entries(s.worktrees).find(([, list]) => list.some((w) => normPath(w.path) === normPath(session.cwd)))?.[0]
+    return s.workspaces.find((w) => w.id === byWt) ?? s.workspaces.find((w) => w.id === session.workspaceId) ?? ownerWorkspace(s.workspaces, session.cwd)
+  })
   const agent = useStore((s) => s.agents.find((a) => a.id === session.agent))
-  const main = ws && normPath(ws.path) === normPath(session.cwd)
+  // «GigaCode · Все проекты (IdeaProjects)» / «GigaCode · project · branch or folder» — never one name twice.
+  const parts: string[] = [agent?.label ?? session.agent]
+  if (ws?.kind === 'root') parts.push(`Все проекты (${basename(ws.path)})`)
+  else if (ws) parts.push(ws.name)
+  const here = basename(session.cwd)
+  const showFolder = !session.branch && ws?.kind !== 'root' && !parts.includes(here) && (!ws || normPath(ws.path) !== normPath(session.cwd))
   return (
     <div className="chat-meta" data-tip={session.cwd}>
-      <span>{agent?.label ?? session.agent}</span>
-      {ws && <span>{ws.name}</span>}
-      <span className="mono">{basename(session.cwd)}</span>
-      <span>{main ? 'основная копия' : 'рабочее дерево'}</span>
+      {parts.map((p) => <span key={p}>{p}</span>)}
+      {showFolder && <span className="mono">{here}</span>}
       {session.branch && <BranchPicker cwd={session.cwd} branch={session.branch}><Branch name={session.branch} /></BranchPicker>}
     </div>
   )

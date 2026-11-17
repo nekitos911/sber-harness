@@ -1,19 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Check, ChevronDown, RefreshCw } from 'lucide-react'
-import { useFeature, useStore } from '../../store'
+import { Check, ChevronDown, LoaderCircle, RefreshCw } from 'lucide-react'
+import { openScreen, useFeature, useStore } from '../../store'
 import { api, errorText } from '../../api'
 import { relTime } from '../../lib/format'
-import { FULL_ACCESS, GRADES, loadAgentMeta, loadSettings, modeShort, modelLabel, normModels, useAgentMeta, useSettings } from '../../lib/agents'
-import { ComboList, Popover, Segmented, type ComboItem, type Placement } from '../ui'
+import { GRADES, loadAgentMeta, loadSettings, modelLabel, useAgentMeta, useSettings } from '../../lib/agents'
+import { pickerModels } from '../../lib/models'
+import { useElapsed } from '../../lib/live'
+import { ComboList, Popover, type ComboItem, type Placement } from '../ui'
 
 interface Props {
   agentId: string
   /** Selected model id; null = the agent's default. */
   value: string | null
   onChange: (id: string | null) => void
-  /** Approval mode footer (composer): current mode and setter. */
-  mode?: string | null
-  onMode?: (m: string) => void
   /** 'inline' = quiet label in the composer bar, 'field' = select-like trigger (settings). */
   variant?: 'inline' | 'field'
   label: string
@@ -28,10 +27,11 @@ interface Props {
 }
 
 /**
- * Orca-style model picker: search, the agent's catalog (label, context, grade), models seen in past
- * sessions, «Использовать "…"» when nothing matches, and the approval mode as a footer.
+ * Orca-style model picker: search, every model of the agent's catalogue (label, context, grade, availability),
+ * models seen in past sessions, «Использовать "…"» when nothing matches, and the catalogue refresh. The approval mode
+ * has its own chip in the composer.
  */
-export function ModelPicker({ agentId, value, onChange, mode, onMode, variant = 'inline', label, placement = 'top-end', allowDefault = true, emptyText = 'по умолчанию', disabled, openKey }: Props) {
+export function ModelPicker({ agentId, value, onChange, variant = 'inline', label, placement = 'top-end', allowDefault = true, emptyText = 'по умолчанию', disabled, openKey }: Props) {
   const [open, setOpen] = useState(false)
   useEffect(() => {
     if (!openKey) return
@@ -44,10 +44,9 @@ export function ModelPicker({ agentId, value, onChange, mode, onMode, variant = 
   const settings = useSettings()
   const meta = useAgentMeta(open ? agentId : null)
   const conf = settings?.agents[agentId]
-  const catalog = useMemo(() => normModels(conf?.models ?? agent?.models), [conf?.models, agent?.models])
+  // The live catalogue (/api/state) is the list; settings only add labels. A short settings list must not hide models.
+  const catalog = useMemo(() => pickerModels(agent?.models, conf?.models), [conf?.models, agent?.models])
   const grades = conf?.modelGrades ?? {}
-  const modeLabels = conf?.approvalModeLabels ?? agent?.approvalModeLabels ?? {}
-  const modes = agent?.approvalModes ?? conf?.approvalModes ?? []
   const fallback = conf?.model ?? grades.default ?? null
 
   const pick = (id: string | null) => {
@@ -75,11 +74,11 @@ export function ModelPicker({ agentId, value, onChange, mode, onMode, variant = 
         onSelect: () => pick(null),
       })
     }
-    // Unavailable models stay selectable (the catalogue may be stale) but sink to the end, greyed.
-    for (const m of [...catalog].sort((x, y) => Number(x.available === false) - Number(y.available === false))) {
+    // Unavailable models stay selectable (the catalogue may be stale) but sit at the end, greyed; unchecked ones say so.
+    for (const m of catalog) {
       const g = gradeOf(m.id)
       const off = m.available === false
-      const sub = [off && 'недоступна', m.context && `контекст ${m.context}`, g.length && `уровень: ${g.join(', ')}`, m.description].filter(Boolean).join(' · ')
+      const sub = [off ? 'недоступна' : m.available == null && 'не проверено', m.context && `контекст ${m.context}`, g.length && `уровень: ${g.join(', ')}`, m.description].filter(Boolean).join(' · ')
       out.push({ key: m.id, text: `${m.label ?? ''} ${m.id}`, group: 'Модели', node: <span className="model-row" data-off={off || undefined}>{row(m.label ?? m.id, sub || m.id, value === m.id)}</span>, onSelect: () => pick(m.id) })
     }
     for (const id of meta?.seen?.models ?? []) {
@@ -123,35 +122,42 @@ export function ModelPicker({ agentId, value, onChange, mode, onMode, variant = 
           placeholder="Найти модель…"
           label="Модели"
           empty="Нет моделей в каталоге агента"
-          footer={<>
-            <CatalogRefresh agentId={agentId} />
-            {onMode && modes.length > 0 && (
-            <div className="picker-mode">
-              <span className="picker-mode-label">Режим</span>
-              <Segmented
-                size="sm"
-                label="Режим подтверждений"
-                value={mode ?? ''}
-                onChange={(m) => onMode(m)}
-                options={modes.map((m) => ({ value: m, label: modeShort(m), hint: modeLabels[m] ?? m, tone: FULL_ACCESS.has(m) ? 'access' : undefined }))}
-              />
-              {mode && modeLabels[mode] && <span className="picker-mode-hint">{modeLabels[mode]}</span>}
-            </div>
-            )}
-          </>}
+          footer={<CatalogRefresh agentId={agentId} />}
         />
       </Popover>
     </>
   )
 }
 
-/** «Обновить список · обновлено 3 ч назад»: re-discover the CLI's models; errors stay inline. */
+/**
+ * The catalogue refresh, with a state you can read: idle «Обновить список · обновлено 5 мин назад»; running «Спрашиваем
+ * GigaCode… 12 с»; failed «Не удалось получить список: …» + «Повторить»; a CLI that cannot start points to Settings.
+ */
 function CatalogRefresh({ agentId }: { agentId: string }) {
   const meta = useAgentMeta(agentId)
+  const label = useStore((s) => s.agents.find((a) => a.id === agentId)?.label ?? agentId)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
   const on = useFeature('models-refresh')
+  const running = busy || !!meta?.catalog?.running
+  const [since, setSince] = useState(0)
+  if (running && !since) setSince(Date.now())
+  if (!running && since) setSince(0)
+  const elapsed = useElapsed(since, running)
+  // The server is still asking the CLI (another refresh, startup discovery): follow it until it answers.
+  useEffect(() => {
+    if (!meta?.catalog?.running || busy) return
+    const t = window.setInterval(() => loadAgentMeta(agentId, true), 2000)
+    return () => window.clearInterval(t)
+  }, [meta?.catalog?.running, busy, agentId])
   if (!on || !meta || meta.catalog === undefined) return null // this server does not discover models
+  if (!meta.resolved.ok) {
+    return (
+      <div className="picker-refresh" data-state="broken">
+        <span>CLI не запускается — см. <button type="button" className="link" onClick={() => openScreen('settings')}>Настройки → {label}</button></span>
+      </div>
+    )
+  }
   const refresh = async () => {
     setBusy(true)
     setErr(null)
@@ -166,15 +172,31 @@ function CatalogRefresh({ agentId }: { agentId: string }) {
       setBusy(false)
     }
   }
+  const error = err ?? meta.catalog?.error ?? null
   const at = meta.catalog?.at
+  if (running) {
+    return (
+      <div className="picker-refresh" data-state="running" role="status">
+        <LoaderCircle className="spinner" aria-hidden />
+        <span>Спрашиваем {label}…{elapsed > 0 && <span className="num"> {elapsed} с</span>}</span>
+      </div>
+    )
+  }
+  if (error) {
+    return (
+      <div className="picker-refresh" data-state="error" role="alert">
+        <span className="picker-refresh-error">Не удалось получить список: {error}</span>
+        <button type="button" className="btn btn-sm" onClick={() => void refresh()}><RefreshCw />Повторить</button>
+      </div>
+    )
+  }
   return (
     <div className="picker-refresh">
-      <button type="button" className="btn btn-ghost btn-sm" disabled={busy} onClick={() => void refresh()}>
-        <RefreshCw className={busy ? 'spinner' : undefined} />
+      <button type="button" className="btn btn-ghost btn-sm" onClick={() => void refresh()}>
+        <RefreshCw />
         Обновить список
       </button>
-      <span className="muted">{busy ? 'спрашиваем CLI…' : at ? `обновлено ${relTime(at)} назад` : 'ещё не обновлялся'}</span>
-      {(err || meta.catalog?.error) && <span className="field-error">{err ?? meta.catalog?.error}</span>}
+      <span className="muted">{!at ? 'ещё не обновлялся' : relTime(at) === 'сейчас' ? 'обновлено только что' : `обновлено ${relTime(at)} назад`}</span>
     </div>
   )
 }

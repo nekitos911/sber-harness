@@ -1,3 +1,4 @@
+import { createPortal } from 'react-dom'
 import { useEffect, useLayoutEffect, useRef, type CSSProperties, type ReactNode, type RefObject } from 'react'
 import { ErrorBoundary } from '../ErrorBoundary'
 
@@ -50,15 +51,22 @@ export function Popover({ anchor, open, onClose, placement = 'bottom-start', mat
         el.style.top = `${Math.max(MARGIN, Math.min(r.top - 4, vh - h - MARGIN))}px`
         return
       }
+      // The wanted side when the content fits there, else the roomier one; never over the trigger: too tall → scrolls.
+      const full = Math.max(h, el.scrollHeight)
+      const above = r.top - GAP - MARGIN
+      const below = vh - r.bottom - GAP - MARGIN
       const wantTop = placement.startsWith('top')
-      const fitsBelow = r.bottom + GAP + h <= vh - MARGIN
-      const fitsAbove = r.top - GAP - h >= MARGIN
-      const top = wantTop ? (fitsAbove || !fitsBelow ? r.top - GAP - h : r.bottom + GAP) : (fitsBelow || !fitsAbove ? r.bottom + GAP : r.top - GAP - h)
+      const side = wantTop ? (full <= above || above >= below ? 'top' : 'bottom') : (full <= below || below >= above ? 'bottom' : 'top')
+      const room = Math.max(0, side === 'top' ? above : below)
+      const tall = full > room
+      el.style.maxHeight = tall ? `${room}px` : ''
+      el.style.overflowY = tall ? 'auto' : ''
+      const hh = Math.min(full, room)
       let left = placement.endsWith('end') ? r.right - w : r.left
       left = Math.min(Math.max(MARGIN, left), vw - w - MARGIN)
-      el.style.top = `${Math.max(MARGIN, Math.min(top, vh - h - MARGIN))}px`
+      el.style.top = `${side === 'top' ? r.top - GAP - hh : r.bottom + GAP}px`
       el.style.left = `${left}px`
-      el.dataset.side = top < r.top ? 'top' : 'bottom'
+      el.dataset.side = side
     }
     place()
     const target = initialFocus?.current ?? el.querySelector<HTMLElement>('input, [role="option"], [role="menuitem"], button, [tabindex="0"]')
@@ -103,8 +111,13 @@ export function Popover({ anchor, open, onClose, placement = 'bottom-start', mat
   if (!open) return null
   return (
     // React events still bubble through the component tree from the top layer: keep clicks from reaching row handlers.
-    <div ref={ref} popover="manual" role={role} aria-label={label} className={`popover ${className ?? ''}`} style={style} data-placement={placement} onClick={(e) => e.stopPropagation()}>
-      <ErrorBoundary area="это меню">{children}</ErrorBoundary>
-    </div>
+    // In <body> (or the open dialog, outside of which everything is inert): fixed positioning must not depend on a
+    // transformed ancestor or on a browser without the Popover API.
+    createPortal(
+      <div ref={ref} popover="manual" role={role} aria-label={label} className={`popover ${className ?? ''}`} style={style} data-placement={placement} onClick={(e) => e.stopPropagation()}>
+        <ErrorBoundary area="это меню">{children}</ErrorBoundary>
+      </div>,
+      anchor.current?.closest('dialog') ?? document.body,
+    )
   )
 }
