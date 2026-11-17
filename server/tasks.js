@@ -4,7 +4,9 @@
 export const STATUSES = ['backlog', 'todo', 'in_progress', 'review', 'done'];
 export const PRIORITIES = ['low', 'medium', 'high'];
 const EDITABLE = ['title', 'description', 'status', 'order', 'priority', 'deps', 'labels', 'workspaceId', 'parentId',
-  'targets', 'branch', 'ports', 'assigneeSessionId', 'externalId', 'externalUrl', 'source'];
+  'targets', 'branch', 'ports', 'assigneeSessionId', 'externalId', 'externalUrl', 'source',
+  'externalStatus', 'statusManual', 'hidden', 'takenAt', 'snapshot'];
+const DEFAULTS = { parentId: null, targets: null, branch: null, ports: [], externalStatus: null, statusManual: false, hidden: false, takenAt: null, snapshot: null };
 
 const fail = (status, message) => { throw Object.assign(new Error(message), { status }); };
 const isStrArr = (v) => Array.isArray(v) && v.every((x) => typeof x === 'string');
@@ -12,6 +14,10 @@ const defined = (f) => Object.fromEntries(Object.entries(f).filter(([, v]) => v 
 
 export function createTasks({ store, bus, defaultBase = 'main' }) {
   const db = store.db;
+  for (const t of db.tasks) {
+    for (const [k, v] of Object.entries(DEFAULTS)) t[k] ??= Array.isArray(v) ? [] : v;
+    t.targets ??= [defaultBase];
+  }
   const find = (id) => db.tasks.find((t) => t.id === id);
   const get = (id) => find(id) || fail(404, `task ${id} not found`);
   const column = (status, exceptId) => db.tasks.filter((t) => t.status === status && t.id !== exceptId).sort((a, b) => a.order - b.order);
@@ -49,7 +55,7 @@ export function createTasks({ store, bus, defaultBase = 'main' }) {
 
   function validate(f, selfId) {
     if ('title' in f && (typeof f.title !== 'string' || !f.title.trim())) fail(400, 'title must be a non-empty string');
-    for (const k of ['description', 'externalId', 'externalUrl', 'source', 'workspaceId', 'assigneeSessionId', 'parentId', 'branch']) {
+    for (const k of ['description', 'externalId', 'externalUrl', 'source', 'workspaceId', 'assigneeSessionId', 'parentId', 'branch', 'externalStatus']) {
       if (k in f && f[k] !== null && f[k] !== undefined && typeof f[k] !== 'string') fail(400, `${k} must be a string`);
     }
     if ('status' in f && !STATUSES.includes(f.status)) fail(400, `status must be one of ${STATUSES.join(', ')}`);
@@ -58,6 +64,9 @@ export function createTasks({ store, bus, defaultBase = 'main' }) {
     if ('labels' in f && !isStrArr(f.labels)) fail(400, 'labels must be an array of strings');
     if ('targets' in f && f.targets !== undefined && (!isStrArr(f.targets) || f.targets.some((t) => !t.trim()))) fail(400, 'targets must be an array of branch names');
     if ('ports' in f && !Array.isArray(f.ports)) fail(400, 'ports must be an array');
+    for (const k of ['statusManual', 'hidden']) if (k in f && typeof f[k] !== 'boolean') fail(400, `${k} must be a boolean`);
+    if ('takenAt' in f && f.takenAt !== null && !Number.isFinite(f.takenAt)) fail(400, 'takenAt must be a number or null');
+    if ('snapshot' in f && f.snapshot !== null && (typeof f.snapshot !== 'object' || Array.isArray(f.snapshot))) fail(400, 'snapshot must be an object or null');
     if ('deps' in f && f.deps !== undefined) {
       if (!isStrArr(f.deps)) fail(400, 'deps must be an array of task ids');
       for (const d of f.deps) {
@@ -113,6 +122,11 @@ export function createTasks({ store, bus, defaultBase = 'main' }) {
         externalId: f.externalId ?? null,
         externalUrl: f.externalUrl ?? null,
         source: f.source ?? null,
+        externalStatus: f.externalStatus ?? null,
+        statusManual: false,
+        hidden: false,
+        takenAt: null,
+        snapshot: null,
         log: [{ at: now, by, text: 'created' }],
         createdAt: now,
         updatedAt: now,
@@ -146,6 +160,7 @@ export function createTasks({ store, bus, defaultBase = 'main' }) {
       validate({ status });
       if (task.status !== status) task.log.push({ at: Date.now(), by: 'user', text: `status -> ${status}` });
       task.status = status;
+      task.statusManual = true; // a human moved the card: tracker sync no longer changes its column
       if (!beforeId) {
         task.order = endOrder(status, id);
         return emit(task);
@@ -167,8 +182,14 @@ export function createTasks({ store, bus, defaultBase = 'main' }) {
       return emit(task);
     },
 
+    /** Imported tasks are only hidden (re-import keeps them hidden); local tasks are deleted. */
     remove(id) {
-      get(id);
+      const task = get(id);
+      if (task.source) {
+        task.hidden = true;
+        emit(task);
+        return;
+      }
       db.tasks = db.tasks.filter((t) => t.id !== id);
       for (const t of db.tasks) {
         if (t.deps.includes(id) || t.parentId === id) {

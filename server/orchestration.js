@@ -8,9 +8,13 @@ import { newId } from './sessions.js';
 const fail = (status, message) => { throw Object.assign(new Error(message), { status }); };
 const HARNESS_CLI = path.join(CODE_ROOT, 'mcp', 'harness-mcp.js');
 const REPORT_RE = /^Worker report \((?:done|failed)\): ([\s\S]*)$/;
+const TASK_VARS = ['{taskUrl}', '{key}', '{id}', '{description}'];
 
-/** Replaces {name} with vars[name]; unknown placeholders are left as they are. */
-export const render = (tpl, vars) => String(tpl).replace(/\{(\w+)\}/g, (m, k) => (k in vars ? String(vars[k] ?? '') : m));
+/**
+ * Single pass with a replacer function: values are inserted literally ($&, $' stay as typed) and never
+ * expanded again; unknown {placeholders} are left as they are.
+ */
+export const render = (tpl, vars) => String(tpl).replace(/\{(\w+)\}/g, (m, k) => (Object.hasOwn(vars, k) ? String(vars[k] ?? '') : m));
 
 const obj = (properties, required = []) => ({ type: 'object', properties, required });
 const str = (description, extra = {}) => ({ type: 'string', description, ...extra });
@@ -30,12 +34,16 @@ function checkArgs(schema, args) {
 
 export function createOrchestration({ config, store, bus, tasks, sessions }) {
   const db = store.db;
-  const gitCfg = { defaultBase: 'main', branchTemplate: 'feature/{key}', portBranchTemplate: '{branch}-{target}', commitTitleTemplate: '{key}: {title}', prTitleTemplate: '{key}: {title}', ...config.git };
+  const gitCfg = () => ({ branchTemplate: 'feature/{key}', portBranchTemplate: '{branch}-{target}', commitTitleTemplate: '{key}: {title}', prTitleTemplate: '{key}: {title}', ...config.git });
   const label = (s) => `${s.title} (${s.id})`;
   const fromSession = (s, text) => `[harness] Message from ${label(s)}:\n${text}`;
   const isActive = (s) => !!s && s.kind === 'chat' && (s.status === 'idle' || s.status === 'running');
   const samePath = (a, b) => (process.platform === 'win32' ? path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase() : path.resolve(a) === path.resolve(b));
   const findWs = (id) => db.workspaces.find((w) => w.id === id) || null;
+  const starting = new Map(); // taskId -> Promise<Session> (single flight per task)
+
+  // orphan locks: assignees whose session no longer exists
+  for (const t of db.tasks) if (t.assigneeSessionId && !sessions.find(t.assigneeSessionId)) t.assigneeSessionId = null;
 
   function workspaceRef(ref) {
     const lower = String(ref).toLowerCase();
@@ -47,19 +55,13 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
     return isActive(s) ? s : null;
   }
 
-  function notify({ kind, sessionId = null, taskId = null, text }) {
-    const n = { id: newId('n'), at: Date.now(), read: false, kind, sessionId, taskId, text };
+  function notify({ kind, sessionId = null, taskId = null, text, options }) {
+    const n = { id: newId('n'), at: Date.now(), read: false, kind, sessionId, taskId, text, ...(options?.length ? { options } : {}) };
     db.notifications.push(n);
     if (db.notifications.length > 500) db.notifications.splice(0, db.notifications.length - 500);
     store.save();
     bus.send({ t: 'notify', n });
     return n;
-  }
-
-  function checkAgent(agent) {
-    const cfg = config.agents[agent] || fail(400, `unknown agent "${agent}"`);
-    if (cfg.enabled === false) fail(400, `agent "${agent}" is disabled in the config`);
-    return agent;
   }
 
   const lastSummary = (task) => {
@@ -74,79 +76,123 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
     tasks.update(task.id, { ports: [...task.ports.filter((p) => p.target !== rec.target), rec] }, 'harness');
   }
 
-  function taskPrompt(task, agent, { branch, cwd, ws }) {
+  function promptTemplate(agent) {
     const tpl = config.agents[agent]?.taskPromptTemplate ?? config.tasks?.promptTemplate ?? '{key}: {title}\n\n{description}';
-    return render(tpl, {
+    if (!TASK_VARS.some((v) => tpl.includes(v))) {
+      fail(400, `config error: the task prompt template for "${agent}" contains none of ${TASK_VARS.join(' ')}, so the agent would start without the task`);
+    }
+    return tpl;
+  }
+
+  function taskPrompt(task, s, { notes = '' } = {}) {
+    const agentCfg = config.agents[s.agent] || {};
+    const ws = findWs(s.workspaceId);
+    return render(promptTemplate(s.agent), {
       key: tasks.key(task),
       id: task.id,
       title: task.title,
       description: task.description,
       url: task.externalUrl || '',
+      taskUrl: task.externalUrl || tasks.key(task), // local tasks have no URL; the key still identifies them
       targets: task.targets.join(', '),
-      branch: branch || task.branch || '',
-      repo: ws?.name || path.basename(cwd),
+      branch: s.branch || task.branch || '',
+      repo: ws?.name || path.basename(s.cwd),
+      notes: notes.trim() ? ` ${notes.trim()}` : '',
+      runId: s.id,
+      registryDir: sessions.registryDir(s.id),
+      settingsPath: s.settingsPath || '',
+      approvalMode: s.approvalMode || agentCfg.approvalMode || '',
     });
   }
 
-  /** Worktree + branch for a task: branchTemplate with the task key, started from targets[0]. */
+  /** Worktree + branch for a task: branchTemplate with the task key, started from targets[0]; reused if present. */
   async function taskWorktree(task, cwd, explicitBranch) {
     if (!(await git.isRepo(cwd))) fail(400, `cannot create a worktree: ${cwd} is not a git repository`);
     let branch;
     if (explicitBranch) branch = git.sanitizeBranch(explicitBranch);
     else if (task.branch && (await git.branchExists(cwd, task.branch))) branch = task.branch;
-    else branch = await git.uniqueBranch(cwd, git.sanitizeBranch(render(gitCfg.branchTemplate, { key: tasks.key(task), id: task.id })), task.branch);
+    else branch = await git.uniqueBranch(cwd, git.sanitizeBranch(render(gitCfg().branchTemplate, { key: tasks.key(task), id: task.id })), task.branch);
+    const existed = (await git.worktrees(cwd)).some((w) => w.branch === branch);
     const start = await git.startPoint(cwd, task.targets[0]);
-    return git.addWorktree(cwd, { branch, start, worktreeRoot: config.worktreeRoot });
+    const wt = await git.addWorktree(cwd, { branch, start, worktreeRoot: config.worktreeRoot });
+    return { wt, created: !existed, repo: cwd };
   }
 
   /** Creates a worker chat session for `task` and sends it the first prompt. Used by worker_start, assign, start. */
   async function startWorker(task, o, caller) {
     const busy = activeWorker(task);
     if (busy) fail(409, `task ${task.id} already has an active worker (${busy.id})`);
+    if (starting.has(task.id)) fail(409, `task ${task.id} is being started right now`);
     const pending = task.deps.filter((d) => tasks.find(d)?.status !== 'done');
     if (pending.length) fail(409, `task ${task.id} has unfinished dependencies: ${pending.join(', ')}`);
-    const agent = checkAgent(o.agent || (caller?.kind === 'chat' ? caller.agent : null) || config.defaultAgent);
     if (o.worktree && !['current', 'new'].includes(o.worktree)) fail(400, 'worktree must be "current" or "new"');
+    const agent = o.agent || (caller?.kind === 'chat' ? caller.agent : null) || config.defaultAgent;
+    // fail fast, before any worktree or session exists
+    sessions.resolveAgent(agent);
+    if (!o.spec) promptTemplate(agent);
     const ws = o.workspace ? workspaceRef(o.workspace) : o.workspaceId ? findWs(o.workspaceId) || fail(404, `workspace ${o.workspaceId} not found`) : findWs(task.workspaceId);
-    let cwd = o.cwd ? path.resolve(o.cwd) : ws ? ws.path : caller?.cwd || config.root;
-    let branch;
-    if (o.worktree === 'new') {
-      const wt = await taskWorktree(task, cwd, o.branch);
-      cwd = wt.path;
-      branch = wt.branch;
-    } else {
-      branch = await git.currentBranch(cwd);
+
+    const run = (async () => {
+      let cwd = o.cwd ? path.resolve(o.cwd) : ws ? ws.path : caller?.cwd || config.root;
+      let branch;
+      let made = null;
+      if (o.worktree === 'new') {
+        made = await taskWorktree(task, cwd, o.branch);
+        cwd = made.wt.path;
+        branch = made.wt.branch;
+      } else {
+        branch = await git.currentBranch(cwd);
+      }
+      const key = tasks.key(task);
+      let s;
+      try {
+        s = await sessions.create({
+          kind: 'chat', agent, cwd, workspaceId: ws?.id, title: `${key}: ${task.title}`, role: 'worker',
+          parentId: caller?.id ?? null, taskId: task.id, model: o.model, branch,
+        });
+      } catch (e) {
+        if (made?.created) await git.removeWorktree(made.repo, made.wt.path).catch(() => {});
+        throw e;
+      }
+      const by = caller?.id || 'user';
+      const patch = { status: 'in_progress', assigneeSessionId: s.id };
+      if (!task.workspaceId && ws) patch.workspaceId = ws.id;
+      if (o.worktree === 'new' || (!task.branch && branch && !task.targets.includes(branch))) patch.branch = branch;
+      if (!task.takenAt) {
+        patch.takenAt = Date.now();
+        patch.snapshot = { title: task.title, description: task.description, externalStatus: task.externalStatus ?? null, at: patch.takenAt };
+      }
+      tasks.update(task.id, patch, by);
+      tasks.addLog(task.id, by, `worker ${s.id} started (${agent}) in ${cwd}${branch ? ` on ${branch}` : ''}`);
+      sessions.deliver(s.id, { from: by, text: o.spec ?? taskPrompt(task, s, { notes: o.notes }) });
+      return s;
+    })();
+    starting.set(task.id, run);
+    try {
+      return await run;
+    } finally {
+      starting.delete(task.id);
     }
-    const key = tasks.key(task);
-    const s = await sessions.create({
-      kind: 'chat', agent, cwd, workspaceId: ws?.id, title: `${key}: ${task.title}`, role: 'worker',
-      parentId: caller?.id ?? null, taskId: task.id, model: o.model, branch,
-    });
-    const by = caller?.id || 'user';
-    const patch = { status: 'in_progress', assigneeSessionId: s.id };
-    if (!task.workspaceId && ws) patch.workspaceId = ws.id;
-    if (o.worktree === 'new' || (!task.branch && branch && !task.targets.includes(branch))) patch.branch = branch;
-    tasks.update(task.id, patch, by);
-    tasks.addLog(task.id, by, `worker ${s.id} started (${agent}) in ${cwd}${branch ? ` on ${branch}` : ''}`);
-    sessions.deliver(s.id, { from: by, text: o.spec ?? taskPrompt(task, agent, { branch, cwd, ws }) });
-    return s;
   }
 
   /** Cherry-picks the task's commits into another target branch in a new worktree (see ARCHITECTURE.md). */
   async function port(task, target, { agent } = {}, caller = null) {
     if (typeof target !== 'string' || !target.trim()) fail(400, 'target is required');
-    if (!task.branch) fail(409, `task ${task.id} has no work branch yet; start it with a new worktree first`);
+    if (!task.branch) fail(409, `Task ${task.id} has no work branch yet: take it into work first.`);
     const primary = task.targets[0];
     if (target === primary) fail(400, `${target} is the primary target; ports go to the other targets`);
     const prev = task.ports.find((p) => p.target === target);
     if (prev?.status === 'clean' || prev?.status === 'done') return prev;
-    if (prev?.status === 'conflict' && isActive(sessions.find(prev.sessionId))) fail(409, `port of ${task.id} to ${target} is in progress (${prev.sessionId})`);
+    if (prev?.status === 'conflict' && isActive(sessions.find(prev.sessionId))) fail(409, `The port of ${task.id} to ${target} is already being resolved (${prev.sessionId}).`);
     const ws = findWs(task.workspaceId);
     const repo = ws?.path || sessions.find(task.assigneeSessionId)?.cwd || config.root;
+    const conflictAgent = agent || (caller?.kind === 'chat' ? caller.agent : null) || config.defaultAgent;
     const start = (await git.startPoint(repo, target)) || fail(400, `target branch ${target} not found locally or on origin`);
     const commits = (await git.revList(repo, `${primary}..${task.branch}`)) ?? (await git.revList(repo, `origin/${primary}..${task.branch}`));
     if (!commits) fail(400, `cannot list commits of ${task.branch} relative to ${primary}`);
-    const branch = await git.uniqueBranch(repo, git.sanitizeBranch(render(gitCfg.portBranchTemplate, { branch: task.branch, target, key: tasks.key(task) })));
+    if (!commits.length) fail(409, `Nothing to port yet: ${task.branch} has no commits ahead of ${primary}. Commit the work first.`);
+    sessions.resolveAgent(conflictAgent); // a conflict needs a worker: fail before creating the worktree
+    const branch = await git.uniqueBranch(repo, git.sanitizeBranch(render(gitCfg().portBranchTemplate, { branch: task.branch, target, key: tasks.key(task) })));
     const wt = await git.addWorktree(repo, { branch, start, worktreeRoot: config.worktreeRoot });
     const status = await git.cherryPick(wt.path, commits);
     const rec = { target, branch, cwd: wt.path, status, sessionId: null };
@@ -155,8 +201,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
     tasks.addLog(task.id, by, `port to ${target}: ${status} (${commits.length} commit(s) on ${branch})`);
     if (status === 'conflict') {
       const s = await sessions.create({
-        kind: 'chat', agent: checkAgent(agent || (caller?.kind === 'chat' ? caller.agent : null) || config.defaultAgent),
-        cwd: wt.path, workspaceId: ws?.id, title: `${tasks.key(task)}: port to ${target}`, role: 'worker',
+        kind: 'chat', agent: conflictAgent, cwd: wt.path, workspaceId: ws?.id, title: `${tasks.key(task)}: port to ${target}`, role: 'worker',
         parentId: caller?.id ?? null, taskId: task.id, branch,
       });
       rec.sessionId = s.id;
@@ -181,7 +226,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
         '- After starting workers END YOUR TURN. The harness wakes you with a message for every worker report, question or escalation. Do not poll.',
         '- Answer worker questions with send_message(to: <worker session id>, body); ask the user with send_message(to: "user") when needed.',
         '- Several repositories: one task per repository. Call workspace_list, then create one subtask per repo with task_create({ parent_id, workspace, ... }). Subtasks share the parent key, so every repo gets the same branch.',
-        '- Several target branches (task.targets): the work happens on targets[0]; after its worker reports done call task_port({ task_id, target }) for every other target. One PR per repo per target.',
+        '- Several target branches (task.targets): the work happens on targets[0]; once its commits exist call task_port({ task_id, target }) for every other target. One PR per repo per target.',
       ].join('\n');
     }
     if (s.role !== 'worker') return '';
@@ -189,7 +234,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
     const parent = s.parentId && sessions.find(s.parentId);
     const who = `Session: ${s.id}; parent: ${parent ? label(parent) : 'none (your reports go to the user)'}.`;
     const common = [
-      '- Need a decision? Call ask(question), then END YOUR TURN; the answer arrives as your next message.',
+      '- Need a decision? Call ask(question, options?), then END YOUR TURN; the answer arrives as your next message.',
       '- Never use built-in sub-agent tools (Task, Agent or similar).',
       '- Finish with exactly one worker_done(summary, status: "done" | "failed"): what changed, evidence (commands and results), open blockers.',
       tools,
@@ -204,18 +249,21 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
         `Working directory: ${s.cwd}.`,
         'Steps: run git status; resolve every conflict keeping the intent of the original change; git add the files;',
         'run `git -c core.editor=true cherry-pick --continue` (repeat until the cherry-pick finishes; never abort or skip commits without asking);',
-        'run the project checks if any. Stay on this branch, do not push.',
+        'run the project checks if any. Stay on this branch; do not push, merge or create pull requests.',
         ...common,
       ].join('\n');
     }
+    const commitRule = config.orchestration?.workerMayCommit
+      ? `- Commit your changes; every commit message must start with "${key}: ". Do not push, merge or create pull requests.`
+      : '- Do NOT commit, push, merge, create pull requests or change the tracker unless the task explicitly says so: leave your changes in the working tree; the user reviews and commits them from the harness UI (the commit message is prefilled from your worker_done summary).';
     return [
       `[harness] You are a WORKER session in a local multi-agent harness. ${who}`,
       `Task: ${key} - ${task.title} (task id ${task.id}).`,
       `Working directory: ${s.cwd}. Branch: ${s.branch || task.branch || '(current)'}. Base branch (primary target): ${task.targets[0]}.`,
       'Rules:',
       '- Do only this task and only inside the working directory.',
-      '- Stay on your branch (do not switch or create branches) and do not push.',
-      `- Commit your changes; every commit message must start with "${key}: ".`,
+      '- Stay on your branch: do not switch or create branches.',
+      commitRule,
       ...common,
     ].join('\n');
   }
@@ -352,17 +400,19 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
     },
     {
       name: 'ask',
-      description: 'Ask your coordinator (or the user) a question. Then END YOUR TURN: the answer arrives as your next message.',
-      inputSchema: obj({ question: str('the question') }, ['question']),
+      description: 'Ask your coordinator (or the user) a question, optionally with answer options. Then END YOUR TURN: the answer arrives as your next message.',
+      inputSchema: obj({ question: str('the question'), options: strArr('suggested answers (rendered as buttons)') }, ['question']),
       run: (a, c) => {
         const note = 'End your turn now; the answer will arrive as your next message.';
+        const options = a.options?.length ? a.options : undefined;
         if (c) sessions.flag(c.id, 'communicated');
         const parent = c?.parentId && sessions.find(c.parentId);
         if (parent) {
-          sessions.deliver(parent.id, { from: c.id, text: fromSession(c, `Question: ${a.question}\n(Answer with send_message to "${c.id}".)`) });
+          const choices = options ? `\nOptions: ${options.map((o) => `"${o}"`).join(', ')}` : '';
+          sessions.deliver(parent.id, { from: c.id, options, text: fromSession(c, `Question: ${a.question}${choices}\n(Answer with send_message to "${c.id}".)`) });
           return { delivered: parent.id, note };
         }
-        notify({ kind: 'question', sessionId: c?.id ?? null, taskId: c?.taskId ?? null, text: a.question });
+        notify({ kind: 'question', sessionId: c?.id ?? null, taskId: c?.taskId ?? null, text: a.question, options });
         return { delivered: 'user', note };
       },
     },
@@ -384,7 +434,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
           tasks.update(task.id, { status: status === 'done' ? 'review' : 'todo' }, c.id);
           tasks.addLog(task.id, c.id, `Worker report (${status}): ${a.summary}`);
         }
-        const ready = tasks.list({ ready: true }).filter((t) => !activeWorker(t));
+        const ready = tasks.list({ ready: true }).filter((t) => !activeWorker(t) && !t.hidden);
         const what = portRec ? ` the port of ${tasks.key(task)} to ${portRec.target}` : task ? ` task ${tasks.key(task)} "${task.title}" (${task.id})` : '';
         const report = [
           `Worker ${label(c)} finished${what} with status: ${status}.`,
@@ -405,6 +455,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
     if (typeof cwd !== 'string' || !cwd) fail(400, 'cwd is required');
     const dir = path.resolve(cwd);
     const st = await git.status(dir);
+    const g = gitCfg();
     let task = null;
     let portRec = null;
     for (const t of db.tasks) {
@@ -426,7 +477,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
       const cands = db.tasks.filter((t) => t.branch === st.branch || hasKey(t));
       task = cands.find((t) => inRepo(t) && t.branch === st.branch) ?? cands.find(inRepo) ?? cands.find((t) => t.branch === st.branch) ?? cands[0] ?? null;
     }
-    const base = portRec?.target ?? task?.targets[0] ?? gitCfg.defaultBase;
+    const base = portRec?.target ?? task?.targets[0] ?? g.defaultBase;
     const key = task ? tasks.key(task) : null;
     const fallback = st.branch && st.branch !== base ? st.branch : st.files[0] ? `Update ${st.files[0].path}` : 'Update';
     const title = (tpl) => (task ? render(tpl, { key, id: task.id, title: task.title, branch: st.branch || '', target: base }) : fallback);
@@ -440,9 +491,9 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
       key,
       branch: st.branch,
       base,
-      commit: { title: title(gitCfg.commitTitleTemplate), body: [summary, files].filter(Boolean).join('\n\n') },
+      commit: { title: title(g.commitTitleTemplate), body: [summary, files].filter(Boolean).join('\n\n') },
       pr: {
-        title: title(gitCfg.prTitleTemplate),
+        title: title(g.prTitleTemplate),
         body: [
           desc && (desc.length > 600 ? `${desc.slice(0, 600)}...` : desc),
           task?.externalUrl,
@@ -459,6 +510,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
     notify,
     preamble,
     gitSuggest,
+    promptTemplate,
     port: (taskId, target, o) => port(tasks.get(taskId), target, o, null),
     tools: TOOLS.map(({ name, description, inputSchema }) => ({ name, description, inputSchema })),
 
@@ -477,18 +529,25 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
       const s = sessions.get(body.sessionId);
       const busy = activeWorker(task);
       if (busy && busy.id !== s.id) fail(409, `task ${task.id} already has an active worker (${busy.id})`);
+      const text = taskPrompt(task, s);
       tasks.update(task.id, { status: 'in_progress', assigneeSessionId: s.id }, 'user');
       if (s.kind === 'chat' && !s.taskId) sessions.update(s.id, { taskId: task.id });
-      sessions.deliver(s.id, { from: 'user', text: taskPrompt(task, s.agent, { branch: s.branch, cwd: s.cwd, ws: findWs(s.workspaceId) }) });
+      sessions.deliver(s.id, { from: 'user', text });
       return s;
     },
 
-    /** POST /api/tasks/:id/start ("take into work"): default agent, new worktree in the task's workspace. */
-    async start(taskId, { agent } = {}) {
+    /**
+     * POST /api/tasks/:id/start ("take into work"): default agent, new worktree in the task's workspace.
+     * A task with a live worker (or a start in flight) returns that session with jumped: true.
+     */
+    async start(taskId, { agent, notes } = {}) {
       const task = tasks.get(taskId);
+      const live = activeWorker(task);
+      if (live) return { ...live, jumped: true };
+      if (starting.has(task.id)) return { ...(await starting.get(task.id)), jumped: true };
       const ws = findWs(task.workspaceId) || (db.workspaces.length === 1 ? db.workspaces[0] : null);
       if (!ws) fail(400, `task ${task.id} has no workspace; set its workspace first`);
-      return startWorker(task, { agent: agent || config.defaultAgent, workspaceId: ws.id, worktree: ws.isGit ? 'new' : 'current' }, null);
+      return startWorker(task, { agent: agent || config.defaultAgent, workspaceId: ws.id, worktree: ws.isGit ? 'new' : 'current', notes }, null);
     },
   };
 }

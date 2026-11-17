@@ -1,4 +1,5 @@
-// Loads harness.config.json, deep-merges harness.config.local.json and programmatic overrides on top.
+// Loads the config file (HARNESS_CONFIG or <root>/harness.config.json), deep-merges its ".local" sibling
+// (harness.config.local.json) and programmatic overrides on top.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -22,22 +23,36 @@ export function expandHome(p) {
     : p;
 }
 
-function readJson(file) {
-  return fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : {};
+export function readJsonFile(file) {
+  if (!fs.existsSync(file)) return {};
+  try {
+    return JSON.parse(fs.readFileSync(file, 'utf8').replace(/^﻿/, ''));
+  } catch (e) {
+    throw new Error(`Invalid JSON in ${file}: ${e.message}`);
+  }
 }
 
-/** @returns {object} config with absolute `root` and `dataDir` */
-export function loadConfig({ root = CODE_ROOT, overrides = {}, dataDir } = {}) {
-  let cfg = readJson(path.join(root, 'harness.config.json'));
-  cfg = deepMerge(cfg, readJson(path.join(root, 'harness.config.local.json')));
+export const localFileFor = (file) => file.replace(/(\.json)?$/i, '.local.json');
+
+/** @returns {object} config with absolute `root`, `dataDir`, `configFile`, `localConfigFile` */
+export function loadConfig({ root = CODE_ROOT, overrides = {}, dataDir, configFile } = {}) {
+  const file = path.resolve(root, expandHome(configFile || process.env.HARNESS_CONFIG || 'harness.config.json'));
+  const localFile = localFileFor(file);
+  let cfg = readJsonFile(file);
+  cfg = deepMerge(cfg, readJsonFile(localFile));
   cfg = deepMerge(cfg, overrides);
   cfg.root = root;
+  cfg.configFile = file;
+  cfg.localConfigFile = localFile;
   cfg.dataDir = path.resolve(root, expandHome(dataDir || cfg.dataDir || './data'));
   cfg.host ||= '127.0.0.1';
   cfg.agents ||= {};
   cfg.agentMcpServers ||= {};
   cfg.mcpServers ||= {};
   cfg.integrations ||= {};
+  cfg.git = { defaultBase: 'main', ...cfg.git };
+  cfg.session = { idleWindowSec: 90, ...cfg.session };
+  cfg.orchestration = { workerMayCommit: false, ...cfg.orchestration };
   const shell = cfg.shell || {};
   if (process.platform !== 'win32' && (!shell.command || /powershell(\.exe)?$/i.test(shell.command))) {
     cfg.shell = { command: process.env.SHELL || '/bin/bash', args: [] };
@@ -45,4 +60,17 @@ export function loadConfig({ root = CODE_ROOT, overrides = {}, dataDir } = {}) {
     cfg.shell = { command: shell.command || 'powershell.exe', args: shell.args || [] };
   }
   return cfg;
+}
+
+const SECRET_KEY = /token|secret|password|passwd|authorization|api[-_]?key/i;
+
+/** Config strings that look like a literal credential (they belong in the secrets file). */
+export function findLiteralSecrets(obj, prefix = '') {
+  const hits = [];
+  for (const [k, v] of Object.entries(obj || {})) {
+    const p = prefix ? `${prefix}.${k}` : k;
+    if (isObj(v)) hits.push(...findLiteralSecrets(v, p));
+    else if (typeof v === 'string' && SECRET_KEY.test(k) && v.length >= 16 && !v.includes('$') && /^[\w+/=.:-]+(\s[\w+/=.:-]+)?$/.test(v) && new Set(v).size >= 10) hits.push(p);
+  }
+  return hits;
 }

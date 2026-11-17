@@ -181,8 +181,27 @@ export async function addWorktree(cwd, { branch, start = null, worktreeRoot = nu
   return { path: dir, branch, head: await out(dir, ['rev-parse', 'HEAD']).catch(() => ''), main: false };
 }
 
-export async function removeWorktree(cwd, wtPath, force = false) {
-  await git(cwd, ['worktree', 'remove', ...(force ? ['--force'] : []), wtPath]);
+/** `worktree remove --force` + `prune --expire now`, then whatever is left of the folder. */
+export async function removeWorktree(cwd, wtPath) {
+  const dir = path.resolve(wtPath);
+  const r = await git(cwd, ['worktree', 'remove', '--force', dir], { ok: [0, 128] });
+  await git(cwd, ['worktree', 'prune', '--expire', 'now'], { ok: [0, 128] });
+  if (!fs.existsSync(dir)) return;
+  let target = dir;
+  if (process.platform === 'win32') {
+    // a locked folder can still be renamed; the stale copy is removed with retries and never blocks a new worktree
+    try {
+      target = `${dir}.stale-${Date.now()}`;
+      fs.renameSync(dir, target);
+    } catch {
+      target = dir;
+    }
+  }
+  try {
+    await fs.promises.rm(target, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+  } catch (e) {
+    if (r.code) fail(400, `cannot remove worktree ${dir}: ${r.stderr.trim() || e.message}`);
+  }
 }
 
 /** Repository id for PR services: "owner/name" from the origin URL, else the folder name. */

@@ -3,55 +3,65 @@
  *  AGENT LAUNCHERS — the ONLY file in the harness with knowledge of concrete agent CLIs.
  * ============================================================================================
  *
- *  A launcher turns one chat turn into an argv + env for a headless CLI run, writes the per-session
- *  config files the CLI needs, and normalizes the CLI's stdout (NDJSON, one object per line) into
- *  NormalizedEvent objects (see docs/ARCHITECTURE.md "Agent launchers"). runner.js spawns the
- *  process (never through a shell; the prompt is ONE argv element); sessions.js applies the events.
+ *  A launcher turns one chat turn into an executable + argv + env for a headless CLI run, writes the
+ *  per-session config files the CLI needs, and normalizes the CLI's stdout (NDJSON, one object per line)
+ *  into NormalizedEvent objects (docs/ARCHITECTURE.md "Agent launchers"). runner.js spawns the process
+ *  (never through a shell; the prompt is ONE argv element); sessions.js applies the events.
  *
  *  Shape:
  *    { id, defaults: { command, settingsEnv?, firstEventTimeoutMs },
- *      buildArgs(ctx) -> string[]       argv after the executable
- *      env(ctx) -> {}                    extra env vars (e.g. path of the per-session settings.json)
- *      prepare(ctx)                      write runs/<sid>/settings.json or mcp.json (idempotent, every turn)
- *      parse(obj, state) -> events[]     one parsed stdout line -> 0..n NormalizedEvents }
+ *      resolve?(agentCfg) -> { file, args, env }   executable (+ leading args, env); default: runner.resolveCommand
+ *      buildArgs(ctx) -> string[]                   argv after resolve().args
+ *      env(ctx) -> {}                               extra env vars (e.g. path of the per-session settings.json)
+ *      prepare(ctx)                                 write runs/<sid>/settings.json or mcp.json (idempotent, every turn)
+ *      parse(obj, state) -> events[]                one parsed stdout line -> 0..n NormalizedEvents }
  *  ctx = { prompt, session, agentCfg, settingsPath, mcpConfigPath, harnessMcp, agentMcpServers }
+ *  resolve() runs before anything is created (worktree, session) so a broken install fails fast.
  *
- *  HOW TO ADD A LAUNCHER: write an object of the shape above (reuse `geminiFamily(...)` if the CLI
- *  is a Gemini-CLI fork), add it to `launchers` at the bottom, then reference it from
- *  harness.config.json: "agents": { "<agentId>": { "launcher": "<launcherId>", "command": ... } }.
- *  `command` may be a string (looked up in PATH; Windows npm .cmd shims are unwrapped to
- *  `node <entry.js>`) or an argv array such as ["node", "C:/path/to/cli.js"].
+ *  HOW TO ADD A LAUNCHER: write an object of the shape above (reuse `geminiFamily(...)` for Gemini-CLI forks),
+ *  add it to `launchers` at the bottom and reference it from the config:
+ *  "agents": { "<agentId>": { "launcher": "<launcherId>", "command": ... } }.
  *
- *  GigaCode (target CLI, not installed on the dev machine) — VERIFY on the target machine:
- *   1. The env var that points the CLI at a settings file: agents.gigacode.settingsEnv in config
- *      (currently GIGACODE_CLI_SYSTEM_SETTINGS_PATH, a guess modeled on GEMINI_CLI_SYSTEM_SETTINGS_PATH).
- *      Check: run one turn, then confirm the `harness` MCP tools are visible to the agent.
- *   2. The stream-json event shapes. `test/fixtures/gigacode.stream.ndjson` holds the ASSUMED
- *      (Gemini-CLI style) shape. Replace it with a real capture:
- *        gigacode -p "list files, then say hi" --output-format stream-json --approval-mode yolo > test/fixtures/gigacode.stream.ndjson
- *      and fix `normalize()` + test/normalizer.test.js until the test passes. Lines the
- *      normalizer does not understand become `meta` events and are written to runs/<sid>/stderr.log.
- *   3. Approval mode names (agents.gigacode.approvalModes) and that `--resume <id>` takes the
- *      session id from the stream (requires settings `chatRecording: true`; the CLI finds the
- *      transcript by cwd, so cwd + settings path are frozen per session).
- *   4. How built-in sub-agents are disabled (put the CLI's tool-exclude setting into
- *      agents.gigacode.settings, e.g. { "tools": { "exclude": [...] } } — exact key unknown).
+ *  GigaCode — facts from the target machine (docs/ARCHITECTURE.md "GigaCode launcher: known facts"):
+ *   - command = the gigacode.cmd shim. It is resolved to <shimDir>/runtime/node/node.exe + <shimDir>/lib/cli-entry.js,
+ *     else the js entry parsed from the shim text, else the explicit pair agents.gigacode.node + cliEntry.
+ *   - cli-entry.js refuses to run unless env GIGACODE_PACKAGE_IDENTITY (64 hex, read from the shim's
+ *     `set "GIGACODE_PACKAGE_IDENTITY=..."`) and GIGACODE_PACKAGE_LAUNCHER (the shim path) are set.
+ *   - argv: [...nodeArgs, cliEntry, (--resume <id>)?, -p, <prompt>, --approval-mode, <mode>, --output-format, stream-json, (--model <m>)?]
+ *   - settings: env GIGACODE_SYSTEM_SETTINGS_PATH -> runs/<sid>/settings.json =
+ *     { agents: { modelGrades, allowedGrades }, chatRecording: true, mcpServers: { harness, ...agentMcpServers } }.
+ *     Never `permissions` (the CLI layers this file over ~/.gigacode/settings.json, which owns them).
+ *  STILL TO VERIFY on the target machine: the stream-json event shapes. test/fixtures/gigacode.stream.ndjson holds
+ *  the ASSUMED (Gemini-CLI style) shape; replace it with a real capture
+ *    gigacode -p "list files, then say hi" --approval-mode auto --output-format stream-json > test/fixtures/gigacode.stream.ndjson
+ *  and fix normalize() + test/normalizer.test.js until green. Lines the normalizer does not understand become
+ *  `meta` events (written to runs/<sid>/stderr.log); non-JSON lines are shown in the chat as a system message.
  * ============================================================================================
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { CODE_ROOT, deepMerge, expandHome } from './config.js';
+import { CODE_ROOT } from './config.js';
 import { writeAtomic } from './store.js';
+import { locate, shimJsEntry, resolveCommand } from './runner.js';
 
 // ---------------------------------------------------------------------------------------------
 // Tolerant stream-json normalizer: Gemini-CLI style and Claude-Code style (Qwen Code uses the latter).
 // ---------------------------------------------------------------------------------------------
 
 const asText = (v) => (typeof v === 'string' ? v : v == null ? '' : JSON.stringify(v));
+const num = (...vals) => vals.reduce((sum, v) => sum + (Number.isFinite(v) ? v : 0), 0);
 
 function contentText(c) {
   if (Array.isArray(c)) return c.map((p) => (typeof p === 'string' ? p : p?.text ?? '')).join('');
   return asText(c);
+}
+
+/** Token counts from a result event: Claude `usage`, Gemini `stats` (several spellings). */
+function tokens(o) {
+  const u = o.usage || o.stats || {};
+  const tokensIn = num(u.input_tokens, u.input_token_count, u.prompt_token_count, u.cache_read_input_tokens, u.cache_creation_input_tokens);
+  const tokensOut = num(u.output_tokens, u.output_token_count, u.candidates_token_count);
+  return tokensIn || tokensOut ? { tokensIn, tokensOut } : {};
 }
 
 /** @returns {Array<object>} NormalizedEvents for one parsed stdout object. `state` lives for one turn. */
@@ -123,7 +133,7 @@ export function normalize(o, state = {}) {
     case 'result': {
       const isError = o.is_error === true || o.status === 'error' || (typeof o.subtype === 'string' && o.subtype.startsWith('error'));
       const text = typeof o.result === 'string' ? o.result : typeof o.response === 'string' ? o.response : isError && o.error ? asText(o.error.message ?? o.error) : null;
-      out.push({ type: 'result', text, isError });
+      out.push({ type: 'result', text, isError, ...tokens(o) });
       break;
     }
   }
@@ -137,27 +147,67 @@ export function normalize(o, state = {}) {
 
 // yargs/commander would read a prompt starting with "-" as a flag.
 const argPrompt = (p) => (p.startsWith('-') ? ` ${p}` : p);
+const fail = (message) => { throw Object.assign(new Error(message), { status: 400 }); };
+const exists = (p) => !!p && fs.existsSync(p);
 
-function readUserMcp(file) {
-  if (!file) return {};
-  try {
-    return JSON.parse(fs.readFileSync(expandHome(file), 'utf8')).mcpServers || {};
-  } catch {
-    return {};
-  }
+/** Per-session settings.json for the Gemini-CLI family. Never contains `permissions`. */
+export function sessionSettings({ agentCfg, harnessMcp, agentMcpServers }) {
+  const { permissions, agents, mcpServers, ...rest } = agentCfg.settings || {};
+  return {
+    ...rest,
+    agents: { ...agents, modelGrades: agents?.modelGrades || {}, allowedGrades: agents?.allowedGrades || [] },
+    chatRecording: true,
+    mcpServers: { ...agentMcpServers, harness: { ...harnessMcp, trust: true } },
+  };
 }
 
-/** Gemini-CLI argv family: gigacode, qwen, gemini, mock. They differ only by defaults. */
-function geminiFamily(id, defaults) {
+export function shimIdentity(text) {
+  return text.match(/set\s+"GIGACODE_PACKAGE_IDENTITY=([0-9a-f]{64})"/i)?.[1] || null;
+}
+
+/** gigacode.cmd shim -> bundled node + cli-entry.js + identity env (see header). Throws a 400 with a clear message. */
+export function resolveGigacode(agentCfg, defaultCommand = 'gigacode') {
+  const command = agentCfg.command || defaultCommand;
+  const shim = typeof command === 'string' ? locate(command) : null;
+  if (!shim) fail(`GigaCode launcher not found: ${JSON.stringify(command)}. Set agents.gigacode.command to the path of gigacode.cmd.`);
+  const text = fs.readFileSync(shim, 'utf8');
+  const identity = shimIdentity(text);
+  if (!identity) fail(`GIGACODE_PACKAGE_IDENTITY not found in ${shim}; the CLI refuses to start without it. Point agents.gigacode.command at the gigacode.cmd shim.`);
+  let node;
+  let entry;
+  if (agentCfg.node || agentCfg.cliEntry) {
+    if (!agentCfg.node || !agentCfg.cliEntry) fail('agents.gigacode.node and agents.gigacode.cliEntry must be set together (or both null).');
+    for (const k of ['node', 'cliEntry']) if (!exists(agentCfg[k])) fail(`agents.gigacode.${k} does not exist: ${agentCfg[k]}`);
+    node = agentCfg.node;
+    entry = agentCfg.cliEntry;
+  } else {
+    const dir = path.dirname(shim);
+    const bundledNode = path.join(dir, 'runtime', 'node', process.platform === 'win32' ? 'node.exe' : 'node');
+    const bundledEntry = path.join(dir, 'lib', 'cli-entry.js');
+    entry = exists(bundledEntry) ? bundledEntry : shimJsEntry(shim, text);
+    node = exists(bundledNode) ? bundledNode : process.execPath;
+    if (!exists(entry)) fail(`Cannot find the GigaCode cli entry next to ${shim} (expected ${bundledEntry}). Set agents.gigacode.node and cliEntry.`);
+  }
+  return {
+    file: node,
+    args: [...(agentCfg.nodeArgs || []), entry],
+    env: { GIGACODE_PACKAGE_IDENTITY: identity, GIGACODE_PACKAGE_LAUNCHER: shim },
+  };
+}
+
+/** Gemini-CLI argv family: gigacode, qwen, gemini, mock. They differ only by defaults (and gigacode's resolve). */
+function geminiFamily(id, defaults, resolve) {
   return {
     id,
     defaults,
+    resolve: resolve || ((agentCfg) => ({ ...resolveCommand(agentCfg.command || defaults.command), env: {} })),
     buildArgs({ prompt, session, agentCfg }) {
       const args = [];
       if (session.externalSessionId) args.push('--resume', session.externalSessionId);
-      args.push('-p', argPrompt(prompt), '--output-format', 'stream-json');
+      args.push('-p', argPrompt(prompt));
       const mode = session.approvalMode || agentCfg.approvalMode;
       if (mode) args.push('--approval-mode', mode);
+      args.push('--output-format', 'stream-json');
       const model = session.model || agentCfg.model;
       if (model) args.push('--model', model);
       return args;
@@ -166,15 +216,8 @@ function geminiFamily(id, defaults) {
       const name = agentCfg.settingsEnv || defaults.settingsEnv;
       return name ? { [name]: settingsPath } : {};
     },
-    prepare({ agentCfg, settingsPath, harnessMcp, agentMcpServers }) {
-      const settings = deepMerge({}, agentCfg.settings || {});
-      settings.mcpServers = {
-        ...readUserMcp(agentCfg.inheritUserMcpFrom),
-        ...settings.mcpServers,
-        ...agentMcpServers,
-        harness: { ...harnessMcp, trust: true },
-      };
-      writeAtomic(settingsPath, JSON.stringify(settings, null, 2));
+    prepare(ctx) {
+      writeAtomic(ctx.settingsPath, JSON.stringify(sessionSettings(ctx), null, 2));
     },
     parse: normalize,
   };
@@ -183,6 +226,7 @@ function geminiFamily(id, defaults) {
 const claude = {
   id: 'claude',
   defaults: { command: 'claude', firstEventTimeoutMs: 60000 },
+  resolve: (agentCfg) => ({ ...resolveCommand(agentCfg.command || 'claude'), env: {} }),
   buildArgs({ prompt, session, agentCfg, mcpConfigPath }) {
     const args = ['-p', argPrompt(prompt), '--output-format', 'stream-json', '--verbose'];
     const mode = session.approvalMode || agentCfg.approvalMode;
@@ -203,7 +247,7 @@ const claude = {
 };
 
 export const launchers = {
-  gigacode: geminiFamily('gigacode', { command: 'gigacode', settingsEnv: 'GIGACODE_CLI_SYSTEM_SETTINGS_PATH', firstEventTimeoutMs: 30000 }),
+  gigacode: geminiFamily('gigacode', { command: 'gigacode', settingsEnv: 'GIGACODE_SYSTEM_SETTINGS_PATH', firstEventTimeoutMs: 30000 }, (cfg) => resolveGigacode(cfg)),
   qwen: geminiFamily('qwen', { command: 'qwen', settingsEnv: 'QWEN_CODE_SYSTEM_SETTINGS_PATH', firstEventTimeoutMs: 30000 }),
   gemini: geminiFamily('gemini', { command: 'gemini', settingsEnv: 'GEMINI_CLI_SYSTEM_SETTINGS_PATH', firstEventTimeoutMs: 30000 }),
   claude,

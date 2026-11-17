@@ -1,15 +1,17 @@
 // Console-level MCP client: the harness itself calls MCP servers (task tracker, PR service).
-// Transports: stdio (newline-delimited JSON-RPC) and streamable HTTP (POST; JSON or SSE response; Mcp-Session-Id).
-// Lazy connect, per-call timeout, secrets ({ "<server>": { env, headers } }) merged from the secrets file.
+// Servers: config.mcpServers merged over the mcpServers of config.mcpServersFrom (~/.gigacode/settings.json,
+// env CONSOLE_MCP_SETTINGS). Transports: stdio (newline-delimited JSON-RPC) and streamable HTTP (POST; JSON or
+// SSE response; Mcp-Session-Id). Every call connects, initializes, calls and closes (per-call timeout).
+// Secrets (docs/ARCHITECTURE.md "Console MCP"): resolved at call time, never logged or returned by an API.
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { expandHome } from './config.js';
+import { deepMerge, expandHome } from './config.js';
 import { resolveCommand, killTree } from './runner.js';
 
 const PROTOCOL = '2025-06-18';
 const CLIENT_INFO = { name: 'sber-harness', version: '0.1.0' };
-const fail = (status, message) => { throw Object.assign(new Error(message), { status }); };
+const fail = (status, message, extra = {}) => { throw Object.assign(new Error(message), { status, ...extra }); };
 
 /** Tool result -> value: structuredContent, else JSON of the first text content, else that text. */
 export function toolResultValue(result) {
@@ -23,10 +25,82 @@ export function toolResultValue(result) {
   }
 }
 
+// ---- secrets ----
+
 export function secretsFile(config) {
+  const fromEnv = process.env.HARNESS_MCP_SECRETS || process.env.CONSOLE_MCP_SECRETS;
+  if (fromEnv) return path.resolve(expandHome(fromEnv));
   if (config.mcpSecretsFile) return path.resolve(config.root, expandHome(config.mcpSecretsFile));
-  return process.env.HARNESS_MCP_SECRETS || path.join(config.dataDir, 'mcp-secrets.json');
+  return path.join(config.dataDir, 'mcp-secrets.json');
 }
+
+const canon = (name) => String(name).replace(/\//g, '_').toLowerCase();
+
+/** Secrets file -> Map(canonical name -> { name, value }). JSON map, `name=value` lines, or one bare value. */
+export function loadSecrets(config) {
+  const secrets = new Map();
+  let text = '';
+  try { text = fs.readFileSync(secretsFile(config), 'utf8').replace(/^﻿/, '').trim(); } catch {}
+  const add = (name, value) => {
+    if (name && typeof value === 'string') secrets.set(canon(name), { name: name.trim(), value });
+  };
+  if (text.startsWith('{')) {
+    try {
+      for (const [k, v] of Object.entries(JSON.parse(text))) add(k, v);
+    } catch {
+      console.error(`[mcp] secrets file ${secretsFile(config)} is not valid JSON`);
+    }
+    return secrets;
+  }
+  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !l.startsWith('#'));
+  if (lines.length === 1 && !lines[0].includes('=')) add('onework/Authorization', lines[0]);
+  else for (const l of lines) if (l.includes('=')) add(l.slice(0, l.indexOf('=')).trim(), l.slice(l.indexOf('=') + 1).trim());
+  return secrets;
+}
+
+/** Every secret as MCP_SECRET_<NAME> ("/" -> "_"), for stdio MCP children and agent processes. */
+export function secretEnv(config) {
+  const env = {};
+  for (const { name, value } of loadSecrets(config).values()) env[`MCP_SECRET_${name.replace(/\//g, '_')}`] = value;
+  return env;
+}
+
+/** Replaces ${env:NAME}, ${secret:scope/header}, $secret:scope/header in every string of `value`. */
+function resolveRefs(value, secrets) {
+  if (typeof value === 'string') {
+    return value.replace(/\$\{env:([^}]+)\}|\$\{secret:([^}]+)\}|\$secret:([\w.\-/]+)/g, (m, envName, s1, s2) => {
+      const name = envName || s1 || s2;
+      const v = envName && process.env[envName] !== undefined ? process.env[envName] : secrets.get(canon(name))?.value;
+      if (v === undefined) fail(424, `missing secret ${name}`, { problem: true });
+      return v;
+    });
+  }
+  if (Array.isArray(value)) return value.map((v) => resolveRefs(v, secrets));
+  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, resolveRefs(v, secrets)]));
+  return value;
+}
+
+// ---- server definitions ----
+
+export function serverDefs(config) {
+  const from = process.env.CONSOLE_MCP_SETTINGS || config.mcpServersFrom;
+  let fromFile = {};
+  if (from) {
+    try {
+      fromFile = JSON.parse(fs.readFileSync(path.resolve(config.root, expandHome(from)), 'utf8').replace(/^﻿/, '')).mcpServers || {};
+    } catch (e) {
+      if (e.code !== 'ENOENT') console.error(`[mcp] cannot read mcpServersFrom ${from}: ${e.message}`);
+    }
+  }
+  const defs = {};
+  for (const name of new Set([...Object.keys(fromFile), ...Object.keys(config.mcpServers || {})])) {
+    const cfg = deepMerge(fromFile[name] || {}, config.mcpServers?.[name] || {});
+    defs[name] = { ...cfg, transport: cfg.transport || (cfg.url || cfg.httpUrl ? 'http' : 'stdio'), url: cfg.url || cfg.httpUrl, enabled: cfg.enabled !== false };
+  }
+  return defs;
+}
+
+// ---- transports ----
 
 function rpcError(name, err) {
   return Object.assign(new Error(`MCP ${name}: ${err.message || JSON.stringify(err)}`), { status: 502 });
@@ -36,7 +110,7 @@ function timeoutError(name, method, ms) {
   return Object.assign(new Error(`MCP ${name}: ${method} timed out after ${ms} ms`), { status: 504 });
 }
 
-function stdioTransport(name, cfg, root, onDead) {
+function stdioTransport(name, cfg, root) {
   const { file, args } = resolveCommand(cfg.command);
   const child = spawn(file, [...args, ...(cfg.args || [])], {
     cwd: cfg.cwd ? path.resolve(root, cfg.cwd) : root,
@@ -56,7 +130,6 @@ function stdioTransport(name, cfg, root, onDead) {
     dead = true;
     for (const p of pending.values()) p.reject(err);
     pending.clear();
-    onDead();
   };
 
   child.stdout.setEncoding('utf8').on('data', (chunk) => {
@@ -159,93 +232,75 @@ function httpTransport(name, cfg) {
   };
 }
 
-function createClient(name, cfg, root) {
-  const ms = cfg.timeoutMs || 15000;
-  let transport = null;
-  let ready = null;
+// ---- manager ----
 
-  function connect() {
-    const t = cfg.transport === 'http'
-      ? httpTransport(name, cfg)
-      : stdioTransport(name, cfg, root, () => { if (transport === t) { transport = null; ready = null; } });
-    transport = t;
-    return t.request('initialize', { protocolVersion: PROTOCOL, capabilities: {}, clientInfo: CLIENT_INFO }, ms).then((init) => {
-      t.notify('notifications/initialized');
-      return t;
-    });
-  }
-
-  const ensure = () => (ready ||= connect().catch((e) => {
-    transport?.close();
-    transport = null;
-    ready = null;
-    throw e;
-  }));
-
-  return {
-    async listTools() {
-      const t = await ensure();
-      const tools = [];
-      let cursor;
-      do {
-        const r = await t.request('tools/list', cursor ? { cursor } : {}, ms);
-        tools.push(...(r?.tools || []));
-        cursor = r?.nextCursor;
-      } while (cursor);
-      return tools;
-    },
-    async callTool(tool, args = {}) {
-      const t = await ensure();
-      const result = await t.request('tools/call', { name: tool, arguments: args }, ms);
-      if (result?.isError) throw rpcError(name, { message: `${tool} failed: ${JSON.stringify(toolResultValue(result))}` });
-      return result;
-    },
-    close() {
-      transport?.close();
-      transport = null;
-      ready = null;
-    },
-  };
-}
-
-/** One lazily-connected client per configured server in config.mcpServers. */
 export function createMcpManager(config) {
-  const clients = new Map();
-
-  function get(name) {
-    const cfg = config.mcpServers?.[name] || fail(404, `MCP server "${name}" is not configured (mcpServers)`);
-    if (cfg.enabled === false) fail(400, `MCP server "${name}" is disabled (mcpServers.${name}.enabled)`);
-    if (!clients.has(name)) {
-      let secrets = {};
-      try {
-        secrets = JSON.parse(fs.readFileSync(secretsFile(config), 'utf8'))[name] || {};
-      } catch {}
-      const merged = { ...cfg, env: { ...cfg.env, ...secrets.env }, headers: { ...cfg.headers, ...secrets.headers } };
-      clients.set(name, createClient(name, merged, config.root));
+  /** Server config with secrets applied; throws { problem: true } when a referenced secret is missing. */
+  function prepared(name) {
+    const def = serverDefs(config)[name] || fail(404, `MCP server "${name}" is not configured (mcpServers)`);
+    if (!def.enabled) fail(400, `MCP server "${name}" is disabled (mcpServers.${name}.enabled)`);
+    const secrets = loadSecrets(config);
+    const headers = {};
+    const prefix = `${canon(name)}_`;
+    for (const [key, { name: secretName, value }] of secrets) {
+      if (key.startsWith(prefix)) headers[secretName.slice(name.length + 1)] = value; // "<server>/<Header>" secrets
     }
-    return clients.get(name);
+    const resolved = resolveRefs({ env: def.env || {}, headers: def.headers || {}, args: def.args || [], url: def.url || '' }, secrets);
+    return {
+      ...def,
+      ...resolved,
+      headers: { ...headers, ...resolved.headers },
+      env: { ...secretEnv(config), ...resolved.env },
+    };
   }
 
+  async function withClient(name, fn) {
+    const cfg = prepared(name);
+    const ms = cfg.timeoutMs || 15000;
+    const t = cfg.transport === 'http' ? httpTransport(name, cfg) : stdioTransport(name, cfg, config.root);
+    try {
+      await t.request('initialize', { protocolVersion: PROTOCOL, capabilities: {}, clientInfo: CLIENT_INFO }, ms);
+      t.notify('notifications/initialized');
+      return await fn((method, params) => t.request(method, params, ms));
+    } finally {
+      t.close();
+    }
+  }
+
+  const listTools = (name) => withClient(name, async (request) => {
+    const tools = [];
+    let cursor;
+    do {
+      const r = await request('tools/list', cursor ? { cursor } : {});
+      tools.push(...(r?.tools || []));
+      cursor = r?.nextCursor;
+    } while (cursor);
+    return tools;
+  });
+
+  const callTool = (name, tool, args = {}) => withClient(name, async (request) => {
+    const result = await request('tools/call', { name: tool, arguments: args });
+    if (result?.isError) throw rpcError(name, { message: `${tool} failed: ${JSON.stringify(toolResultValue(result))}` });
+    return result;
+  });
+
   return {
-    get,
-    listTools: (name) => get(name).listTools(),
-    callTool: (name, tool, args) => get(name).callTool(tool, args),
+    listTools,
+    callTool,
     async status() {
-      return Promise.all(Object.entries(config.mcpServers || {}).map(async ([name, cfg]) => {
-        const row = { name, enabled: cfg.enabled !== false, transport: cfg.transport || 'stdio', ok: false, tools: [] };
+      return Promise.all(Object.entries(serverDefs(config)).map(async ([name, def]) => {
+        const row = { name, enabled: def.enabled, transport: def.transport, ok: false, tools: [] };
         if (!row.enabled) return row;
         try {
-          row.tools = (await get(name).listTools()).map((t) => ({ name: t.name, description: t.description || '' }));
+          row.tools = (await listTools(name)).map((t) => ({ name: t.name, description: t.description || '' }));
           row.ok = true;
         } catch (e) {
           row.error = e.message;
+          if (e.problem) row.problem = e.message;
         }
         return row;
       }));
     },
-    close() {
-      for (const c of clients.values()) c.close();
-      clients.clear();
-    },
+    close() {}, // connections are per call
   };
 }

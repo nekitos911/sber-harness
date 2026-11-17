@@ -71,3 +71,45 @@ test('resolveCommand: argv arrays, node, missing commands, .cmd shims', () => {
     assert.deepEqual(r, { file: process.execPath, args: [path.join(bin, 'node_modules', 'tool', 'cli.js')] });
   }
 });
+
+function scriptTurn(name, source, extra = {}) {
+  const file = path.join(dir, name);
+  fs.writeFileSync(file, source);
+  const s = { id: 's_x', externalSessionId: null, approvalMode: null, model: null };
+  const ctx = { prompt: 'x', session: s, agentCfg: {}, settingsPath: path.join(dir, 'settings.json') };
+  const events = [];
+  return runTurn({
+    launcher, ctx, command: [process.execPath, file], cwd: dir, env: { ...process.env }, firstEventTimeoutMs: 10000,
+    logFile: path.join(dir, 'stderr.log'), onEvent: (e) => events.push(e), ...extra,
+  }).done.then((res) => ({ res, events }));
+}
+
+test('NDJSON split across chunks, non-JSON lines as raw events, stderr and exit code kept', async () => {
+  const { res, events } = await scriptTurn('split-agent.js', String.raw`
+    process.stdout.write('{"type":"init","session_id":"split-1"}\n{"type":"message","role":"assistant","con');
+    setTimeout(() => {
+      process.stdout.write('tent":"joined","delta":true}\nnot json 1\nnot json 2\n');
+      process.stderr.write('boom: something failed\n');
+      process.exitCode = 3;
+    }, 150);
+  `);
+  assert.deepEqual(events, [
+    { type: 'session', id: 'split-1' },
+    { type: 'text', text: 'joined', delta: true },
+    { type: 'raw', text: 'not json 1' },
+    { type: 'raw', text: 'not json 2' },
+  ]);
+  assert.equal(res.code, 3);
+  assert.match(res.stderrTail, /boom: something failed/);
+});
+
+test('over-long stdout lines are truncated with a marker; the stream continues', async () => {
+  const { events } = await scriptTurn('long-agent.js', String.raw`
+    process.stdout.write('x'.repeat(3000));
+    setTimeout(() => process.stdout.write('y'.repeat(3000) + '\n{"type":"result","status":"success"}\n'), 100);
+  `, { maxLine: 1000 });
+  assert.equal(events.length, 2);
+  assert.equal(events[0].type, 'raw');
+  assert.ok(events[0].text.startsWith('x'.repeat(1000)) && events[0].text.endsWith('[line truncated by harness]'));
+  assert.deepEqual(events[1], { type: 'result', text: null, isError: false });
+});

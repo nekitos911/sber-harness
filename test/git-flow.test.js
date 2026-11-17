@@ -10,6 +10,7 @@ const root = tmpDir();
 const repoA = path.join(root, 'svc-a');
 const repoB = path.join(root, 'svc-b');
 const plain = path.join(root, 'plain');
+const argvFile = path.join(root, 'argv.jsonl');
 let wsA;
 let wsB;
 
@@ -25,6 +26,7 @@ before(async () => {
   gitIn(repoA, 'add', 'REL.md');
   gitIn(repoA, 'commit', '-q', '-m', 'release file');
   gitIn(repoA, 'checkout', '-q', 'develop');
+  process.env.MOCK_AGENT_ARGV_FILE = argvFile;
   h = await startTestServer({ agents: { mock: { taskPromptTemplate: '/full-task {key} on {branch} -> {targets}' } } });
   wsA = (await h.api('POST', '/api/workspaces', { path: repoA })).body;
   wsB = (await h.api('POST', '/api/workspaces', { path: repoB, name: 'svc-b' })).body;
@@ -145,4 +147,54 @@ test('ports: clean cherry-pick and conflict that starts a resolver worker', asyn
   const after = await task(conflict.id);
   assert.equal(after.ports[0].status, 'done');
   assert.equal(after.status, 'in_progress', 'a port report does not move the task');
+});
+
+test('concurrent starts give one worker; a live task jumps to it; port needs commits; worker may not commit by default', async () => {
+  const t = (await h.api('POST', '/api/tasks', { title: 'Twice', workspaceId: wsA.id, targets: ['develop', 'release-1'] })).body;
+  const [a, b] = await Promise.all([
+    h.api('POST', `/api/tasks/${t.id}/start`, { agent: 'mock', notes: 'be brief' }),
+    h.api('POST', `/api/tasks/${t.id}/start`, { agent: 'mock' }),
+  ]);
+  assert.equal(a.status, 200, JSON.stringify(a.body));
+  assert.equal(b.status, 200, JSON.stringify(b.body));
+  assert.equal(a.body.id, b.body.id);
+  assert.equal([a.body.jumped, b.body.jumped].filter(Boolean).length, 1);
+  const workers = (await h.api('GET', '/api/state')).body.sessions.filter((s) => s.taskId === t.id);
+  assert.equal(workers.length, 1);
+  assert.equal(gitIn(repoA, 'worktree', 'list').split('\n').filter((l) => l.includes(`feature-${t.id}`)).length, 1);
+  const first = await waitFor(async () => (await messages(a.body.id)).find((m) => m.kind === 'user'));
+  assert.equal(first.text, `/full-task ${t.id} on feature/${t.id} -> develop, release-1`);
+
+  const again = (await h.api('POST', `/api/tasks/${t.id}/start`, {})).body;
+  assert.deepEqual([again.id, again.jumped], [a.body.id, true]);
+  const taken = await task(t.id);
+  assert.ok(taken.takenAt && taken.snapshot.title === 'Twice');
+
+  const r = await h.api('POST', `/api/tasks/${t.id}/port`, { target: 'release-1' });
+  assert.equal(r.status, 409);
+  assert.match(r.body.error, /no commits ahead of develop/);
+
+  const run = await waitFor(() => {
+    try {
+      return fs.readFileSync(argvFile, 'utf8').trim().split('\n').map((l) => JSON.parse(l)).find((x) => x.env.HARNESS_SESSION_ID === a.body.id);
+    } catch {
+      return null;
+    }
+  }, { what: 'worker argv' });
+  const prompt = run.argv[run.argv.indexOf('-p') + 1];
+  assert.match(prompt, /Do NOT commit, push, merge/);
+  assert.match(prompt, /Base branch \(primary target\): develop/);
+  await h.api('POST', `/api/sessions/${a.body.id}/stop`);
+});
+
+test('worktrees: create from a base, remove a dirty one (force + prune + folder gone)', async () => {
+  const wt = (await h.api('POST', `/api/workspaces/${wsA.id}/worktrees`, { name: 'tmp/remove me', base: 'release-1' })).body;
+  assert.equal(wt.branch, 'tmp/remove-me');
+  assert.equal(gitIn(wt.path, 'rev-parse', 'HEAD'), gitIn(repoA, 'rev-parse', 'release-1'));
+  fs.writeFileSync(path.join(wt.path, 'dirty.txt'), 'uncommitted\n');
+  const listed = (await h.api('GET', `/api/workspaces/${wsA.id}/worktrees`)).body;
+  assert.ok(listed.some((w) => w.path === wt.path && !w.main));
+  assert.equal((await h.api('DELETE', `/api/workspaces/${wsA.id}/worktrees`, { path: wt.path })).status, 200);
+  assert.equal(fs.existsSync(wt.path), false);
+  assert.ok(!gitIn(repoA, 'worktree', 'list').includes('remove-me'));
 });

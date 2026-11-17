@@ -21,7 +21,7 @@ test('gigacode (Gemini-style) stream normalizes', () => {
     { type: 'tool_result', id: 'read_file-2', output: 'File not found: missing.txt', isError: true },
     { type: 'error', text: 'Loop detection is disabled' },
     { type: 'text', text: 'OK', delta: true },
-    { type: 'result', text: null, isError: false },
+    { type: 'result', text: null, isError: false, tokensIn: 100, tokensOut: 20 },
   ]);
 });
 

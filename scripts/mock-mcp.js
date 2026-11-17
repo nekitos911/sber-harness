@@ -1,16 +1,25 @@
 #!/usr/bin/env node
 // Fake MCP server (stdio) standing in for the task tracker and the PR service in tests and demos.
-// Tools: list_issues -> { issues: [...] } (3 samples), create_pull_request -> { url: "http://pr.local/<repo>/<n>" }.
+// Tools: list_issues -> { issues: [...] } (4 samples, one Closed), update_issue_status -> { ok, key, status },
+//        create_pull_request -> { url: "http://pr.local/<repo>/<n>" }.
+// MOCK_MCP_ISSUES (JSON file path) replaces the sample issues, so tests can change the tracker between syncs.
+import fs from 'node:fs';
 import readline from 'node:readline';
 
 const ISSUES = [
   { key: 'DEMO-1', summary: 'Add health endpoint', description: 'Expose GET /health returning {"ok":true}.', url: 'http://tracker.local/DEMO-1', status: 'Open', priority: 'High' },
   { key: 'DEMO-2', summary: 'Fix login redirect', description: 'After login the user lands on /undefined.', url: 'http://tracker.local/DEMO-2', status: 'In Progress', priority: 'Medium' },
   { key: 'DEMO-3', summary: 'Update README', description: 'Document the new setup steps.', url: 'http://tracker.local/DEMO-3', status: 'Done', priority: 'Low' },
+  { key: 'DEMO-4', summary: 'Old idea', description: 'Declined long ago.', url: 'http://tracker.local/DEMO-4', status: 'Closed', priority: 'Low' },
 ];
 
 const TOOLS = [
-  { name: 'list_issues', description: 'List issues assigned to the current user', inputSchema: { type: 'object', properties: { assignee: { type: 'string' } } } },
+  { name: 'list_issues', description: 'List issues assigned to the current user', inputSchema: { type: 'object', properties: { assignee: { type: 'string' }, limit: { type: 'number' } } } },
+  {
+    name: 'update_issue_status',
+    description: 'Change the status of an issue',
+    inputSchema: { type: 'object', properties: { key: { type: 'string' }, status: { type: 'string' }, comment: { type: 'string' } }, required: ['key', 'status'] },
+  },
   {
     name: 'create_pull_request',
     description: 'Create a pull request',
@@ -24,7 +33,14 @@ const TOOLS = [
 
 let prSeq = 0;
 function callTool(name, args = {}) {
-  if (name === 'list_issues') return { issues: ISSUES };
+  if (name === 'list_issues') {
+    const issues = process.env.MOCK_MCP_ISSUES ? JSON.parse(fs.readFileSync(process.env.MOCK_MCP_ISSUES, 'utf8')) : ISSUES;
+    return { issues: args.limit ? issues.slice(0, args.limit) : issues };
+  }
+  if (name === 'update_issue_status') {
+    if (!args.key || !args.status) throw new Error('key and status are required');
+    return { ok: true, key: args.key, status: args.status };
+  }
   if (name === 'create_pull_request') {
     for (const k of ['repo', 'source', 'target', 'title']) if (!args[k]) throw new Error(`${k} is required`);
     return { url: `http://pr.local/${args.repo}/${++prSeq}`, source: args.source, target: args.target };

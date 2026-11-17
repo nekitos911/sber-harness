@@ -1,11 +1,12 @@
-// Shared test helpers (not a test file itself).
+// Shared test helpers (not a test file itself). Temp dirs carry Cyrillic letters and spaces on purpose.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { startServer } from '../server/index.js';
+import { CODE_ROOT } from '../server/config.js';
 
-export const tmpDir = (prefix = 'harness-test-') => fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
+export const tmpDir = (prefix = 'харнесс тест ') => fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
 
 export function rmrf(dir) {
   try {
@@ -39,15 +40,29 @@ export async function waitFor(fn, { timeout = 15000, interval = 50, what = 'cond
   throw new Error(`timed out waiting for ${what}`);
 }
 
-/** Starts a server on a random port with a temp dataDir; `api(method, path, body, headers)` -> { status, body }. */
+/** Waits until a process is gone (a PTY shell can hold its cwd for a moment after kill on Windows). */
+export async function waitPidGone(pid, timeout = 10000) {
+  const alive = () => { try { process.kill(pid, 0); return true; } catch { return false; } };
+  const end = Date.now() + timeout;
+  while (pid && alive() && Date.now() < end) await new Promise((r) => setTimeout(r, 100));
+}
+
+/**
+ * Starts a server on a random port with temp dataDir and a temp copy of harness.config.json (so PUT /api/settings
+ * writes a temp harness.config.local.json). `api(method, path, body, headers)` -> { status, body }.
+ */
 export async function startTestServer(configOverrides = {}) {
-  const dataDir = tmpDir('harness-data-');
+  const dataDir = tmpDir('харнесс данные ');
+  const cfgDir = tmpDir('харнесс конфиг ');
+  const configFile = path.join(cfgDir, 'harness.config.json');
+  fs.copyFileSync(path.join(CODE_ROOT, 'harness.config.json'), configFile);
   const mockState = tmpDir('harness-mock-');
   process.env.MOCK_AGENT_STATE_DIR = mockState;
   const srv = await startServer({
     dataDir,
+    configFile,
     port: 0,
-    configOverrides: { defaultAgent: 'mock', worktreeRoot: null, ...configOverrides },
+    configOverrides: { defaultAgent: 'mock', worktreeRoot: null, mcpServersFrom: null, ...configOverrides },
   });
   async function api(method, p, body, headers = {}) {
     const res = await fetch(srv.url + p, {
@@ -61,9 +76,11 @@ export async function startTestServer(configOverrides = {}) {
     srv,
     api,
     dataDir,
+    configFile,
     async close() {
       await srv.close();
       rmrf(dataDir);
+      rmrf(cfgDir);
       rmrf(mockState);
     },
   };

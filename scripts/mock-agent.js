@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 // Fake GigaCode-like CLI for tests and demos. Emits Gemini-style stream-json on stdout.
-//   mock-agent.js [--resume <id>] -p <prompt> --output-format stream-json [--approval-mode <m>] [--model <id>]
+//   mock-agent.js [--resume <id>] -p <prompt> --approval-mode <m> --output-format stream-json [--model <id>]  (GigaCode argv)
 // Prompt directives (ignored in messages delivered from other sessions, i.e. prompts starting "[harness] Message from"):
 //   #spawn <spec>   worker_start({ spec })          #done <summary>  worker_done(done)   #fail  worker_done(failed)
-//   #ask <q>        ask({ question })               #crash  exit 1 with stderr           #silent  sleep, no output
-//   #slow           stream slowly for ~5 s
+//   #ask <q> | <option> | ...   ask({ question, options })   #crash  exit 1 with stderr   #silent  sleep, no output
+//   #slow           stream slowly for ~5 s          #raw   print two non-JSON lines
+// MOCK_AGENT_ARGV_FILE: appends { argv (incl. node flags), env (GIGACODE_*, settings path, MCP_SECRET_*) } per run.
 // Harness API from env: HARNESS_URL, HARNESS_TOKEN, HARNESS_SESSION_ID. Turn counts per session id live in
 // MOCK_AGENT_STATE_DIR (default <tmp>/harness-mock-agent), so --resume answers "resumed <id>, turn N".
 import fs from 'node:fs';
@@ -25,6 +26,12 @@ const resume = opt('--resume');
 const model = opt('--model') || 'mock-model';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const emit = (o) => process.stdout.write(`${JSON.stringify({ ...o, timestamp: new Date().toISOString() })}\n`);
+
+// tests: record exactly what the harness passed (argv, settings/identity env), like a real GigaCode run would see it
+if (process.env.MOCK_AGENT_ARGV_FILE) {
+  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => /^(GIGACODE_|MOCK_AGENT_SETTINGS|MCP_SECRET_|HARNESS_SESSION_ID)/.test(k)));
+  fs.appendFileSync(process.env.MOCK_AGENT_ARGV_FILE, `${JSON.stringify({ argv: [...process.execArgv, ...process.argv.slice(1)], env })}\n`);
+}
 
 const delivered = prompt.startsWith('[harness] Message from');
 const lines = delivered ? [] : prompt.split(/\r?\n/);
@@ -84,6 +91,7 @@ emit({ type: 'tool_use', tool_name: 'read_file', tool_id: 'fake_1', parameters: 
 emit({ type: 'tool_result', tool_id: 'fake_1', status: 'success', output: '# fake file content' });
 
 if (delivered) await say(`Received: ${prompt.split('\n')[1]?.slice(0, 120) || ''}`);
+if (has(/#raw\b/)) process.stdout.write('plain line 1\nplain line 2\n');
 if (has(/#slow\b/)) await say('slow '.repeat(20), 250);
 
 const rest = [];
@@ -93,11 +101,16 @@ for (const l of lines) {
   else rest.push(l);
 }
 const restText = rest.join('\n');
-const ask = restText.match(/#ask\s+(.+)/);
-const done = restText.match(/#done\b([^\n]*)/);
-if (ask) await harness('ask', { question: ask[1].trim() });
+// the last occurrence wins: a worker preamble echoes the task title before the prompt itself
+const last = (re) => [...restText.matchAll(re)].pop();
+const ask = last(/#ask\s+([^\n]+)/g);
+const done = last(/#done\b([^\n]*)/g);
+if (ask) {
+  const [question, ...options] = ask[1].split('|').map((x) => x.trim());
+  await harness('ask', { question, ...(options.length ? { options } : {}) });
+}
 else if (/#fail\b/.test(restText)) await harness('worker_done', { summary: 'mock failure', status: 'failed' });
 else if (done) await harness('worker_done', { summary: done[1].trim() || 'completed', status: 'done' });
 
 await say(' Done.');
-emit({ type: 'result', status: 'success', stats: { total_tokens: 0, tool_calls: toolSeq + 1 } });
+emit({ type: 'result', status: 'success', stats: { input_tokens: 10, output_tokens: 5, tool_calls: toolSeq + 1 } });

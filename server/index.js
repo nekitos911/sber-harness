@@ -1,12 +1,13 @@
 // HTTP server: security (Host + token), REST router, WebSocket, static web/dist (or Vite middleware with --dev).
-// Usage: node server/index.js [--dev]      Programmatic: startServer({ root, configOverrides, dataDir, port, dev })
+// Usage: node server/index.js [--dev] [--print-config]
+// Programmatic: startServer({ root, configOverrides, configFile, dataDir, port, dev })
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { timingSafeEqual } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
-import { loadConfig, CODE_ROOT } from './config.js';
+import { loadConfig, CODE_ROOT, deepMerge, readJsonFile, findLiteralSecrets, expandHome } from './config.js';
 import { createStore, writeAtomic } from './store.js';
 import { createBus } from './bus.js';
 import { createTasks } from './tasks.js';
@@ -14,8 +15,9 @@ import { createSessions, newId } from './sessions.js';
 import { createOrchestration } from './orchestration.js';
 import * as git from './git.js';
 import * as wfs from './fs.js';
-import { createMcpManager } from './mcp-client.js';
-import { importTasks } from './integrations/tasks.js';
+import { createMcpManager, loadSecrets, secretsFile, serverDefs } from './mcp-client.js';
+import { launchers } from './launchers.js';
+import { importTasks, transitionTask } from './integrations/tasks.js';
 import { createPullRequest } from './integrations/pr.js';
 
 const MAX_BODY = 1024 * 1024;
@@ -26,8 +28,11 @@ const MIME = {
   '.map': 'application/json', '.wasm': 'application/wasm', '.txt': 'text/plain; charset=utf-8',
 };
 const NO_BUILD_HTML = '<!doctype html><meta charset="utf-8"><title>Harness</title><body style="font-family:sans-serif;padding:2rem"><h1>UI is not built</h1><p>Run <code>npm run build</code> (or start with <code>npm run dev</code>) and reload.</p></body>';
+const GRADES = ['default', 'fast', 'review', 'explore'];
+const GIT_KEYS = ['defaultBase', 'branchTemplate', 'portBranchTemplate', 'commitTitleTemplate', 'prTitleTemplate'];
 
 const fail = (status, message) => { throw Object.assign(new Error(message), { status }); };
+const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const samePath = (a, b) => (process.platform === 'win32' ? path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase() : path.resolve(a) === path.resolve(b));
 
 /** Validates `obj` against { field: 'string' | 'string?' | 'boolean?' | 'number?' | 'array?' }. */
@@ -65,7 +70,7 @@ function readBody(req) {
       if (!text.trim()) return resolve({});
       try {
         const body = JSON.parse(text);
-        if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error();
+        if (!isObj(body)) throw new Error();
         resolve(body);
       } catch {
         reject(Object.assign(new Error('body must be a JSON object'), { status: 400 }));
@@ -83,17 +88,130 @@ function sendJson(res, status, data) {
 
 export async function startServer(opts = {}) {
   const root = opts.root || CODE_ROOT;
-  const config = loadConfig({ root, overrides: opts.configOverrides, dataDir: opts.dataDir });
+  const config = loadConfig({ root, overrides: opts.configOverrides, dataDir: opts.dataDir, configFile: opts.configFile });
+  const literal = findLiteralSecrets(config);
+  if (literal.length) {
+    console.warn(`\n!!! WARNING: config values look like literal credentials: ${literal.join(', ')}\n!!! Move them to the secrets file (${secretsFile(config)}) and reference them as $secret:<scope>/<name>.\n`);
+  }
   const store = createStore(config.dataDir);
   const db = store.db;
   const bus = createBus();
   let url = '';
-  const tasks = createTasks({ store, bus, defaultBase: config.git?.defaultBase || 'main' });
+  const tasks = createTasks({ store, bus, defaultBase: config.git.defaultBase });
   const sessions = createSessions({ config, store, bus, getUrl: () => url });
   const orch = createOrchestration({ config, store, bus, tasks, sessions });
   const mcp = createMcpManager(config);
   const tokenBuf = Buffer.from(store.token);
   const tokenOk = (t) => typeof t === 'string' && t.length === store.token.length && timingSafeEqual(Buffer.from(t), tokenBuf);
+  const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_BODY });
+
+  // ---- tracker sync ----
+  let tasksProblem = null;
+  let syncing = null;
+  let syncTimer = null;
+  function runSync() {
+    syncing ||= importTasks({ config, mcp, tasks })
+      .then((r) => {
+        tasksProblem = null;
+        return r;
+      }, (e) => {
+        if (e.status !== 501) tasksProblem = { error: e.message, at: Date.now() };
+        throw e;
+      })
+      .finally(() => { syncing = null; });
+    return syncing;
+  }
+  function scheduleSync() {
+    clearInterval(syncTimer);
+    const cfg = config.integrations.tasks;
+    const sec = Number(cfg?.refreshSec) || 0;
+    if (!cfg?.enabled || sec <= 0) return;
+    // only while a UI is connected; importTasks updates (and so broadcasts) changed tasks only
+    syncTimer = setInterval(() => { if (wss.clients.size > 0) runSync().catch(() => {}); }, Math.max(sec, 10) * 1000);
+    syncTimer.unref?.();
+  }
+
+  // ---- settings: GET/PUT /api/settings, saved into harness.config.local.json ----
+  function settingsView() {
+    return {
+      agents: Object.fromEntries(Object.entries(config.agents).map(([id, a]) => [id, {
+        approvalMode: a.approvalMode ?? null,
+        approvalModes: a.approvalModes || [],
+        model: a.model ?? null,
+        modelGrades: a.settings?.agents?.modelGrades || {},
+        allowedGrades: a.settings?.agents?.allowedGrades || [],
+        taskPromptTemplate: a.taskPromptTemplate ?? null,
+      }])),
+      defaultAgent: config.defaultAgent,
+      git: pick(config.git, GIT_KEYS),
+      tasks: { refreshSec: config.integrations.tasks?.refreshSec ?? 0 },
+    };
+  }
+
+  function agentPatch(id, a) {
+    const cur = config.agents[id] || fail(400, `unknown agent "${id}"`);
+    if (!isObj(a)) fail(400, `agents.${id} must be an object`);
+    const p = {};
+    if ('approvalMode' in a) {
+      if (typeof a.approvalMode !== 'string' || (cur.approvalModes?.length && !cur.approvalModes.includes(a.approvalMode))) {
+        fail(400, `agents.${id}.approvalMode must be one of ${(cur.approvalModes || []).join(', ')}`);
+      }
+      p.approvalMode = a.approvalMode;
+    }
+    if ('model' in a) {
+      if (a.model !== null && typeof a.model !== 'string') fail(400, `agents.${id}.model must be a string or null`);
+      p.model = a.model || null;
+    }
+    if ('taskPromptTemplate' in a) {
+      if (a.taskPromptTemplate !== null && typeof a.taskPromptTemplate !== 'string') fail(400, `agents.${id}.taskPromptTemplate must be a string or null`);
+      p.taskPromptTemplate = a.taskPromptTemplate || null;
+    }
+    if ('modelGrades' in a) {
+      if (!isObj(a.modelGrades) || Object.entries(a.modelGrades).some(([g, v]) => !GRADES.includes(g) || (v !== null && typeof v !== 'string'))) {
+        fail(400, `agents.${id}.modelGrades: keys ${GRADES.join('/')}, string values`);
+      }
+      (p.settings ||= { agents: {} }).agents.modelGrades = a.modelGrades;
+    }
+    if ('allowedGrades' in a) {
+      check(a, { allowedGrades: 'array' });
+      (p.settings ||= { agents: {} }).agents.allowedGrades = a.allowedGrades;
+    }
+    return p;
+  }
+
+  function saveSettings(body) {
+    const patch = {};
+    if (body.agents !== undefined) {
+      if (!isObj(body.agents)) fail(400, 'agents must be an object');
+      patch.agents = Object.fromEntries(Object.entries(body.agents).map(([id, a]) => [id, agentPatch(id, a)]));
+    }
+    if (body.defaultAgent !== undefined) {
+      if (!config.agents[body.defaultAgent]) fail(400, `unknown agent "${body.defaultAgent}"`);
+      patch.defaultAgent = body.defaultAgent;
+    }
+    if (body.git !== undefined) {
+      if (!isObj(body.git) || Object.entries(body.git).some(([k, v]) => !GIT_KEYS.includes(k) || typeof v !== 'string' || !v.trim())) {
+        fail(400, `git accepts non-empty strings for ${GIT_KEYS.join(', ')}`);
+      }
+      patch.git = body.git;
+    }
+    if (body.tasks !== undefined) {
+      const sec = body.tasks?.refreshSec;
+      if (!Number.isInteger(sec) || sec < 0) fail(400, 'tasks.refreshSec must be an integer >= 0 (0 = off, minimum 10)');
+      patch.integrations = { tasks: { refreshSec: sec } };
+    }
+    const next = Object.fromEntries(Object.entries(patch).map(([k, v]) => [k, deepMerge(config[k], v)]));
+    for (const [id, a] of Object.entries(next.agents || {})) {
+      const tpl = a.taskPromptTemplate;
+      if (tpl && !['{taskUrl}', '{key}', '{id}', '{description}'].some((v) => tpl.includes(v))) {
+        fail(400, `agents.${id}.taskPromptTemplate must contain one of {taskUrl} {key} {id} {description}`);
+      }
+    }
+    writeAtomic(config.localConfigFile, `${JSON.stringify(deepMerge(readJsonFile(config.localConfigFile), patch), null, 2)}\n`);
+    Object.assign(config, next);
+    scheduleSync();
+    return settingsView();
+  }
 
   // ---- routes ----
   const routes = [];
@@ -117,9 +235,14 @@ export async function startServer(opts = {}) {
     agents: Object.entries(config.agents).map(([id, a]) => ({
       id, label: a.label || id, launcher: a.launcher, approvalModes: a.approvalModes || [], approvalMode: a.approvalMode || null, enabled: a.enabled !== false,
     })),
+    defaultAgent: config.agents[config.defaultAgent] && config.agents[config.defaultAgent].enabled !== false
+      ? config.defaultAgent
+      : Object.keys(config.agents).find((id) => config.agents[id].enabled !== false) ?? null,
     shell: { command: config.shell.command },
-    integrations: { tasks: !!config.integrations.tasks?.enabled, pr: !!config.integrations.pr?.enabled },
+    integrations: { tasks: !!config.integrations.tasks?.enabled, pr: !!config.integrations.pr?.enabled, tasksProblem },
   }));
+  route('GET', '/api/settings', () => settingsView());
+  route('PUT', '/api/settings', ({ body }) => saveSettings(body));
 
   // workspaces
   route('POST', '/api/workspaces', async ({ body }) => {
@@ -148,13 +271,14 @@ export async function startServer(opts = {}) {
   route('DELETE', '/api/workspaces/:id/worktrees', async ({ params, body }) => {
     const ws = getWs(params.id);
     check(body, { path: 'string', force: 'boolean?' });
-    await git.removeWorktree(ws.path, body.path, body.force);
+    await git.removeWorktree(ws.path, body.path);
   });
 
   // tasks
-  route('POST', '/api/tasks/sync', () => importTasks({ config, mcp, tasks }));
+  route('POST', '/api/tasks/sync', () => runSync());
   route('POST', '/api/tasks', ({ body }) => tasks.create(pick(body, ['title', 'description', 'status', 'priority', 'deps', 'labels', 'workspaceId', 'parentId', 'targets'])));
-  route('PATCH', '/api/tasks/:id', ({ params, body }) => tasks.update(params.id, body));
+  // a human editing the status pins the column: tracker sync no longer moves the card
+  route('PATCH', '/api/tasks/:id', ({ params, body }) => tasks.update(params.id, 'status' in body ? { ...body, statusManual: true } : body));
   route('DELETE', '/api/tasks/:id', ({ params }) => tasks.remove(params.id));
   route('POST', '/api/tasks/:id/move', ({ params, body }) => {
     check(body, { status: 'string', beforeId: 'string?' });
@@ -164,10 +288,14 @@ export async function startServer(opts = {}) {
     check(body, { agent: 'string?', workspaceId: 'string?', cwd: 'string?', worktree: 'string?', sessionId: 'string?' });
     return orch.assign(params.id, body);
   });
-  route('POST', '/api/tasks/:id/start', ({ params, body }) => orch.start(params.id, check(body, { agent: 'string?' })));
+  route('POST', '/api/tasks/:id/start', ({ params, body }) => orch.start(params.id, check(body, { agent: 'string?', notes: 'string?' })));
   route('POST', '/api/tasks/:id/port', ({ params, body }) => {
     check(body, { target: 'string', agent: 'string?' });
     return orch.port(params.id, body.target, { agent: body.agent });
+  });
+  route('POST', '/api/tasks/:id/tracker-status', ({ params, body }) => {
+    check(body, { status: 'string', comment: 'string?' });
+    return transitionTask({ config, mcp, tasks, task: tasks.get(params.id), status: body.status, comment: body.comment || '' });
   });
 
   // sessions
@@ -179,6 +307,7 @@ export async function startServer(opts = {}) {
   route('POST', '/api/sessions/:id/stop', ({ params }) => sessions.stop(params.id));
   route('POST', '/api/sessions/:id/restart', ({ params }) => sessions.restart(params.id));
   route('GET', '/api/sessions/:id/log', ({ params }) => sessions.logTail(params.id));
+  route('GET', '/api/sessions/:id/subagents', ({ params }) => sessions.subagents(params.id));
 
   // git
   route('GET', '/api/git/status', async ({ query }) => {
@@ -199,7 +328,7 @@ export async function startServer(opts = {}) {
     if (!config.integrations.pr?.enabled) fail(501, 'PR creation is disabled (integrations.pr.enabled)');
     const branch = (await git.currentBranch(body.cwd)) || fail(400, 'cwd is not on a branch');
     return createPullRequest({
-      config, mcp, cwd: body.cwd, branch, base: body.base || config.git?.defaultBase || 'main',
+      config, mcp, cwd: body.cwd, branch, base: body.base || config.git.defaultBase,
       title: body.title, body: body.body || '', repo: await git.repoName(body.cwd),
     });
   });
@@ -306,7 +435,6 @@ export async function startServer(opts = {}) {
   });
 
   // ---- websocket ----
-  const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_BODY });
   server.on('upgrade', (req, socket, head) => {
     let u;
     try {
@@ -335,7 +463,10 @@ export async function startServer(opts = {}) {
   wss.on('connection', (ws) => {
     const attached = new Set();
     const send = (frame) => {
-      if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(frame));
+      if (ws.readyState !== ws.OPEN) return;
+      try {
+        ws.send(JSON.stringify(frame));
+      } catch {} // a socket closing mid-send must not break the broadcast to the others
     };
     const unsubscribe = bus.subscribe((frame) => {
       if (frame.t === 'term' && !attached.has(frame.id)) return;
@@ -382,6 +513,7 @@ export async function startServer(opts = {}) {
   url = `http://${config.host.includes(':') ? `[${config.host}]` : config.host}:${actualPort}`;
   const serverJson = path.join(config.dataDir, 'server.json');
   writeAtomic(serverJson, JSON.stringify({ url, pid: process.pid }));
+  scheduleSync();
 
   let closed = false;
   return {
@@ -392,6 +524,7 @@ export async function startServer(opts = {}) {
     async close() {
       if (closed) return;
       closed = true;
+      clearInterval(syncTimer);
       sessions.close();
       mcp.close();
       for (const c of wss.clients) c.terminate();
@@ -407,8 +540,39 @@ export async function startServer(opts = {}) {
   };
 }
 
+/** Resolved config for humans: paths and whether they exist, modes, refresh, secret NAMES (never values). */
+export function describeConfig(config) {
+  const ex = (p) => (p ? { path: p, exists: fs.existsSync(p) } : null);
+  const from = process.env.CONSOLE_MCP_SETTINGS || config.mcpServersFrom;
+  return {
+    configFile: ex(config.configFile),
+    localConfigFile: ex(config.localConfigFile),
+    dataDir: ex(config.dataDir),
+    worktreeRoot: config.worktreeRoot ?? null,
+    defaultAgent: config.defaultAgent,
+    agents: Object.fromEntries(Object.entries(config.agents).map(([id, a]) => {
+      let resolved;
+      try {
+        const r = launchers[a.launcher]?.resolve(a);
+        resolved = r ? { file: ex(r.file), args: r.args } : { error: `unknown launcher "${a.launcher}"` };
+      } catch (e) {
+        resolved = { error: e.message };
+      }
+      return [id, { launcher: a.launcher, enabled: a.enabled !== false, approvalMode: a.approvalMode ?? null, approvalModes: a.approvalModes || [], resolved }];
+    })),
+    tasks: { enabled: !!config.integrations.tasks?.enabled, server: config.integrations.tasks?.server ?? null, refreshSec: config.integrations.tasks?.refreshSec ?? 0 },
+    mcpServersFrom: from ? ex(path.resolve(config.root, expandHome(from))) : null,
+    mcpServers: Object.keys(serverDefs(config)),
+    secretsFile: ex(secretsFile(config)),
+    secretNames: [...loadSecrets(config).values()].map((x) => x.name),
+    literalSecretWarnings: findLiteralSecrets(config),
+  };
+}
+
 const isMain = process.argv[1] && samePath(fileURLToPath(import.meta.url), process.argv[1]);
-if (isMain) {
+if (isMain && process.argv.includes('--print-config')) {
+  console.log(JSON.stringify(describeConfig(loadConfig()), null, 2));
+} else if (isMain) {
   const dev = process.argv.includes('--dev');
   startServer({ dev }).then((srv) => {
     console.log(`Harness running at ${srv.url}${dev ? ' (dev, Vite middleware)' : ''}`);

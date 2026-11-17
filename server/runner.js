@@ -1,11 +1,12 @@
 // Runs ONE agent turn: resolve the executable (never via a shell), spawn, read NDJSON from stdout with
-// partial-line buffering, enforce the first-event timeout, kill the whole process tree on stop.
+// partial-line buffering (capped line length), enforce the first-event timeout, kill the whole process tree on stop.
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn, execFile } from 'node:child_process';
 
 const isWin = process.platform === 'win32';
 const STDERR_TAIL = 4000;
+export const MAX_LINE = 8 * 1024 * 1024;
 
 function searchPath(name, env) {
   const dirs = (env.PATH ?? env.Path ?? '').split(path.delimiter).filter(Boolean);
@@ -22,15 +23,27 @@ function searchPath(name, env) {
   return null;
 }
 
-/** npm/pnpm .cmd shims end with `"%dp0%\node_modules\pkg\cli.js" %*`; run that entry with node instead. */
-function unwrapShim(file) {
+/** Absolute path of `command` (a path, or a name looked up in PATH/PATHEXT), or null. */
+export function locate(command, env = process.env) {
+  const found = /[\\/]/.test(command) ? command : searchPath(command, env);
+  return found && fs.existsSync(found) ? path.resolve(found) : null;
+}
+
+/** Paths a .cmd shim references relative to its own folder (%~dp0 / %dp0%), in order of appearance. */
+export function shimTargets(file, text = fs.readFileSync(file, 'utf8')) {
   const dir = path.dirname(file);
-  const targets = [...fs.readFileSync(file, 'utf8').matchAll(/"([^"]*%~?dp0%?[^"]*)"/gi)]
+  return [...text.matchAll(/"([^"]*%~?dp0%?[^"]*)"/gi)]
     .map((m) => m[1].replace(/^.*?%~?dp0%?\\?/i, dir + path.sep))
     .map((p) => path.normalize(p));
-  const js = targets.filter((t) => /\.[cm]?js$/i.test(t)).pop();
+}
+
+export const shimJsEntry = (file, text) => shimTargets(file, text).filter((t) => /\.[cm]?js$/i.test(t)).pop() || null;
+
+/** npm/pnpm .cmd shims end with `"%dp0%\node_modules\pkg\cli.js" %*`; run that entry with node instead. */
+function unwrapShim(file) {
+  const js = shimJsEntry(file);
   if (js) return { file: process.execPath, args: [js] };
-  const exe = targets.filter((t) => /\.exe$/i.test(t) && !/[\\/]node\.exe$/i.test(t)).pop();
+  const exe = shimTargets(file).filter((t) => /\.exe$/i.test(t) && !/[\\/]node\.exe$/i.test(t)).pop();
   if (exe) return { file: exe, args: [] };
   throw new Error(`Cannot unwrap "${file}" to a node entry point. Set "command" in harness.config.json to an argv array, e.g. ["node", "C:/path/to/cli.js"].`);
 }
@@ -43,8 +56,8 @@ export function resolveCommand(command, env = process.env) {
   }
   if (typeof command !== 'string' || !command) throw new Error('"command" must be a string or an argv array');
   if (command === 'node') return { file: process.execPath, args: [] };
-  const found = /[\\/]/.test(command) ? command : searchPath(command, env);
-  if (!found || !fs.existsSync(found)) {
+  const found = locate(command, env);
+  if (!found) {
     throw new Error(`Command "${command}" not found in PATH. Set "command" in harness.config.json to an absolute path or an argv array, e.g. ["node", "C:/path/to/cli.js"].`);
   }
   if (!isWin) return { file: found, args: [] };
@@ -57,7 +70,7 @@ export function resolveCommand(command, env = process.env) {
 export function killTree(pid) {
   if (!pid) return;
   if (isWin) {
-    execFile('taskkill', ['/pid', String(pid), '/T', '/F'], { windowsHide: true }, () => {});
+    execFile('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true }, () => {});
     return;
   }
   try {
@@ -70,16 +83,18 @@ export function killTree(pid) {
 const shortArg = (a) => JSON.stringify(a.length > 200 ? `${a.slice(0, 200)}...` : a);
 
 /**
- * @param {{ launcher, ctx, command, cwd, env, firstEventTimeoutMs: number, logFile: string, onEvent: (ev) => void }} o
+ * @param {{ launcher, ctx, command: string|string[]|{file,args}, cwd, env, firstEventTimeoutMs: number, logFile: string,
+ *           onEvent: (ev) => void, maxLine?: number }} o
+ *   Events are the launcher's NormalizedEvents plus { type: 'raw', text } for each non-JSON stdout line.
  * @returns {{ pid: number|null, stop(): void, done: Promise<{code, signal, sawResult, timedOut, stopped, error, stderrTail}> }}
  */
-export function runTurn({ launcher, ctx, command, cwd, env, firstEventTimeoutMs, logFile, onEvent }) {
+export function runTurn({ launcher, ctx, command, cwd, env, firstEventTimeoutMs, logFile, onEvent, maxLine = MAX_LINE }) {
   const log = fs.createWriteStream(logFile, { flags: 'a' });
   const res = { code: null, signal: null, sawResult: false, timedOut: false, stopped: false, error: null, stderrTail: '' };
   let child;
   try {
     if (!fs.existsSync(cwd)) throw new Error(`Working directory does not exist: ${cwd}`);
-    const { file, args: pre } = resolveCommand(command);
+    const { file, args: pre } = command?.file ? command : resolveCommand(command);
     const args = [...pre, ...launcher.buildArgs(ctx)];
     log.write(`\n=== ${new Date().toISOString()} ${shortArg(file)} ${args.map(shortArg).join(' ')}\n`);
     child = spawn(file, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, detached: !isWin });
@@ -90,10 +105,19 @@ export function runTurn({ launcher, ctx, command, cwd, env, firstEventTimeoutMs,
 
   const state = {};
   let buf = '';
+  let skipping = false; // inside the remainder of an over-long line
   const timer = setTimeout(() => {
     res.timedOut = true;
     killTree(child.pid);
   }, firstEventTimeoutMs);
+
+  const emit = (ev) => {
+    try {
+      onEvent(ev);
+    } catch (e) {
+      log.write(`[harness] event handler failed: ${e.stack}\n`);
+    }
+  };
 
   function handleLine(raw) {
     const line = raw.trim();
@@ -103,7 +127,8 @@ export function runTurn({ launcher, ctx, command, cwd, env, firstEventTimeoutMs,
     try {
       obj = JSON.parse(line);
     } catch {
-      log.write(`[stdout] ${line}\n`);
+      log.write(`[stdout] ${line.slice(0, 2000)}\n`);
+      emit({ type: 'raw', text: line.length > 20000 ? `${line.slice(0, 20000)}...` : line });
       return;
     }
     for (const ev of launcher.parse(obj, state)) {
@@ -112,21 +137,28 @@ export function runTurn({ launcher, ctx, command, cwd, env, firstEventTimeoutMs,
         continue;
       }
       if (ev.type === 'result') res.sawResult = true;
-      try {
-        onEvent(ev);
-      } catch (e) {
-        log.write(`[harness] event handler failed: ${e.stack}\n`);
-      }
+      emit(ev);
     }
   }
 
   child.stdout.setEncoding('utf8').on('data', (chunk) => {
+    if (skipping) {
+      const nl = chunk.indexOf('\n');
+      if (nl < 0) return;
+      skipping = false;
+      chunk = chunk.slice(nl + 1);
+    }
     buf += chunk;
     let i;
     while ((i = buf.indexOf('\n')) >= 0) {
       const line = buf.slice(0, i);
       buf = buf.slice(i + 1);
-      handleLine(line);
+      handleLine(line.length > maxLine ? `${line.slice(0, maxLine)} [line truncated by harness]` : line);
+    }
+    if (buf.length > maxLine) {
+      handleLine(`${buf.slice(0, maxLine)} [line truncated by harness]`);
+      buf = '';
+      skipping = true;
     }
   });
   child.stderr.setEncoding('utf8').on('data', (chunk) => {
@@ -140,7 +172,7 @@ export function runTurn({ launcher, ctx, command, cwd, env, firstEventTimeoutMs,
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      handleLine(buf);
+      if (!skipping) handleLine(buf);
       buf = '';
       log.end(`=== exit code=${res.code} signal=${res.signal}${res.timedOut ? ' (first-event timeout)' : ''}${res.stopped ? ' (stopped)' : ''}\n`);
       resolve(res);

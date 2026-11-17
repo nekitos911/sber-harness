@@ -1,12 +1,13 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import http from 'node:http';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import WebSocket from 'ws';
 import { startServer } from '../server/index.js';
-import { startTestServer, makeRepo, tmpDir, rmrf, waitFor } from './helpers.js';
+import { startTestServer, makeRepo, tmpDir, rmrf, waitFor, waitPidGone } from './helpers.js';
 
 let h;
 let repo;
@@ -117,10 +118,11 @@ test('coordinator spawns a worker; worker_done moves the task to review and wake
 });
 
 test('worker without parent: escalation and question go to notifications', async () => {
-  const t = (await h.api('POST', '/api/tasks', { title: 'lonely #ask which db?' })).body;
+  const t = (await h.api('POST', '/api/tasks', { title: 'lonely #ask which db? | pg | mysql' })).body;
   const w = (await h.api('POST', `/api/tasks/${t.id}/assign`, { agent: 'mock', cwd: repo })).body;
   assert.equal(w.parentId, null);
-  await waitFor(async () => (await state()).notifications.some((n) => n.kind === 'question' && n.sessionId === w.id), { what: 'question' });
+  const q = await waitFor(async () => (await state()).notifications.find((n) => n.kind === 'question' && n.sessionId === w.id), { what: 'question' });
+  assert.deepEqual([q.text, q.options], ['which db?', ['pg', 'mysql']]);
   const plain = (await h.api('POST', '/api/tasks', { title: 'silent worker' })).body;
   const w2 = (await h.api('POST', `/api/tasks/${plain.id}/assign`, { agent: 'mock', cwd: repo })).body;
   await waitFor(async () => (await state()).notifications.some((n) => n.kind === 'escalation' && n.sessionId === w2.id), { what: 'escalation' });
@@ -165,7 +167,7 @@ test('harness-mcp stdio server proxies tools/list and tools/call', async () => {
 
 test('terminal session runs a command in a PTY', async (t) => {
   const isWin = process.platform === 'win32';
-  const res = await h.api('POST', '/api/sessions', { kind: 'terminal', cwd: repo, command: isWin ? 'Write-Output (6*7001)' : 'echo $((6*7001))' });
+  const res = await h.api('POST', '/api/sessions', { kind: 'terminal', cwd: os.tmpdir(), command: isWin ? 'Write-Output (6*7001)' : 'echo $((6*7001))' });
   if (res.status === 501) return t.skip(res.body.error);
   assert.equal(res.status, 200, JSON.stringify(res.body));
   const s = res.body;
@@ -182,6 +184,7 @@ test('terminal session runs a command in a PTY', async (t) => {
   } finally {
     ws.close();
     await h.api('DELETE', `/api/sessions/${s.id}`);
+    await waitPidGone(s.pid);
   }
 });
 
@@ -203,4 +206,92 @@ test('restart: an interrupted chat turn becomes idle with a system message', asy
     await srv.close();
     rmrf(dataDir);
   }
+});
+
+test('stop: status is stopped at once and a late exit never overwrites it; the next message resumes', async () => {
+  const s = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', cwd: repo, prompt: 'hi' })).body;
+  await waitFor(async () => (await state()).sessions.find((x) => x.id === s.id && x.status === 'idle' && x.externalSessionId), { what: 'turn 1' });
+  await h.api('POST', `/api/sessions/${s.id}/messages`, { text: '#slow' });
+  await waitFor(async () => (await messages(s.id)).some((m) => m.kind === 'assistant' && m.text.includes('slow')), { what: 'slow output' });
+  assert.equal((await h.api('POST', `/api/sessions/${s.id}/stop`)).body.status, 'stopped');
+  await waitFor(async () => (await messages(s.id)).some((m) => m.text === 'Stopped by user'), { what: 'process exit' });
+  const after = (await state()).sessions.find((x) => x.id === s.id);
+  assert.deepEqual([after.status, after.pid], ['stopped', null]);
+  await h.api('POST', `/api/sessions/${s.id}/messages`, { text: 'continue' });
+  await waitFor(async () => (await messages(s.id)).some((m) => m.kind === 'assistant' && /resumed .*turn 3/.test(m.text)), { what: 'resume after stop' });
+});
+
+test('non-JSON stdout lines become one system message; a chat without a repo gets its own folder; tokens add up', async () => {
+  const s = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', prompt: '#raw' })).body;
+  assert.equal(s.cwd, path.join(h.dataDir, 'chats', s.id));
+  assert.ok(fs.statSync(s.cwd).isDirectory());
+  const sys = await waitFor(async () => (await messages(s.id)).find((m) => m.kind === 'system' && m.text.includes('plain line 1')), { what: 'raw lines' });
+  assert.match(sys.text, /plain line 1\nplain line 2/);
+  const done = await waitFor(async () => (await state()).sessions.find((x) => x.id === s.id && x.status === 'idle'));
+  assert.deepEqual([done.tokensIn, done.tokensOut], [10, 5]);
+});
+
+test('ask with options reaches the parent as a user message with options', async () => {
+  const coord = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', role: 'coordinator', cwd: repo })).body;
+  const w = (await h.api('POST', '/api/agent/worker_start', { spec: 'quiet work', agent: 'mock' }, { 'x-harness-session': coord.id })).body;
+  assert.equal(w.parentId, coord.id);
+  const r = await h.api('POST', '/api/agent/ask', { question: 'Which port?', options: ['8080', '9090'] }, { 'x-harness-session': w.id });
+  assert.equal(r.body.delivered, coord.id);
+  const m = await waitFor(async () => (await messages(coord.id)).find((x) => x.kind === 'user' && x.from === w.id && x.text.includes('Which port?')), { what: 'question at parent' });
+  assert.deepEqual(m.options, ['8080', '9090']);
+});
+
+test('websocket: frames after a client vanished do not break the server', async () => {
+  const ws = new WebSocket(`${h.srv.url.replace('http', 'ws')}/ws?token=${h.srv.token}`);
+  await new Promise((r) => ws.on('open', r));
+  ws.terminate();
+  for (let i = 0; i < 5; i++) await h.api('POST', '/api/tasks', { title: `burst ${i}` });
+  const ws2 = new WebSocket(`${h.srv.url.replace('http', 'ws')}/ws?token=${h.srv.token}`);
+  const frame = new Promise((r) => ws2.on('message', (raw) => {
+    const f = JSON.parse(raw.toString());
+    if (f.t === 'task' && f.task.title === 'after') r(f);
+  }));
+  await new Promise((r) => ws2.on('open', r));
+  await h.api('POST', '/api/tasks', { title: 'after' });
+  assert.equal((await frame).task.title, 'after');
+  ws2.close();
+});
+
+test('settings: read, validate, save to the local config file', async () => {
+  const s = (await h.api('GET', '/api/settings')).body;
+  assert.equal(s.agents.mock.approvalMode, 'auto');
+  assert.equal(s.defaultAgent, 'mock');
+  assert.equal((await h.api('PUT', '/api/settings', { agents: { mock: { approvalMode: 'yolo' } } })).status, 400);
+  assert.equal((await h.api('PUT', '/api/settings', { agents: { mock: { taskPromptTemplate: 'do it' } } })).status, 400);
+  assert.equal((await h.api('PUT', '/api/settings', { agents: { mock: { modelGrades: { turbo: 'x' } } } })).status, 400);
+  const saved = (await h.api('PUT', '/api/settings', {
+    agents: { mock: { approvalMode: 'plan', modelGrades: { default: 'm-big', fast: 'm-small' }, allowedGrades: ['default'], taskPromptTemplate: '/full-task-ui {taskUrl}{notes}' } },
+    tasks: { refreshSec: 30 },
+  })).body;
+  assert.deepEqual(saved.agents.mock.modelGrades, { default: 'm-big', fast: 'm-small' });
+  const local = JSON.parse(fs.readFileSync(h.configFile.replace(/\.json$/, '.local.json'), 'utf8'));
+  assert.deepEqual(local.agents.mock, { approvalMode: 'plan', settings: { agents: { modelGrades: { default: 'm-big', fast: 'm-small' }, allowedGrades: ['default'] } }, taskPromptTemplate: '/full-task-ui {taskUrl}{notes}' });
+  assert.equal(local.integrations.tasks.refreshSec, 30);
+  const chat = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', cwd: repo })).body;
+  assert.deepEqual(JSON.parse(fs.readFileSync(chat.settingsPath, 'utf8')).agents, { modelGrades: { default: 'm-big', fast: 'm-small' }, allowedGrades: ['default'] });
+  await h.api('PUT', '/api/settings', { agents: { mock: { approvalMode: 'auto', taskPromptTemplate: null } } });
+});
+
+test('subagents registry route; board: manual status, hidden imported tasks, tracker-status 501', async () => {
+  const s = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', cwd: repo })).body;
+  const reg = path.join(h.dataDir, 'runs', s.id, 'registry');
+  fs.mkdirSync(path.join(reg, 'sub1'), { recursive: true });
+  fs.writeFileSync(path.join(reg, 'sub1', 'agent.json'), JSON.stringify({ id: 'sub1', name: 'explorer', startedAt: Date.now(), state: 'working' }));
+  fs.mkdirSync(path.join(reg, 'bad'));
+  const sub = (await h.api('GET', `/api/sessions/${s.id}/subagents`)).body;
+  assert.deepEqual(sub.items.map((i) => [i.id, i.state, i.tokensIn]), [['sub1', 'working', 0]]);
+  assert.deepEqual(sub.problems.map((p) => p.agentId), ['bad']);
+
+  const t = (await h.api('POST', '/api/tasks', { title: 'imported one' })).body;
+  await h.api('PATCH', `/api/tasks/${t.id}`, { source: 'tracker', externalId: 'EXT-9' });
+  assert.equal((await h.api('PATCH', `/api/tasks/${t.id}`, { status: 'review' })).body.statusManual, true);
+  await h.api('DELETE', `/api/tasks/${t.id}`);
+  const hidden = (await state()).tasks.find((x) => x.id === t.id);
+  assert.equal(hidden.hidden, true);
+  assert.equal((await h.api('POST', `/api/tasks/${t.id}/tracker-status`, { status: 'Done' })).status, 501);
 });
