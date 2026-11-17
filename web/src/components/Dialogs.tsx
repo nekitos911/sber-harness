@@ -100,19 +100,23 @@ function WorkspaceDialog() {
 interface Where { workspaceId: string; cwd: string }
 
 function useWhere(init: Partial<Where>): [Where, (w: Where) => void] {
-  const workspaces = useStore((s) => s.workspaces)
-  const first = workspaces.find((w) => w.id === init.workspaceId) ?? workspaces[0]
-  return useState<Where>({ workspaceId: first?.id ?? '', cwd: init.cwd ?? first?.path ?? '' })
+  // «Проект» is a project, never the projects folder itself (that one is «Все проекты»)
+  const workspaces = useStore((s) => s.workspaces).filter((w) => w.kind !== 'root')
+  const given = workspaces.find((w) => w.id === init.workspaceId)
+  const first = given ?? workspaces[0]
+  return useState<Where>({ workspaceId: first?.id ?? '', cwd: (given && init.cwd) || first?.path || '' })
 }
 
 function WhereFields({ value, onChange }: { value: Where; onChange: (w: Where) => void }) {
-  const workspaces = useStore((s) => s.workspaces)
+  const all = useStore((s) => s.workspaces)
+  const workspaces = useMemo(() => all.filter((w) => w.kind !== 'root'), [all])
   const worktrees = useStore((s) => s.worktrees[value.workspaceId])
   const ws = workspaces.find((w) => w.id === value.workspaceId)
 
+  // asked again each time: worktrees made since the list was loaded (by agents too) must be there
   useEffect(() => {
-    if (ws?.isGit && !worktrees) void loadWorktrees(ws.id)
-  }, [ws, worktrees])
+    if (ws?.isGit) void loadWorktrees(ws.id)
+  }, [ws?.id, ws?.isGit])
 
   if (!workspaces.length) return <p className="field-hint">Сначала добавьте проект (кнопка с папкой в боковой панели).</p>
 
@@ -156,7 +160,8 @@ function ChatDialog(init: Partial<Where>) {
   const foldersOn = useFeature('folders')
   const dirsOn = useFeature('include-dirs')
   // «Где»: the projects folder unless the dialog was opened for a particular project/worktree.
-  const [place, setPlace] = useState<Place>(rootWs && !init.cwd ? 'root' : 'project')
+  const forRoot = !init.cwd || init.workspaceId === rootWs?.id || (!!rootWs && normPath(init.cwd) === normPath(rootWs.path))
+  const [place, setPlace] = useState<Place>(rootWs && forRoot ? 'root' : 'project')
   const [folder, setFolder] = useState<string | null>(null)
   const [picking, setPicking] = useState<'folder' | 'dir' | null>(null)
   const [dirs, setDirs] = useState<string[]>([])
