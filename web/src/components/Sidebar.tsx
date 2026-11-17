@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react'
 import { ArrowUp, Bot, ChevronDown, Ellipsis, Folder, GitPullRequest, Pin, ChevronRight, FolderGit2, FolderPlus, GitBranch, GitBranchPlus, House, Inbox, MessageSquarePlus, Moon, Search, Settings, SquareKanban, SquareTerminal, Sun } from 'lucide-react'
-import { openDialog, openScreen, openSession, openWorktree, setState, useActiveCwd, useStore, type Screen } from '../store'
+import { openDialog, openScreen, openSession, openWorktree, setState, showPanel, useActiveCwd, useStore, type Screen } from '../store'
+import { useHistory } from '../lib/history'
 import { loadWorktrees } from '../ws'
 import { useCurrentTool, useStateLine } from '../lib/live'
 import { sessionVisualState, stateSummary } from '../lib/sessionState'
@@ -33,7 +34,8 @@ export function Sidebar() {
   const running = sessions.filter((s) => s.kind === 'chat' && s.status === 'running').length
   const openPrs = useStore((s) => s.tasks.filter((t) => t.pr?.state === 'open').length)
   const chats = sessions.filter((s) => s.kind === 'chat').length
-  const tree = useMemo(() => buildTree(sessions.filter((s) => !s.archived), query), [sessions, query])
+  const allWorktrees = useStore((s) => s.worktrees)
+  const tree = useMemo(() => buildTree(sessions.filter((s) => !s.archived), query, allWorktrees), [sessions, query, allWorktrees])
   const filtering = !!query.trim()
   const rootWs = workspaces.find((w) => w.kind === 'root')
   const projects = workspaces.filter((w) => w.kind !== 'root')
@@ -43,7 +45,7 @@ export function Sidebar() {
   const activeCwd = useActiveCwd()
   const dirtyIn = useStore((s) => s.worktrees)
   const isActive = (ws: Workspace) =>
-    tree.roots.some((x) => x.workspaceId === ws.id) ||
+    tree.roots.some((x) => tree.owner(x) === ws.id) ||
     (dirtyIn[ws.id] ?? []).some((w) => (w.dirty ?? 0) > 0) ||
     (!!activeCwd && (normPath(activeCwd) === normPath(ws.path) || normPath(activeCwd).startsWith(`${normPath(ws.path)}/`) || (dirtyIn[ws.id] ?? []).some((w) => normPath(w.path) === normPath(activeCwd))))
   const shownProjects = showAll || filtering ? projects : projects.filter(isActive)
@@ -160,12 +162,17 @@ function NavItem({ screen, icon, label, end }: { screen: Screen; icon: ReactNode
 }
 
 interface Tree {
+  owner: (s: Session) => string | null // the project a session shows under: the one whose worktree it runs in, else its workspaceId
   roots: Session[] // sessions without a (living) parent; workers hang under their coordinator
   kids: Map<string, Session[]>
   loose: Session[] // roots that match no workspace
 }
 
-function buildTree(sessions: Session[], query: string): Tree {
+function buildTree(sessions: Session[], query: string, worktrees: Record<string, Worktree[]>): Tree {
+  // A known worktree decides the project (a folder workspace may contain another project's worktrees).
+  const byPath = new Map<string, string>()
+  for (const [id, list] of Object.entries(worktrees)) for (const w of list) byPath.set(normPath(w.path), id)
+  const owner = (s: Session) => byPath.get(normPath(s.cwd)) ?? s.workspaceId
   const ids = new Set(sessions.map((s) => s.id))
   const sorted = [...sessions].sort((a, b) => a.createdAt - b.createdAt)
   const kids = new Map<string, Session[]>()
@@ -180,7 +187,7 @@ function buildTree(sessions: Session[], query: string): Tree {
       (kids.get(s.id) ?? []).some(hit)
     roots = roots.filter(hit)
   }
-  return { roots, kids, loose: roots.filter((s) => !s.workspaceId) }
+  return { owner, roots, kids, loose: roots.filter((s) => !owner(s)) }
 }
 
 /** Whether a worktree is worth a row by default: it is where something is, was recently, or is about to happen. */
@@ -193,7 +200,7 @@ const ATTENTION = new Set(['waiting_answer', 'waiting_permission', 'stalled', 'a
 const BUSY = new Set(['running', 'starting'])
 
 function ProjectNode({ ws, tree, filtering }: { ws: Workspace; tree: Tree; filtering: boolean }) {
-  const mine = tree.roots.filter((s) => s.workspaceId === ws.id)
+  const mine = tree.roots.filter((s) => tree.owner(s) === ws.id)
   const activeCwd = useActiveCwd()
   const worktrees = useStore((s) => s.worktrees[ws.id])
   const tasks = useStore((s) => s.tasks)
@@ -296,6 +303,8 @@ function WorktreeNode({ ws, wt, sessions, kids, active }: { ws: Workspace; wt: W
   const where = { workspaceId: ws.id, cwd: wt.path }
   const sleeping = !!wt.meta?.sleeping
   const ahead = wt.ahead ?? 0
+  const history = useHistory(wt.path, sessions.length === 0) // only rows without harness chats ask for it
+  const ownHistory = (history ?? []).filter((h) => normPath(h.cwd) === normPath(wt.path)).length // not the main copy's, listed for every worktree
   return (
     <div className="wt" data-active={active} data-sleeping={sleeping || undefined}>
       <div ref={row} className="tree-row tree-wt" role="button" tabIndex={0} style={depth(1)}
@@ -307,6 +316,11 @@ function WorktreeNode({ ws, wt, sessions, kids, active }: { ws: Workspace; wt: W
         <span className="label">{name}</span>
         {wt.meta?.pinned && <Pin className="wt-pin" aria-label="закреплено" />}
         {unread && <span className="wt-unread" aria-label="непрочитано" />}
+        {sessions.length === 0 && ownHistory > 0 && (
+          <button type="button" className="wt-history" data-tip="Сессии GigaCode, начатые в CLI" onClick={(e) => { e.stopPropagation(); openWorktree(wt.path); showPanel('history') }}>
+            история: {ownHistory}
+          </button>
+        )}
         <span className="wt-badges">
           {changed > 0 && <span className="wt-stat num" data-tip={`${changed} ${plural(changed, 'изменённый файл', 'изменённых файла', 'изменённых файлов')}`}>±{changed}</span>}
           {ahead > 0 && <span className="wt-stat num" data-tip={`${ahead} ${plural(ahead, 'коммит', 'коммита', 'коммитов')} не в базовой ветке`}><ArrowUp aria-hidden />{ahead}</span>}

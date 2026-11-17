@@ -7,10 +7,10 @@ const plural = (n: number, [one, few, many]: [string, string, string]) =>
 export type ToolKind = 'edit' | 'shell' | 'mcp' | 'read' | 'search' | 'other'
 
 const KIND: [ToolKind, RegExp][] = [
-  ['edit', /^(edit|replace|write_file|write|multiedit|notebookedit|apply_patch|create_file|str_replace\w*)$/i],
+  ['edit', /^(edit|replace|write_file|writefile|write|multiedit|notebookedit|apply_patch|create_file|str_replace\w*)$/i],
   ['shell', /^(run_shell_command|bash|shell|exec_command)$/i],
-  ['read', /^(read_file|read|read_many_files|view)$/i],
-  ['search', /^(glob|grep_search|grep|search|search_file_content|list_directory|ls|web_search)$/i],
+  ['read', /^(read_file|readfile|read|read_many_files|readmanyfiles|readfolder|view)$/i],
+  ['search', /^(glob|grep_search|grep|search|searchtext|findfiles|search_file_content|list_directory|ls|web_search|googlesearch)$/i], // GigaCode display names too
   ['mcp', /^mcp__|^[\w-]+\.[\w-]+$/], // mcp__server__tool (Claude) or server.tool (GigaCode / harness)
 ]
 export const toolKind = (name: string): ToolKind => KIND.find(([, re]) => re.test(name))?.[0] ?? 'other'

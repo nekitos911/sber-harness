@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react'
-import type { AgentInfo, AgentMeta, RecoveryState, GitStatus, SddPlan, Settings, Integrations, Message, Notification, Session, SubAgent, Task, Workspace, Worktree } from './types'
+import type { AgentInfo, AgentMeta, HistoryItem, RecoveryState, GitStatus, SddPlan, Settings, Integrations, Message, Notification, Session, SubAgent, Task, Workspace, Worktree } from './types'
 import type { DiffFile } from './lib/diff'
 import { normPath } from './lib/format'
 import type { PrState } from './lib/pr'
@@ -11,6 +11,7 @@ export type Tab =
   | { kind: 'session'; id: string }
   | { kind: 'file'; cwd: string; path: string }
   | { kind: 'diff'; cwd: string; path: string | null }
+  | { kind: 'history'; cwd: string; agent: string; id: string; title: string } // a CLI-recorded chat, read-only
 
 /** Main area: a full-screen global view, or one worktree with its own tab strip. */
 export type View = { kind: 'screen'; screen: Screen } | { kind: 'wt'; cwd: string }
@@ -49,7 +50,7 @@ interface Prefs {
   sidebar: boolean
   sidebarWidth: number
   panel: boolean
-  panelTab: 'files' | 'changes' | 'verdicts'
+  panelTab: 'files' | 'changes' | 'verdicts' | 'history'
   theme: Theme | null // null = default (dark)
   drafts: Record<string, string> // unsent composer text per chat session
 }
@@ -76,6 +77,7 @@ export interface State extends Prefs {
   prs: Record<string, PrState | undefined> // key = normPath(cwd): PR of the branch checked out there
   sdd: Record<string, SddPlan[] | null> // key = normPath(cwd): /full-task plans and verdicts (null: server lacks it)
   recentFolders: string[]
+  history: Record<string, HistoryItem[]> // key = normPath(cwd): CLI-recorded chats of that folder
   recovery: RecoveryState | null // interrupted sessions waiting for «продолжить» or «не продолжать»
   features: string[] // optional API groups of this server; an optional endpoint is called only when listed
   dirty: Record<string, boolean>
@@ -92,6 +94,7 @@ export const tabKey = (t: Tab): string => {
     case 'session': return `s:${t.id}`
     case 'file': return `f:${t.path}`
     case 'diff': return `d:${t.path ?? ''}`
+    case 'history': return `h:${t.agent}:${t.id}`
   }
 }
 
@@ -131,7 +134,7 @@ let state: State = {
   conn: 'connecting', loaded: false, authExpired: false, scheme: resolveScheme(prefs.theme),
   tasks: [], sessions: [], workspaces: [], notifications: [], agents: [], defaultAgent: null, shell: '',
   integrations: { tasks: false, pr: false },
-  messages: {}, subagents: {}, worktrees: {}, git: {}, agentMeta: {}, settings: null, prs: {}, sdd: {}, recentFolders: [], recovery: null, features: [], dirty: {}, toasts: [], jobs: [], focusTaskId: null, dialog: null, back: [], forward: [],
+  messages: {}, subagents: {}, worktrees: {}, git: {}, agentMeta: {}, settings: null, prs: {}, sdd: {}, recentFolders: [], history: {}, recovery: null, features: [], dirty: {}, toasts: [], jobs: [], focusTaskId: null, dialog: null, back: [], forward: [],
 }
 
 const listeners = new Set<() => void>()
@@ -171,7 +174,7 @@ document.documentElement.dataset.theme = state.scheme
 
 export type Feature = 'sdd' | 'subagents' | 'virtual-sessions' | 'worker-run' | 'pr-status' | 'branches' | 'fs-search'
   | 'agent-info' | 'models-refresh' | 'tracker-links' | 'worktree-meta' | 'open' | 'board-columns' | 'review-loop' | 'skills-install' | 'demo'
-  | 'fs-raw' | 'rework' | 'tracker-import' | 'folders' | 'include-dirs' | 'acp' | 'pr-decline' | 'questions' | 'permissions' | 'activity' | 'recovery'
+  | 'fs-raw' | 'rework' | 'tracker-import' | 'folders' | 'include-dirs' | 'acp' | 'pr-decline' | 'questions' | 'permissions' | 'activity' | 'recovery' | 'cli-history'
 
 /** Whether this server implements an optional API group (no flag list = an older server = none). */
 export const hasFeature = (f: Feature) => state.features.includes(f)
@@ -312,7 +315,7 @@ export function setDirty(key: string, value: boolean) {
   setState((s) => ({ dirty: { ...s.dirty, [key]: value } }))
 }
 
-export function showPanel(tab: 'files' | 'changes' | 'verdicts') {
+export function showPanel(tab: 'files' | 'changes' | 'verdicts' | 'history') {
   setState({ panel: true, panelTab: tab })
 }
 

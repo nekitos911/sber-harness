@@ -34,6 +34,12 @@ export async function newTerminal(where: Where) {
   if (s) adoptSession(s)
 }
 
+/** The most specific workspace containing a folder (the projects folder contains every project). */
+export function ownerWorkspace<W extends { path: string }>(workspaces: W[], cwd: string): W | undefined {
+  const p = normPath(cwd)
+  return workspaces.filter((w) => p === normPath(w.path) || p.startsWith(`${normPath(w.path)}/`)).sort((a, b) => b.path.length - a.path.length)[0]
+}
+
 /** Project a folder belongs to: a known worktree of it, a session there, or the path prefix. */
 export function workspaceFor(cwd: string): string | null {
   const st = getState()
@@ -41,7 +47,7 @@ export function workspaceFor(cwd: string): string | null {
   for (const [id, list] of Object.entries(st.worktrees)) if (list.some((w) => normPath(w.path) === p)) return id
   const s = st.sessions.find((x) => x.workspaceId && normPath(x.cwd) === p)
   if (s) return s.workspaceId
-  return st.workspaces.find((w) => p === normPath(w.path) || p.startsWith(`${normPath(w.path)}/`))?.id ?? null
+  return ownerWorkspace(st.workspaces, cwd)?.id ?? null
 }
 
 /** Folder for «new chat here»: the worktree or folder on screen, else the projects folder (when the server has one). */

@@ -15,6 +15,9 @@ test('kinds cover GigaCode and Claude names', () => {
   assert.equal(toolKind('mcp__playwright__browser_click'), 'mcp')
   assert.equal(toolKind('harness.worker_start'), 'mcp')
   assert.equal(toolKind('todo_write'), 'other')
+  assert.equal(toolKind('ReadFile'), 'read') // recorded CLI history uses display names
+  assert.equal(toolKind('SearchText'), 'search')
+  assert.equal(toolKind('WriteFile'), 'edit')
   assert.deepEqual(mcpParts('mcp__playwright__browser_click'), ['Playwright', 'browser_click'])
   assert.deepEqual(mcpParts('onework.find'), ['onework', 'find'])
 })

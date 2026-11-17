@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef, useState } from 'react'
-import { ArrowLeft, ArrowRight, Command, FileText, FolderOpen, GitCompare, MessageSquare, MessageSquarePlus, PanelLeft, PanelRight, Plus, SquareTerminal, X } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Command, FileText, FolderOpen, History, GitCompare, MessageSquare, MessageSquarePlus, PanelLeft, PanelRight, Plus, SquareTerminal, X } from 'lucide-react'
 import { activateTab, closeTab, dirtyKey, hasFeature, navigate, openDialog, setState, tabKey, useStore, wtKey, type Tab } from '../store'
 import { basename } from '../lib/format'
 import { useGit } from '../lib/git'
@@ -152,5 +152,6 @@ function describeTab(t: Tab, sessions: Session[], status: GitStatus | null) {
       return { icon: <FileText />, title: basename(t.path), hint: t.path, badge, file: true }
     }
     case 'diff': return { icon: <GitCompare />, title: t.path ? basename(t.path) : 'Все изменения', hint: `Изменения: ${t.path ?? 'все файлы'}` }
+    case 'history': return { icon: <History />, title: `История: ${t.title || t.id}`, hint: `Сессия из CLI (только чтение)\n${t.title}` }
   }
 }

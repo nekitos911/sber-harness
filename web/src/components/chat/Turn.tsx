@@ -79,6 +79,7 @@ function head(list: Message[], userIdx: number, runningTurn: number | null, last
   let end = userIdx
   while (end + 1 < list.length && list[end + 1].turn === u.turn) end++
   const start = list[first].at
+  if (u.imported) return [] // a recorded CLI chat: its timing is not this harness's
   if (u.turn === runningTurn) return [{ kind: 'head', key: `head-${u.id}`, start, end: null }]
   const stop = end === list.length - 1 ? Math.max(list[end].at, lastActivity) : list[end].at
   return stop - start >= 1000 ? [{ kind: 'head', key: `head-${u.id}`, start, end: stop }] : []

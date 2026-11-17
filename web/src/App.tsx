@@ -19,6 +19,7 @@ import { PrsView } from './views/PrsView'
 import { SettingsView } from './views/SettingsView'
 import { ChatView } from './views/ChatView'
 import { DiffView } from './views/DiffView'
+import { HistoryView } from './views/HistoryView'
 import { WorktreeHome } from './views/WorktreeHome'
 import { useGitWatch } from './lib/git'
 import { useUnreadTitle } from './lib/notify'
@@ -125,6 +126,7 @@ function TabContent({ tab, active }: { tab: Tab; active: boolean }) {
     case 'session': return <SessionTab id={tab.id} active={active} />
     case 'file': return <Suspense fallback={<Loading />}><FileView cwd={tab.cwd} path={tab.path} /></Suspense>
     case 'diff': return <DiffView cwd={tab.cwd} path={tab.path} />
+    case 'history': return <HistoryView tab={tab} />
   }
 }
 

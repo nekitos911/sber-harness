@@ -1,4 +1,5 @@
 import { useMemo } from 'react'
+import { HistoryList } from '../components/HistoryList'
 import { FolderOpen, FolderTree, GitBranch, GitCompareArrows, House, MessageSquarePlus, SquareTerminal } from 'lucide-react'
 import { openSession, openTask, showPanel, useFeature, useStore } from '../store'
 import { basename, normPath, relTime, statusLabel } from '../lib/format'
@@ -17,6 +18,7 @@ export function WorktreeHome({ cwd }: { cwd: string }) {
   const git = useGit(cwd)
   const now = useNow()
   const openOn = useFeature('open')
+  const historyOn = useFeature('cli-history')
 
   const p = normPath(cwd)
   const wsId = workspaceFor(cwd)
@@ -87,6 +89,13 @@ export function WorktreeHome({ cwd }: { cwd: string }) {
               </li>
             ))}
           </ul>
+        </section>
+      )}
+
+      {historyOn && (
+        <section className="wt-home-section">
+          <h2>История GigaCode</h2>
+          <HistoryList cwd={cwd} />
         </section>
       )}
 

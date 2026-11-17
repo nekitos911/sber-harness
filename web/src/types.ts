@@ -155,6 +155,7 @@ export interface Message {
   options?: string[] | null // `ask` with choices: each option is a one-click reply
   link?: string | null // e.g. the GigaCode login URL
   action?: 'pick-model' | null // failure the user fixes by choosing another model
+  imported?: boolean // copied from a CLI-recorded chat (turn 0): no timing of its own
   question?: { id: string; text: string; options: { label: string; description?: string }[]; multiSelect?: boolean; answer?: string | null } | null
   permission?: { id: string; tool: string; input: unknown; reason?: string | null; transport?: 'headless' | 'acp'; options: PermissionOption[]; choice?: string | null } | null
 }
@@ -328,3 +329,6 @@ export type ClientEvent =
 /** GET /api/recovery: sessions a restart interrupted mid-turn (feature recovery). */
 export interface RecoveryItem { id: string; title: string; cwd: string; taskId: string | null; role: SessionRole; reason: 'harness_restart' | 'reboot' | 'crash'; at: number; lastActivity: string | null }
 export interface RecoveryState { sessions: RecoveryItem[]; message: string }
+
+/** GET /api/history?cwd=: a chat the agent CLI recorded itself (feature cli-history). */
+export interface HistoryItem { id: string; agent: string; cwd: string; title: string; startedAt: number | null; updatedAt: number | null; messages: number; model: string | null; file: string; linkedSessionId: string | null; raw?: boolean }

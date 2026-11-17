@@ -27,7 +27,7 @@ export function ThoughtBlock({ m, until }: { m: Message; until: number | null })
   const sec = useElapsed(m.at, until === null)
   const ms = until === null ? sec * 1000 : until - m.at
   return (
-    <Disclosure className="msg msg-thought" summary={<><Brain className="thought-icon" aria-hidden />{until === null ? 'Размышляет' : 'Размышлял'} <span className="num">{longDur(ms)}</span></>}>
+    <Disclosure className="msg msg-thought" summary={<><Brain className="thought-icon" aria-hidden />{until === null ? 'Размышляет' : 'Размышлял'}{(until === null || ms >= 1000) && <span className="num">{longDur(ms)}</span>}</>}>
       <div className="thought-text">{m.text}</div>
     </Disclosure>
   )
