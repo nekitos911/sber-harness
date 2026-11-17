@@ -1,4 +1,5 @@
 import { useEffect } from 'react'
+import { pendingCount } from './pending'
 import { getState, openSession, openTask, useStore } from '../store'
 import type { Notification as Note } from '../types'
 
@@ -35,7 +36,10 @@ export function desktopNotify(n: Note) {
 }
 
 /** «(2) Harness» in the browser tab while there are unread inbox entries. */
+/** The tab title counts what waits for the person («Ждёт меня»), else unread notifications. */
 export function useUnreadTitle() {
   const unread = useStore((s) => s.notifications.filter((n) => !n.read).length)
-  useEffect(() => { document.title = unread ? `(${unread}) Harness` : 'Harness' }, [unread])
+  const pending = useStore((s) => pendingCount(s.sessions, s.tasks))
+  const n = pending || unread
+  useEffect(() => { document.title = n ? `(${n}) Harness` : 'Harness' }, [n])
 }

@@ -19,6 +19,7 @@ import { Button, Menu, Popover } from './ui'
 import { ideEnabled, isUnread, onWorktreeKey, projectMenu, setUnread, worktreeMenu } from './WorktreeMenu'
 import { useNow } from '../lib/useNow'
 import { useRail } from '../lib/useMedia'
+import { pendingCount } from '../lib/pending'
 
 const depth = (d: number) => ({ '--depth': d }) as CSSProperties
 const APP_START = Date.now() // rows for sessions born after this animate in; the initial list does not
@@ -32,6 +33,7 @@ export function Sidebar() {
   const workspaces = useStore((s) => s.workspaces)
   const sessions = useStore((s) => s.sessions)
   const unread = useStore((s) => s.notifications.filter((n) => !n.read).length)
+  const pending = useStore((s) => pendingCount(s.sessions, s.tasks)) // «Ждёт меня»
   const scheme = useStore((s) => s.scheme)
   const width = useStore((s) => s.sidebarWidth)
   const [query, setQuery] = useState('')
@@ -90,7 +92,9 @@ export function Sidebar() {
             : chats > 0 && <span className="count" data-tip={`Чатов: ${chats}`}>{chats}</span>}
         />
         <NavItem screen="prs" icon={<GitPullRequest />} label="Пулл-реквесты" end={openPrs > 0 && <span className="count" data-tip={`Открытых PR задач: ${openPrs}`}>{openPrs}</span>} />
-        <NavItem screen="inbox" icon={<Inbox />} label="Входящие" end={unread > 0 && <span className="count count-signal" aria-label={`непрочитанных: ${unread}`}>{unread}</span>} />
+        <NavItem screen="inbox" icon={<Inbox />} label="Входящие" end={pending > 0
+          ? <span className="count count-signal" aria-label={`ждёт меня: ${pending}`} data-tip="Ждёт меня: вопросы, разрешения, готовые задачи">{pending}</span>
+          : unread > 0 && <span className="count" aria-label={`непрочитанных: ${unread}`}>{unread}</span>} />
       </div>
 
       <div className="tree" aria-label="Проекты и сессии">

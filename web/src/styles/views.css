@@ -469,3 +469,6 @@ button.chip.chip-mono[aria-pressed="true"] { background: var(--signal-soft); col
 .linked-wt { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 30px; padding: 0 8px; border: 0; border-radius: var(--r-1); background: none; color: var(--ink-2); text-align: left; }
 .linked-wt:hover { background: var(--deck-2); color: var(--ink); }
 .linked-wt .ellipsis { flex: 1; min-width: 0; }
+.inbox-wait-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+.inbox-actions { display: flex; flex-wrap: wrap; gap: 4px; }
+.inbox-waiting h2 .count { margin-left: 4px; vertical-align: 1px; }
