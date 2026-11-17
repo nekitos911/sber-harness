@@ -66,13 +66,18 @@
 .nav-item .end { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; }
 
 .sb-head {
-  display: flex; align-items: center; gap: 2px; height: 28px; padding: 0 6px 0 14px; flex-shrink: 0;
-  border-top: 1px solid var(--rule-soft); color: var(--ink-3); font-size: 11.5px; font-weight: 600;
+  display: flex; align-items: center; gap: 4px; height: 28px; padding: 0 0 0 8px; margin-top: 2px; flex-shrink: 0;
+  color: var(--ink-3); font-size: 11.5px; font-weight: 600;
 }
+.sb-scope { display: inline-flex; border: 1px solid var(--rule); border-radius: var(--r-1); overflow: hidden; }
+.sb-scope button { height: 20px; padding: 0 7px; border: 0; background: none; color: var(--ink-3); font-size: 11px; font-weight: 500; }
+.sb-scope button[aria-pressed="true"] { background: var(--deck-3); color: var(--ink); }
+.sb-scope button:hover { color: var(--ink); }
 .sb-head span { flex: 1; }
 
 .tree { flex: 1; min-height: 0; overflow: auto; padding: 0 6px 12px; }
-.tree-group { margin-bottom: 8px; }
+.tree-group { margin-bottom: 2px; }
+.tree-group[data-open] { margin-bottom: 6px; }
 .tree-row {
   position: relative; display: flex; align-items: center; gap: 7px;
   height: 26px; padding: 0 4px 0 calc(6px + var(--depth, 0) * 16px);
@@ -87,21 +92,30 @@
 .tree-row .agent { font-family: var(--font-mono); font-size: 11px; color: var(--ink-3); flex-shrink: 0; max-width: 84px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tree-row .actions { display: none; gap: 1px; }
 .tree-row:hover .actions, .tree-row:focus-within .actions { display: flex; }
-.tree-row:has(.actions):hover .wt-changes, .tree-row:has(.actions):focus-within .wt-changes { display: none; }
+.tree-row:has(.actions):hover .wt-badges, .tree-row:has(.actions):focus-within .wt-badges { display: none; }
 
+/* Hierarchy: project (bold) → worktrees (16 px in) → sessions (32 px in); a guide line under an open project. */
 .tree-project { font-weight: 600; color: var(--ink); }
+.tree-children { position: relative; }
+.tree-children::before { content: ""; position: absolute; left: 12px; top: 0; bottom: 6px; width: 1px; background: var(--rule-strong); pointer-events: none; z-index: 1; }
+.tree-path { font-weight: 400; font-size: 11.5px; color: var(--ink-3); }
+.tree-group[data-root] { margin-bottom: 4px; padding-bottom: 6px; border-bottom: 1px solid var(--rule-soft); }
+.tree-more { width: 100%; height: 24px; border: 0; background: none; font: inherit; font-size: 12px; color: var(--ink-3); text-align: left; }
+.tree-more .muted { color: var(--ink-4); }
+.tree-more svg { width: 13px !important; height: 13px !important; }
 .tree-project .chev { width: 12px; height: 12px; color: var(--ink-4); transition: transform var(--t-fast) var(--ease-out); }
 .tree-project[aria-expanded="true"] .chev { transform: rotate(90deg); }
 
-/* A worktree and its sessions form a card; the one on screen is highlighted. */
-.wt { border: 1px solid transparent; border-radius: var(--r-2); margin: 2px 0 2px 10px; padding: 1px 0; transition: background-color var(--t-fast) ease, border-color var(--t-fast) ease; }
-.wt[data-active="true"] { background: var(--deck); border-color: var(--rule); }
-.tree-wt { padding-left: 6px; }
-.tree-wt .label { font-weight: 500; color: var(--ink); }
-.wt-changes { flex-shrink: 0; padding: 0 5px; border-radius: 3px; background: var(--run-soft); color: var(--lamp-run); font-size: 10.5px; font-weight: 600; line-height: 16px; }
+/* The worktree on screen (and its sessions) is highlighted. */
+.wt { border-radius: var(--r-1); transition: background-color var(--t-fast) ease; }
+.wt[data-active="true"] { background: var(--deck); }
+.tree-wt .label { color: var(--ink); }
+.wt-badges { display: inline-flex; gap: 6px; flex-shrink: 0; }
+.wt-stat { display: inline-flex; align-items: center; gap: 1px; font-size: 11px; color: color-mix(in srgb, var(--lamp-run) 70%, var(--ink-3)); }
+.wt-stat svg { width: 10px; height: 10px; }
 
 /* Session activity rows: status, title - what it is doing, model, time. */
-.tree-sess { height: 22px; gap: 6px; padding-left: 22px; font-size: 12.5px; }
+.tree-sess { height: 24px; gap: 6px; font-size: 12.5px; }
 .tree-sess .label { color: var(--ink); }
 .tree-sess .st { width: 13px; height: 13px; }
 .sess-doing { color: var(--ink-3); }
@@ -110,13 +124,10 @@
 .sess-state { flex-shrink: 0; max-width: 46%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--state-ink, var(--ink-3)); font-variant-numeric: tabular-nums; }
 .sess-state .agent { font-family: var(--font-mono); }
 /* «1 ждёт ответа · 2 работают» under a worktree header or a collapsed project */
-.state-summary { display: block; padding: 0 8px 2px 30px; font-size: 11px; color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.state-summary { display: block; padding: 0 8px 2px 44px; font-size: 11px; color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .state-summary [data-s] { color: var(--state-ink, var(--ink-3)); }
 .tree-sess[aria-current="true"] { background: var(--deck-3); }
-.tree-sess[data-nested] { padding-left: 40px; }
-.tree-kids { position: relative; }
-.tree-kids::before { content: ""; position: absolute; left: 28px; top: 0; bottom: 8px; width: 1px; background: var(--rule-strong); }
-.tree-sub { cursor: default; padding-left: 40px; opacity: 0.72; }
+.tree-sub { cursor: default; opacity: 0.72; }
 .tree-sub:hover { background: transparent; }
 .tree-sess[data-enter] { animation: slide-in 200ms var(--ease-out); }
 
@@ -182,6 +193,6 @@
 .wt[data-sleeping] > .tree-row, .wt[data-sleeping] > .tree-sess { opacity: 0.55; }
 .wt-pin { width: 11px !important; height: 11px !important; color: var(--ink-4) !important; }
 .wt-unread { width: 7px; height: 7px; border-radius: 50%; background: var(--signal); flex-shrink: 0; }
-.tree-sess[data-depth="2"] { padding-left: 58px; }
+
 .tree-sess[data-depth="3"] { padding-left: 76px; }
 .role-tag { display: inline-block; margin-right: 5px; padding: 0 4px; border-radius: 3px; background: var(--signal-soft); color: var(--signal); font-size: 10.5px; line-height: 15px; vertical-align: 1px; }

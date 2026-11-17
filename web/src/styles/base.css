@@ -278,4 +278,4 @@ pre, code, .diff-table, .edit-lines, .xterm { font-variant-ligatures: none; }
 /* No connection: changing things is off (the tooltip says why). */
 .app[data-conn="closed"] :is(.btn-primary, .composer-send, [data-mutates]) { opacity: 0.45; cursor: not-allowed; }
 .board-loading { padding: 24px; max-width: 720px; }
-.tree-skel { padding: 2px 8px 4px 30px; }
+.tree-skel { padding: 2px 8px 4px 28px; }

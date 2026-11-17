@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react'
-import { Bot, ChevronDown, Ellipsis, Folder, GitPullRequest, Pin, ChevronRight, FolderGit2, FolderPlus, GitBranch, GitBranchPlus, House, Inbox, MessageSquarePlus, Moon, Search, Settings, SquareKanban, SquareTerminal, Sun } from 'lucide-react'
+import { ArrowUp, Bot, ChevronDown, Ellipsis, Folder, GitPullRequest, Pin, ChevronRight, FolderGit2, FolderPlus, GitBranch, GitBranchPlus, House, Inbox, MessageSquarePlus, Moon, Search, Settings, SquareKanban, SquareTerminal, Sun } from 'lucide-react'
 import { openDialog, openScreen, openSession, openWorktree, setState, useActiveCwd, useStore, type Screen } from '../store'
 import { loadWorktrees } from '../ws'
 import { useCurrentTool, useStateLine } from '../lib/live'
 import { sessionVisualState, stateSummary } from '../lib/sessionState'
-import { basename, normPath, relTime, tokens } from '../lib/format'
+import { basename, normPath, plural, relTime, tokens } from '../lib/format'
+import { loadDraft, saveDraft } from '../lib/draft'
 import { newChat, newTerminal } from '../lib/actions'
 import type { Session, Workspace, Worktree } from '../types'
 import { Skeleton, StatusIcon, SubStateIcon, subStateLabel } from './bits'
@@ -33,6 +34,20 @@ export function Sidebar() {
   const openPrs = useStore((s) => s.tasks.filter((t) => t.pr?.state === 'open').length)
   const chats = sessions.filter((s) => s.kind === 'chat').length
   const tree = useMemo(() => buildTree(sessions.filter((s) => !s.archived), query), [sessions, query])
+  const filtering = !!query.trim()
+  const rootWs = workspaces.find((w) => w.kind === 'root')
+  const projects = workspaces.filter((w) => w.kind !== 'root')
+  // «Активные»: projects with sessions or a dirty worktree (or the one on screen); the rest wait behind «Ещё N».
+  const [showAll, setShowAllState] = useState(() => loadDraft<boolean>('sb:all') ?? false)
+  const setShowAll = (v: boolean) => { setShowAllState(v); saveDraft('sb:all', v || null) }
+  const activeCwd = useActiveCwd()
+  const dirtyIn = useStore((s) => s.worktrees)
+  const isActive = (ws: Workspace) =>
+    tree.roots.some((x) => x.workspaceId === ws.id) ||
+    (dirtyIn[ws.id] ?? []).some((w) => (w.dirty ?? 0) > 0) ||
+    (!!activeCwd && (normPath(activeCwd) === normPath(ws.path) || normPath(activeCwd).startsWith(`${normPath(ws.path)}/`) || (dirtyIn[ws.id] ?? []).some((w) => normPath(w.path) === normPath(activeCwd))))
+  const shownProjects = showAll || filtering ? projects : projects.filter(isActive)
+  const quiet = showAll || filtering ? [] : projects.filter((w) => !isActive(w))
 
   return (
     <nav className="sidebar" aria-label="Навигация">
@@ -55,21 +70,32 @@ export function Sidebar() {
         <NavItem screen="inbox" icon={<Inbox />} label="Входящие" end={unread > 0 && <span className="count count-signal" aria-label={`непрочитанных: ${unread}`}>{unread}</span>} />
       </div>
 
-      <div className="sb-head">
-        <span>Проекты</span>
-        <button type="button" className="icon-btn icon-btn-sm" data-tip="Добавить проект" aria-label="Добавить проект" onClick={() => openDialog({ kind: 'workspace' })}>
-          <FolderPlus />
-        </button>
-      </div>
-
       <div className="tree" aria-label="Проекты и сессии">
-        {[...workspaces].sort((a, b) => Number(b.kind === 'root') - Number(a.kind === 'root')).map((ws) => (
-          <ProjectNode key={ws.id} ws={ws} tree={tree} filtering={!!query.trim()} />
-        ))}
+        {rootWs && <ProjectNode ws={rootWs} tree={tree} filtering={filtering} />}
+        <div className="sb-head">
+          <span>Проекты <span className="num">· {projects.length}</span></span>
+          {projects.length > 1 && (
+            <span className="sb-scope" role="group" aria-label="Какие проекты показывать">
+              <button type="button" aria-pressed={!showAll} onClick={() => setShowAll(false)} data-tip="С сессиями или изменениями">Активные</button>
+              <button type="button" aria-pressed={showAll} onClick={() => setShowAll(true)}>Все</button>
+            </span>
+          )}
+          <button type="button" className="icon-btn icon-btn-sm" data-tip="Добавить проект" aria-label="Добавить проект" onClick={() => openDialog({ kind: 'workspace' })}>
+            <FolderPlus />
+          </button>
+        </div>
+        {shownProjects.map((ws) => <ProjectNode key={ws.id} ws={ws} tree={tree} filtering={filtering} />)}
+        {quiet.length > 0 && (
+          <button type="button" className="tree-row tree-more" style={depth(0)} onClick={() => setShowAll(true)}>
+            <Ellipsis aria-hidden />
+            Ещё {quiet.length} {plural(quiet.length, 'проект', 'проекта', 'проектов')}
+            <span className="muted">без сессий и изменений</span>
+          </button>
+        )}
         {tree.loose.length > 0 && (
           <div className="tree-group">
             <div className="tree-note" style={depth(-1)}>Вне проектов</div>
-            {tree.loose.map((s) => <SessionNode key={s.id} s={s} kids={tree.kids} />)}
+            {tree.loose.map((s) => <SessionNode key={s.id} s={s} kids={tree.kids} base={1} />)}
           </div>
         )}
         {workspaces.length === 0 && (
@@ -157,44 +183,74 @@ function buildTree(sessions: Session[], query: string): Tree {
   return { roots, kids, loose: roots.filter((s) => !s.workspaceId) }
 }
 
+/** Whether a worktree is worth a row by default: it is where something is, was recently, or is about to happen. */
+function worktreeMatters(wt: Worktree, here: Session[], taskStatus: string | null | undefined, active: boolean, now: number) {
+  return wt.main || active || here.length > 0 || (wt.dirty ?? 0) > 0 || (wt.ahead ?? 0) > 0 || !!wt.meta?.pinned ||
+    taskStatus === 'in_progress' || taskStatus === 'review' || (!!wt.lastActivityAt && now - wt.lastActivityAt < WEEK)
+}
+const WEEK = 7 * 24 * 3600 * 1000
+const ATTENTION = new Set(['waiting_answer', 'waiting_permission', 'stalled', 'auth', 'error'])
+const BUSY = new Set(['running', 'starting'])
+
 function ProjectNode({ ws, tree, filtering }: { ws: Workspace; tree: Tree; filtering: boolean }) {
-  const [open, setOpen] = useState(true)
+  const mine = tree.roots.filter((s) => s.workspaceId === ws.id)
+  const activeCwd = useActiveCwd()
+  const worktrees = useStore((s) => s.worktrees[ws.id])
+  const tasks = useStore((s) => s.tasks)
+  const now = useNow()
+  const holdsActive = !!activeCwd && (normPath(activeCwd) === normPath(ws.path) || (worktrees ?? []).some((w) => normPath(w.path) === normPath(activeCwd)) || mine.some((s) => normPath(s.cwd) === normPath(activeCwd)))
+  // Open by default only where something is; a choice the user made sticks.
+  const [choice, setChoice] = useState(() => loadDraft<boolean>(`sb:open:${ws.id}`))
+  const open = choice ?? (mine.length > 0 || holdsActive)
+  const toggle = () => { setChoice(!open); saveDraft(`sb:open:${ws.id}`, !open) }
+  const [moreChoice, setMoreChoice] = useState(() => loadDraft<boolean>(`sb:more:${ws.id}`) ?? false)
+  const setMore = (v: boolean) => { setMoreChoice(v); saveDraft(`sb:more:${ws.id}`, v || null) }
   const [menu, setMenu] = useState(false)
   const projRow = useRef<HTMLDivElement>(null)
-  const worktrees = useStore((s) => s.worktrees[ws.id])
-  const activeCwd = useActiveCwd()
-
-  const mine = tree.roots.filter((s) => s.workspaceId === ws.id)
+  const plain = ws.kind === 'root' || ws.kind === 'folder' // the projects folder and plain folders hold chats directly
+  const expanded = open || filtering
   const loaded = worktrees !== undefined
+
   // Git worktrees, plus folders sessions run in that git does not list (so every session sits under a worktree).
   const list = useMemo(() => {
     const out: Worktree[] = worktrees?.length ? [...worktrees] : [{ path: ws.path, branch: null, head: '', main: true }]
     for (const s of mine) {
       if (!out.some((w) => normPath(w.path) === normPath(s.cwd))) out.push({ path: s.cwd, branch: s.branch, head: '', main: false })
     }
-    // Main copy first, then pinned, then the rest in git's order.
-    return out.sort((a, b) => Number(b.main) - Number(a.main) || Number(!!b.meta?.pinned) - Number(!!a.meta?.pinned))
+    return out
   }, [worktrees, ws.path, mine])
   const unknown = loaded && list.length > (worktrees?.length || 1)
-
+  // Lazy: only an expanded project asks for its (enriched, slower) worktree list, and again when its sessions change.
+  const sig = mine.map((s) => s.id + s.status).join()
   useEffect(() => {
-    if (open && ws.isGit && (!loaded || unknown)) void loadWorktrees(ws.id)
-  }, [open, ws.id, ws.isGit, loaded, unknown])
+    if (expanded && ws.isGit && !plain) void loadWorktrees(ws.id).then(() => loadWorktrees(ws.id, true)) // rows at once, badges next
+  }, [expanded, ws.id, ws.isGit, plain, sig, unknown])
+
+  const rows = useMemo(() => {
+    const out = list.map((wt) => {
+      const here = mine.filter((s) => normPath(s.cwd) === normPath(wt.path))
+      const states = withKids(here, tree.kids).map(sessionVisualState)
+      const task = wt.taskStatus ?? tasks.find((t) => t.id === wt.taskId || (!!wt.branch && t.branch === wt.branch))?.status
+      const active = !!activeCwd && normPath(activeCwd) === normPath(wt.path)
+      const last = Math.max(wt.lastActivityAt ?? 0, ...here.map((s) => s.lastActivityAt))
+      return { wt, here, active, last, rank: states.some((v) => ATTENTION.has(v)) ? 0 : states.some((v) => BUSY.has(v)) ? 1 : 2, matters: worktreeMatters(wt, here, task, active, now) }
+    })
+    return out.sort((a, b) => a.rank - b.rank || b.last - a.last || (a.wt.branch ?? a.wt.path).localeCompare(b.wt.branch ?? b.wt.path))
+  }, [list, mine, tree.kids, tasks, activeCwd, now])
+  const visible = filtering ? rows.filter((r) => r.here.length > 0) : moreChoice ? rows : rows.filter((r) => r.matters)
+  const hidden = filtering ? 0 : rows.length - rows.filter((r) => r.matters).length
 
   if (filtering && mine.length === 0) return null
-  const expanded = open || filtering
-  const toggle = () => setOpen(!open)
-  // The projects folder and plain folders hold chats directly: no worktrees there.
-  const plain = ws.kind === 'root' || ws.kind === 'folder'
-  const name = ws.kind === 'root' ? `Все проекты (${basename(ws.path)})` : ws.name
+  const isRoot = ws.kind === 'root'
+  const name = isRoot ? 'Все проекты' : ws.name
 
   return (
-    <div className="tree-group">
+    <div className="tree-group" data-open={expanded || undefined} data-root={isRoot || undefined}>
       <div ref={projRow} className="tree-row tree-project" role="button" tabIndex={0} aria-expanded={expanded} data-tip={plain ? ws.path : ws.name} data-tip-trunc onClick={toggle} onKeyDown={activate(toggle)}
-        onContextMenu={(e) => { e.preventDefault(); setMenu(true) }}>
+        style={depth(0)} onContextMenu={(e) => { e.preventDefault(); setMenu(true) }}>
         <ChevronRight className="chev" aria-hidden />
         {plain ? <Folder aria-hidden /> : <FolderGit2 aria-hidden />}
-        <span className="label">{name}</span>
+        <span className="label">{name}{isRoot && <span className="tree-path"> {basename(ws.path)}</span>}</span>
         {plain && <RowAction label={`Новый чат: ${name}`} icon={<MessageSquarePlus />} onClick={() => void newChat({ workspaceId: ws.id, cwd: ws.path })} />}
         <span className="actions">
           {ws.isGit && <RowAction label="Новое рабочее дерево" icon={<GitBranchPlus />} onClick={() => openDialog({ kind: 'worktree', workspaceId: ws.id })} />}
@@ -203,13 +259,23 @@ function ProjectNode({ ws, tree, filtering }: { ws: Workspace; tree: Tree; filte
       </div>
       <Menu anchor={projRow} open={menu} onClose={() => setMenu(false)} items={projectMenu(ws)} label={`Проект ${ws.name}`} placement="bottom-end" />
       {!expanded && <StateSummary sessions={withKids(mine, tree.kids)} />}
-      {expanded && ws.isGit && !loaded && <div className="tree-skel"><Skeleton rows={2} label="Загрузка рабочих деревьев…" /></div>}
-      {expanded && plain && <div className="tree-plain">{mine.map((s) => <SessionNode key={s.id} s={s} kids={tree.kids} />)}</div>}
-      {expanded && !plain && list.map((wt) => {
-        const here = mine.filter((s) => normPath(s.cwd) === normPath(wt.path))
-        if (filtering && here.length === 0) return null
-        return <WorktreeNode key={wt.path} ws={ws} wt={wt} sessions={here} kids={tree.kids} active={!!activeCwd && normPath(activeCwd) === normPath(wt.path)} />
-      })}
+      {expanded && (
+        <div className="tree-children">
+          {plain ? mine.map((s) => <SessionNode key={s.id} s={s} kids={tree.kids} base={1} />)
+            : !loaded && ws.isGit ? <div className="tree-skel"><Skeleton rows={2} label="Загрузка рабочих деревьев…" /></div>
+              : (
+                <>
+                  {visible.map((r) => <WorktreeNode key={r.wt.path} ws={ws} wt={r.wt} sessions={r.here} kids={tree.kids} active={r.active} />)}
+                  {hidden > 0 && (
+                    <button type="button" className="tree-row tree-more" style={depth(1)} aria-expanded={moreChoice} onClick={() => setMore(!moreChoice)}>
+                      <Ellipsis aria-hidden />
+                      {moreChoice ? 'Свернуть тихие рабочие деревья' : `Ещё ${hidden} ${plural(hidden, 'рабочее дерево', 'рабочих дерева', 'рабочих деревьев')}`}
+                    </button>
+                  )}
+                </>
+              )}
+        </div>
+      )}
     </div>
   )
 }
@@ -229,9 +295,10 @@ function WorktreeNode({ ws, wt, sessions, kids, active }: { ws: Workspace; wt: W
   const name = wt.meta?.label || wt.branch || (wt.main ? ws.name : basename(wt.path))
   const where = { workspaceId: ws.id, cwd: wt.path }
   const sleeping = !!wt.meta?.sleeping
+  const ahead = wt.ahead ?? 0
   return (
     <div className="wt" data-active={active} data-sleeping={sleeping || undefined}>
-      <div ref={row} className="tree-row tree-wt" role="button" tabIndex={0}
+      <div ref={row} className="tree-row tree-wt" role="button" tabIndex={0} style={depth(1)}
         data-tip={name} data-tip-trunc
         aria-current={active ? 'location' : undefined} onClick={pick}
         onKeyDown={(e) => { onWorktreeKey(e, ws, wt); activate(pick)(e) }}
@@ -240,7 +307,10 @@ function WorktreeNode({ ws, wt, sessions, kids, active }: { ws: Workspace; wt: W
         <span className="label">{name}</span>
         {wt.meta?.pinned && <Pin className="wt-pin" aria-label="закреплено" />}
         {unread && <span className="wt-unread" aria-label="непрочитано" />}
-        {changed > 0 && <span className="wt-changes num" data-tip={`Изменённых файлов: ${changed}`}>{changed}</span>}
+        <span className="wt-badges">
+          {changed > 0 && <span className="wt-stat num" data-tip={`${changed} ${plural(changed, 'изменённый файл', 'изменённых файла', 'изменённых файлов')}`}>±{changed}</span>}
+          {ahead > 0 && <span className="wt-stat num" data-tip={`${ahead} ${plural(ahead, 'коммит', 'коммита', 'коммитов')} не в базовой ветке`}><ArrowUp aria-hidden />{ahead}</span>}
+        </span>
         <span className="actions">
           <RowAction label="Новый чат в этом дереве" icon={<MessageSquarePlus />} onClick={() => void newChat(where)} />
           <RowAction label="Новый терминал в этом дереве" icon={<SquareTerminal />} onClick={() => void newTerminal(where)} />
@@ -254,27 +324,28 @@ function WorktreeNode({ ws, wt, sessions, kids, active }: { ws: Workspace; wt: W
       </div>
       <Menu anchor={row} open={menu} onClose={() => setMenu(false)} items={worktreeMenu(ws, wt, task, ideEnabled())} label={`Рабочее дерево ${name}`} placement="bottom-end" />
       <StateSummary sessions={withKids(sessions, kids)} />
-      {sessions.map((s) => <SessionNode key={s.id} s={s} kids={kids} />)}
+      {sessions.map((s) => <SessionNode key={s.id} s={s} kids={kids} base={2} />)}
     </div>
   )
 }
 
 /** A top-level session and, under it, its workers (harness chats) and the agent's own internal sub-agents. */
-function SessionNode({ s, kids, level = 0 }: { s: Session; kids: Map<string, Session[]>; level?: number }) {
+function SessionNode({ s, kids, level = 0, base = 2 }: { s: Session; kids: Map<string, Session[]>; level?: number; base?: number }) {
   const children = kids.get(s.id) ?? []
   const internal = useStore((st) => st.subagents[s.id])
   const [open, setOpen] = useState(true)
   const has = children.length > 0 || !!internal?.items.length
   return (
     <>
-      <SessionRow s={s} nested={level > 0} level={level} caret={has ? { open, toggle: () => setOpen(!open) } : undefined} />
+      <SessionRow s={s} nested={level > 0} level={base + level} caret={has ? { open, toggle: () => setOpen(!open) } : undefined} />
       {has && open && (
         <div className="tree-kids" role="group" aria-label={`Агенты сессии ${s.title}`}>
-          {children.map((c) => <SessionNode key={c.id} s={c} kids={kids} level={level + 1} />)}
+          {children.map((c) => <SessionNode key={c.id} s={c} kids={kids} level={level + 1} base={base} />)}
           {internal?.items.map((a) => (
             <div
               key={a.id}
               className="tree-row tree-sess tree-sub"
+              style={depth(base + level + 1)}
               data-tip={a.name} data-tip-trunc aria-label={`${a.name}: ${subStateLabel(a.state)}, внутренний агент`}
             >
               <SubStateIcon state={a.state} />
@@ -308,14 +379,13 @@ function SessionRow({ s, nested, level = 0, caret }: { s: Session; nested: boole
       role="button"
       data-s={v}
       data-nested={nested || undefined}
-      data-depth={level > 1 ? level : undefined}
       data-enter={s.createdAt > APP_START || undefined}
       tabIndex={0}
       aria-current={current ? 'true' : undefined}
       data-tip={s.title || s.id} data-tip-trunc
       onClick={open}
       onKeyDown={activate(open)}
-      style={depth(0)}
+      style={depth(level)}
     >
       <StatusIcon session={s} />
       <span className="label">

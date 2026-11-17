@@ -140,10 +140,11 @@ export async function loadSubagents(sessionId: string) {
   } catch { /* older server or no registry: nothing to show */ }
 }
 
-export async function loadWorktrees(workspaceId: string) {
+/** A project's worktrees; `enrich` adds dirty/ahead (a git call per worktree, cached on the server) — only for open projects. */
+export async function loadWorktrees(workspaceId: string, enrich = false) {
   let list: Worktree[] = []
   try {
-    list = arr(await api<Worktree[]>('GET', `/workspaces/${encodeURIComponent(workspaceId)}/worktrees`))
+    list = arr(await api<Worktree[]>('GET', `/workspaces/${encodeURIComponent(workspaceId)}/worktrees${enrich ? '?enrich=1' : ''}`))
   } catch { /* not a git repo or gone: show none */ }
   setState((s) => ({ worktrees: { ...s.worktrees, [workspaceId]: list } }))
 }
