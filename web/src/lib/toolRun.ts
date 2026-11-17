@@ -75,3 +75,16 @@ export function runImages(msgs: Message[]): string[] {
   return [...found].slice(0, 6)
 }
 
+/** «Model: … · MCP: harness ✓, java-lsp ✗ (timeout)» or «MCP: …»: the CLI's MCP status line. */
+export const isMcpStatus = (text: string) => /(^|·\s*)MCP:\s*\S/.test(text.trim()) && !text.includes('\n')
+
+/** The MCP servers of a status line: name, ok, reason. */
+export function mcpServers(text: string): { name: string; ok: boolean; reason: string | null }[] {
+  const seg = text.split('·').map((x) => x.trim()).find((x) => x.startsWith('MCP:'))
+  if (!seg) return []
+  return seg.slice(4).split(',').map((x) => x.trim()).filter(Boolean).map((x) => {
+    const bad = /✗|×|fail/i.test(x)
+    const reason = /\((.+)\)\s*$/.exec(x)?.[1] ?? null
+    return { name: x.replace(/\s*\(.+\)\s*$/, '').replace(/\s*[✓✔✗×]\s*$/, '').trim(), ok: !bad, reason }
+  })
+}

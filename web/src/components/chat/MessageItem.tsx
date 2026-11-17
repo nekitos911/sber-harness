@@ -14,11 +14,12 @@ import { ThoughtBlock } from './ToolSteps'
 import { AskToolCard, isAskTool, MessageQuestion, PermissionCard } from './Attention'
 
 /** `until`: for a thought, when it ended (null = still thinking); the thought shows how long it took. */
-export const MessageItem = memo(function MessageItem({ m, fresh = false, until }: { m: Message; fresh?: boolean; until?: number | null }) {
+export const MessageItem = memo(function MessageItem({ m, fresh = false, until, count }: { m: Message; fresh?: boolean; until?: number | null; count?: number }) {
   // An `ask` with options (from this agent or a worker) is a question card like the CLI's own question tool.
   const body = m.kind === 'thought' ? <ThoughtBlock m={m} until={until === undefined ? m.at : until} />
     : m.options?.length && m.kind !== 'permission' ? <MessageQuestion m={m} />
-      : <MessageBody m={m} />
+      : m.kind === 'system' ? <><SystemNote text={m.text} count={count} />{m.link && <LinkButton href={m.link} />}</>
+        : <MessageBody m={m} />
   // Messages that arrive while the chat is open fade in; the loaded history does not replay.
   return (
     <div className="msg-wrap" data-kind={m.kind} data-enter={fresh || undefined}>
@@ -80,13 +81,13 @@ function UserMessage({ m }: { m: Message }) {
 }
 
 /** System lines: "⚠ …" is a warning (amber, not an error); "MCP: a ✓, b ✗" is a compact status line. */
-function SystemNote({ text }: { text: string }) {
+function SystemNote({ text, count }: { text: string; count?: number }) {
   const t = text.trim()
   if (t.startsWith('⚠')) {
     return (
       <div className="msg msg-warn" role="note">
         <TriangleAlert aria-hidden />
-        <span>{t.replace(/^⚠️?\s*/, '')}</span>
+        <span>{t.replace(/^⚠️?\s*/, '')}{count && count > 1 && <span className="warn-count num"> ×{count}</span>}</span>
       </div>
     )
   }

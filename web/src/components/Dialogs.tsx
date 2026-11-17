@@ -38,6 +38,7 @@ function DialogSwitch({ d }: { d: DialogRequest }) {
     case 'wt-cleanup': return <CleanupDialog workspaceId={d.workspaceId} />
     case 'recovery': return <RecoveryDialog />
     case 'session-delete': return <SessionDeleteDialog id={d.id} />
+    case 'session-perms': return <SessionPermsDialog id={d.id} />
     case 'folder-chat': return <FolderPicker title="Новый чат в папке" submitLabel="Начать чат здесь" onClose={closeDialog} onPick={(p) => { closeDialog(); void newChatInFolder(p) }} />
   }
 }
@@ -561,6 +562,25 @@ function SessionDeleteDialog({ id }: { id: string }) {
     <Modal title={`Удалить «${s.title || s.id}»?`} submitLabel={running ? 'Остановить и удалить' : 'Удалить'} danger busy={busy} progress={step}
       onClose={closeDialog} onSubmit={() => run(async () => { if (await deleteSession(s)) closeDialog() })}>
       <p>История чата будет удалена. {running ? 'Агент сейчас работает — он будет остановлен.' : 'Если она ещё понадобится, лучше убрать чат в архив.'}</p>
+    </Modal>
+  )
+}
+
+/** «Разрешения этого чата»: tool patterns allowed for this chat only (granted from permission cards); × removes one. */
+function SessionPermsDialog({ id }: { id: string }) {
+  const s = useStore((st) => st.sessions.find((x) => x.id === id))
+  if (!s) return null
+  const list = s.allowedTools ?? []
+  const remove = async (p: string) => {
+    const saved = await tryApi<Session>('PATCH', `/sessions/${encodeURIComponent(id)}`, { allowedTools: list.filter((x) => x !== p) })
+    if (saved) setState((st) => ({ sessions: upsert(st.sessions, saved) }))
+  }
+  return (
+    <Modal title="Разрешения этого чата" submitLabel="Готово" onClose={closeDialog} onSubmit={closeDialog}>
+      {list.length ? (
+        <div className="chips-row">{list.map((p) => <Chip key={p} mono onRemove={() => void remove(p)} removeLabel={`Убрать ${p}`}>{p}</Chip>)}</div>
+      ) : <p className="muted">Отдельных разрешений нет: действуют общие из настроек агента.</p>}
+      <p className="field-hint">Появляются, когда в карточке разрешения выбрано «Разрешать всегда в этой сессии».</p>
     </Modal>
   )
 }

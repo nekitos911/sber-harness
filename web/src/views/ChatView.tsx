@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { ArrowDown, Check, Copy, Ellipsis, ExternalLink, FolderPlus, KeyRound, Wrench, X, GitCompareArrows, MessageSquare, RotateCcw, ScrollText, Square, Trash2 } from 'lucide-react'
+import { ArrowDown, Check, Copy, Ellipsis, ExternalLink, FolderPlus, KeyRound, ShieldCheck, Wrench, X, GitCompareArrows, MessageSquare, RotateCcw, ScrollText, Square, Trash2 } from 'lucide-react'
 import { api, errorText, tryApi } from '../api'
-import { openScreen, openSession, openTask, setState, showPanel, useFeature, useStore, without, upsertSession } from '../store'
+import { openDialog, openScreen, openSession, openTask, setState, showPanel, useFeature, useStore, without, upsertSession } from '../store'
 import { loadMessages, loadSubagents } from '../ws'
 import { basename, normPath, ROLE } from '../lib/format'
 import { useGit } from '../lib/git'
@@ -18,6 +18,7 @@ import { ReworkPopover } from '../components/board/Rework'
 import { BranchPicker } from '../components/pickers/BranchPicker'
 import { MessageItem } from '../components/chat/MessageItem'
 import { ActivityLine, buildItems, StallBanner, ToolRun, TurnFiles, TurnHead } from '../components/chat/Turn'
+import { isMcpStatus, mcpServers } from '../lib/toolRun'
 import { sessionVisualState } from '../lib/sessionState'
 import { ownerWorkspace } from '../lib/actions'
 import { Composer } from '../components/chat/Composer'
@@ -184,7 +185,7 @@ export function ChatView({ id, active }: { id: string; active: boolean }) {
           )}
           {items.map((it) => {
             switch (it.kind) {
-              case 'msg': return <MessageItem key={it.key} m={it.m} until={it.until} fresh={it.m.at > shownAt.current} />
+              case 'msg': return <MessageItem key={it.key} m={it.m} until={it.until} count={it.count} fresh={it.m.at > shownAt.current} />
               case 'tools': return <ToolRun key={it.key} msgs={it.msgs} cwd={session.cwd} live={running} />
               case 'head': return <TurnHead key={it.key} start={it.start} end={it.end} />
               case 'files': return <TurnFiles key={it.key} msgs={it.msgs} cwd={session.cwd} />
@@ -264,6 +265,7 @@ function ChatHeader({ session, onLog, onReset, onDelete }: { session: Session; o
         </button>
       )}
       <span className="grow" />
+      <McpChip sessionId={session.id} />
       {dirsOn && !session.virtual && <IncludeDirs session={session} />}
       {reworkOn && task && session.status !== 'running' && session.role !== 'reviewer' && !session.virtual && (
         <>
@@ -290,12 +292,47 @@ function ChatHeader({ session, onLog, onReset, onDelete }: { session: Session; o
         icon={<Ellipsis />}
         align="right"
         items={[
+          ...(session.allowedTools !== undefined ? [{ label: 'Разрешения этого чата…', icon: <ShieldCheck />, onSelect: () => openDialog({ kind: 'session-perms', id: session.id }) }] : []),
           { label: 'Лог агента', icon: <ScrollText />, onSelect: onLog },
           { label: 'Сбросить статус', icon: <RotateCcw />, onSelect: onReset },
           { label: 'Удалить сессию', icon: <Trash2 />, onSelect: onDelete },
         ]}
       />
     </header>
+  )
+}
+
+/** «MCP 4/5»: the CLI's MCP servers from the latest status line; the list with ✗ reasons on click. */
+function McpChip({ sessionId }: { sessionId: string }) {
+  const line = useStore((s) => {
+    const list = s.messages[sessionId] ?? []
+    for (let i = list.length - 1; i >= 0; i--) if (list[i].kind === 'system' && isMcpStatus(list[i].text)) return list[i].text
+    return null
+  })
+  const [open, setOpen] = useState(false)
+  const anchor = useRef<HTMLButtonElement>(null)
+  if (!line) return null
+  const servers = mcpServers(line)
+  if (!servers.length) return null
+  const ok = servers.filter((x) => x.ok).length
+  return (
+    <>
+      <button ref={anchor} type="button" className="btn btn-sm mcp-chip" data-bad={ok < servers.length || undefined} aria-expanded={open} onClick={() => setOpen(!open)}
+        data-tip={ok < servers.length ? 'Не все MCP-серверы запустились' : 'MCP-серверы запущены'}>
+        MCP {ok}/{servers.length}
+      </button>
+      <Popover anchor={anchor} open={open} onClose={() => setOpen(false)} placement="bottom-end" label="MCP-серверы" className="mcp-pop">
+        <ul className="mcp-pop-list">
+          {servers.map((x) => (
+            <li key={x.name} data-bad={!x.ok || undefined}>
+              {x.ok ? <Check aria-hidden /> : <X aria-hidden />}
+              <span className="mono">{x.name}</span>
+              {!x.ok && <span className="muted">{x.reason ?? 'не запустился'}</span>}
+            </li>
+          ))}
+        </ul>
+      </Popover>
+    </>
   )
 }
 

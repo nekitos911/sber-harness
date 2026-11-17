@@ -332,3 +332,11 @@ svg.step-icon.spinner { color: var(--lamp-run); }
 .chat-waiting { color: var(--lamp-ask); }
 .chat-working[data-closing] { color: var(--ink-3); }
 .chat-working[data-closing] svg { color: var(--ink-4); }
+.perm-from { margin-right: 4px; color: var(--ink-2); font-weight: 600; }
+.warn-count { margin-left: 4px; color: var(--ink-3); }
+.mcp-chip[data-bad] { color: var(--lamp-fail); }
+.mcp-pop { padding: 8px 10px; min-width: 220px; }
+.mcp-pop-list { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; font-size: 12.5px; }
+.mcp-pop-list li { display: flex; align-items: center; gap: 6px; }
+.mcp-pop-list svg { width: 13px; height: 13px; color: var(--lamp-done); flex-shrink: 0; }
+.mcp-pop-list li[data-bad] svg { color: var(--lamp-fail); }

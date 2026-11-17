@@ -1,7 +1,7 @@
 import { useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { CircleHelp, Eye, Pencil, Plug, ShieldAlert, SquareTerminal, Wrench } from 'lucide-react'
 import { tryApi } from '../../api'
-import { useStore } from '../../store'
+import { openSession, useStore } from '../../store'
 import { loadDraft, saveDraft } from '../../lib/draft'
 import { mcpParts, obj, pathOf, toolKind } from '../../lib/toolRun'
 import { summarizeInput } from '../../lib/toolcall'
@@ -115,6 +115,10 @@ function actionLine(tool: string, input: unknown): { icon: ReactNode; text: stri
   }
 }
 
+/** Headless: the CLI already said no; what the buttons do is retry with an allowance, allow for the chat, or leave it. */
+const HEADLESS_LABEL = (o: PermissionOption) =>
+  isReject(o) ? 'Оставить отклонённым' : isOnce(o) ? 'Разрешить и повторить' : /session|always/i.test(`${o.id} ${o.kind ?? ''}`) ? 'Разрешать всегда в этой сессии' : optionLabel(o)
+
 const isReject = (o: PermissionOption) => /reject|deny/i.test(`${o.id} ${o.kind ?? ''}`)
 const isOnce = (o: PermissionOption) => /allow_once|^allow$/i.test(o.kind ?? o.id)
 const optionLabel = (o: PermissionOption) => o.label ?? o.name ?? o.id
@@ -134,7 +138,10 @@ function resolvedText(o: PermissionOption | undefined, id: string) {
  */
 export function PermissionCard({ m }: { m: Message }) {
   const p = m.permission!
-  const [choice, setChoice] = useAnswer(m.id, p.choice ?? null)
+  const [choice, setChoice] = useAnswer(m.id, p.choice ?? p.resolved ?? null)
+  const here = useStore((s) => s.sessions.find((x) => x.id === m.sessionId))
+  const from = useStore((s) => (m.from && m.from !== m.sessionId && m.from !== 'user' ? s.sessions.find((x) => x.id === m.from) : undefined))
+  const headless = p.transport !== 'acp'
   const [busy, setBusy] = useState<string | null>(null)
   const [note, setNote] = useState('')
   const rejectRef = useRef<HTMLButtonElement>(null)
@@ -148,11 +155,24 @@ export function PermissionCard({ m }: { m: Message }) {
     setBusy(null)
     if (res !== undefined) setChoice(o.id)
   }
+  // Inside a built-in sub-agent's own (read-only) chat: a record; the answer belongs to the parent chat.
+  if (here?.virtual) {
+    return (
+      <div className="perm-card perm-done" role="note">
+        <ShieldAlert aria-hidden /><span className="ellipsis">CLI отклонил: {text}</span>
+        {here.parentId && <button type="button" className="link" onClick={() => openSession(here.parentId!)}>ответить в родительском чате</button>}
+      </div>
+    )
+  }
   if (choice) {
     const o = options.find((x) => x.id === choice)
+    const rejected = !!o && isReject(o)
     return (
-      <div className="perm-card perm-done" data-rejected={(o && isReject(o)) || undefined} role="note">
-        <ShieldAlert aria-hidden /><span className="ellipsis">{resolvedText(o, choice)}: {text}</span>
+      <div className="perm-card perm-done" data-rejected={rejected || undefined} role="note">
+        <ShieldAlert aria-hidden />
+        <span className="ellipsis">{headless
+          ? (rejected ? `Оставлено отклонённым: ${p.pattern ?? text}` : `Разрешено: ${p.pattern ?? text}${isOnce(o!) ? ' · повтор отправлен' : ' · для этого чата'}`)
+          : `${resolvedText(o, choice)}: ${text}`}</span>
       </div>
     )
   }
@@ -163,8 +183,12 @@ export function PermissionCard({ m }: { m: Message }) {
   }
   return (
     <section className="perm-card" aria-label="Запрос разрешения" onKeyDown={onKey}>
-      <header className="perm-head"><ShieldAlert aria-hidden />Агент запрашивает разрешение</header>
+      <header className="perm-head"><ShieldAlert aria-hidden />
+        {from && <span className="perm-from">субагент {(/^([\w.-]{2,40}):/.exec(from.title)?.[1]) ?? from.title}:</span>}
+        {headless ? 'CLI отклонил действие — нужно разрешение' : 'Агент ждёт разрешения'}
+      </header>
       <div className="perm-action"><span className="perm-icon" aria-hidden>{icon}</span><span className="mono">{text}</span></div>
+      {headless && p.pattern && <p className="perm-reason muted">Будет разрешено: <span className="mono">{p.pattern}</span></p>}
       {p.reason && <p className="perm-reason muted">{p.reason}</p>}
       <Disclosure className="perm-more" summary={<span>Подробности</span>}>
         <pre>{typeof p.input === 'string' ? p.input : JSON.stringify(p.input, null, 2)}</pre>
@@ -181,7 +205,7 @@ export function PermissionCard({ m }: { m: Message }) {
             disabled={busy !== null && busy !== o.id}
             onClick={() => void choose(o)}
           >
-            {optionLabel(o)}
+            {headless ? HEADLESS_LABEL(o) : optionLabel(o)}
           </Button>
         ))}
       </div>

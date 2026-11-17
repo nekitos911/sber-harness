@@ -451,3 +451,4 @@ button.chip.chip-mono[aria-pressed="true"] { background: var(--signal-soft); col
 .mcp-list li[data-off] .mcp-dot { background: var(--ink-4); }
 .set-line { display: block; }
 .chat-hint { display: flex; align-items: center; gap: 8px; padding: 6px 6px 6px 12px; border: 1px solid var(--rule); border-radius: var(--r-2); background: var(--deck); font-size: 12.5px; color: var(--ink-2); }
+.quick-tools { margin-top: 6px; }

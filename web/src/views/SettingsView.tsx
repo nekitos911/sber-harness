@@ -267,6 +267,7 @@ function AgentSection({ id, form, update, fieldError, primary }: SectionProps & 
           </Row>
         )}
         {primary && <McpServersRow id={id} a={a} set={set} />}
+        {primary && a.allowedTools !== undefined && <AllowedToolsRow a={a} set={set} />}
       </div>
       <Advanced id={`agent-${id}`}>
       <div className="set-rows">
@@ -421,6 +422,24 @@ function CommandRow({ id, a, set, error }: { id: string; a: AgentSettings; set: 
       )}
       {unknown && <span className="field-warn"><TriangleAlert aria-hidden />Команда /{cmd} не встречалась в сессиях GigaCode. Проверьте, что она установлена.</span>}
       {known.length > 0 && <span className="set-hint">Известные команды: <span className="mono">{known.slice(0, 12).join(' ')}{known.length > 12 ? ' …' : ''}</span></span>}
+    </Row>
+  )
+}
+
+const QUICK_TOOLS = ['git', 'mvn', 'mvnw', 'gradle', 'gradlew', 'npm', 'npx', 'node', 'java', 'python', 'pytest'].map((c) => `run_shell_command(${c})`)
+
+/** «Разрешённые команды»: tool patterns the CLI may run without asking (--allowed-tools), with quick-add for common ones. */
+function AllowedToolsRow({ a, set }: { a: AgentSettings; set: (p: Partial<AgentSettings>) => void }) {
+  const list = a.allowedTools ?? []
+  const missing = QUICK_TOOLS.filter((t) => !list.includes(t))
+  return (
+    <Row label="Разрешённые команды" hint="Что CLI выполняет без вопроса в любом чате. Остальное агент попросит разрешить." wide>
+      <ChipsInput label="шаблон, например run_shell_command(git)" values={list} onChange={(v) => set({ allowedTools: v })} />
+      {missing.length > 0 && (
+        <div className="chips quick-tools" aria-label="Быстро добавить">
+          {missing.map((t) => <Chip key={t} mono onClick={() => set({ allowedTools: [...list, t] })} tip="Добавить">+ {t}</Chip>)}
+        </div>
+      )}
     </Row>
   )
 }

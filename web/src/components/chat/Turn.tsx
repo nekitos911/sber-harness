@@ -13,11 +13,11 @@ import { Disclosure, IconButton } from '../ui'
 import { isSubagentTool } from './SubagentCard'
 import { isAskTool } from './Attention'
 import { longDur, RunImages, StepList } from './ToolSteps'
-import { toolRunSummary } from '../../lib/toolRun'
+import { isMcpStatus, toolRunSummary } from '../../lib/toolRun'
 
 /** What the transcript renders: messages, runs of tool calls folded into one line, turn headers and footers, «НОВОЕ». */
 export type Item =
-  | { kind: 'msg'; key: string; m: Message; until?: number | null } // until: when a thought ended (null = still thinking)
+  | { kind: 'msg'; key: string; m: Message; until?: number | null; count?: number } // until: when a thought ended; count: a repeated ⚠
   | { kind: 'tools'; key: string; msgs: Message[] }
   | { kind: 'head'; key: string; start: number; end: number | null }
   | { kind: 'files'; key: string; msgs: Message[] }
@@ -32,8 +32,14 @@ const isGroupable = (m: Message) => m.kind === 'tool' && !!m.tool && !isSubagent
 export function buildItems(list: Message[], runningTurn: number | null, newSince: number | null, lastActivity = 0): Item[] {
   const out: Item[] = []
   let newDone = newSince === null
+  const warnings = new Map<string, Extract<Item, { kind: 'msg' }>>() // the same ⚠ again: one line with ×N
   for (let i = 0; i < list.length; i++) {
     const m = list[i]
+    if (m.kind === 'system' && isMcpStatus(m.text)) continue // the header chip «MCP 4/5» shows it
+    if (m.kind === 'system' && m.text.trim().startsWith('⚠')) {
+      const seen = warnings.get(m.text.trim())
+      if (seen) { seen.count = (seen.count ?? 1) + 1; continue }
+    }
     const prev = list[i - 1]
     const next = list[i + 1]
     if (!newDone && m.at > newSince! && m.kind !== 'user') { out.push({ kind: 'new', key: `new-${m.id}` }); newDone = true }
@@ -53,7 +59,9 @@ export function buildItems(list: Message[], runningTurn: number | null, newSince
       i = j - 1
       out.push(run.length > 1 ? { kind: 'tools', key: `tools-${m.id}`, msgs: run } : { kind: 'msg', key: m.id, m })
     } else {
-      out.push({ kind: 'msg', key: m.id, m, until: m.kind === 'thought' ? (next ? next.at : m.turn === runningTurn ? null : m.at) : undefined })
+      const item: Extract<Item, { kind: 'msg' }> = { kind: 'msg', key: m.id, m, until: m.kind === 'thought' ? (next ? next.at : m.turn === runningTurn ? null : m.at) : undefined }
+      if (m.kind === 'system' && m.text.trim().startsWith('⚠')) warnings.set(m.text.trim(), item)
+      out.push(item)
     }
     const after = list[i + 1]
     const turnEnds = !after || after.turn !== list[i].turn

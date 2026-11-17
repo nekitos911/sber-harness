@@ -34,6 +34,7 @@ export type DialogRequest =
   | { kind: 'folder-chat' }
   | { kind: 'recovery' }
   | { kind: 'session-delete'; id: string }
+  | { kind: 'session-perms'; id: string }
 
 export interface Toast { id: number; text: string; tone: 'info' | 'ok' | 'error'; href?: string; leaving?: boolean }
 

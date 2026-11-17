@@ -112,6 +112,7 @@ export interface Session {
   warm?: boolean // ACP sessions only: the process is loaded (false = unloaded after idling)
   system?: boolean // harness-internal (login terminal, discovery…): shown only under «Служебное»
   worktreePath?: string | null // the worktree root the session runs in (its cwd may be a subfolder)
+  allowedTools?: string[] // tool patterns allowed for this chat (e.g. run_shell_command(git))
   waitingFor?: 'answer' | 'auth' | 'permission' | null // called `ask` and no reply yet, or needs a login (newer servers)
   stalled?: boolean // running, process alive, but silent for session.stallSec (newer servers)
   includeDirs?: string[] // extra directories the CLI may use (--include-directories), feature include-dirs
@@ -162,7 +163,7 @@ export interface Message {
   action?: 'pick-model' | null // failure the user fixes by choosing another model
   imported?: boolean // copied from a CLI-recorded chat (turn 0): no timing of its own
   question?: { id: string; text: string; options: { label: string; description?: string }[]; multiSelect?: boolean; answer?: string | null } | null
-  permission?: { id: string; tool: string; input: unknown; reason?: string | null; transport?: 'headless' | 'acp'; options: PermissionOption[]; choice?: string | null } | null
+  permission?: { id: string; tool: string; input: unknown; reason?: string | null; transport?: 'headless' | 'acp'; options: PermissionOption[]; choice?: string | null; resolved?: string | null; pattern?: string | null } | null
 }
 
 export type NotificationKind = 'question' | 'permission' | 'recovery' | 'done' | 'failed' | 'escalation' | 'info' | 'error'
@@ -275,6 +276,7 @@ export interface AgentSettings {
   transport?: 'headless' | 'acp' // acp: one long-lived process with interactive permissions (feature acp)
   acpIdleMin?: number | null // ACP: unload an idle chat's process after N minutes (null = never)
   mcpExclude?: string[] // MCP servers (from the CLI's own config) not started for harness sessions
+  allowedTools?: string[] // tool patterns the CLI may run without asking, e.g. run_shell_command(git)
 }
 
 export interface Settings {

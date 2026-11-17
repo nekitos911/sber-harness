@@ -1,7 +1,7 @@
 // Run: node --test web/src/lib/toolRun.test.ts
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mcpParts, runImages, toolKind, toolRunSummary } from './toolRun.ts'
+import { isMcpStatus, mcpParts, mcpServers, runImages, toolKind, toolRunSummary } from './toolRun.ts'
 
 const msg = (name: string, input: unknown, status = 'ok', output: string | null = null) =>
   ({ id: Math.random().toString(36), sessionId: 's', at: 0, kind: 'tool', text: '', from: null, turn: 1, tool: { id: 't', name, input, status, output } }) as never
@@ -35,4 +35,15 @@ test('summary: plurals, distinct files, tense', () => {
 
 test('images from inputs and outputs', () => {
   assert.deepEqual(runImages([msg('mcp__playwright__shot', { filename: 'login.png' }, 'ok', 'Saved to C:\\tmp\\shot-2.jpeg now')]), ['login.png', 'C:\\tmp\\shot-2.jpeg'])
+})
+
+test('MCP status line: detected inside «Model: … · MCP: …», servers with reasons', () => {
+  const line = 'Model: qwen · MCP: harness ✓, java-lsp ✗ (timeout 30 s), playwright ✓'
+  assert.equal(isMcpStatus(line), true)
+  assert.equal(isMcpStatus('Готово: тесты зелёные'), false)
+  assert.deepEqual(mcpServers(line), [
+    { name: 'harness', ok: true, reason: null },
+    { name: 'java-lsp', ok: false, reason: 'timeout 30 s' },
+    { name: 'playwright', ok: true, reason: null },
+  ])
 })
