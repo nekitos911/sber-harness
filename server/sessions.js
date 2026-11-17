@@ -315,11 +315,11 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     s.tokensIn ??= 0;
     s.tokensOut ??= 0;
     s.phase = null;
+    s.turnClosing = false; // a lingering process is not followed across a restart (re-attach sets it again at result)
     if (s.virtual) continue; // settled below, once we know which parents are re-attached
     if (s.kind === 'chat' && s.status === 'running' && s.pid && latestTurnFile(s.id)) {
       toReattach.push(s);
       runtime(s.id).running = true; // no new turn until resumeRuns() has decided about this one
-    s.turnClosing = false; // a lingering process is not followed across a restart (re-attach sets it again at result)
       continue;
     }
     s.pid = null;
@@ -709,8 +709,8 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     emit(s);
 
     let res;
-    try {
     let handle;
+    try {
       const { agentCfg, launcher, exe } = resolveAgent(s.agent, s.launcherId);
       checkMode(agentCfg, s.approvalMode || agentCfg.approvalMode);
       const model = s.model || agentCfg.model;
@@ -786,7 +786,6 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     } catch (e) {
       res = { error: e.message, action: e.action };
     }
-    if (!res.detached) finishTurn(s, res);
     if (res.error && !res.eventCount && !res.sawResult && !handle?.pid && !r.stopRequested && find(s.id)) {
       // the process never started (spawn error, config, unknown model): the messages wait in the queue, not lost
       s.queue.unshift(...items.map((it) => ({ ...it, recorded: true })));
@@ -794,6 +793,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
       r.requeued = true;
       res.error += `\nСообщений в очереди: ${s.queue.length} — уйдут со следующим сообщением или после смены модели.`;
     }
+    if (!res.detached) finishTurn(s, res);
   }
 
   function turnFiles(s, n) {
