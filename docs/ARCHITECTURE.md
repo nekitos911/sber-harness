@@ -1043,6 +1043,24 @@ of the project root path), or via `gigacode sessions …` (VERIFY subcommands, e
   `history.command` (a CLI listing) is accepted in the config but not run yet — waiting for the real `gigacode sessions`
   output (VERIFY, GIGACODE-FACTS open question 12).
 
+## Permissions strategy for GigaCode (no yolo): work without constant prompts
+
+GigaCode has no yolo; headless denies everything not pre-allowed. Three layers, so a task runs end-to-end unattended:
+1. **«Полный доступ» = `auto` + workspace sandbox** (`agents.gigacode.autoSandbox: "workspace"` by default — the CLI's own
+   documented way: `settings.tools.sandbox`). The sandbox scope is the session cwd (+ includeDirs); a task started at the
+   projects root therefore covers every repo and `<repo>-worktrees`. Self-healing: if a turn fails fatally with a
+   sandbox-related error (stderr matches `/sandbox/i` before any event), the harness sets
+   `agentMeta.<id>.sandboxBroken = { at, error }`, maps auto → auto-edit for that agent from then on (approvalModeMap),
+   retries the same turn once, and notifies «Песочница GigaCode недоступна: <reason>. «Полный доступ» работает как
+   «Авто-правки» + разрешённые команды». Settings show the state and a «Проверить снова» action (clears the flag).
+2. **Default allow-list** (`agents.gigacode.allowedTools` default): `run_shell_command(git)`, `(mvn)`, `(mvnw)`, `(gradle)`,
+   `(gradlew)`, `(npm)`, `(npx)`, `(node)`, `(java)`, `(python)`, `(py)`, `(pytest)`, `(dir)`, `(ls)`, `(type)`, `(cat)`,
+   `(findstr)`, `(rg)`, `(where)`, `(echo)` — passed on every turn in auto-edit/default (not in plan) so routine commands
+   never prompt. Users edit it in Settings.
+3. Remaining denials → «Разрешить и повторить» (one-turn / session allow-list grants), or ACP (real waiting) when enabled.
+The effective mode + sandbox + allow-list used by a turn are recorded on the turn's user message (`runInfo`) and shown
+in the chat header tooltip-free popover «Как запущен агент».
+
 ## Session activity states (what the UI shows)
 
 Session gains `lastEventAt: number | null` (last stdout event of the current turn), `waitingFor: 'answer' | 'auth' | null`
