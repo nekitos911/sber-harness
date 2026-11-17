@@ -12,8 +12,8 @@ an agents board, PowerShell terminals, files/diff/commit/PR). Everything is buil
 The facts about GigaCode, onework and sourcecontrol on this machine have already been implemented (docs/GIGACODE-FACTS.md).
 Your task: verify the integration live, fill in the local config, and fix only what turns out to differ in reality.
 
-Read first: AGENTS.md, docs/INTEGRATION.md (the step-by-step plan, follow it exactly), docs/GIGACODE-FACTS.md,
-docs/ARCHITECTURE.md (the contract).
+Read first: docs/HANDOFF.md (what has been done and how it works), AGENTS.md, docs/INTEGRATION.md (the
+step-by-step plan, follow it exactly), docs/GIGACODE-FACTS.md, docs/ARCHITECTURE.md (the contract).
 
 Data on this machine:
 - raw GigaCode/MCP samples: <PATH_TO .gigacode-facts, e.g. C:\Users\<login>\IdeaProjects\.gigacode-facts>

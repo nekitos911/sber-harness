@@ -18,6 +18,9 @@ npm run typecheck    # UI types
 Demo without GigaCode: in the UI create a chat with the `mock` agent (see `scripts/mock-agent.js`;
 directives such as `#spawn`, `#done`, `#ask` in a message trigger orchestration).
 
+**Start with [`docs/HANDOFF.md`](docs/HANDOFF.md)**: what has been done, how the key scenarios work, what has been
+checked and what has not.
+
 ## Where things live
 
 | What | Where |
