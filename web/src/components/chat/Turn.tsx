@@ -173,16 +173,20 @@ export function TurnFiles({ msgs, cwd }: { msgs: Message[]; cwd: string }) {
 // ---------- live activity of a running turn ----------
 
 /** What the agent is doing right now, from the latest messages of the running turn. */
-export function activityOf(list: Message[]): string {
+/**
+ * What the agent is doing right now, from the latest messages of the running turn and the last event: a running tool;
+ * text that arrived in the last 3 s («Пишет ответ»); a finished answer while the CLI lingers («Завершает ход…»).
+ */
+export function activityOf(list: Message[], lastEventKind?: string | null, quietMs = 0): { text: string; closing?: boolean } {
   const turn = list.length ? list[list.length - 1].turn : -1
   for (let i = list.length - 1; i >= 0 && list[i].turn === turn; i--) {
     const t = list[i].tool
-    if (list[i].kind === 'tool' && t?.status === 'running') return `Выполняет: ${t.name} ${summarizeInput(t.input)}`.slice(0, 140)
+    if (list[i].kind === 'tool' && t?.status === 'running') return { text: `Выполняет: ${t.name} ${summarizeInput(t.input)}`.slice(0, 140) }
   }
   const last = list[list.length - 1]
-  if (!last || last.kind === 'user' || last.kind === 'thought' || last.kind === 'system') return 'Думает'
-  if (last.kind === 'assistant') return 'Пишет ответ'
-  return 'Работает…'
+  if (!last || last.kind === 'user' || last.kind === 'thought' || last.kind === 'system') return { text: 'Думает' }
+  if (last.kind === 'assistant') return lastEventKind === 'assistant_final' || quietMs > 3000 ? { text: 'Завершает ход…', closing: true } : { text: 'Пишет ответ' }
+  return { text: 'Работает…' }
 }
 
 /** Bottom line while the agent works: spinner, activity, and «последнее событие 40 с назад» once it goes quiet. */
@@ -193,11 +197,14 @@ export function ActivityLine({ session, list, starting }: { session: Session; li
     const Icon = session.waitingFor === 'answer' ? CircleHelp : ShieldAlert
     return <div className="chat-working chat-waiting" role="status"><Icon aria-hidden />{session.waitingFor === 'answer' ? 'Ждёт вашего ответа' : 'Ждёт вашего разрешения'}</div>
   }
+  const act = starting ? { text: starting } : activityOf(list, session.lastEventKind, quiet * 1000)
+  // A finished answer is not news for half a minute; after that silence is worth saying.
+  const showQuiet = !starting && quiet > (act.closing ? 30 : 20)
   return (
-    <div className="chat-working" role="status">
+    <div className="chat-working" data-closing={act.closing || undefined} role="status">
       <LoaderCircle className="spinner" aria-hidden />
-      <span className="ellipsis">{starting || activityOf(list)}</span>
-      {!starting && quiet > 20 && <span className="muted num nowrap">· последнее событие {dur(quiet * 1000)} назад</span>}
+      <span className="ellipsis">{act.text}</span>
+      {showQuiet && <span className="muted num nowrap">· последнее событие {dur(quiet * 1000)} назад</span>}
     </div>
   )
 }

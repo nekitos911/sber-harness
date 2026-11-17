@@ -107,6 +107,8 @@ export interface Session {
   status: SessionStatus
   phase?: 'starting' | 'streaming' | 'auth' | null
   lastEventAt?: number | null // last stdout event of the current turn (newer servers)
+  lastEventKind?: string | null // e.g. 'assistant_delta', 'assistant_final', 'tool', 'thought' (newer servers)
+  turnClosing?: boolean // the answer is complete (result seen); the CLI is only shutting down
   waitingFor?: 'answer' | 'auth' | 'permission' | null // called `ask` and no reply yet, or needs a login (newer servers)
   stalled?: boolean // running, process alive, but silent for session.stallSec (newer servers)
   includeDirs?: string[] // extra directories the CLI may use (--include-directories), feature include-dirs

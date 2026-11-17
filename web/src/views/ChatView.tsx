@@ -69,7 +69,8 @@ export function ChatView({ id, active }: { id: string; active: boolean }) {
   }, [id, messages])
 
   const list = messages ?? EMPTY
-  const running = session?.status === 'running'
+  // A turn whose answer is complete (turnClosing) reads as finished: no activity line, the header says «Работал».
+  const running = session?.status === 'running' && !session.turnClosing
   const starting = useStartingLabel(session ?? PLACEHOLDER)
   const lastText = list.length ? list[list.length - 1].text.length : 0
   const lastAt = list.length ? list[list.length - 1].at : 0

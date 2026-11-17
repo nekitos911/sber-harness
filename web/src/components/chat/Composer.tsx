@@ -84,7 +84,7 @@ export function Composer({ session, active }: { session: Session; active: boolea
         ref={ref}
         rows={1}
         className="composer-input"
-        placeholder={running ? 'Сообщение встанет в очередь' : session.status === 'stopped' ? 'Остановлено. Следующее сообщение продолжит работу' : 'Задайте вопрос; @ — файлы, / — команды'}
+        placeholder={running && !session.turnClosing ? 'Сообщение встанет в очередь' : session.status === 'stopped' ? 'Остановлено. Следующее сообщение продолжит работу' : 'Задайте вопрос; @ — файлы, / — команды'}
         aria-label="Сообщение агенту"
         value={text}
         onChange={(e) => { update(e.target.value); setCaret(e.target.selectionStart) }}

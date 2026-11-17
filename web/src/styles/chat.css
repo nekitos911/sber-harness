@@ -330,3 +330,5 @@ svg.step-icon.spinner { color: var(--lamp-run); }
 .btn-outline.btn-danger { background: transparent; color: var(--lamp-fail); border-color: color-mix(in srgb, var(--lamp-fail) 55%, var(--rule)); }
 .perm-note { font-size: 12.5px; }
 .chat-waiting { color: var(--lamp-ask); }
+.chat-working[data-closing] { color: var(--ink-3); }
+.chat-working[data-closing] svg { color: var(--ink-4); }
