@@ -1078,7 +1078,9 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
    * deepest registered folder.
    */
   async function placeFor(cwd, fresh = false, retry = true) {
-    if (insideDir(store.dataDir, cwd)) return { workspaceId: null, worktreePath: null, system: true };
+    // the harness's own folders (default chat folders, login terminal, model discovery, run files); a projects
+    // folder inside the data dir (the demo's <dataDir>/projects) is an ordinary place
+    if (['chats', 'terms', 'runs'].some((d) => insideDir(path.join(store.dataDir, d), cwd))) return { workspaceId: null, worktreePath: null, system: true };
     let best = null;
     for (const w of db.workspaces.filter((x) => x.isGit)) {
       for (const t of await worktreesOf(w.path, fresh)) {

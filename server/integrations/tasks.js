@@ -259,7 +259,13 @@ async function fetchLinks(mcp, cfg, key) {
   const seen = new Map();
   for (let page = 0; page < 5; page++) {
     const { links, hasNext } = parseLinks(await callText(mcp, cfg, cfg.tools.links, { key, page_size: 100, page_number: page }));
-    for (const l of links) seen.set(`${l.type} ${l.from} ${l.to}`, l);
+    for (const l of links) {
+      // one entry per linked task (decomposition wins: it marks a child); links not about this key or to itself are noise
+      if ((l.from !== key && l.to !== key) || l.from === l.to) continue;
+      const other = l.from === key ? l.to : l.from;
+      const prev = seen.get(other);
+      if (!prev || (l.type === 'decomposition' && prev.type !== 'decomposition')) seen.set(other, l);
+    }
     if (!hasNext || !links.length) break;
   }
   return [...seen.values()];

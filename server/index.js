@@ -135,9 +135,13 @@ export async function startServer(opts = {}) {
   const root = opts.root || CODE_ROOT;
   let overrides = opts.configOverrides;
   let dataDir = opts.dataDir;
+  let port = opts.port;
   if (opts.demo) {
-    // offline demo: its own data dir and port, mock agent + fixture MCP servers, seeded repositories and tasks
-    dataDir = path.resolve(root, dataDir || 'data-demo');
+    // offline demo: its own data dir and port (--data-dir / --port, or HARNESS_CONFIG's dataDir / port), mock agent +
+    // fixture MCP servers, seeded repositories and tasks
+    const own = process.env.HARNESS_CONFIG ? readJsonFile(path.resolve(root, expandHome(process.env.HARNESS_CONFIG))) : {};
+    dataDir = path.resolve(root, expandHome(dataDir || own.dataDir || 'data-demo'));
+    port ??= Number.isInteger(own.port) ? own.port : DEMO_PORT;
     overrides = deepMerge(demoOverrides(root, dataDir), overrides || {});
     seedDemoRepos(dataDir);
   }
@@ -1438,7 +1442,7 @@ export async function startServer(opts = {}) {
   }
 
   if (opts.demo) seedDemoTasks({ db, tasks, store });
-  const port = opts.port ?? (opts.demo ? DEMO_PORT : config.port ?? 4777);
+  port ??= config.port ?? 4777;
   await new Promise((resolve, reject) => {
     server.once('error', (e) => {
       sessions.close();
@@ -1578,7 +1582,13 @@ if (isMain && process.argv.includes('--print-config')) {
 } else if (isMain) {
   const dev = process.argv.includes('--dev');
   const demo = process.argv.includes('--demo');
-  startServer({ dev, demo }).then((srv) => {
+  const arg = (n) => { const i = process.argv.indexOf(n); return i > 0 ? process.argv[i + 1] : undefined; };
+  const port = arg('--port') === undefined ? undefined : Number(arg('--port'));
+  if (port !== undefined && !(Number.isInteger(port) && port >= 0 && port < 65536)) {
+    console.error(`--port: нужен номер порта, получено «${arg('--port')}»`);
+    process.exit(2);
+  }
+  startServer({ dev, demo, port, dataDir: arg('--data-dir') }).then((srv) => {
     console.log(`Harness running at ${srv.url}${dev ? ' (dev, Vite middleware)' : ''}${demo ? ' (offline demo: mock agent, fixture tracker and PR service)' : ''}`);
     const shutdown = () => {
       srv.flush(); // synchronously first: the async close below may not finish before a second signal

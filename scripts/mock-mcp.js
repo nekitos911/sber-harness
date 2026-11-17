@@ -6,6 +6,10 @@
 // Fixture mode: `mock-mcp.js --fixtures <dir> --server <name>` serves <dir>/<name>.<tool>.json as the result of <tool>;
 // <name>.<tool>.<variant>.json wins when variant = args.page_number or args.key. A file with `content` is returned
 // as the MCP result as is (e.g. onework markdown), anything else is wrapped as JSON text + structuredContent.
+// Without a <variant> file an issue tool asked about another key answers for THAT key: getIssue/getIssueMeta/listLinks
+// take the fixture's key over, title and status from the findIssues fixtures (links deduped, no self-links).
+// Pull requests: list_pull_requests returns the fixture PRs of the asked head plus the PRs create_pull_request made
+// (kept in --state <file>, in memory without it); no PR is invented for other branches.
 // MOCK_MCP_LOG (file path): every tools/call is appended as { tool, args } (tests assert the arguments).
 import fs from 'node:fs';
 import path from 'node:path';
@@ -15,6 +19,82 @@ const argv = process.argv.slice(2);
 const opt = (n) => (argv.includes(n) ? argv[argv.indexOf(n) + 1] : null);
 const fixtures = opt('--fixtures');
 const serverName = opt('--server');
+const stateFile = opt('--state');
+let memState = { pulls: [] };
+const loadState = () => { try { return stateFile ? JSON.parse(fs.readFileSync(stateFile, 'utf8')) : memState; } catch { return { pulls: [] }; } };
+const saveState = (st) => { if (stateFile) fs.writeFileSync(stateFile, JSON.stringify(st, null, 1)); else memState = st; };
+const KEY_RE = /\b[A-Z][A-Z0-9_]*-\d+\b/;
+
+/** key -> { title, status } from every findIssues fixture ("1. **KEY** — Title [status | prio]"). */
+function knownIssues() {
+  const out = new Map();
+  for (const n of fs.readdirSync(fixtures).filter((x) => x.includes('findIssues') && x.endsWith('.json'))) {
+    const text = (JSON.parse(fs.readFileSync(path.join(fixtures, n), 'utf8')).content || []).map((c) => c.text || '').join('\n');
+    for (const m of text.matchAll(/\*\*([A-Z][A-Z0-9_]*-\d+)\*\* — (.+?) \[([^|\]]+?)\s*(?:\||\])/g)) out.set(m[1], { title: m[2].trim(), status: m[3].trim() });
+  }
+  return out;
+}
+
+/** The generic fixture of an issue tool, rewritten for the asked key. */
+function forKey(name, value, key) {
+  if (!Array.isArray(value?.content)) return value;
+  const known = knownIssues().get(key);
+  const content = value.content.map((c) => {
+    if (typeof c.text !== 'string') return c;
+    let text = c.text;
+    const base = text.match(KEY_RE)?.[0];
+    if (base && base !== key) text = text.split(base).join(key);
+    if (/getIssueMeta/.test(name) && known) text = text.replace(/^## Current Status: .*$/m, `## Current Status: ${known.status} (\`${known.status}\`)`);
+    if (/getIssue$/.test(name) && known) {
+      text = text.replace(/^# .+$/m, `# ${key} — ${known.title}`).replace(/^- \*\*Status\*\*: .*$/m, `- **Status**: ${known.status}`);
+    }
+    if (/listLinks/.test(name)) {
+      const seen = new Set();
+      text = text.split('\n').filter((l) => {
+        const m = l.match(/^\d+\. (\S+) \*\*(.+?)\*\* -> (\S+)/);
+        if (!m) return true;
+        const sig = `${m[1]} ${m[2]} ${m[3]}`;
+        if (m[1] === m[3] || seen.has(sig)) return false;
+        seen.add(sig);
+        return true;
+      }).join('\n');
+    }
+    return { ...c, text };
+  });
+  return { ...value, content };
+}
+
+function pullRequests(name, value, args) {
+  const st = loadState();
+  if (/create_pull_request/.test(name)) {
+    const head = args.head ?? args.source ?? args.source_branch;
+    const open = st.pulls.find((p) => p.head?.name === head && p.state === 'open' && (!args.base || p.base?.name === args.base));
+    if (open) return open;
+    let index = Number(value.index) || 700; // the first one is the fixture's own number
+    while (st.pulls.some((p) => p.index === index)) index++;
+    const where = args.project && args.repository ? `${args.project}/${args.repository}` : null;
+    const url = String(value.html_url || '').replace(/\/pulls\/\d+$/, `/pulls/${index}`);
+    const pr = {
+      ...value, index, title: args.title ?? value.title, body: args.body ?? '', state: 'open',
+      head: { ...value.head, name: head }, base: { ...value.base, name: args.base ?? args.target ?? value.base?.name },
+      html_url: where ? url.replace(/\/[^/]+\/[^/]+\/pulls\//, `/${where}/pulls/`) : url, created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+    };
+    saveState({ ...st, pulls: [...st.pulls, pr] });
+    return pr;
+  }
+  if (/decline_pull_request/.test(name)) {
+    const pr = st.pulls.find((p) => p.index === Number(args.index ?? args.pull_index ?? args.id));
+    if (pr) {
+      pr.state = 'declined';
+      saveState(st);
+    }
+    return value;
+  }
+  if (!Array.isArray(value?.pulls)) return value;
+  const want = (p) => (!args.head || p.head?.name === args.head) && (!args.state || String(p.state).toLowerCase() === String(args.state).toLowerCase());
+  const fixtureOnes = value.pulls.filter((p) => !args.head || p.head?.name === args.head);
+  return { ...value, pulls: [...fixtureOnes, ...st.pulls.filter(want)] };
+}
 
 function fixtureTools() {
   const prefix = `${serverName}.`;
@@ -29,15 +109,9 @@ function fixtureCall(name, args = {}) {
     .filter(Boolean).map((n) => path.join(fixtures, n)).find((p) => fs.existsSync(p));
   if (!file) throw new Error(`no fixture for ${name}`);
   let value = JSON.parse(fs.readFileSync(file, 'utf8'));
-  if (Array.isArray(value?.pulls) && args.head) {
-    // demo: a pull request for whatever branch is asked about, shaped like the fixture
-    const mine = value.pulls.filter((p) => p.head?.name === args.head);
-    const open = !args.state || /^open$/i.test(args.state);
-    const index = 600 + ([...String(args.head)].reduce((h, c) => (h * 31 + c.charCodeAt(0)) % 300, 0));
-    const fake = value.pulls[0] && { ...value.pulls[0], index, title: `${args.head} (демо)`, head: { ...value.pulls[0].head, name: args.head },
-      html_url: String(value.pulls[0].html_url).replace(/\/pulls\/\d+$/, `/pulls/${index}`), state: 'open' };
-    value = { ...value, pulls: mine.length ? mine : open && fake ? [fake] : [] };
-  }
+  const generic = path.basename(file) === `${serverName}.${name}.json`;
+  if (generic && args.key) value = forKey(name, value, String(args.key));
+  value = pullRequests(name, value, args);
   return value && Array.isArray(value.content) ? { isError: false, ...value } : { content: [{ type: 'text', text: JSON.stringify(value) }], structuredContent: value, isError: false };
 }
 

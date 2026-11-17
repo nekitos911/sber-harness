@@ -784,8 +784,10 @@ NOT confirmed (it may print a URL / device code and wait for the browser callbac
   non-archived sessions attached to a folder workspace to the repository that owns their worktree (count logged).
   Every session also has `worktreePath` (the worktree root containing its cwd — a sub-folder included — by longest prefix
   over the registered repositories' worktree lists, case-insensitive on Windows; null at a projects folder or a plain
-  folder) and `system: true` for anything under the harness data folder (login terminal, model discovery, default chat
-  folders): no workspace, no worktree, never grouped under a project. The startup pass recomputes all three.
+  folder) and `system: true` for anything under the harness's own folders `<dataDir>/chats` (default chat folders,
+  login terminal, model discovery), `<dataDir>/terms`, `<dataDir>/runs`: no workspace, no worktree, never grouped under
+  a project (a projects folder inside the data dir, like the demo's `<dataDir>/projects`, is not system). The startup
+  pass recomputes all three.
   Feature flag `worktree-lazy`.
 - `PATCH /api/worktrees/meta { path, label?, note?, pinned?, sleeping? }` → meta, broadcast as `{ t: "worktree.meta" }`.
   `sleeping: true` stops terminal PTYs in that cwd (chat sessions are idle between turns anyway; a running turn is NOT
@@ -826,7 +828,8 @@ kills agent turns (terminal PTYs are still closed). Stop still kills the tree by
 Task field `pr: { index, state, url, updatedAt } | null` is refreshed for tasks that have a `branch` and a workspace when
 `integrations.pr.refreshSec` > 0 (min 30) and a UI client is connected; only changes are broadcast.
 
-`GET /api/tasks/:id/external` also returns `links: [{ type, from, to }]` (onework `listLinks`); `decomposition` links whose
+`GET /api/tasks/:id/external` also returns `links: [{ type, from, to }]` (onework `listLinks`; one entry per linked task —
+`decomposition` wins over other types —, links that do not involve this key or point at itself dropped); `decomposition` links whose
 `from` is this task are its children. `POST /api/tasks/:id/import-children` imports those child keys (getIssue each) as tasks
 with `parentId` = this task and the parent's workspace/targets, deduped by externalId → `{ imported, updated }`.
 

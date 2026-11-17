@@ -48,11 +48,15 @@ The native terminal module (`@lydell/node-pty`) needs the usual build tools only
 
 ### Демо без GigaCode: `npm run demo`
 
-`npm run demo` (= `node server/index.js --demo`, http://127.0.0.1:4778) starts an offline demo: its own data folder
-`data-demo/` (gitignored) with two seeded git repositories (`demo-service` with `develop` + `release/1.54.0`,
-`ledger-service`) and a few tasks (a hotfix for two target branches, a parent task with subtasks in both repos); the
-`mock` agent stands in for GigaCode (it answers `/models`, runs workers, reviews), and the tracker and PR service are
-served from `test/fixtures` by `scripts/mock-mcp.js`. Seeding happens once; delete `data-demo/` to start over.
+`npm run demo` (= `node server/index.js --demo`, http://127.0.0.1:4778; `--port <n>` / `--data-dir <path>`, or
+`port` / `dataDir` of the HARNESS_CONFIG file, change both) starts an offline demo: its own data folder
+`data-demo/` (gitignored) with two seeded git repositories in its projects folder `data-demo/projects/`
+(`demo-service` with `develop` + `release/1.54.0`, `ledger-service`; origin = a local bare repository in
+`data-demo/remotes/PROJ/`, so push works) and a few tasks (a hotfix for two target branches, a parent task with subtasks
+in both repos); the `mock` agent stands in for GigaCode (it answers `/models`, runs workers, reviews), and the tracker
+and PR service are served from `test/fixtures` by `scripts/mock-mcp.js` (issues answer for the asked key; a PR exists
+only once the demo created it, remembered in `data-demo/mock-sourcecontrol.json`). Seeding happens once; delete
+`data-demo/` to start over (a data folder from before keeps its old layout).
 
 Manual demo in a normal run: **add a workspace** (path to any git repo) → **New chat** → agent `Mock agent`, role
 "coordinator" → the message `#spawn create file hello.txt #done`. A worker chat appears and the coordinator receives

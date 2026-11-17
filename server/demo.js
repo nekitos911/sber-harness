@@ -1,6 +1,8 @@
 // Offline demo (`npm run demo` = node server/index.js --demo): every flow without GigaCode, onework or sourcecontrol.
 // The mock agent stands in for the CLI, scripts/mock-mcp.js serves test/fixtures for the tracker and the code host,
-// and the data dir gets two small git repositories and a few tasks on the first start (idempotent).
+// and the data dir gets two small git repositories (<dataDir>/projects, the projects folder) with a local bare
+// "origin" each (<dataDir>/remotes/PROJ/<name>.git: push works, the PR service sees project PROJ) and a few tasks on
+// the first start (idempotent).
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -8,12 +10,15 @@ import { spawnOptions } from './runner.js';
 
 export const DEMO_PORT = 4778;
 
+export const demoProjects = (dataDir) => path.join(dataDir, 'projects');
+
 export function demoOverrides(root, dataDir) {
-  const fixtures = (server) => ({ enabled: true, transport: 'stdio', command: 'node', args: ['scripts/mock-mcp.js', '--fixtures', 'test/fixtures', '--server', server], timeoutMs: 15000 });
+  // --state: the PRs the demo creates are remembered per data dir (listed for their branch only)
+  const fixtures = (server) => ({ enabled: true, transport: 'stdio', command: 'node', args: ['scripts/mock-mcp.js', '--fixtures', 'test/fixtures', '--server', server, '--state', path.join(dataDir, `mock-${server}.json`)], timeoutMs: 15000 });
   return {
     defaultAgent: 'mock',
     mcpServersFrom: null,
-    workspaces: { root: dataDir, repos: [] },
+    workspaces: { root: demoProjects(dataDir), repos: [] },
     mcpServers: { onework: fixtures('onework'), sourcecontrol: fixtures('sourcecontrol') },
     integrations: {
       tasks: { enabled: true, space: 'PROJ', urlTemplate: 'https://tracker.example/swtr/units/all/unit/{key}', limit: 5 },
@@ -31,7 +36,6 @@ function repo(dir, name, commits) {
   run(dir, 'init', '-q', '-b', 'develop');
   run(dir, 'config', 'user.name', 'Demo');
   run(dir, 'config', 'user.email', 'demo@example.com');
-  run(dir, 'remote', 'add', 'origin', `ssh://git@code.example:7998/PROJ/${name}.git`);
   for (const [file, text, msg] of commits) {
     fs.mkdirSync(path.dirname(path.join(dir, file)), { recursive: true });
     fs.writeFileSync(path.join(dir, file), text);
@@ -41,9 +45,19 @@ function repo(dir, name, commits) {
   return true;
 }
 
+/** A local bare repository as origin (forward slashes: also a valid git URL on Windows); every branch pushed once. */
+function bareOrigin(dir, dataDir, name) {
+  const bare = path.join(dataDir, 'remotes', 'PROJ', `${name}.git`);
+  fs.mkdirSync(bare, { recursive: true });
+  run(bare, 'init', '-q', '--bare');
+  run(dir, 'remote', 'add', 'origin', bare.split(path.sep).join('/'));
+  run(dir, 'push', '-q', 'origin', '--all');
+}
+
 /** Git repositories of the demo (before the server registers workspaces from the data dir). */
 export function seedDemoRepos(dataDir) {
-  const svc = path.join(dataDir, 'demo-service');
+  const projects = demoProjects(dataDir);
+  const svc = path.join(projects, 'demo-service');
   if (repo(svc, 'demo-service', [
     ['README.md', '# demo-service\n\nСервис лимитов (демо).\n', 'PROJ-1 Начальная версия'],
     ['src/limits.js', 'export const limit = (a) => a * 2;\n', 'PROJ-2 Расчёт лимитов'],
@@ -54,10 +68,12 @@ export function seedDemoRepos(dataDir) {
     run(svc, 'add', '-A');
     run(svc, 'commit', '-q', '-m', 'PROJ-3 Релиз 1.54.0');
     run(svc, 'switch', '-q', 'develop');
+    bareOrigin(svc, dataDir, 'demo-service');
   }
-  repo(path.join(dataDir, 'ledger-service'), 'ledger-service', [
+  const ledger = path.join(projects, 'ledger-service');
+  if (repo(ledger, 'ledger-service', [
     ['README.md', '# ledger-service\n\nУчёт операций (демо).\n', 'PROJ-4 Начальная версия'],
-  ]);
+  ])) bareOrigin(ledger, dataDir, 'ledger-service');
 }
 
 /** Board tasks of the demo, once per data dir. */
