@@ -22,28 +22,28 @@ the settings path goes in, how it calls onework/sourcecontrol), **take the worki
 
 ## 1. GigaCode CLI
 
-How it works now: each chat turn is a separate CLI process
-`gigacode [--resume <id>] -p <prompt> --output-format stream-json --approval-mode <mode> [--model <m>]`
-in the session's `cwd`, with `<env settingsEnv> = data/runs/<sessionId>/settings.json`. The CLI session id is
-taken from the stream (the `session` event) and stored in `session.externalSessionId`; the next turn goes out with
-`--resume`. The settings file (`chatRecording: true` + `mcpServers`, including `harness`) is the same for every
-turn of a session.
+Already implemented from the facts about the old console (`server/launchers.js`, its header comment holds the
+details): each chat turn is a separate process, without a shell:
+`<shimDir>/runtime/node/node.exe --max-old-space-size=6144 <shimDir>/lib/cli-entry.js [--resume <id>] -p <prompt> --approval-mode <mode> --output-format stream-json [--model <m>]`
+with env `GIGACODE_PACKAGE_IDENTITY` (read from the text of `gigacode.cmd`), `GIGACODE_PACKAGE_LAUNCHER` (path to
+the shim), `GIGACODE_SYSTEM_SETTINGS_PATH = data/runs/<sessionId>/settings.json`
+(`agents.modelGrades/allowedGrades` + `chatRecording: true` + `mcpServers.harness`, never `permissions`).
+The CLI session id is taken from the stream and stored in `session.externalSessionId`; the next turn goes out with `--resume`.
 
-Steps:
+Steps (verify, do not rewrite):
 
-1. **Executable.** `Get-Command gigacode` / `where gigacode`. Set `agents.gigacode.command` to a string
-   (looked up via PATH; npm `.cmd` shims are resolved to `node <entry.js>` automatically) or to an argv array
-   such as `["node", "C:/.../gigacode/dist/index.js"]` if the shim is not recognized.
-2. **Flags.** `gigacode --help`. Check `-p`, `--output-format stream-json`, `--resume`, the names of the
-   `--approval-mode` values and `--model`. If anything differs, fix `buildArgs` of the `gigacode` launcher in
-   `server/launchers.js` and `agents.gigacode.approvalModes` in the config.
-3. **Settings env var.** Find out which env var gives the CLI its settings.json path (look at how the existing
-   console does it). Put the name in `agents.gigacode.settingsEnv`. Check: in a chat, ask the agent to list its MCP
-   tools; the `harness` tools (`task_list`, `worker_start`, ...) must be among them.
-   Any extra settings needed (for example `agents.modelGrades`, `allowedGrades`) go in `agents.gigacode.settings`.
+1. **Executable.** `agents.gigacode.command` defaults to `C:/Program Files/.gigacode/bin/gigacode.cmd`.
+   Check with `node server/index.js --print-config` (it shows the resolved node.exe/cli-entry.js and whether they
+   exist). If the layout of `bin\` is different, set the pair `agents.gigacode.node` + `agents.gigacode.cliEntry`.
+2. **Flags.** `gigacode --help`: compare with the argv above and with `approvalModes` (`plan|default|auto-edit|auto`).
+   Differences go only into `buildArgs` of the `gigacode` launcher.
+3. **Model grades.** Fill in `modelGrades`/`allowedGrades` on the Settings screen in the UI (or in
+   `agents.gigacode.settings.agents` in `harness.config.local.json`), the same values the old console uses.
+   Check: in a chat, ask the agent to list its MCP tools; the `harness` tools (`task_list`, `worker_start`, ...)
+   must be among them.
 4. **Stream format.** Capture real output, including a tool call:
    ```powershell
-   gigacode -p "List the files in the current folder with a tool and answer OK" --output-format stream-json --approval-mode yolo > test/fixtures/gigacode.stream.ndjson
+   & "C:\Program Files\.gigacode\bin\gigacode.cmd" -p "List the files in the current folder with a tool and answer OK" --approval-mode auto --output-format stream-json > test/fixtures/gigacode.stream.ndjson
    ```
    The fixture currently holds an **assumed** format. Replace it with the real one, update the expectations in the
    normalizer test (`test/`, search for `gigacode.stream.ndjson`) and fix the `parse` of the launcher in
@@ -64,8 +64,11 @@ Steps:
 9. **The `full-task` command.** When a task is taken into work ("Take into work" on the board or `worker_start`),
    the worker's first prompt is built from the template `agents.gigacode.taskPromptTemplate` (falling back to
    `tasks.promptTemplate`). To run your command, which takes the task and its SDD, set
-   `"taskPromptTemplate": "/full-task {key}"` (variables: `{key} {id} {title} {description} {url} {targets} {branch} {repo}`).
-   **Check** that GigaCode runs custom slash commands in headless mode (`gigacode -p "/full-task KEY-1"`). If it does
+   `"taskPromptTemplate": "/full-task-ui {taskUrl}{notes}"` (variables: `{key} {id} {title} {description} {url}
+   {taskUrl} {targets} {branch} {repo} {notes} {runId} {registryDir} {settingsPath} {approvalMode}`; `{notes}`
+   = a space + the notes from the "Take into work" dialog). If the command writes a registry of internal
+   sub-agents to `{registryDir}`, the UI shows them nested under the session (read-only).
+   **Check** that GigaCode runs custom slash commands in headless mode (`gigacode -p "/full-task-ui <url>"`). If it does
    not, put the expanded text of the command in the template (or have the command text read from its file:
    find where custom commands are stored and add that substitution to the `gigacode` launcher's `buildArgs` in
    `server/launchers.js`).
