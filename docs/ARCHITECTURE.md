@@ -839,6 +839,14 @@ Secrets:
 - `HARNESS_CONFIG` env selects the config file (default `harness.config.json` + `.local`), so work and test
   configs never mix.
 
+## Feature flags (client/server version skew)
+
+`GET /api/state` returns `features: string[]` — the optional API groups this server implements, e.g. `sdd`, `subagents`,
+`virtual-sessions`, `worker-run`, `pr-status`, `branches`, `fs-search`, `agent-info`, `models-refresh`, `tracker-links`,
+`worktree-meta`, `open`, `board-columns`, `review-loop`, `skills-install`, `demo`. The UI calls an optional endpoint only
+when its flag is present (otherwise the feature is hidden or shows «недоступно в этой версии сервера») — no 404 noise.
+A server adds a flag in the same commit that adds the route; a test asserts every flag has a route.
+
 ## Cross-platform (Windows, Linux, macOS)
 
 - No platform-specific defaults in `harness.config.json`: `shell: null` and `agents.gigacode.command: null` mean "auto":
