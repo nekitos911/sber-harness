@@ -283,7 +283,7 @@ export interface Settings {
   orchestration?: { reviewMode?: 'builtin' | 'harness'; subagents?: 'harness' | 'builtin'; workerMayCommit?: boolean; review?: ReviewSettings }
   board?: BoardSettings
   integrations?: {
-    tasks?: { enabled?: boolean; space?: string; urlTemplate?: string; statusMap?: Record<string, string>; closedStatuses?: string[]; onStartTransition?: string | null }
+    tasks?: { enabled?: boolean; space?: string | string[]; urlTemplate?: string; statusMap?: Record<string, string>; closedStatuses?: string[]; onStartTransition?: string | null }
     pr?: { enabled?: boolean; limits?: { titleBytes?: number; bodyBytes?: number } }
   }
 }

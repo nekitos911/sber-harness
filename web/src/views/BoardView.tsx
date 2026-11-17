@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { memo, useEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from 'react'
 import { runJob } from '../lib/jobs'
 import { Skeleton } from '../components/bits'
 import { ReworkPopover } from '../components/board/Rework'
@@ -8,7 +8,7 @@ import {
 } from '@dnd-kit/core'
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { CloudOff, Columns3, Eye, EyeOff, Plus, RefreshCw, Search } from 'lucide-react'
+import { CloudOff, Columns3, Eye, EyeOff, Plus, RefreshCw, Search, SquareKanban } from 'lucide-react'
 import { api, errorText, tryApi } from '../api'
 import { getState, openDialog, setState, toast, upsert, useFeature, useStore } from '../store'
 import { COLUMNS, statusLabel } from '../lib/format'
@@ -16,7 +16,7 @@ import { byOrder } from '../lib/tasks'
 import type { Task, TaskStatus } from '../types'
 import { TaskCard, type BoardCtx } from '../components/board/TaskCard'
 import { TaskDrawer } from '../components/board/TaskDrawer'
-import { Select } from '../components/ui'
+import { Button, Popover, Select } from '../components/ui'
 import { ErrorBoundary } from '../components/ErrorBoundary'
 import { useSettings } from '../lib/agents'
 
@@ -51,6 +51,10 @@ export function BoardView() {
   const [openId, setOpenId] = useState<string | null>(null)
   const [drag, setDrag] = useState<{ id: string; cols: Cols; from: TaskStatus } | null>(null)
   const reworkOn = useFeature('rework')
+  const importOn = useFeature('tracker-import')
+  const [importOpen, setImportOpen] = useState(false)
+  const importRef = useRef<HTMLButtonElement>(null)
+  const [creating, setCreating] = useState(false)
   const [reworkDrop, setReworkDrop] = useState<{ id: string; beforeId: string | null; afterId: string | null } | null>(null)
   const dropAnchor = useRef<HTMLElement | null>(null)
   const [syncing, setSyncing] = useState(false)
@@ -229,6 +233,15 @@ export function BoardView() {
           {showHidden ? <Eye /> : <EyeOff />}
           Скрытые
         </button>
+        {importOn && (
+          <>
+            <button ref={importRef} type="button" className="btn" aria-expanded={importOpen} onClick={() => setImportOpen(!importOpen)} data-tip="Добавить задачу из трекера по ключу или ссылке">
+              <Plus />
+              По ключу
+            </button>
+            <ImportPopover anchor={importRef} open={importOpen} onClose={() => setImportOpen(false)} onImported={(id) => setOpenId(id)} />
+          </>
+        )}
         {syncEnabled && (
           <button type="button" className="btn" onClick={sync} disabled={syncing}>
             <RefreshCw className={syncing ? 'spinner' : undefined} />
@@ -255,9 +268,20 @@ export function BoardView() {
           screenReaderInstructions: { draggable: 'Чтобы переместить задачу, нажмите пробел. Стрелки — перемещение, пробел — отпустить, Escape — отмена.' },
         }}
       >
+        {tasks.length === 0 && (
+          <div className="board-empty">
+            <SquareKanban className="empty-icon" aria-hidden />
+            <p>Здесь появятся задачи, назначенные на вас в трекере{syncEnabled ? ' (кнопка «Синхронизировать»)' : ''}, созданные агентами или добавленные по ключу.</p>
+            <div className="row">
+              {syncEnabled && <Button icon={<RefreshCw />} busy={syncing} onClick={() => void sync()}>Синхронизировать</Button>}
+              {importOn && <Button icon={<Plus />} onClick={() => setImportOpen(true)}>По ключу</Button>}
+              <Button variant="primary" icon={<Plus />} onClick={() => setCreating(true)}>Новая задача</Button>
+            </div>
+          </div>
+        )}
         <div className="board">
-          {lanes.map((c) => (
-            <Column key={c.status} status={c.status} label={c.label} ids={shown[c.status]} ctx={ctx} repo={repo} dragging={!!drag} muted={c.muted}
+          {lanes.map((c, i) => (
+            <Column key={c.status} create={creating && i === 0} onCreateShown={() => setCreating(false)} status={c.status} label={c.label} ids={shown[c.status]} ctx={ctx} repo={repo} dragging={!!drag} muted={c.muted}
               tip={columnTip(c.trackerStatuses.length ? c.trackerStatuses : Object.entries(settings?.integrations?.tasks?.statusMap ?? {}).filter(([, v]) => v === c.status).map(([k]) => k))} />
           ))}
         </div>
@@ -276,14 +300,49 @@ export function BoardView() {
   )
 }
 
+/** «PROJ-1234 или ссылка на задачу» → POST /tasks/import; the imported task opens; errors stay in the popover. */
+function ImportPopover({ anchor, open, onClose, onImported }: { anchor: RefObject<HTMLElement | null>; open: boolean; onClose: () => void; onImported: (id: string) => void }) {
+  const [ref, setRef] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const go = async () => {
+    if (!ref.trim() || busy) return
+    setBusy(true)
+    setError(null)
+    try {
+      const t = await api<Task>('POST', '/tasks/import', { ref: ref.trim() })
+      setState((s) => ({ tasks: upsert(s.tasks, t) }))
+      toast(`Добавлена ${t.externalId ?? t.id}: ${t.title}`, 'ok')
+      setRef('')
+      onClose()
+      onImported(t.id)
+    } catch (e) {
+      setError(errorText(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <Popover anchor={anchor} open={open} onClose={onClose} placement="bottom-end" label="Добавить по ключу" className="import-pop">
+      <form className="import-form" onSubmit={(e) => { e.preventDefault(); void go() }}>
+        <input className="input mono" autoFocus aria-label="Ключ или ссылка" placeholder="PROJ-1234 или ссылка на задачу" value={ref}
+          onChange={(e) => { setRef(e.target.value); setError(null) }} aria-invalid={!!error} />
+        <Button type="submit" variant="primary" size="sm" busy={busy} disabled={!ref.trim()}>Добавить</Button>
+      </form>
+      {error && <p className="field-error">{error}</p>}
+    </Popover>
+  )
+}
+
 /** What a column means: which tracker statuses land in it, and that moving a card never changes the tracker. */
 function columnTip(from: string[]) {
   return `Колонка доски.${from.length ? ` Статусы трекера: ${from.join(', ')}.` : ''}\nПеренос карточки не меняет статус в трекере.`
 }
 
-function Column({ status, label, ids, ctx, repo, dragging, tip, muted }: { status: TaskStatus; label: string; ids: string[]; ctx: BoardCtx; repo: string; dragging: boolean; tip: string; muted?: boolean }) {
+function Column({ status, label, ids, ctx, repo, dragging, tip, muted, create, onCreateShown }: { status: TaskStatus; label: string; ids: string[]; ctx: BoardCtx; repo: string; dragging: boolean; tip: string; muted?: boolean; create?: boolean; onCreateShown?: () => void }) {
   const { setNodeRef, isOver } = useDroppable({ id: COL_PREFIX + status })
   const [adding, setAdding] = useState(false)
+  useEffect(() => { if (create) { setAdding(true); onCreateShown?.() } }, [create, onCreateShown])
 
   return (
     <section className="col" aria-labelledby={`col-${status}`} data-over={isOver} data-muted={muted || undefined}>

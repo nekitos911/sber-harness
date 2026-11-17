@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { ChipsInput } from '../components/ChipsInput'
 import { DEFAULT_REWORK } from '../components/board/Rework'
 import { FolderPicker } from '../components/FolderPicker'
 import { ArrowDown, ArrowUp, Check, CircleCheck, Pencil, CircleX, LogIn, Plus, RefreshCw, TriangleAlert, X } from 'lucide-react'
@@ -437,8 +438,8 @@ function TrackerSection({ form, update, fieldError }: SectionProps) {
   const set = (patch: NonNullable<NonNullable<Settings['integrations']>['tasks']>) =>
     update({ ...form, integrations: { ...form.integrations, tasks: { ...t, ...patch } } })
   const refresh = form.tasks.refreshSec
-  const space = t?.space ?? ''
-  const sample = (t?.urlTemplate ?? '').replaceAll('{key}', `${space || 'PROJ'}-1234`)
+  const spaces = Array.isArray(t?.space) ? t.space : t?.space ? [t.space] : []
+  const sample = (t?.urlTemplate ?? '').replaceAll('{key}', `${spaces[0] || 'PROJ'}-1234`)
   return (
     <section className="settings-section" id="set-tracker">
       <h2>Трекер (onework)</h2>
@@ -449,8 +450,9 @@ function TrackerSection({ form, update, fieldError }: SectionProps) {
           </Row>
         )}
         {t && (
-          <Row label="Пространство" hint="Код пространства в трекере." error={fieldError('space')}>
-            <Input mono className="input-short" value={space} placeholder="PROJ" onChange={(e) => set({ space: e.target.value.trim().toUpperCase() })} />
+          <Row label="Пространства" hint="Коды пространств в трекере: задачи на вас импортируются из каждого. Enter или запятая — добавить." error={fieldError('space')}>
+            <ChipsInput label="пространство" values={spaces}
+              onChange={(v) => { const up = [...new Set(v.map((x) => x.trim().toUpperCase()).filter(Boolean))]; set({ space: up.length === 1 ? up[0] : up }) }} />
           </Row>
         )}
         <Row label="Синхронизация" hint="Как часто перечитывать задачи из трекера." error={fieldError('sync')}>
