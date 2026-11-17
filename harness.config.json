@@ -87,6 +87,7 @@
       "inheritUserMcp": false,
       "agentToolHook": null,
       "taskPromptTemplate": "/full-task {taskUrl}{notes}",
+      "reworkPromptTemplate": "/full-task {taskUrl} Задача готова, но нужны правки: {notes}",
       "firstEventTimeoutMs": 120000,
       "authTimeoutMs": 600000,
       "env": {}

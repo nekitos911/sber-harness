@@ -143,9 +143,19 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
   }
 
   function taskPrompt(task, s, { notes = '' } = {}) {
+    return render(promptTemplate(s.agent), promptVars(task, s, notes.trim() ? ` ${notes.trim()}` : ''));
+  }
+
+  /** «Доработка» prompt: agents.<id>.reworkPromptTemplate ({notes} = the user's text as is). */
+  function reworkPrompt(task, s, notes) {
+    const tpl = config.agents[s.agent]?.reworkPromptTemplate || '{key} {title}: нужны правки: {notes}';
+    return render(tpl, promptVars(task, s, notes.trim()));
+  }
+
+  function promptVars(task, s, notes) {
     const agentCfg = config.agents[s.agent] || {};
     const ws = findWs(s.workspaceId);
-    return render(promptTemplate(s.agent), {
+    return {
       key: tasks.key(task),
       id: task.id,
       title: task.title,
@@ -155,12 +165,12 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
       targets: task.targets.join(', '),
       branch: s.branch || task.branch || '',
       repo: ws?.name || path.basename(s.cwd),
-      notes: notes.trim() ? ` ${notes.trim()}` : '',
+      notes,
       runId: s.id,
       registryDir: sessions.registryDir(s.id),
       settingsPath: s.settingsPath || '',
       approvalMode: s.approvalMode || agentCfg.approvalMode || '',
-    });
+    };
   }
 
   /** Worktree + branch for a task: branchTemplate with the task key, started from targets[0]; reused if present. */
@@ -929,6 +939,31 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
      * POST /api/tasks/:id/start ("take into work"): default agent, new worktree in the task's workspace.
      * A task with a live worker (or a start in flight) returns that session with jumped: true.
      */
+    /**
+     * «Доработка»: the fix request goes to the task's worker (the same CLI session, queued if it runs) or, without one,
+     * to a new worker in the task's existing worktree/branch. The card goes back to in_progress.
+     */
+    async rework(taskId, { notes, agent } = {}) {
+      const task = tasks.get(taskId);
+      if (typeof notes !== 'string' || !notes.trim()) fail(400, 'notes are required');
+      const prev = task.assigneeSessionId && sessions.find(task.assigneeSessionId);
+      const worker = prev && prev.kind === 'chat' && prev.role === 'worker' && !prev.archived && !prev.ephemeral ? prev : null;
+      if (!worker && !task.branch) fail(409, `${tasks.key(task)} has not been taken into work yet: start it first`);
+      if (task.status !== 'in_progress') tasks.move(task.id, 'in_progress', null);
+      tasks.addLog(task.id, 'user', `Доработка: ${notes.trim()}`);
+      if (worker) {
+        jobStep('Отправка агенту');
+        sessions.deliver(worker.id, { from: 'user', text: reworkPrompt(task, worker, notes) });
+        return sessions.get(worker.id);
+      }
+      const ws = findWs(task.workspaceId) || fail(400, `task ${task.id} has no workspace; set its workspace first`);
+      const existing = ws.isGit ? (await git.worktrees(ws.path)).find((w) => w.branch === task.branch) : null;
+      const a = agent || config.defaultAgent;
+      // the prompt needs the session (branch, repo): render it for the worker that startWorker creates
+      const spec = reworkPrompt(task, { agent: a, workspaceId: ws.id, branch: task.branch, cwd: existing?.path || ws.path, id: '' }, notes);
+      return startWorker(task, { agent: a, workspaceId: ws.id, ...(existing ? { cwd: existing.path, worktree: 'current' } : { worktree: ws.isGit ? 'new' : 'current' }), spec }, null);
+    },
+
     async start(taskId, { agent, notes } = {}) {
       const task = tasks.get(taskId);
       const live = activeWorker(task);

@@ -40,6 +40,7 @@ test('each feature flag has a working route (not 404/405)', async () => {
       questions: ['GET', `/api/sessions/${chat.id}/messages`],
       permissions: ['POST', `/api/sessions/${chat.id}/permission`, null, {}],
       activity: ['GET', '/api/settings', (b) => Number.isInteger(b.session?.stallSec)],
+      rework: ['POST', `/api/tasks/${task.id}/rework`, null, { notes: 'x' }],
       sdd: ['GET', `/api/sdd?cwd=${q}`, (b) => Array.isArray(b.plans)],
     };
     for (const flag of FEATURES) {

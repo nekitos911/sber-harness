@@ -37,7 +37,7 @@ const NO_BUILD_HTML = '<!doctype html><meta charset="utf-8"><title>Harness</titl
 const GRADES = ['default', 'fast', 'review', 'explore'];
 // optional API groups this server implements (docs/ARCHITECTURE.md "Feature flags"); a flag ships with its route
 export const FEATURES = ['branches', 'fs-search', 'pr-status', 'agent-info', 'models-refresh', 'tracker-links', 'board-columns', 'review-loop',
-  'subagents', 'virtual-sessions', 'worker-run', 'skills-install', 'demo', 'worktree-meta', 'open', 'sdd', 'health', 'folders', 'include-dirs', 'questions', 'permissions', 'activity'];
+  'subagents', 'virtual-sessions', 'worker-run', 'skills-install', 'demo', 'worktree-meta', 'open', 'sdd', 'health', 'folders', 'include-dirs', 'questions', 'permissions', 'activity', 'rework'];
 // titles of operations the UI may follow by sending x-job-id (WS { t: 'job' } frames)
 const JOB_TITLES = {
   'POST /api/tasks/sync': 'Синхронизация с трекером',
@@ -227,6 +227,7 @@ export async function startServer(opts = {}) {
         modelGrades: a.settings?.agents?.modelGrades || {},
         allowedGrades: a.settings?.agents?.allowedGrades || [],
         taskPromptTemplate: a.taskPromptTemplate ?? null,
+        reworkPromptTemplate: a.reworkPromptTemplate ?? null,
         taskPromptPresets: a.taskPromptPresets || [],
         firstEventTimeoutMs: a.firstEventTimeoutMs ?? launchers[a.launcher]?.defaults.firstEventTimeoutMs ?? null,
         authTimeoutMs: a.authTimeoutMs ?? 600000,
@@ -270,6 +271,11 @@ export async function startServer(opts = {}) {
     if ('approvalModeLabels' in a) {
       if (!isStrMap(a.approvalModeLabels)) fail(400, `${where('approvalModeLabels')} must map modes to strings`);
       p.approvalModeLabels = a.approvalModeLabels;
+    }
+    if ('reworkPromptTemplate' in a) {
+      const t = a.reworkPromptTemplate;
+      if (t !== null && (typeof t !== 'string' || !t.includes('{notes}'))) fail(400, `${where('reworkPromptTemplate')} must be null or a string with {notes}`);
+      p.reworkPromptTemplate = t || null;
     }
     if ('taskPromptTemplate' in a) {
       if (a.taskPromptTemplate !== null && typeof a.taskPromptTemplate !== 'string') fail(400, `${where('taskPromptTemplate')} must be a string or null`);
@@ -792,6 +798,16 @@ export async function startServer(opts = {}) {
   route('POST', '/api/tasks/:id/start', async ({ params, body }) => {
     const s = await orch.start(params.id, check(body, { agent: 'string?', notes: 'string?' }));
     if (!s.jumped) await trackerOnStart(tasks.get(params.id));
+    return s;
+  });
+  route('POST', '/api/tasks/:id/rework', async ({ params, body }) => {
+    check(body, { notes: 'string', agent: 'string?' });
+    const before = tasks.get(params.id).status;
+    const s = await orch.rework(params.id, body);
+    const task = tasks.get(params.id);
+    if (config.board?.moveSyncsTracker && before !== task.status && tracksTracker(task)) {
+      trackerWrite(task, 'sync to "in_progress"', () => syncColumn({ config, mcp, tasks, task, status: task.status })); // the normal move-sync
+    }
     return s;
   });
   route('POST', '/api/tasks/:id/port', ({ params, body }) => {

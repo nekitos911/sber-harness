@@ -575,6 +575,14 @@ runs implementer/reviewer sub-agents with cross-model review and writes a ledger
   `agents.<id>.modelRefsScan` (gigacode default `["~/.gigacode/agents/*.md", "~/.gigacode/commands/*.md"]`; frontmatter
   `model:` and model-id-looking tokens that match the catalogue naming), `available` against the discovered catalogue
   (prefix match tolerates the `-262k` suffix). Read-only; the harness never edits these files.
+- Rework (the user's FOLLOW_UP form `/full-task <url> Задача готова, но нужны правки: <text>`):
+  `POST /api/tasks/:id/rework { notes, agent? }` (flag `rework`). Prompt = `agents.<id>.reworkPromptTemplate` (gigacode
+  `"/full-task {taskUrl} Задача готова, но нужны правки: {notes}"`, generic default `"{key} {title}: нужны правки: {notes}"`;
+  `{notes}` is the text as typed, single-pass rendering; settable in /api/settings, must contain `{notes}`). Target: the
+  task's non-archived worker (`assigneeSessionId`) → delivered (queued if running; `--resume` continues the CLI
+  session); none → a new worker in the task's existing worktree (or the task branch re-checked out, never a new branch)
+  with the rework prompt instead of the task prompt; never started (no branch) → 409. Effects: status → in_progress
+  (with `board.moveSyncsTracker` the normal move-sync), log «Доработка: <notes>», no notification. Returns the session.
 
 ## Sub-agents as chats
 
