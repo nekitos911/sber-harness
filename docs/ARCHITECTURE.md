@@ -574,6 +574,41 @@ runs implementer/reviewer sub-agents with cross-model review and writes a ledger
   `model:` and model-id-looking tokens that match the catalogue naming), `available` against the discovered catalogue
   (prefix match tolerates the `-262k` suffix). Read-only; the harness never edits these files.
 
+## Sub-agents as chats
+
+### Level 1 — virtual read-only chats from the stream (works with the unchanged `/full-task`)
+Every built-in sub-agent call (`agent` / `fork` tool_use in the main stream) becomes a **virtual session**:
+`{ id: '<parentSid>~<toolUseId>', kind: 'chat', virtual: true, parentId: <parentSid>, role: 'subagent', agent,
+title: '<subagent_type> · <model|grade>', status: running|done|failed, model, cwd: parent's }` — persisted like sessions,
+listed in `/api/state`, nested under the parent in the UI. Its transcript is built from events with
+`parent_tool_use_id === toolUseId` (text, tool calls/results — the same Message shapes) plus the call's prompt as the
+first `user` message and the tool_result as the final assistant message; `GET /api/sessions/<virtualId>/messages` works,
+WS `msg` events are emitted for it. `POST …/messages` to a virtual session → 409 «внутренний субагент — писать можно
+только в родительский чат». The parent's tool card keeps a link to it (`tool.subSessionId`).
+
+### Level 2 — real sub-agent sessions via `worker_run` ("Orca mode")
+Agent tool `worker_run { profile?: string, spec: string, model?: string, approvalMode?: string, title?: string,
+worktree?: 'current' (default) | 'new', timeoutMin?: number (default 60) }`: synchronous drop-in for GigaCode's `agent`
+tool. Creates an EPHEMERAL worker session (child of the caller, its own chat, no board task); when `profile` is set, reads
+`~/.gigacode/agents/<profile>.md` (YAML frontmatter `model`, `approvalMode`, `tools`, `description`; body = role prompt):
+model/approvalMode default from the frontmatter (explicit args win), first prompt = role body + «\n\n## Задание\n» + spec +
+the short worker preamble (report with worker_done). Returns when the worker calls `worker_done`
+(`{ status, summary, sessionId }`), or when its turn ends without it (`{ status: 'no_report', summary: <last assistant
+text>, sessionId }`), or on timeout (`{ status: 'timeout', sessionId }`, the worker keeps running). The user may watch,
+message and stop that worker; messages from the user are queued into it as usual.
+Transport: `POST /api/agent/worker_run` returns `{ sessionId }` immediately; `mcp/harness-mcp.js` then long-polls
+`GET /api/agent/worker_wait?sessionId=&timeoutMs=25000` until settled and sends MCP `notifications/progress` (when the
+client gave a progressToken) every poll so the tool call is not timed out; the per-session settings.json sets
+`mcpServers.harness.timeout = 3600000` (ms).
+`commands/full-task-harness.md` (shipped in the repo): a thin wrapper — load `full-task` via the skill tool and follow it
+fully, except: every sub-agent dispatch of §6/§8 (and explorers) goes through harness `worker_run` with `profile` = the
+agent name and `model` = the model from §8's table instead of the `agent` tool; parallel sub-agents = several
+`worker_run` calls in one turn; everything else unchanged; task = `{{args}}`.
+`POST /api/agents/:id/commands/install { name: 'full-task-harness' }` copies it to `~/.gigacode/commands/` only on this
+explicit request (refuses to overwrite a different existing file without `force`); `/api/agents/:id/info` reports
+`commands: { 'full-task-harness': 'installed' | 'missing' | 'different' }`. Preset `/full-task-harness {taskUrl}{notes}`
+is added to `taskPromptPresets`.
+
 ## Review loop run by the harness (`orchestration.reviewMode: "harness"`)
 
 Does not depend on what the task command (`/full-task`) says. Config:
