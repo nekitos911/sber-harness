@@ -560,7 +560,8 @@ none. `{notes}` = `" " + notes` when the user typed notes at start, else `""`.
 runs implementer/reviewer sub-agents with cross-model review and writes a ledger + verdict files. The harness aligns:
 - Worker preamble for a task started in a harness worktree adds: «Ты уже в рабочем дереве задачи `<cwd>` (ветка
   `<branch>`) — это и есть worktree задачи; не создавай другой. Коммиты/пуш/PR/трекер — только пользователь из UI.
-  После финального сообщения твоей команды вызови worker_done с тем же текстом.»
+  После финального сообщения твоей команды вызови worker_done с тем же текстом.» (session field `inWorktree: true`: the worker
+  started in a linked worktree; the commit sentence is dropped when `orchestration.workerMayCommit`.)
 - SDD artifacts viewer: `GET /api/sdd?cwd=` → `{ plans: [{ name, dir, progress: { raw, items: [{ title, status }] },
   verdicts: [{ n, file, status: 'PASS'|'FAIL'|'ESCALATION_REQUIRED'|'INDEPENDENT_VERIFICATION_REQUIRED'|null,
   filesChanged: string[], commands: [{ cmd, result }], openQuestions, implementerModel, reviewerModel, secondReviewModel,
@@ -568,7 +569,8 @@ runs implementer/reviewer sub-agents with cross-model review and writes a ledger
   `key: value` block + list items; unparsed → `raw` only). While a session in that cwd runs, the server polls (3 s) and
   broadcasts `{ t: 'sdd', cwd, plans }` on change.
 - `git.excludeFromCommit` (default `[".superpowers/"]`): `GET /api/git/status` marks matching files `service: true`;
-  commit-all and the suggested file list skip them (pathspec `:!<pattern>`); they are never pushed by the harness.
+  commit-all and the suggested file list skip them (pathspec `:(top,exclude)<pattern>`, so files staged earlier are skipped
+  too); explicit `paths` drop them (400 when only service files are left); they are never pushed by the harness.
 - Model references check: `GET /api/agents/:id/info` adds `modelRefs: [{ file, model, available }]` from
   `agents.<id>.modelRefsScan` (gigacode default `["~/.gigacode/agents/*.md", "~/.gigacode/commands/*.md"]`; frontmatter
   `model:` and model-id-looking tokens that match the catalogue naming), `available` against the discovered catalogue
@@ -838,6 +840,33 @@ Secrets:
   like a token/password (long high-entropy value under a key like token/secret/password/authorization) is a loud warning.
 - `HARNESS_CONFIG` env selects the config file (default `harness.config.json` + `.local`), so work and test
   configs never mix.
+
+## Nothing is lost on restart (harness, browser, PC)
+
+Durable state (all in `<dataDir>`, atomic writes):
+- `db.json` + rotating `db.json.bak` (last good copy, written before each replace); on startup a corrupt/unparsable
+  `db.json` is replaced by the `.bak` with a notification «восстановлено из резервной копии»; transcripts likewise
+  (`<sid>.json` + `.bak`). Debounce ≤ 250 ms; flush on every turn end, on shutdown, and synchronously on SIGINT/SIGTERM.
+- Session delivery queue is persisted (`session.queue: [{ id, from, text, at }]`, not only a count); after a restart,
+  queued deliveries of idle sessions are sent, those of re-attached running sessions wait for the turn end as before.
+- Re-attach identity: at spawn the harness records `pidStartedAt` (Windows: process creation time via
+  `Get-CimInstance Win32_Process` / `wmic` fallback; Linux: `/proc/<pid>/stat` starttime + boot time; macOS: `ps -o lstart=`);
+  on startup a `running` session is re-attached only if the pid exists AND its start time matches (±2 s); otherwise the turn
+  is finalized from the remaining output file (or marked interrupted with a system note) — a reused pid is never adopted
+  and never killed. Stop on a re-attached session re-checks identity before killing.
+- Single-instance lock: a live pid in `server.json` is a conflict only if `GET <url>/api/health` (new, unauthenticated,
+  returns `{ ok, pid, dataDir }`) answers from that pid within 1 s; otherwise the lock is stale and taken over.
+- Orchestration waits: `worker_run`/`agent` waits are stateless on the server (the worker session persists `parentId`,
+  `waiter: true`, and its `report: { status, summary, at }`); `mcp/harness-mcp.js` keeps long-polling `worker_wait` with
+  backoff across server restarts until the overall timeout, so the orchestrator's tool call survives a harness restart.
+- Review loop / ports state (`task.review: { round, reviewerSessionId, verdicts[] }`, `task.ports[]`) persisted; a reviewer
+  that finished while the harness was down is picked up on startup (its report is in the transcript/report field).
+- Terminals: history persists (`terms/<sid>.log`); PTY processes cannot outlive the server, so on startup every terminal
+  that was alive is respawned automatically in the same cwd (system line «— перезапуск harness: новая сессия терминала —»
+  appended to its log); a terminal whose initial command was an agent CLI with a continue flag is respawned with it
+  (`agents.<id>.continueArgs`, gigacode default `["-c"]`). `terminal.autoRespawn` (default true).
+- UI: drafts (composer per session, commit title/body per cwd, PR dialog per cwd+base, task drawer edits) persist in
+  localStorage (try/catch, cleared on send/commit); open screens/tabs/panels/scroll per worktree persist as now.
 
 ## Feature flags (client/server version skew)
 
