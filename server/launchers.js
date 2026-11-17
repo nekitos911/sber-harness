@@ -10,7 +10,7 @@
  *
  *  Shape:
  *    { id, defaults: { command, settingsEnv?, firstEventTimeoutMs },
- *      resolve?(agentCfg) -> { file, args, env }   executable (+ leading args, env); default: runner.resolveCommand
+ *      resolve(agentCfg) -> { file, args, env }    executable (+ leading args, env)
  *      buildArgs(ctx) -> string[]                   argv after resolve().args
  *      env(ctx) -> {}                               extra env vars (e.g. path of the per-session settings.json)
  *      prepare(ctx)                                 write runs/<sid>/settings.json or mcp.json (idempotent, every turn)
@@ -22,45 +22,51 @@
  *  add it to `launchers` at the bottom and reference it from the config:
  *  "agents": { "<agentId>": { "launcher": "<launcherId>", "command": ... } }.
  *
- *  GigaCode — facts from the target machine (docs/ARCHITECTURE.md "GigaCode launcher: known facts"):
- *   - command = the gigacode.cmd shim. It is resolved to <shimDir>/runtime/node/node.exe + <shimDir>/lib/cli-entry.js,
- *     else the js entry parsed from the shim text, else the explicit pair agents.gigacode.node + cliEntry.
- *   - cli-entry.js refuses to run unless env GIGACODE_PACKAGE_IDENTITY (64 hex, read from the shim's
- *     `set "GIGACODE_PACKAGE_IDENTITY=..."`) and GIGACODE_PACKAGE_LAUNCHER (the shim path) are set.
+ *  GigaCode — facts from the target machine (docs/GIGACODE-FACTS.md):
+ *   - command = the gigacode.cmd shim (ROOT\bin\gigacode.cmd). The shim sets ROOT=%~dp0.. and runs
+ *     "%ROOT%\runtime\node\node.exe" --max-old-space-size=6144 "%ROOT%\lib\cli-entry.js" %*. The .cmd itself cannot
+ *     be spawned honestly, so we run the bundled node + cli-entry directly: explicit agents.gigacode.node + cliEntry
+ *     if set, else parsed from the shim text, else <shimDir>/../runtime/node/node.exe + <shimDir>/../lib/cli-entry.js,
+ *     else the same under <shimDir>. Never the system node (it is too old for cli-entry).
+ *   - cli-entry.js needs env GIGACODE_PACKAGE_IDENTITY (64 hex, from the shim's `set "GIGACODE_PACKAGE_IDENTITY=..."`)
+ *     and GIGACODE_PACKAGE_LAUNCHER (the shim path); without them it prints to stderr and exits 0 with no stdout.
  *   - argv: [...nodeArgs, cliEntry, (--resume <id>)?, -p, <prompt>, --approval-mode, <mode>, --output-format, stream-json, (--model <m>)?]
  *   - settings: env GIGACODE_SYSTEM_SETTINGS_PATH -> runs/<sid>/settings.json =
  *     { agents: { modelGrades, allowedGrades }, chatRecording: true, mcpServers: { harness, ...agentMcpServers } }.
- *     Never `permissions` (the CLI layers this file over ~/.gigacode/settings.json, which owns them).
- *  STILL TO VERIFY on the target machine: the stream-json event shapes. test/fixtures/gigacode.stream.ndjson holds
- *  the ASSUMED (Gemini-CLI style) shape; replace it with a real capture
- *    gigacode -p "list files, then say hi" --approval-mode auto --output-format stream-json > test/fixtures/gigacode.stream.ndjson
- *  and fix normalize() + test/normalizer.test.js until green. Lines the normalizer does not understand become
- *  `meta` events (written to runs/<sid>/stderr.log); non-JSON lines are shown in the chat as a system message.
+ *     Never `permissions`. agents.gigacode.inheritUserMcp copies ~/.gigacode/settings.json mcpServers in as well
+ *     (whether the CLI merges or replaces mcpServers is unconfirmed).
+ *   - stream-json is Qwen-Code / Claude style (test/fixtures/gigacode.*.ndjson): system/init, assistant, user
+ *     (tool results), stream_event (goal_state, ignored), result (usage = run total). Events with a non-null
+ *     parent_tool_use_id belong to a built-in sub-agent and are tagged parentToolId (kept out of the main chat).
  * ============================================================================================
  */
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { CODE_ROOT } from './config.js';
 import { writeAtomic } from './store.js';
-import { locate, shimJsEntry, resolveCommand } from './runner.js';
+import { locate, resolveCommand } from './runner.js';
 
 // ---------------------------------------------------------------------------------------------
-// Tolerant stream-json normalizer: Gemini-CLI style and Claude-Code style (Qwen Code uses the latter).
+// Tolerant stream-json normalizer: Claude-Code / Qwen-Code style (GigaCode, claude) and Gemini-CLI style.
 // ---------------------------------------------------------------------------------------------
 
 const asText = (v) => (typeof v === 'string' ? v : v == null ? '' : JSON.stringify(v));
-const num = (...vals) => vals.reduce((sum, v) => sum + (Number.isFinite(v) ? v : 0), 0);
+const num = (v) => (Number.isFinite(v) ? v : 0);
 
 function contentText(c) {
   if (Array.isArray(c)) return c.map((p) => (typeof p === 'string' ? p : p?.text ?? '')).join('');
   return asText(c);
 }
 
-/** Token counts from a result event: Claude `usage`, Gemini `stats` (several spellings). */
+/** Token counts of a whole run, from the result event only (per-step assistant usage does not add up to it). */
 function tokens(o) {
-  const u = o.usage || o.stats || {};
-  const tokensIn = num(u.input_tokens, u.input_token_count, u.prompt_token_count, u.cache_read_input_tokens, u.cache_creation_input_tokens);
-  const tokensOut = num(u.output_tokens, u.output_token_count, u.candidates_token_count);
+  const u = o.usage || o.stats;
+  if (!u) return {};
+  // Qwen/GigaCode report input_tokens including the cached part (total_tokens = in + out); Claude reports cache separately.
+  const cache = u.total_tokens == null ? num(u.cache_read_input_tokens) + num(u.cache_creation_input_tokens) : 0;
+  const tokensIn = num(u.input_tokens ?? u.input_token_count ?? u.prompt_token_count) + cache;
+  const tokensOut = num(u.output_tokens ?? u.output_token_count ?? u.candidates_token_count);
   return tokensIn || tokensOut ? { tokensIn, tokensOut } : {};
 }
 
@@ -73,25 +79,64 @@ export function normalize(o, state = {}) {
     state.sessionId = sid;
     out.push({ type: 'session', id: sid });
   }
+  const body = [];
   switch (o.type) {
-    // --- Gemini style ---
+    // --- Claude / Qwen style ---
+    case 'system':
+      if (o.subtype === 'init') {
+        body.push({
+          type: 'init',
+          model: o.model ?? null,
+          mcpServers: Array.isArray(o.mcp_servers) ? o.mcp_servers.map((s) => ({ name: String(s.name), status: String(s.status) })) : [],
+        });
+      }
+      break;
+    case 'assistant': {
+      const blocks = Array.isArray(o.message?.content) ? o.message.content : [{ type: 'text', text: contentText(o.message?.content) }];
+      for (const b of blocks) {
+        if (b?.type === 'text' && b.text && !state.streamedText) body.push({ type: 'text', text: b.text, delta: false });
+        else if (b?.type === 'thinking' && b.thinking && !state.streamedText) body.push({ type: 'thought', text: b.thinking, delta: false });
+        else if (b?.type === 'tool_use') body.push({ type: 'tool_call', id: String(b.id ?? ''), name: String(b.name ?? 'tool'), input: b.input ?? {} });
+      }
+      break;
+    }
+    case 'user':
+      for (const b of Array.isArray(o.message?.content) ? o.message.content : []) {
+        if (b?.type === 'tool_result') body.push({ type: 'tool_result', id: String(b.tool_use_id ?? ''), output: contentText(b.content), isError: b.is_error === true });
+      }
+      break;
+    case 'stream_event': {
+      // Claude --include-partial-messages deltas (the full `assistant` event that follows is then skipped);
+      // anything else (GigaCode goal_state) is ignored.
+      const e = o.event || {};
+      if (e.type === 'message_start') state.streamedText = false;
+      if (e.type === 'content_block_delta' && e.delta?.type === 'text_delta') {
+        state.streamedText = true;
+        body.push({ type: 'text', text: e.delta.text, delta: true });
+      } else if (e.type === 'content_block_delta' && e.delta?.type === 'thinking_delta') {
+        state.streamedText = true;
+        body.push({ type: 'thought', text: e.delta.thinking, delta: true });
+      }
+      return out.concat(body);
+    }
+    // --- Gemini style (its `init` only carries the session id, handled above) ---
     case 'message':
       if (o.role === 'assistant' || o.role === 'model') {
         const text = contentText(o.content);
-        if (text) out.push({ type: 'text', text, delta: o.delta === true });
+        if (text) body.push({ type: 'text', text, delta: o.delta === true });
       }
       break;
     case 'thought':
     case 'thinking': {
       const text = contentText(o.content ?? o.text ?? [o.subject, o.description].filter(Boolean).join(': '));
-      if (text) out.push({ type: 'thought', text, delta: o.delta === true });
+      if (text) body.push({ type: 'thought', text, delta: o.delta === true });
       break;
     }
     case 'tool_use':
-      out.push({ type: 'tool_call', id: String(o.tool_id ?? o.id ?? ''), name: String(o.tool_name ?? o.name ?? 'tool'), input: o.parameters ?? o.input ?? {} });
+      body.push({ type: 'tool_call', id: String(o.tool_id ?? o.id ?? ''), name: String(o.tool_name ?? o.name ?? 'tool'), input: o.parameters ?? o.input ?? {} });
       break;
     case 'tool_result':
-      out.push({
+      body.push({
         type: 'tool_result',
         id: String(o.tool_id ?? o.tool_use_id ?? ''),
         output: contentText(o.output ?? o.content ?? o.error?.message ?? ''),
@@ -99,44 +144,20 @@ export function normalize(o, state = {}) {
       });
       break;
     case 'error':
-      out.push({ type: 'error', text: asText(o.message ?? o.error?.message ?? o.error ?? 'error') });
+      body.push({ type: 'error', text: asText(o.message ?? o.error?.message ?? o.error ?? 'error') });
       break;
-    // --- Claude style ---
-    case 'assistant': {
-      const blocks = Array.isArray(o.message?.content) ? o.message.content : [{ type: 'text', text: contentText(o.message?.content) }];
-      for (const b of blocks) {
-        if (b?.type === 'text' && b.text && !state.streamedText) out.push({ type: 'text', text: b.text, delta: false });
-        else if (b?.type === 'thinking' && b.thinking && !state.streamedText) out.push({ type: 'thought', text: b.thinking, delta: false });
-        else if (b?.type === 'tool_use') out.push({ type: 'tool_call', id: String(b.id ?? ''), name: String(b.name ?? 'tool'), input: b.input ?? {} });
-      }
-      break;
-    }
-    case 'user':
-      for (const b of Array.isArray(o.message?.content) ? o.message.content : []) {
-        if (b?.type === 'tool_result') out.push({ type: 'tool_result', id: String(b.tool_use_id ?? ''), output: contentText(b.content), isError: b.is_error === true });
-      }
-      break;
-    case 'stream_event': {
-      // Only present with --include-partial-messages; the full `assistant` event that follows is then skipped.
-      const e = o.event || {};
-      if (e.type === 'message_start') state.streamedText = false;
-      if (e.type === 'content_block_delta' && e.delta?.type === 'text_delta') {
-        state.streamedText = true;
-        out.push({ type: 'text', text: e.delta.text, delta: true });
-      } else if (e.type === 'content_block_delta' && e.delta?.type === 'thinking_delta') {
-        state.streamedText = true;
-        out.push({ type: 'thought', text: e.delta.thinking, delta: true });
-      }
-      break;
-    }
     // --- both ---
     case 'result': {
       const isError = o.is_error === true || o.status === 'error' || (typeof o.subtype === 'string' && o.subtype.startsWith('error'));
       const text = typeof o.result === 'string' ? o.result : typeof o.response === 'string' ? o.response : isError && o.error ? asText(o.error.message ?? o.error) : null;
-      out.push({ type: 'result', text, isError, ...tokens(o) });
+      body.push({ type: 'result', text, isError, ...tokens(o) });
       break;
     }
   }
+  // events of a built-in sub-agent (started by the tool call parent_tool_use_id) stay out of the main chat
+  const parent = o.parent_tool_use_id;
+  if (parent && o.type !== 'result') for (const ev of body) ev.parentToolId = String(parent);
+  out.push(...body);
   if (!out.length) out.push({ type: 'meta', raw: o });
   return out;
 }
@@ -149,6 +170,15 @@ export function normalize(o, state = {}) {
 const argPrompt = (p) => (p.startsWith('-') ? ` ${p}` : p);
 const fail = (message) => { throw Object.assign(new Error(message), { status: 400 }); };
 const exists = (p) => !!p && fs.existsSync(p);
+const USER_SETTINGS = path.join(os.homedir(), '.gigacode', 'settings.json');
+
+function userMcpServers(file = USER_SETTINGS) {
+  try {
+    return JSON.parse(fs.readFileSync(file, 'utf8').replace(/^﻿/, '')).mcpServers || {};
+  } catch {
+    return {};
+  }
+}
 
 /** Per-session settings.json for the Gemini-CLI family. Never contains `permissions`. */
 export function sessionSettings({ agentCfg, harnessMcp, agentMcpServers }) {
@@ -157,12 +187,46 @@ export function sessionSettings({ agentCfg, harnessMcp, agentMcpServers }) {
     ...rest,
     agents: { ...agents, modelGrades: agents?.modelGrades || {}, allowedGrades: agents?.allowedGrades || [] },
     chatRecording: true,
-    mcpServers: { ...agentMcpServers, harness: { ...harnessMcp, trust: true } },
+    mcpServers: {
+      ...(agentCfg.inheritUserMcp ? userMcpServers(agentCfg.userSettingsPath) : {}),
+      ...agentMcpServers,
+      harness: { ...harnessMcp, trust: true },
+    },
   };
 }
 
 export function shimIdentity(text) {
-  return text.match(/set\s+"GIGACODE_PACKAGE_IDENTITY=([0-9a-f]{64})"/i)?.[1] || null;
+  return text.match(/set\s+"?GIGACODE_PACKAGE_IDENTITY=([0-9a-f]{64})"?/i)?.[1] || null;
+}
+
+/**
+ * Bundled node + cli-entry referenced by a gigacode.cmd shim: `set "ROOT=%~dp0.."` + the quoted call line.
+ * Expands %~dp0, %~f0 and variables set earlier in the shim. Returns absolute paths (not checked for existence).
+ */
+export function parseShim(shimPath, text) {
+  const vars = { '~dp0': path.dirname(shimPath) + path.sep, '~f0': shimPath };
+  const expand = (s) => s.replace(/%(~dp0|~f0)|%([A-Za-z_][\w]*)%/gi, (m, special, name) => {
+    if (special) return vars[special.toLowerCase()];
+    const key = Object.keys(vars).find((k) => k.toLowerCase() === name.toLowerCase());
+    return key ? vars[key] : m;
+  });
+  let node = null;
+  let entry = null;
+  for (const line of text.split(/\r?\n/)) {
+    const set = line.match(/^\s*set\s+"?([A-Za-z_][\w]*)=([^"]*)"?\s*$/i);
+    if (set) {
+      vars[set[1]] = expand(set[2]);
+      continue;
+    }
+    const quoted = [...line.matchAll(/"([^"]+)"/g)].map((m) => expand(m[1]));
+    const n = quoted.find((q) => /[\\/]node(\.exe)?$/i.test(q));
+    const e = quoted.find((q) => /\.[cm]?js$/i.test(q));
+    if (n && e) {
+      node = path.resolve(n);
+      entry = path.resolve(e);
+    }
+  }
+  return { node, entry };
 }
 
 /** gigacode.cmd shim -> bundled node + cli-entry.js + identity env (see header). Throws a 400 with a clear message. */
@@ -173,24 +237,27 @@ export function resolveGigacode(agentCfg, defaultCommand = 'gigacode') {
   const text = fs.readFileSync(shim, 'utf8');
   const identity = shimIdentity(text);
   if (!identity) fail(`GIGACODE_PACKAGE_IDENTITY not found in ${shim}; the CLI refuses to start without it. Point agents.gigacode.command at the gigacode.cmd shim.`);
-  let node;
-  let entry;
+  let pair;
   if (agentCfg.node || agentCfg.cliEntry) {
     if (!agentCfg.node || !agentCfg.cliEntry) fail('agents.gigacode.node and agents.gigacode.cliEntry must be set together (or both null).');
     for (const k of ['node', 'cliEntry']) if (!exists(agentCfg[k])) fail(`agents.gigacode.${k} does not exist: ${agentCfg[k]}`);
-    node = agentCfg.node;
-    entry = agentCfg.cliEntry;
+    pair = { node: agentCfg.node, entry: agentCfg.cliEntry };
   } else {
     const dir = path.dirname(shim);
-    const bundledNode = path.join(dir, 'runtime', 'node', process.platform === 'win32' ? 'node.exe' : 'node');
-    const bundledEntry = path.join(dir, 'lib', 'cli-entry.js');
-    entry = exists(bundledEntry) ? bundledEntry : shimJsEntry(shim, text);
-    node = exists(bundledNode) ? bundledNode : process.execPath;
-    if (!exists(entry)) fail(`Cannot find the GigaCode cli entry next to ${shim} (expected ${bundledEntry}). Set agents.gigacode.node and cliEntry.`);
+    const nodeName = process.platform === 'win32' ? 'node.exe' : 'node';
+    const candidates = [
+      parseShim(shim, text),
+      { node: path.join(dir, '..', 'runtime', 'node', nodeName), entry: path.join(dir, '..', 'lib', 'cli-entry.js') },
+      { node: path.join(dir, 'runtime', 'node', nodeName), entry: path.join(dir, 'lib', 'cli-entry.js') },
+    ].map((c) => ({ node: c.node && path.resolve(c.node), entry: c.entry && path.resolve(c.entry) }));
+    pair = candidates.find((c) => exists(c.node) && exists(c.entry));
+    if (!pair) {
+      fail(`Cannot find GigaCode's bundled node + cli-entry.js for ${shim} (tried ${candidates.map((c) => c.node).filter(Boolean).join(', ')}). Set agents.gigacode.node and agents.gigacode.cliEntry.`);
+    }
   }
   return {
-    file: node,
-    args: [...(agentCfg.nodeArgs || []), entry],
+    file: pair.node,
+    args: [...(agentCfg.nodeArgs || []), pair.entry],
     env: { GIGACODE_PACKAGE_IDENTITY: identity, GIGACODE_PACKAGE_LAUNCHER: shim },
   };
 }
@@ -247,7 +314,8 @@ const claude = {
 };
 
 export const launchers = {
-  gigacode: geminiFamily('gigacode', { command: 'gigacode', settingsEnv: 'GIGACODE_SYSTEM_SETTINGS_PATH', firstEventTimeoutMs: 30000 }, (cfg) => resolveGigacode(cfg)),
+  // cold start (hundreds of tools, ~9 MCP servers) can take 30-60 s before system/init
+  gigacode: geminiFamily('gigacode', { command: 'gigacode', settingsEnv: 'GIGACODE_SYSTEM_SETTINGS_PATH', firstEventTimeoutMs: 120000 }, (cfg) => resolveGigacode(cfg)),
   qwen: geminiFamily('qwen', { command: 'qwen', settingsEnv: 'QWEN_CODE_SYSTEM_SETTINGS_PATH', firstEventTimeoutMs: 30000 }),
   gemini: geminiFamily('gemini', { command: 'gemini', settingsEnv: 'GEMINI_CLI_SYSTEM_SETTINGS_PATH', firstEventTimeoutMs: 30000 }),
   claude,

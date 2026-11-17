@@ -86,11 +86,11 @@ const shortArg = (a) => JSON.stringify(a.length > 200 ? `${a.slice(0, 200)}...` 
  * @param {{ launcher, ctx, command: string|string[]|{file,args}, cwd, env, firstEventTimeoutMs: number, logFile: string,
  *           onEvent: (ev) => void, maxLine?: number }} o
  *   Events are the launcher's NormalizedEvents plus { type: 'raw', text } for each non-JSON stdout line.
- * @returns {{ pid: number|null, stop(): void, done: Promise<{code, signal, sawResult, timedOut, stopped, error, stderrTail}> }}
+ * @returns {{ pid: number|null, stop(): void, done: Promise<{code, signal, sawResult, timedOut, stopped, error, stderrTail, eventCount}> }}
  */
 export function runTurn({ launcher, ctx, command, cwd, env, firstEventTimeoutMs, logFile, onEvent, maxLine = MAX_LINE }) {
   const log = fs.createWriteStream(logFile, { flags: 'a' });
-  const res = { code: null, signal: null, sawResult: false, timedOut: false, stopped: false, error: null, stderrTail: '' };
+  const res = { code: null, signal: null, sawResult: false, timedOut: false, stopped: false, error: null, stderrTail: '', eventCount: 0 };
   let child;
   try {
     if (!fs.existsSync(cwd)) throw new Error(`Working directory does not exist: ${cwd}`);
@@ -112,6 +112,7 @@ export function runTurn({ launcher, ctx, command, cwd, env, firstEventTimeoutMs,
   }, firstEventTimeoutMs);
 
   const emit = (ev) => {
+    res.eventCount++;
     try {
       onEvent(ev);
     } catch (e) {

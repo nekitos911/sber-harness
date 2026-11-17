@@ -1,4 +1,4 @@
-// Read-only reader of an agent-internal sub-agent registry: <registryDir>/<agentId>/agent.json (+ log.jsonl).
+// Read-only reader of an agent-internal sub-agent registry: <registryDir>/<agentId>/agent.json (+ log.jsonl tail).
 // Some task commands run their own sub-agents and record them there; the harness only displays them.
 // Rules: broken record -> skipped and listed in `problems`; `working` with no activity for idleWindowSec ->
 // shown as `unverifiable` (the file is never rewritten); terminal states without settledAt are flagged.
@@ -8,6 +8,30 @@ import path from 'node:path';
 export const STATES = ['queued', 'working', 'restarting', 'compacting', 'waiting', 'blocked', 'idle', 'done', 'failed', 'interrupted', 'unverifiable'];
 const TERMINAL = ['done', 'failed', 'interrupted'];
 const OPTIONAL = ['model', 'role', 'parentId', 'worktree', 'lastText', 'lastActivity', 'activity', 'settledAt'];
+
+const LOG_TAIL = 16 * 1024;
+
+/** Last parseable event of an append-only log.jsonl ({ ts, event, state, note?, tool? }), read from the file tail. */
+function lastLogEvent(file) {
+  let fd;
+  try {
+    fd = fs.openSync(file, 'r');
+    const size = fs.fstatSync(fd).size;
+    const len = Math.min(size, LOG_TAIL);
+    const buf = Buffer.alloc(len);
+    fs.readSync(fd, buf, 0, len, size - len);
+    const lines = buf.toString('utf8').split(/\r?\n/).filter((l) => l.trim());
+    for (let i = lines.length - 1; i >= 0; i--) {
+      try {
+        const ev = JSON.parse(lines[i]);
+        if (ev && typeof ev === 'object') return ev;
+      } catch {} // the first line of a tail window is usually cut
+    }
+  } catch {} finally {
+    if (fd !== undefined) fs.closeSync(fd);
+  }
+  return null;
+}
 
 /** ISO string or epoch (s or ms) -> ms, else NaN */
 function toMs(v) {
@@ -34,6 +58,9 @@ export function readRegistry(dir, { idleWindowSec = 90, now = Date.now() } = {})
       for (const k of OPTIONAL) item[k] = rec[k] ?? null;
       item.tokensIn = Number.isFinite(rec.tokensIn) ? rec.tokensIn : 0;
       item.tokensOut = Number.isFinite(rec.tokensOut) ? rec.tokensOut : 0;
+      const ev = lastLogEvent(path.join(dir, e.name, 'log.jsonl'));
+      item.lastEvent = ev ? { ts: ev.ts ?? null, event: ev.event ?? null, state: ev.state ?? null, note: ev.note ?? null, tool: ev.tool ?? null } : null;
+      item.lastText ??= ev?.note ?? null;
       const last = toMs(rec.lastActivity ?? rec.startedAt);
       if (rec.state === 'working' && Number.isFinite(last) && now - last > idleWindowSec * 1000) {
         item.state = 'unverifiable';

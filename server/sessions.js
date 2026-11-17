@@ -124,6 +124,7 @@ export function createSessions({ config, store, bus, getUrl }) {
     s.pid = null;
     s.tokensIn ??= 0;
     s.tokensOut ??= 0;
+    s.phase = null;
     if (s.kind === 'chat' && s.status === 'running') {
       s.status = 'idle';
       addMessage(s, { kind: 'system', text: 'harness restarted, the turn was interrupted; send a message to continue (context is kept by --resume)' });
@@ -136,13 +137,45 @@ export function createSessions({ config, store, bus, getUrl }) {
 
   // ---- chat turns ----
 
+  /** Built-in sub-agent activity (parent_tool_use_id) -> compact lines on the parent tool call, not the main chat. */
+  function subagentProgress(s, c, ev) {
+    const parent = c.tools.get(ev.parentToolId);
+    if (!parent) return;
+    const short = (v, n = 160) => {
+      const t = (typeof v === 'string' ? v : JSON.stringify(v) ?? '').replace(/\s+/g, ' ').trim();
+      return t.length > n ? `${t.slice(0, n)}…` : t;
+    };
+    let line = null;
+    if (ev.type === 'text') line = short(ev.text, 200);
+    else if (ev.type === 'tool_call') {
+      c.subTools.set(ev.id, ev.name);
+      line = `→ ${ev.name} ${short(ev.input, 120)}`;
+    } else if (ev.type === 'tool_result') line = `${ev.isError ? '✗' : '✓'} ${c.subTools.get(ev.id) || 'tool'} ${short(ev.output, 120)}`;
+    else if (ev.type === 'error') line = `✗ ${short(ev.text)}`;
+    if (!line) return;
+    parent.tool = { ...parent.tool, progress: [...(parent.tool.progress || []), line].slice(-50) };
+    updateMessage(s, parent);
+  }
+
   function applyEvent(s, ev) {
     if (!find(s.id)) return; // deleted while running
     const r = runtime(s.id);
     const c = r.cur;
     s.lastActivityAt = Date.now();
+    if (s.phase !== 'streaming') {
+      s.phase = 'streaming';
+      emit(s);
+    }
+    if (ev.parentToolId) return subagentProgress(s, c, ev);
     if (ev.type !== 'raw') c.raw = null;
     switch (ev.type) {
+      case 'init': {
+        const mcp = ev.mcpServers.map((m) => `${m.name} ${/^connected$/i.test(m.status) ? '✓' : '✗'}`).join(', ');
+        const note = [ev.model && `Model: ${ev.model}`, mcp && `MCP: ${mcp}`].filter(Boolean).join(' · ');
+        // once per session (again only when it changes, e.g. an MCP server went down)
+        if (note && !store.messages(s.id).some((m) => m.kind === 'system' && m.text === note)) addMessage(s, { kind: 'system', text: note });
+        break;
+      }
       case 'session':
         if (s.externalSessionId !== ev.id) {
           s.externalSessionId = ev.id;
@@ -221,7 +254,7 @@ export function createSessions({ config, store, bus, getUrl }) {
     r.running = true;
     r.turn += 1;
     r.flags = {};
-    r.cur = { assistant: null, thought: null, raw: null, tools: new Map(), gotText: false };
+    r.cur = { assistant: null, thought: null, raw: null, tools: new Map(), subTools: new Map(), gotText: false };
     for (const it of items) addMessage(s, { kind: 'user', text: it.text, from: it.from, ...(it.options ? { options: it.options } : {}) });
     Object.assign(s, { status: 'running', queued: 0, lastActivityAt: Date.now() });
     emit(s);
@@ -233,7 +266,8 @@ export function createSessions({ config, store, bus, getUrl }) {
       let prompt = items.map((i) => i.text).join('\n\n');
       if (!s.externalSessionId) {
         const pre = hooks.preamble(s);
-        if (pre) prompt = `${pre}\n\n${prompt}`;
+        // a slash command only works as the first word of the prompt; the rest becomes its $ARGUMENTS
+        if (pre) prompt = prompt.startsWith('/') ? `${prompt}\n\n${pre}` : `${pre}\n\n${prompt}`;
       }
       const ctx = turnCtx(s, agentCfg, prompt);
       fs.mkdirSync(runDir(s.id), { recursive: true });
@@ -252,6 +286,7 @@ export function createSessions({ config, store, bus, getUrl }) {
       r.handle = handle;
       if (r.stopRequested) handle.stop();
       s.pid = handle.pid;
+      s.phase = 'starting'; // spawned, no output yet (GigaCode may need a minute to start its MCP servers)
       emit(s);
       res = await handle.done;
     } catch (e) {
@@ -281,9 +316,18 @@ export function createSessions({ config, store, bus, getUrl }) {
       addMessage(s, { kind: 'error', text: `No output from the agent within ${Math.round(ms / 1000)} s; the process was killed.${tail(res.stderrTail)}` });
       status = 'error';
     } else if (!res.sawResult && res.code !== 0) {
-      addMessage(s, { kind: 'error', text: `The agent exited with code ${res.code}${res.signal ? ` (${res.signal})` : ''}.${tail(res.stderrTail)}` });
+      // a fatal CLI error leaves stdout empty and the whole story in stderr: lead with it
+      const why = res.stderrTail.trim();
+      addMessage(s, { kind: 'error', text: `The agent failed (exit code ${res.code}${res.signal ? `, ${res.signal}` : ''})${why ? `:\n${why.slice(-2000)}` : '.'}` });
+      if (!res.eventCount) status = 'error';
+    } else if (!res.eventCount) {
+      // exit 0 without a single event: e.g. GigaCode's identity check fails silently (message only on stderr)
+      addMessage(s, { kind: 'error', text: `The agent exited without any output.${tail(res.stderrTail)}` });
+      status = 'error';
+    } else if (res.stderrTail.trim()) {
+      addMessage(s, { kind: 'system', text: `⚠ ${res.stderrTail.trim().slice(-2000)}` });
     }
-    Object.assign(s, { status, pid: null, lastActivityAt: Date.now() });
+    Object.assign(s, { status, pid: null, phase: null, lastActivityAt: Date.now() });
     emit(s);
     try {
       hooks.turnEnded(s, { ...r.flags, stopped, queueEmpty: r.queue.length === 0 });
@@ -442,6 +486,7 @@ export function createSessions({ config, store, bus, getUrl }) {
         pid: null,
         tokensIn: 0,
         tokensOut: 0,
+        phase: null,
         createdAt: now,
         lastActivityAt: now,
       };
@@ -546,7 +591,7 @@ export function createSessions({ config, store, bus, getUrl }) {
       store.removeSessionFiles(sid);
       // the process may still hold stderr.log for a moment; settings.json goes first
       for (const f of ['settings.json', 'mcp.json']) fs.rmSync(path.join(runDir(sid), f), { force: true });
-      fs.rm(runDir(sid), { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }, () => {});
+      git.removeDir(runDir(sid));
       store.save();
       bus.send({ t: 'session.del', id: s.id });
     },

@@ -6,42 +6,54 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { CODE_ROOT } from '../server/config.js';
-import { shimIdentity, resolveGigacode } from '../server/launchers.js';
+import { shimIdentity, resolveGigacode, parseShim } from '../server/launchers.js';
 import { startTestServer, makeRepo, tmpDir, rmrf, gitIn, waitFor, waitPidGone } from './helpers.js';
 
 const IDENTITY = 'ab'.repeat(32);
 const root = tmpDir();
-const bin = path.join(root, 'Program Files тест', '.gigacode', 'bin');
+// the real layout (docs/GIGACODE-FACTS.md): ROOT\bin\gigacode.cmd, ROOT\runtime\node\node.exe, ROOT\lib\cli-entry.js
+const ROOT = path.join(root, 'Program Files тест', '.gigacode');
+const bin = path.join(ROOT, 'bin');
 const shim = path.join(bin, 'gigacode.cmd');
-const entry = path.join(bin, 'lib', 'cli-entry.js');
+const bundledNode = path.join(ROOT, 'runtime', 'node', process.platform === 'win32' ? 'node.exe' : 'node');
+const bundledEntry = path.join(ROOT, 'lib', 'cli-entry.js');
+const entry = path.join(root, 'cli', 'cli-entry.js'); // runnable copy of the mock agent for the e2e (explicit pair)
 const badShim = path.join(bin, 'no-identity.cmd');
 const argvFile = path.join(root, 'argv.jsonl');
 const shimText = (identity) => [
-  '@ECHO off',
-  'SETLOCAL',
+  '@echo off',
+  'setlocal',
+  'set "ROOT=%~dp0.."',
   ...(identity ? [`set "GIGACODE_PACKAGE_IDENTITY=${identity}"`] : []),
   'set "GIGACODE_PACKAGE_LAUNCHER=%~f0"',
-  '"%~dp0runtime\\node\\node.exe" --max-old-space-size=6144 "%~dp0lib\\cli-entry.js" %*',
+  '"%ROOT%\\runtime\\node\\node.exe" --max-old-space-size=6144 "%ROOT%\\lib\\cli-entry.js" %*',
+  'exit /b %ERRORLEVEL%',
   '',
 ].join('\r\n');
 const MODES = ['plan', 'default', 'auto-edit', 'auto'];
-const giga = (command) => ({
+const giga = (command, extra = {}) => ({
   launcher: 'gigacode', label: 'GigaCode (fake)', command, node: null, cliEntry: null, nodeArgs: ['--max-old-space-size=6144'],
   approvalMode: 'auto', approvalModes: MODES, settingsEnv: 'GIGACODE_SYSTEM_SETTINGS_PATH', firstEventTimeoutMs: 15000,
   settings: { agents: { modelGrades: {}, allowedGrades: [] }, chatRecording: true, permissions: { allow: ['everything'] } },
+  ...extra,
 });
 
 let h;
 let repo;
 before(async () => {
+  for (const p of [bundledNode, bundledEntry]) {
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, 'placeholder');
+  }
   fs.mkdirSync(path.dirname(entry), { recursive: true });
   fs.copyFileSync(path.join(CODE_ROOT, 'scripts', 'mock-agent.js'), entry);
+  fs.mkdirSync(bin, { recursive: true });
   fs.writeFileSync(shim, shimText(IDENTITY));
   fs.writeFileSync(badShim, shimText(null));
   repo = makeRepo(path.join(root, 'репо'));
   process.env.MOCK_AGENT_ARGV_FILE = argvFile;
   h = await startTestServer({
-    agents: { giga: giga(shim), gigabad: giga(badShim) },
+    agents: { giga: giga(shim, { node: process.execPath, cliEntry: entry }), gigabad: giga(badShim) },
     integrations: { tasks: { enabled: true, server: 'nope', tools: { find: 'x' } } },
   });
 });
@@ -54,16 +66,30 @@ after(async () => {
 const runs = () => fs.readFileSync(argvFile, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
 const state = async () => (await h.api('GET', '/api/state')).body;
 
-test('shim parsing: identity, bundled entry, explicit node+cliEntry pair', () => {
+test('shim parsing: ROOT=%~dp0.. resolves to the bundled node + cli-entry next to bin; identity; explicit pair wins', () => {
   assert.equal(shimIdentity(shimText(IDENTITY)), IDENTITY);
   assert.equal(shimIdentity(shimText(null)), null);
-  const r = resolveGigacode(giga(shim));
-  assert.deepEqual(r, { file: process.execPath, args: ['--max-old-space-size=6144', entry], env: { GIGACODE_PACKAGE_IDENTITY: IDENTITY, GIGACODE_PACKAGE_LAUNCHER: shim } });
+  assert.deepEqual(parseShim(shim, shimText(IDENTITY)), { node: path.resolve(ROOT, 'runtime', 'node', 'node.exe'), entry: bundledEntry });
+  const env = { GIGACODE_PACKAGE_IDENTITY: IDENTITY, GIGACODE_PACKAGE_LAUNCHER: shim };
+  if (process.platform === 'win32') {
+    assert.deepEqual(resolveGigacode(giga(shim)), { file: bundledNode, args: ['--max-old-space-size=6144', bundledEntry], env });
+  }
+  // a shim without ROOT/call line: <shimDir>/../runtime + <shimDir>/../lib
+  const plain = path.join(bin, 'plain.cmd');
+  fs.writeFileSync(plain, `@echo off\r\nset "GIGACODE_PACKAGE_IDENTITY=${IDENTITY}"\r\n`);
+  assert.deepEqual(resolveGigacode(giga(plain)).args, ['--max-old-space-size=6144', bundledEntry]);
+  assert.equal(resolveGigacode(giga(plain)).file, bundledNode);
+  assert.deepEqual(resolveGigacode(giga(shim, { node: process.execPath, cliEntry: entry })), { file: process.execPath, args: ['--max-old-space-size=6144', entry], env });
+
   assert.throws(() => resolveGigacode(giga(badShim)), /GIGACODE_PACKAGE_IDENTITY not found/);
   assert.throws(() => resolveGigacode(giga(path.join(bin, 'missing.cmd'))), /launcher not found/);
-  assert.throws(() => resolveGigacode({ ...giga(shim), node: process.execPath }), /must be set together/);
-  assert.throws(() => resolveGigacode({ ...giga(shim), node: process.execPath, cliEntry: path.join(bin, 'nope.js') }), /cliEntry does not exist/);
-  assert.equal(resolveGigacode({ ...giga(shim), node: process.execPath, cliEntry: entry }).args.at(-1), entry);
+  assert.throws(() => resolveGigacode(giga(shim, { node: process.execPath })), /must be set together/);
+  assert.throws(() => resolveGigacode(giga(shim, { node: process.execPath, cliEntry: path.join(bin, 'nope.js') })), /cliEntry does not exist/);
+  // no bundled runtime anywhere: a clear error, never the system node
+  const lonely = path.join(root, 'elsewhere', 'bin', 'gigacode.cmd');
+  fs.mkdirSync(path.dirname(lonely), { recursive: true });
+  fs.writeFileSync(lonely, shimText(IDENTITY));
+  assert.throws(() => resolveGigacode(giga(lonely)), /bundled node \+ cli-entry\.js/);
 });
 
 test('exact argv on new and resumed turns; settings.json without permissions; identity env', async () => {

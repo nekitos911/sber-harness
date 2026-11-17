@@ -8,10 +8,76 @@ const run = (objs) => {
   const state = {};
   return objs.flatMap((o) => normalize(o, state)).filter((e) => e.type !== 'meta');
 };
+const MCP = [{ name: 'onework', status: 'connected' }, { name: 'sourcecontrol', status: 'connected' }, { name: 'java-lsp', status: 'disconnected' }];
+const init = { type: 'init', model: 'DeepSeek-V4.1-Flash-1017', mcpServers: MCP };
 
-// gigacode.stream.ndjson holds the ASSUMED Gemini-CLI shape; replace it with a real GigaCode capture (see server/launchers.js).
-test('gigacode (Gemini-style) stream normalizes', () => {
+// GigaCode (Qwen-Code / Claude style), reconstructed from the target machine: test/fixtures/README.md
+test('gigacode: init note, text, usage from result only (not the per-step assistant usage)', () => {
   assert.deepEqual(run(fixture('gigacode.stream.ndjson')), [
+    { type: 'session', id: '7d1e2a40-5b6c-4f1d-9a3e-0c8b2f6e1a11' },
+    init,
+    { type: 'text', text: 'OK', delta: false },
+    { type: 'result', text: 'OK', isError: false, tokensIn: 124394, tokensOut: 133 },
+  ]);
+});
+
+test('gigacode: tool call and result', () => {
+  assert.deepEqual(run(fixture('gigacode.stream-tool.ndjson')), [
+    { type: 'session', id: '4f416018-e66e-4a22-bca3-bee0f23c7e39' },
+    init,
+    { type: 'tool_call', id: 'call_f66cd08f988b4093ad36d4dd', name: 'read_file', input: { absolute_path: 'C:\\Users\\dev\\projects\\demo\\probe.txt' } },
+    { type: 'tool_result', id: 'call_f66cd08f988b4093ad36d4dd', output: 'OK\n', isError: false },
+    { type: 'text', text: 'Файл содержит: OK', delta: false },
+    { type: 'result', text: 'Файл содержит: OK', isError: false, tokensIn: 108400, tokensOut: 49 },
+  ]);
+});
+
+test('gigacode: --resume keeps the session id', () => {
+  assert.deepEqual(run(fixture('gigacode.resume.ndjson')), [
+    { type: 'session', id: '7d1e2a40-5b6c-4f1d-9a3e-0c8b2f6e1a11' },
+    init,
+    { type: 'text', text: 'Ты просил ответить OK.', delta: false },
+    { type: 'result', text: 'Ты просил ответить OK.', isError: false, tokensIn: 55200, tokensOut: 8 },
+  ]);
+});
+
+test('gigacode: built-in sub-agent events are tagged with the parent tool call', () => {
+  assert.deepEqual(run(fixture('gigacode.subagent.ndjson')), [
+    { type: 'session', id: '4f416018-e66e-4a22-bca3-bee0f23c7e39' },
+    { type: 'tool_call', id: 'call_agent_1', name: 'agent', input: { subagent_type: 'java-reviewer', prompt: 'Review the diff', model: 'review' } },
+    { type: 'text', text: 'Reviewing…', delta: false, parentToolId: 'call_agent_1' },
+    { type: 'tool_call', id: 'call_sub_grep', name: 'grep_search', input: { pattern: 'TODO' }, parentToolId: 'call_agent_1' },
+    { type: 'tool_result', id: 'call_sub_grep', output: 'no matches', isError: false, parentToolId: 'call_agent_1' },
+    { type: 'tool_result', id: 'call_agent_1', output: 'APPROVED, 0 findings', isError: false },
+    { type: 'text', text: 'Ревью пройдено.', delta: false },
+    { type: 'result', text: 'Ревью пройдено.', isError: false, tokensIn: 2000, tokensOut: 50 },
+  ]);
+});
+
+test('gigacode: slash command expands into the skill tool; a tool error is a tool result with isError', () => {
+  const events = run(fixture('gigacode.slash.ndjson'));
+  assert.deepEqual(events.map((e) => [e.type, e.name ?? e.id ?? null, e.isError ?? null]), [
+    ['session', '00000000-0000-4000-8000-000000000041', null],
+    ['init', null, null],
+    ['tool_call', 'skill', null],
+    ['tool_result', 'call_skill_1', false],
+    ['tool_call', 'mcp__onework__sbertrack_getIssue', null],
+    ['tool_result', 'call_get_1', true],
+    ['text', null, null],
+    ['result', null, false],
+  ]);
+  assert.deepEqual(events[2].input, { skill: 'full-task', args: 'https://tracker.example/swtr/units/all/unit/PROJ-99001' });
+  assert.match(events[5].output, /Issue PROJ-99001 not found \(404\)/);
+});
+
+test('gigacode: a fatal error leaves stdout empty (the runner reports stderr)', () => {
+  assert.equal(fs.readFileSync(new URL('./fixtures/gigacode.stream-error.ndjson', import.meta.url), 'utf8').trim(), '');
+  assert.match(fs.readFileSync(new URL('./fixtures/gigacode.stream-error.stderr.txt', import.meta.url), 'utf8'), /not present in the current backend catalogue/);
+});
+
+// gemini / qwen launchers: Gemini-CLI style
+test('gemini-style stream normalizes', () => {
+  assert.deepEqual(run(fixture('gemini.stream.ndjson')), [
     { type: 'session', id: '7b0e6c9e-1f7a-4c1e-9d55-2b8c3f1a0001' },
     { type: 'text', text: 'Let me ', delta: true },
     { type: 'text', text: 'look.', delta: true },
@@ -26,9 +92,9 @@ test('gigacode (Gemini-style) stream normalizes', () => {
 });
 
 test('claude stream (real capture) normalizes', () => {
-  const events = run(fixture('claude.stream.ndjson'));
-  assert.deepEqual(events, [
+  assert.deepEqual(run(fixture('claude.stream.ndjson')), [
     { type: 'session', id: 'c5cfa35b-dc12-4713-8b92-a065641e82bb' },
+    { type: 'init', model: 'claude-opus-5-5', mcpServers: [{ name: 'harness', status: 'connected' }] },
     { type: 'tool_call', id: 'toolu_0167ojCd8j7wcE1cqdaBcn2C', name: 'Read', input: { file_path: '/work/demo/package.json' } },
     { type: 'tool_result', id: 'toolu_0167ojCd8j7wcE1cqdaBcn2C', output: '1\t{"name":"demo-pkg"}\n2\t', isError: false },
     { type: 'text', text: 'demo-pkg', delta: false },
@@ -53,8 +119,10 @@ test('claude partial messages stream as deltas and the full message is not dupli
   ]);
 });
 
-test('error results from both shapes', () => {
+test('error results from both shapes; Claude usage adds the cache', () => {
   assert.deepEqual(normalize({ type: 'result', subtype: 'error_max_turns', is_error: true }, {}), [{ type: 'result', text: null, isError: true }]);
   assert.deepEqual(normalize({ type: 'result', status: 'error', error: { type: 'API', message: 'quota exceeded' } }, {}), [{ type: 'result', text: 'quota exceeded', isError: true }]);
+  assert.deepEqual(normalize({ type: 'result', result: 'x', usage: { input_tokens: 4, cache_read_input_tokens: 10, output_tokens: 2 } }, {}), [{ type: 'result', text: 'x', isError: false, tokensIn: 14, tokensOut: 2 }]);
+  assert.deepEqual(normalize({ type: 'stream_event', event: { type: 'goal_state' } }, {}), []);
   assert.deepEqual(normalize({ type: 'whatever', x: 1 }, {}), [{ type: 'meta', raw: { type: 'whatever', x: 1 } }]);
 });

@@ -47,3 +47,26 @@ test('literal credentials in config are detected; references are not', () => {
   });
   assert.deepEqual(hits, ['mcpServers.a.headers.Authorization']);
 });
+
+test('registry: the agent.json example from the target machine, ISO timestamps, note from log.jsonl', () => {
+  const reg = path.join(dir, 'facts-registry');
+  const put = (id, rec, logLines = []) => {
+    fs.mkdirSync(path.join(reg, id), { recursive: true });
+    fs.writeFileSync(path.join(reg, id, 'agent.json'), JSON.stringify(rec));
+    if (logLines.length) fs.writeFileSync(path.join(reg, id, 'log.jsonl'), `${logLines.map((l) => JSON.stringify(l)).join('\n')}\n`);
+  };
+  put('java-reviewer-1', {
+    id: 'java-reviewer-1', name: 'java-reviewer', role: 'review', model: 'm-review', parentId: null, worktree: 'C:/w/PROJ-1',
+    state: 'working', startedAt: '2026-11-17T16:02:11.000Z', lastActivity: '2026-11-17T16:07:43.000Z', settledAt: null,
+    activity: { tool: 'grep_search', since: '2026-11-17T16:07:40.000Z' }, tokensIn: 184320, tokensOut: 2411,
+  }, [
+    { ts: '2026-11-17T16:02:11.000Z', event: 'spawned', state: 'working' },
+    { ts: '2026-11-17T16:07:43.000Z', event: 'activity', state: 'working', note: 'checking the DAO layer', tool: 'grep_search' },
+  ]);
+  const fresh = readRegistry(reg, { idleWindowSec: 90, now: Date.parse('2026-11-17T16:08:00.000Z') }).items[0];
+  assert.deepEqual([fresh.state, fresh.tokensIn, fresh.tokensOut, fresh.activity.tool], ['working', 184320, 2411, 'grep_search']);
+  assert.equal(fresh.lastText, 'checking the DAO layer');
+  assert.deepEqual(fresh.lastEvent, { ts: '2026-11-17T16:07:43.000Z', event: 'activity', state: 'working', note: 'checking the DAO layer', tool: 'grep_search' });
+  const stale = readRegistry(reg, { idleWindowSec: 90, now: Date.parse('2026-11-17T16:30:00.000Z') }).items[0];
+  assert.equal(stale.state, 'unverifiable');
+});

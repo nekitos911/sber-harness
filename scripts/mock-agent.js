@@ -5,6 +5,7 @@
 //   #spawn <spec>   worker_start({ spec })          #done <summary>  worker_done(done)   #fail  worker_done(failed)
 //   #ask <q> | <option> | ...   ask({ question, options })   #crash  exit 1 with stderr   #silent  sleep, no output
 //   #slow           stream slowly for ~5 s          #raw   print two non-JSON lines
+//   #nooutput       stderr only, exit 0 (silent failure)   #warn  stderr warning on a normal run
 // MOCK_AGENT_ARGV_FILE: appends { argv (incl. node flags), env (GIGACODE_*, settings path, MCP_SECRET_*) } per run.
 // Harness API from env: HARNESS_URL, HARNESS_TOKEN, HARNESS_SESSION_ID. Turn counts per session id live in
 // MOCK_AGENT_STATE_DIR (default <tmp>/harness-mock-agent), so --resume answers "resumed <id>, turn N".
@@ -41,6 +42,12 @@ if (has(/#crash\b/)) {
   process.stderr.write('mock-agent: simulated crash (#crash)\n');
   process.exit(1);
 }
+if (has(/#nooutput\b/)) {
+  // what GigaCode does when the package identity env is missing: stderr only, exit 0, no stdout
+  process.stderr.write('GigaCode launcher error: the public launcher and standalone payload identities do not match\n');
+  process.exit(0);
+}
+if (has(/#warn\b/)) process.stderr.write('Warning: MCP server(s) failed to start: java-lsp. Continuing with built-in tools\n');
 if (has(/#silent\b/)) {
   await sleep(120000);
   process.exit(0);
@@ -89,6 +96,14 @@ async function harness(tool, args) {
 await say(resume ? `resumed ${sessionId}, turn ${turn}. ` : `Hello from mock agent, turn ${turn}. `);
 emit({ type: 'tool_use', tool_name: 'read_file', tool_id: 'fake_1', parameters: { path: 'README.md' } });
 emit({ type: 'tool_result', tool_id: 'fake_1', status: 'success', output: '# fake file content' });
+if (has(/#subagent\b/)) {
+  // a built-in sub-agent (GigaCode `agent` tool), Claude/Qwen-style events tagged with parent_tool_use_id
+  const p = 'call_agent_1';
+  emit({ type: 'assistant', parent_tool_use_id: null, message: { content: [{ type: 'tool_use', id: p, name: 'agent', input: { subagent_type: 'java-reviewer' } }] } });
+  emit({ type: 'assistant', parent_tool_use_id: p, message: { content: [{ type: 'text', text: 'Reviewing…' }, { type: 'tool_use', id: 'sub_grep', name: 'grep_search', input: { pattern: 'TODO' } }] } });
+  emit({ type: 'user', parent_tool_use_id: p, message: { content: [{ type: 'tool_result', tool_use_id: 'sub_grep', is_error: false, content: 'no matches' }] } });
+  emit({ type: 'user', parent_tool_use_id: null, message: { content: [{ type: 'tool_result', tool_use_id: p, is_error: false, content: 'APPROVED' }] } });
+}
 
 if (delivered) await say(`Received: ${prompt.split('\n')[1]?.slice(0, 120) || ''}`);
 if (has(/#raw\b/)) process.stdout.write('plain line 1\nplain line 2\n');
