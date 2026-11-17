@@ -115,6 +115,7 @@ export interface Session {
   turnClosing?: boolean // the answer is complete (result seen); the CLI is only shutting down
   warm?: boolean // ACP sessions only: the process is loaded (false = unloaded after idling)
   system?: boolean // harness-internal (login terminal, discovery…): shown only under «Служебное»
+  persistent?: boolean // a child that is a full participant (e.g. an orchestrator in another worktree): never folded or auto-archived
   worktreePath?: string | null // the worktree root the session runs in (its cwd may be a subfolder)
   allowedTools?: string[] // tool patterns allowed for this chat (e.g. run_shell_command(git))
   waitingFor?: 'answer' | 'auth' | 'permission' | null // called `ask` and no reply yet, or needs a login (newer servers)
@@ -298,7 +299,7 @@ export interface Settings {
     prTitleTemplate?: string
   }
   tasks: { refreshSec: number }
-  orchestration?: { reviewMode?: 'builtin' | 'harness'; subagents?: 'harness' | 'builtin'; workerMayCommit?: boolean; review?: ReviewSettings }
+  orchestration?: { reviewMode?: 'builtin' | 'harness'; subagents?: 'harness' | 'builtin'; workerMayCommit?: boolean; review?: ReviewSettings; subagentRetention?: 'archive' | 'keep'; subagentMaxDepth?: number }
   board?: BoardSettings
   integrations?: {
     tasks?: { enabled?: boolean; space?: string | string[]; urlTemplate?: string; statusMap?: Record<string, string>; closedStatuses?: string[]; onStartTransition?: string | null }

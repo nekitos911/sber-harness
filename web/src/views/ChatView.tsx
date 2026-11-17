@@ -21,6 +21,7 @@ import { ActivityLine, buildItems, StallBanner, ToolRun, TurnFiles, TurnHead } f
 import { isMcpStatus, mcpServers } from '../lib/toolRun'
 import { sessionVisualState } from '../lib/sessionState'
 import { ownerWorkspace } from '../lib/actions'
+import { archiveSession } from '../lib/sessionActions'
 import { Composer } from '../components/chat/Composer'
 import { WorkersPanel } from '../components/chat/WorkersPanel'
 
@@ -216,7 +217,12 @@ export function ChatView({ id, active }: { id: string; active: boolean }) {
               <button type="button" className="btn btn-sm" onClick={reset}>Сбросить статус</button>
             </div>
           )}
-          {session.virtual ? (
+          {session.archived ? (
+            <div className="virtual-bar">
+              <span>Чат в архиве — только чтение.</span>
+              <button type="button" className="btn btn-sm" onClick={() => void archiveSession(session, false)}>Вернуть из архива</button>
+            </div>
+          ) : session.virtual ? (
             <div className="virtual-bar">
               <span>Внутренний субагент GigaCode: писать можно в родительский чат.</span>
               {session.parentId && <button type="button" className="btn btn-sm" onClick={() => openSession(session.parentId!)}>Открыть родительский чат</button>}

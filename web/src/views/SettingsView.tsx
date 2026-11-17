@@ -639,6 +639,18 @@ function OrchestrationSection({ form, update }: Omit<SectionProps, 'fieldError'>
             <InstallFile id={agentId} kind="skills" name="harness-orchestration" target="~/.gigacode/skills/harness-orchestration/SKILL.md" title="навык harness-orchestration" action="Установить навык в GigaCode" />
           )}
         </Row>
+        {o.subagentRetention !== undefined && (
+          <Row label="Хранить завершённых субагентов в боковой панели" hint="Временные субагенты (в том же рабочем дереве) убираются после завершения; дочерние оркестраторы в других деревьях остаются. Чат убранного открывается из карточки в чате оркестратора.">
+            <Switch label="Хранить завершённых субагентов" checked={o.subagentRetention === 'keep'}
+              onChange={(v) => update({ ...form, orchestration: { ...o, subagentRetention: v ? 'keep' : 'archive' } })} />
+          </Row>
+        )}
+        {o.subagentMaxDepth !== undefined && (
+          <Row label="Глубина субагентов" hint="Может ли субагент запускать своих субагентов. 1 — только оркестратор.">
+            <Select label="Глубина субагентов" value={String(o.subagentMaxDepth)} onChange={(v) => update({ ...form, orchestration: { ...o, subagentMaxDepth: Number(v) } })}
+              options={[{ value: '1', label: '1' }, { value: '2', label: '2' }, { value: '3', label: '3' }]} />
+          </Row>
+        )}
         <Row label="Ревью" wide hint={mode === 'builtin'
           ? 'Для /full-task оставьте «Внутри агента»: команда сама делает кросс-модельное ревью (§8), харнесс показывает его в карточках субагентов и во вкладке «Вердикты».'
           : '«Через харнесс»: для задач без такой команды. Ревью идёт отдельным чатом-ревьюером другой моделью.'}>

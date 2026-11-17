@@ -18,7 +18,10 @@ export function WorkersPanel({ sessionId, workers }: { sessionId: string; worker
   const sub = useStore((s) => s.subagents[sessionId])
   const all = useStore((s) => s.sessions)
   const reviewers = all.filter((s) => s.role === 'reviewer' && workers.some((w) => w.id === s.parentId))
-  const own = workers.filter((w) => !w.virtual)
+  const parent = all.find((s) => s.id === sessionId)
+  // Children in another worktree (or persistent ones) are their own orchestrators: a separate group.
+  const elsewhere = workers.filter((w) => !w.virtual && (w.persistent || (!!parent && (w.worktreePath ?? w.cwd) !== (parent.worktreePath ?? parent.cwd))))
+  const own = workers.filter((w) => !w.virtual && !elsewhere.includes(w))
   const inner = workers.filter((w) => w.virtual)
   const [open, setOpen] = useState(true)
   const now = useNow()
@@ -44,6 +47,12 @@ export function WorkersPanel({ sessionId, workers }: { sessionId: string; worker
               {reviewers.filter((r) => r.parentId === w.id).map((r) => <WorkerRow key={r.id} w={r} now={now} nested />)}
             </div>
           ))}
+          {elsewhere.length > 0 && (
+            <>
+              <div className="workers-sub">Оркестраторы в других рабочих деревьях</div>
+              {elsewhere.map((w) => <WorkerRow key={w.id} w={w} now={now} />)}
+            </>
+          )}
           {inner.length > 0 && (
             <>
               <div className="workers-sub">Субагенты команды</div>

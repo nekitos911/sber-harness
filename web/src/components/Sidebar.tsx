@@ -36,7 +36,8 @@ export function Sidebar() {
   const openPrs = useStore((s) => s.tasks.filter((t) => t.pr?.state === 'open').length)
   const chats = sessions.filter((s) => s.kind === 'chat').length
   const allWorktrees = useStore((s) => s.worktrees)
-  const tree = useMemo(() => buildTree(sessions.filter((s) => !s.archived), query, allWorktrees), [sessions, query, allWorktrees])
+  const leaving = useLeaving(sessions)
+  const tree = useMemo(() => buildTree(sessions.filter((s) => !s.archived || leaving.has(s.id)), query, allWorktrees), [sessions, query, allWorktrees, leaving])
   const filtering = !!query.trim()
   const rootWs = workspaces.find((w) => w.kind === 'root')
   const projects = workspaces.filter((w) => w.kind !== 'root')
@@ -151,6 +152,22 @@ export function Sidebar() {
   )
 }
 
+/** Sessions archived just now (by the server too): kept ~180 ms so their rows slide out instead of vanishing. */
+function useLeaving(sessions: Session[]): Set<string> {
+  const prev = useRef(new Map<string, boolean>())
+  const [leaving, setLeaving] = useState<Set<string>>(() => new Set())
+  useEffect(() => {
+    const now = new Set<string>()
+    for (const s of sessions) if (s.archived && prev.current.get(s.id) === false) now.add(s.id)
+    prev.current = new Map(sessions.map((s) => [s.id, !!s.archived]))
+    if (!now.size) return
+    setLeaving((l) => new Set([...l, ...now]))
+    const t = window.setTimeout(() => setLeaving((l) => new Set([...l].filter((id) => !now.has(id)))), 180)
+    return () => window.clearTimeout(t)
+  }, [sessions])
+  return leaving
+}
+
 const clampWidth = (w: number) => Math.round(Math.min(520, Math.max(220, w)))
 
 function NavItem({ screen, icon, label, end }: { screen: Screen; icon: ReactNode; label: string; end?: ReactNode }) {
@@ -172,6 +189,7 @@ interface Tree {
   terminals: Session[] // shell tabs: counted on their worktree row, not listed
   system: Session[] // harness-internal sessions: «Служебное»
   all: Session[] // every listed chat (roots and their workers), for the attention section
+  from: Map<string, Session> // a child shown under its own worktree → the parent it came from («от: …»)
 }
 
 /** The worktree a session belongs to: worktreePath from the server, else the longest known worktree containing its cwd. */
@@ -191,13 +209,21 @@ function buildTree(sessions: Session[], query: string, worktrees: Record<string,
   const listed = sessions.filter((s) => !s.system)
   const terminals = listed.filter((s) => s.kind === 'terminal')
   const chats = listed.filter((s) => s.kind !== 'terminal')
-  const ids = new Set(chats.map((s) => s.id))
+  const byId = new Map(chats.map((s) => [s.id, s]))
   const sorted = [...chats].sort((a, b) => a.createdAt - b.createdAt)
+  // A child in another worktree (or marked persistent, e.g. a per-service orchestrator) is a full participant: it sits
+  // under its own worktree with «от: <parent>», not nested under the parent's row.
+  const place = (s: Session) => worktreeOf(s, paths) ?? normPath(s.cwd)
+  const from = new Map<string, Session>()
+  for (const s of sorted) {
+    const p = s.parentId ? byId.get(s.parentId) : undefined
+    if (p && (s.persistent || place(s) !== place(p))) from.set(s.id, p)
+  }
   const kids = new Map<string, Session[]>()
   for (const s of sorted) {
-    if (s.parentId && ids.has(s.parentId)) kids.set(s.parentId, [...(kids.get(s.parentId) ?? []), s])
+    if (s.parentId && byId.has(s.parentId) && !from.has(s.id)) kids.set(s.parentId, [...(kids.get(s.parentId) ?? []), s])
   }
-  let roots = sorted.filter((s) => !s.parentId || !ids.has(s.parentId))
+  let roots = sorted.filter((s) => !s.parentId || !byId.has(s.parentId) || from.has(s.id))
   const q = query.trim().toLowerCase()
   if (q) {
     const hit = (s: Session): boolean =>
@@ -205,7 +231,7 @@ function buildTree(sessions: Session[], query: string, worktrees: Record<string,
       (kids.get(s.id) ?? []).some(hit)
     roots = roots.filter(hit)
   }
-  return { owner, roots, kids, loose: roots.filter((s) => !owner(s)), terminals, system, all: sorted }
+  return { owner, roots, kids, loose: roots.filter((s) => !owner(s)), terminals, system, all: sorted, from }
 }
 
 const WAITS: Partial<Record<string, string>> = { waiting_permission: 'разрешение', waiting_answer: 'вопрос', auth: 'вход', stalled: 'нет вывода' }
@@ -340,7 +366,7 @@ function ProjectNode({ ws, tree, filtering }: { ws: Workspace; tree: Tree; filte
             : !loaded && ws.isGit ? <div className="tree-skel"><Skeleton rows={2} label="Загрузка рабочих деревьев…" /></div>
               : (
                 <>
-                  {visible.map((r) => <WorktreeNode key={r.wt.path} ws={ws} wt={r.wt} sessions={r.here} terminals={r.terms} dup={r.dup} kids={tree.kids} active={r.active} />)}
+                  {visible.map((r) => <WorktreeNode key={r.wt.path} ws={ws} wt={r.wt} sessions={r.here} terminals={r.terms} dup={r.dup} kids={tree.kids} active={r.active} fromOf={(id) => tree.from.get(id)} />)}
                   {hidden > 0 && (
                     <button type="button" className="tree-row tree-more" style={depth(1)} aria-expanded={moreChoice} onClick={() => setMore(!moreChoice)}>
                       <Ellipsis aria-hidden />
@@ -355,8 +381,9 @@ function ProjectNode({ ws, tree, filtering }: { ws: Workspace; tree: Tree; filte
   )
 }
 
-function WorktreeNode({ ws, wt, sessions, terminals, dup, kids, active }: {
+function WorktreeNode({ ws, wt, sessions, terminals, dup, kids, active, fromOf }: {
   ws: Workspace; wt: Worktree; sessions: Session[]; terminals: Session[]; dup: boolean; kids: Map<string, Session[]>; active: boolean
+  fromOf: (id: string) => Session | undefined
 }) {
   const changed = useStore((s) => s.git[normPath(wt.path)]?.status?.files.length ?? wt.dirty ?? 0)
   const task = useStore((s) => (wt.taskId ? s.tasks.find((t) => t.id === wt.taskId) : s.tasks.find((t) => !!wt.branch && t.branch === wt.branch)))
@@ -409,20 +436,43 @@ function WorktreeNode({ ws, wt, sessions, terminals, dup, kids, active }: {
         </span>
       </div>
       <Menu anchor={row} open={menu} onClose={() => setMenu(false)} items={worktreeMenu(ws, wt, task, ideEnabled())} label={`Рабочее дерево ${name}`} placement="bottom-end" />
-      {sessions.map((s) => <SessionNode key={s.id} s={s} kids={kids} base={2} />)}
+      {sessions.map((s) => <SessionNode key={s.id} s={s} kids={kids} base={2} from={fromOf(s.id)} />)}
     </div>
   )
 }
 
 /** A top-level session and, under it, its workers (harness chats) and the agent's own internal sub-agents. */
 /** A sub-agent (built-in, or a worker_run child) whose run is over: folded under its parent. */
-const isFinishedSub = (c: Session) => (c.virtual || c.role === 'subagent') && c.status !== 'running' && !c.waitingFor
+const isFinishedSub = (c: Session) => (c.virtual || c.role === 'subagent') && !c.persistent && c.status !== 'running' && !c.waitingFor
 
-function SessionNode({ s, kids, level = 0, base = 2 }: { s: Session; kids: Map<string, Session[]>; level?: number; base?: number }) {
-  const all = kids.get(s.id) ?? []
+const isSub = (c: Session) => !!c.virtual || c.role === 'subagent'
+const profileOf = (c: Session) => /^([\w.-]{2,40}):/.exec(c.title)?.[1] ?? c.title
+
+/**
+ * Direct children, with sub-agents of sub-agents (older data: chains deeper than one) lifted to this level; `via`
+ * names the sub-agent they ran under.
+ */
+function childrenOf(s: Session, kids: Map<string, Session[]>): { c: Session; via?: string }[] {
+  const out: { c: Session; via?: string }[] = []
+  const lift = (parent: Session) => {
+    for (const g of kids.get(parent.id) ?? []) {
+      out.push({ c: g, via: profileOf(parent) })
+      if (isSub(g)) lift(g)
+    }
+  }
+  for (const c of kids.get(s.id) ?? []) {
+    out.push({ c })
+    if (isSub(c)) lift(c)
+  }
+  return out
+}
+
+function SessionNode({ s, kids, level = 0, base = 2, via, from }: { s: Session; kids: Map<string, Session[]>; level?: number; base?: number; via?: string; from?: Session }) {
+  const lifted = childrenOf(s, kids)
+  const all = lifted.map((x) => x.c)
   const finished = all.filter(isFinishedSub)
   const [showFinished, setShowFinished] = useState(false)
-  const children = showFinished ? all : all.filter((c) => !isFinishedSub(c))
+  const children = lifted.filter((x) => showFinished || !isFinishedSub(x.c))
   const internal = useStore((st) => st.subagents[s.id])
   const [open, setOpen] = useState(true)
   const has = children.length > 0 || !!internal?.items.length
@@ -430,10 +480,12 @@ function SessionNode({ s, kids, level = 0, base = 2 }: { s: Session; kids: Map<s
   const subs = finished.length ? { ok, bad: finished.length - ok, open: showFinished, toggle: () => setShowFinished(!showFinished) } : undefined
   return (
     <>
-      <SessionRow s={s} nested={level > 0} level={base + level} caret={has ? { open, toggle: () => setOpen(!open) } : undefined} subs={subs} />
+      <SessionRow s={s} nested={level > 0} level={base + level} via={via} from={from} caret={has ? { open, toggle: () => setOpen(!open) } : undefined} subs={subs} />
       {has && open && (
         <div className="tree-kids" role="group" aria-label={`Агенты сессии ${s.title}`}>
-          {children.map((c) => <SessionNode key={c.id} s={c} kids={kids} level={level + 1} base={base} />)}
+          {children.map(({ c, via: v }) => isSub(c)
+            ? <SessionRow key={c.id} s={c} nested level={base + level + 1} via={v} /> // a sub-agent never nests further: its own are lifted here
+            : <SessionNode key={c.id} s={c} kids={kids} level={level + 1} base={base} />)}
           {internal?.items.map((a) => (
             <div
               key={a.id}
@@ -456,8 +508,8 @@ function SessionNode({ s, kids, level = 0, base = 2 }: { s: Session; kids: Map<s
   )
 }
 
-function SessionRow({ s, nested, level = 0, caret, subs }: {
-  s: Session; nested: boolean; level?: number; caret?: { open: boolean; toggle: () => void }
+function SessionRow({ s, nested, level = 0, caret, subs, via, from }: {
+  s: Session; nested: boolean; level?: number; caret?: { open: boolean; toggle: () => void }; via?: string; from?: Session
   subs?: { ok: number; bad: number; open: boolean; toggle: () => void }
 }) {
   const [menu, setMenu] = useState(false)
@@ -487,7 +539,7 @@ function SessionRow({ s, nested, level = 0, caret, subs }: {
       data-s={v}
       data-nested={nested || undefined}
       data-enter={s.createdAt > APP_START || undefined}
-      data-leaving={leaving || undefined}
+      data-leaving={leaving || s.archived || undefined}
       tabIndex={0}
       aria-current={current ? 'true' : undefined}
       data-tip={editing ? undefined : s.title || s.id} data-tip-trunc
@@ -507,6 +559,8 @@ function SessionRow({ s, nested, level = 0, caret, subs }: {
           {nested && <span className="sub-glyph" aria-hidden>↳ </span>}
           {s.role === 'reviewer' && <span className="sess-doing">ревью · </span>}
           {sub ? <>{sub[0]}<span className="sess-doing">: {sub[1]}</span></> : s.title || s.id}
+          {via && <span className="sess-doing"> · через {via}</span>}
+          {from && <span className="sess-doing"> · от: <button type="button" className="sess-from" onClick={(e) => { e.stopPropagation(); openSession(from.id) }}>{from.title}</button></span>}
           {doing && <span className="sess-doing"> · {doing}</span>}
         </span>
       )}
