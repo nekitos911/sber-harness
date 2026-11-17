@@ -4,6 +4,7 @@ import os from 'node:os';
 import { execFile } from 'node:child_process';
 import path from 'node:path';
 import { git } from './git.js';
+import { spawnOptions } from './runner.js';
 
 const MAX_TEXT = 2 * 1024 * 1024;
 const SKIP = new Set(['.git', 'node_modules']);
@@ -171,7 +172,7 @@ async function fsRoots() {
   if (process.platform !== 'win32') return ['/', os.homedir()];
   if (rootsCache && Date.now() - rootsCache.at < 60000) return rootsCache.roots;
   const out = await new Promise((resolve) => {
-    execFile('wmic', ['logicaldisk', 'get', 'name'], { windowsHide: true, timeout: 3000, encoding: 'utf8' }, (e, text) => resolve(e ? '' : text));
+    execFile('wmic', ['logicaldisk', 'get', 'name'], spawnOptions({ timeout: 3000, encoding: 'utf8' }), (e, text) => resolve(e ? '' : text));
   });
   let roots = [...out.matchAll(/^([A-Z]):/gm)].map((m) => `${m[1]}:${path.sep}`);
   if (!roots.length) roots = [...'CDEFGHIJKLMNOPQRSTUVWXYZAB'].map((l) => `${l}:${path.sep}`).filter((r) => fs.existsSync(r));

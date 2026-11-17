@@ -1103,7 +1103,14 @@ A server adds a flag in the same commit that adds the route; a test asserts ever
   explicitly. Fallback parser for sh shims (`ROOT=…`, `export GIGACODE_PACKAGE_IDENTITY=…`, `"$ROOT/runtime/node/bin/node"`)
   is used only when the direct spawn is not possible. VERIFY the real Linux install layout on a Linux machine.
 - Process control: Windows `taskkill /PID <pid> /T /F`; POSIX `process.kill(-pid, SIGTERM)` then `SIGKILL` after 3 s
-  (agent turns are spawned `detached` = own process group). Open folder: `explorer.exe` / `open` / `xdg-open`.
+  (on POSIX agent turns, ACP agents and git network ops are spawned `detached` = own process group). Open folder:
+  `explorer.exe` / `open` / `xdg-open`.
+- Windows: NO child is ever spawned `detached` (one helper, `spawnOptions()` in runner.js, used by every spawn/execFile):
+  DETACHED_PROCESS makes Windows ignore CREATE_NO_WINDOW (`windowsHide`), and GigaCode's own console children (MCP stdio
+  servers, the shell tool, node) then each pop up a visible console window. A non-detached child with `windowsHide` gets
+  its own hidden console inherited by all its descendants; it is still a separate console (Ctrl+C in the harness
+  terminal does not reach it) and it outlives the harness (Node never kills children on Windows), so turns still
+  survive a harness restart.
 - Never signal a pid that may have been reused (Windows hands pids out again within milliseconds; a stray
   `taskkill /T` or `process.kill` killed agents and git runs of other sessions): a turn kill records `res.killReason`
   ('stop' | 'first_event_timeout' | 'auth_timeout') BEFORE signalling and skips a child that already exited, so the

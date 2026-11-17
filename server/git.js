@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFile, spawn } from 'node:child_process';
 import { expandHome } from './config.js';
-import { killTree } from './runner.js';
+import { killTree, spawnOptions } from './runner.js';
 
 const fail = (status, message) => { throw Object.assign(new Error(message), { status }); };
 
@@ -23,7 +23,7 @@ export function git(cwd, args, { ok = [0], timeoutSec = 0 } = {}) {
   if (typeof cwd !== 'string' || !path.isAbsolute(cwd) || !fs.existsSync(cwd)) fail(400, `cwd должен быть существующей абсолютной папкой: ${cwd}`);
   if (timeoutSec > 0) return gitNetwork(cwd, args, ok, timeoutSec);
   return new Promise((resolve, reject) => {
-    execFile('git', args, { cwd, maxBuffer: 64 * 1024 * 1024, windowsHide: true, env: gitEnv() }, (err, stdout, stderr) => {
+    execFile('git', args, spawnOptions({ cwd, maxBuffer: 64 * 1024 * 1024, env: gitEnv() }), (err, stdout, stderr) => {
       const code = err ? err.code : 0;
       if (err && typeof code !== 'number') return reject(Object.assign(new Error(`ошибка запуска git: ${err.message}`), { status: 500 }));
       if (!ok.includes(code)) return reject(Object.assign(new Error((stderr || stdout || err.message).trim()), { status: 400 }));
@@ -39,9 +39,7 @@ export function git(cwd, args, { ok = [0], timeoutSec = 0 } = {}) {
  */
 function gitNetwork(cwd, args, ok, timeoutSec) {
   return new Promise((resolve, reject) => {
-    const child = spawn('git', ['-c', 'http.lowSpeedLimit=1000', '-c', `http.lowSpeedTime=${timeoutSec}`, ...args], {
-      cwd, env: gitEnv(), windowsHide: true, detached: process.platform !== 'win32',
-    });
+    const child = spawn('git', ['-c', 'http.lowSpeedLimit=1000', '-c', `http.lowSpeedTime=${timeoutSec}`, ...args], spawnOptions({ cwd, env: gitEnv() }, { group: true }));
     let stdout = '';
     let stderr = '';
     let timedOut = false;

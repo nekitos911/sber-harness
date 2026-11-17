@@ -118,3 +118,10 @@ test('over-long stdout lines are truncated with a marker; the stream continues',
   assert.ok(events[0].text.startsWith('x'.repeat(1000)) && events[0].text.endsWith('[line truncated by harness]'));
   assert.deepEqual(events[1], { type: 'result', text: null, isError: false });
 });
+
+test('spawn options: Windows children are never detached (DETACHED_PROCESS would void windowsHide), POSIX turns get a group', async () => {
+  const { spawnOptions } = await import('../server/runner.js');
+  assert.deepEqual(spawnOptions({ cwd: 'x' }, { group: true, platform: 'win32' }), { cwd: 'x', windowsHide: true, detached: false });
+  assert.deepEqual(spawnOptions({}, { group: true, platform: 'linux' }), { windowsHide: true, detached: true });
+  assert.deepEqual(spawnOptions({ detached: true }, { platform: 'linux' }), { windowsHide: true, detached: false }, 'only `group` decides');
+});

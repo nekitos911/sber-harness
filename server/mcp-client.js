@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { deepMerge, expandHome } from './config.js';
-import { resolveCommand, endChild } from './runner.js';
+import { resolveCommand, endChild, spawnOptions } from './runner.js';
 
 const PROTOCOL = '2025-06-18';
 const CLIENT_INFO = { name: 'sber-harness', version: '0.1.0' };
@@ -114,12 +114,11 @@ function timeoutError(name, method, ms) {
 
 function stdioTransport(name, cfg, root) {
   const { file, args } = resolveCommand(cfg.command);
-  const child = spawn(file, [...args, ...(cfg.args || [])], {
+  const child = spawn(file, [...args, ...(cfg.args || [])], spawnOptions({
     cwd: cfg.cwd ? path.resolve(root, cfg.cwd) : root,
     env: { ...process.env, ...cfg.env },
     stdio: ['pipe', 'pipe', 'pipe'],
-    windowsHide: true,
-  });
+  }));
   const pending = new Map();
   let seq = 0;
   let buf = '';

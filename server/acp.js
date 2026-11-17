@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { endChild, readTail } from './runner.js';
+import { endChild, readTail, spawnOptions } from './runner.js';
 import { resolveInside } from './fs.js';
 
 const PROTOCOL_VERSION = 1;
@@ -130,7 +130,7 @@ export function createAcp() {
     const err = fs.openSync(errFile, 'a');
     let child;
     try {
-      child = spawn(o.command.file, args, { cwd: o.cwd, env: o.env, stdio: ['pipe', 'pipe', err], windowsHide: true });
+      child = spawn(o.command.file, args, spawnOptions({ cwd: o.cwd, env: o.env, stdio: ['pipe', 'pipe', err] }, { group: true }));
     } finally {
       fs.closeSync(err);
     }

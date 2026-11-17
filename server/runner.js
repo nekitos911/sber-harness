@@ -79,10 +79,22 @@ export function endChild(child, graceMs = 2000) {
   setTimeout(() => { if (!gone()) killTree(child.pid); }, graceMs).unref();
 }
 
+/**
+ * Options for every process the harness starts. Windows: never `detached` — DETACHED_PROCESS makes Windows ignore
+ * CREATE_NO_WINDOW (windowsHide), and the agent's own console children (MCP servers, the shell tool, node) then pop up
+ * visible console windows. A non-detached child with windowsHide gets its own hidden console that all its descendants
+ * inherit; it is still a separate console (the harness terminal's Ctrl+C does not reach it) and it outlives the harness
+ * (Node never kills children on Windows). POSIX: `group` = detached = its own process group (killTree kills the group,
+ * and the turn survives a harness restart).
+ */
+export function spawnOptions(o = {}, { group = false, platform = process.platform } = {}) {
+  return { ...o, windowsHide: true, detached: group && platform !== 'win32' };
+}
+
 export function killTree(pid) {
   if (!pid) return;
   if (isWin) {
-    execFile('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true }, () => {});
+    execFile('taskkill', ['/PID', String(pid), '/T', '/F'], spawnOptions(), () => {});
     return;
   }
   // the child leads its own process group (detached: true): a polite SIGTERM first, SIGKILL after 3 s
@@ -124,7 +136,7 @@ export function isAlive(pid) {
 
 // ---- process identity: a pid saved before a restart may belong to another process by now ----
 const run = (file, args) => new Promise((resolve) => {
-  execFile(file, args, { windowsHide: true, timeout: 10000, encoding: 'utf8' }, (e, out) => resolve(e ? '' : String(out).trim()));
+  execFile(file, args, spawnOptions({ timeout: 10000, encoding: 'utf8' }), (e, out) => resolve(e ? '' : String(out).trim()));
 });
 
 /** Linux start time from /proc (boot time + start ticks): the same number every time for the same process. */
@@ -302,7 +314,7 @@ export function runTurn({ launcher, ctx, command, cwd, env, firstEventTimeoutMs,
       const err = fs.openSync(errFile, 'w');
       try {
         // files instead of pipes + detached: the turn outlives a harness restart
-        child = spawn(file, args, { cwd, env, stdio: ['ignore', out, err], windowsHide: true, detached: true });
+        child = spawn(file, args, spawnOptions({ cwd, env, stdio: ['ignore', out, err] }, { group: true }));
       } finally {
         fs.closeSync(out);
         fs.closeSync(err);

@@ -4,6 +4,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { spawnOptions } from './runner.js';
 
 export const DEMO_PORT = 4778;
 
@@ -22,7 +23,7 @@ export function demoOverrides(root, dataDir) {
   };
 }
 
-const run = (cwd, ...args) => execFileSync('git', args, { cwd, stdio: 'ignore', windowsHide: true });
+const run = (cwd, ...args) => execFileSync('git', args, spawnOptions({ cwd, stdio: 'ignore' }));
 
 function repo(dir, name, commits) {
   if (fs.existsSync(path.join(dir, '.git'))) return false;
