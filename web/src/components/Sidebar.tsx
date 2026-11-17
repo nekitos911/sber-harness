@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react'
 import { Activity, ArrowUp, Bot, ChevronDown, Ellipsis, Folder, FolderTree, TriangleAlert, GitPullRequest, Pin, ChevronRight, FolderGit2, FolderPlus, GitBranch, GitBranchPlus, House, Inbox, MessageSquarePlus, Moon, Search, Settings, SquareKanban, SquareTerminal, Sun } from 'lucide-react'
-import { openDialog, openScreen, openSession, openWorktree, setState, showPanel, useActiveCwd, useStore, type Screen } from '../store'
+import { getState, openDialog, openScreen, openSession, openWorktree, setState, showPanel, useActiveCwd, useStore, wtKey, type Screen } from '../store'
 import { useHistory } from '../lib/history'
 import { archiveSession, renameSession, sessionMenu } from '../lib/sessionActions'
 import { loadWorktrees } from '../ws'
@@ -9,7 +9,11 @@ import { dur, sessionVisualState } from '../lib/sessionState'
 import { basename, normPath, plural, relTime, tokens } from '../lib/format'
 import { loadDraft, saveDraft } from '../lib/draft'
 import { newChat, newTerminal } from '../lib/actions'
-import type { Session, Workspace, Worktree } from '../types'
+import type { Session, Task, Workspace, Worktree } from '../types'
+import { compareRows, filteredOut, moveTo, orderProjects, prGroup, PR_GROUPS, statusGroup, STATUS_GROUPS, type SbPrefs } from '../lib/sidebarPrefs'
+import type { VisualState } from '../lib/sessionState'
+import { loadPr } from '../lib/pr'
+import { setSbPrefs, useSbPrefs, WorkspaceParams } from './WorkspaceParams'
 import { Skeleton, StatusIcon, SubStateIcon, subStateLabel } from './bits'
 import { Button, Menu, Popover } from './ui'
 import { ideEnabled, isUnread, onWorktreeKey, projectMenu, setUnread, worktreeMenu } from './WorktreeMenu'
@@ -40,17 +44,32 @@ export function Sidebar() {
   const filtering = !!query.trim()
   const rootWs = workspaces.find((w) => w.kind === 'root')
   const projects = workspaces.filter((w) => w.kind !== 'root')
-  // «Активные»: projects with sessions or a dirty worktree (or the one on screen); the rest wait behind «Ещё N».
+  const prefs = useSbPrefs()
+  // Quiet projects (no sessions, no changes, not on screen) wait behind «Ещё N»; «Скрыть без сессий и изменений» drops them.
   const [showAll, setShowAllState] = useState(() => loadDraft<boolean>('sb:all') ?? false)
   const setShowAll = (v: boolean) => { setShowAllState(v); saveDraft('sb:all', v || null) }
   const activeCwd = useActiveCwd()
-  const dirtyIn = useStore((s) => s.worktrees)
   const isActive = (ws: Workspace) =>
     tree.roots.some((x) => tree.owner(x) === ws.id) ||
-    (dirtyIn[ws.id] ?? []).some((w) => (w.dirty ?? 0) > 0) ||
-    (!!activeCwd && (normPath(activeCwd) === normPath(ws.path) || normPath(activeCwd).startsWith(`${normPath(ws.path)}/`) || (dirtyIn[ws.id] ?? []).some((w) => normPath(w.path) === normPath(activeCwd))))
-  const shownProjects = showAll || filtering ? projects : projects.filter(isActive)
-  const quiet = showAll || filtering ? [] : projects.filter((w) => !isActive(w))
+    (allWorktrees[ws.id] ?? []).some((w) => (w.dirty ?? 0) > 0) ||
+    (!!activeCwd && (normPath(activeCwd) === normPath(ws.path) || normPath(activeCwd).startsWith(`${normPath(ws.path)}/`) || (allWorktrees[ws.id] ?? []).some((w) => normPath(w.path) === normPath(activeCwd))))
+  const lastOf = (ws: Workspace) => Math.max(0, ...tree.all.filter((x) => tree.owner(x) === ws.id).map((x) => x.lastActivityAt), ...(allWorktrees[ws.id] ?? []).map((w) => w.lastActivityAt ?? 0))
+  const ordered = orderProjects(projects, prefs, lastOf)
+  const listed = ordered.filter((w) => !prefs.hiddenProjects.includes(w.id) && (prefs.folders || w.kind !== 'folder'))
+  const quiet = filtering ? [] : listed.filter((w) => !isActive(w))
+  const shownProjects = filtering || (showAll && !prefs.hideEmpty) ? listed : listed.filter(isActive)
+  const grouped = prefs.group !== 'project' && !filtering
+  // «Порядок проектов → Вручную»: drag a project row, or Alt+↑/↓ on it.
+  const manual = prefs.order === 'manual' && prefs.group === 'project' && !filtering
+  const ids = ordered.map((w) => w.id)
+  const drag = (ws: Workspace) => manual ? {
+    onMove: (id: string) => setSbPrefs({ projectOrder: moveTo(ids, id, ws.id) }),
+    onStep: (dir: -1 | 1) => {
+      const shown = shownProjects.map((w) => w.id)
+      const target = shown[shown.indexOf(ws.id) + dir]
+      if (target) setSbPrefs({ projectOrder: moveTo(ids, ws.id, target) })
+    },
+  } : undefined
 
   return (
     <nav className="sidebar" aria-label="Навигация">
@@ -75,25 +94,24 @@ export function Sidebar() {
 
       <div className="tree" aria-label="Проекты и сессии">
         {!filtering && <AttentionSection tree={tree} />}
-        {rootWs && <ProjectNode ws={rootWs} tree={tree} filtering={filtering} />}
+        {rootWs && prefs.folders && <ProjectNode ws={rootWs} tree={tree} filtering={filtering} />}
         <div className="sb-head">
           <span>Проекты <span className="num">· {projects.length}</span></span>
-          {projects.length > 1 && (
-            <span className="sb-scope" role="group" aria-label="Какие проекты показывать">
-              <button type="button" aria-pressed={!showAll} onClick={() => setShowAll(false)} data-tip="С сессиями или изменениями">Активные</button>
-              <button type="button" aria-pressed={showAll} onClick={() => setShowAll(true)}>Все</button>
-            </span>
-          )}
+          <WorkspaceParams projects={projects} />
           <button type="button" className="icon-btn icon-btn-sm" data-tip="Добавить проект" aria-label="Добавить проект" onClick={() => openDialog({ kind: 'workspace' })}>
             <FolderPlus />
           </button>
         </div>
-        {shownProjects.map((ws) => <ProjectNode key={ws.id} ws={ws} tree={tree} filtering={filtering} />)}
-        {quiet.length > 0 && (
-          <button type="button" className="tree-row tree-more" style={depth(0)} onClick={() => setShowAll(true)}>
+        {grouped ? (
+          <>
+            <GroupedWorktrees projects={listed.filter((w) => w.kind !== 'folder')} tree={tree} />
+            {listed.filter((w) => w.kind === 'folder').map((ws) => <ProjectNode key={ws.id} ws={ws} tree={tree} filtering={filtering} />)}
+          </>
+        ) : shownProjects.map((ws) => <ProjectNode key={ws.id} ws={ws} tree={tree} filtering={filtering} drag={drag(ws)} />)}
+        {!grouped && quiet.length > 0 && !prefs.hideEmpty && (
+          <button type="button" className="tree-row tree-more" style={depth(0)} aria-expanded={showAll} onClick={() => setShowAll(!showAll)}>
             <Ellipsis aria-hidden />
-            Ещё {quiet.length} {plural(quiet.length, 'проект', 'проекта', 'проектов')}
-            <span className="muted">без сессий и изменений</span>
+            {showAll ? 'Свернуть тихие проекты' : <>Ещё {quiet.length} {plural(quiet.length, 'проект', 'проекта', 'проектов')} <span className="muted">без сессий и изменений</span></>}
           </button>
         )}
         {tree.loose.length > 0 && (
@@ -286,10 +304,115 @@ function worktreeMatters(wt: Worktree, here: Session[], taskStatus: string | nul
     taskStatus === 'in_progress' || taskStatus === 'review' || (!!wt.lastActivityAt && now - wt.lastActivityAt < WEEK)
 }
 const WEEK = 7 * 24 * 3600 * 1000
+const DRAG_TYPE = 'text/x-harness-project'
 const ATTENTION = new Set(['waiting_answer', 'waiting_permission', 'stalled', 'auth', 'error'])
 const BUSY = new Set(['running', 'starting'])
 
-function ProjectNode({ ws, tree, filtering }: { ws: Workspace; tree: Tree; filtering: boolean }) {
+interface WtRow {
+  ws: Workspace; wt: Worktree; here: Session[]; terms: Session[]; dup: boolean; active: boolean; matters: boolean
+  states: VisualState[]; attention: boolean; task?: Task
+  rank: number; last: number; name: string; created: number; changes: number // for the sorts
+}
+
+/** A project's worktree rows: the sessions and terminals in each, and what the sorts, filters and groups need. */
+function worktreeRows(ws: Workspace, worktrees: Worktree[] | undefined, tree: Tree, tasks: Task[], activeCwd: string | null, now: number): WtRow[] {
+  const mine = tree.roots.filter((s) => tree.owner(s) === ws.id)
+  const myTerminals = tree.terminals.filter((t) => tree.owner(t) === ws.id)
+  // Git's worktrees only: a session in a subfolder belongs to the worktree containing it (no pseudo-worktree rows).
+  const list: Worktree[] = worktrees?.length ? worktrees : [{ path: ws.path, branch: null, head: '', main: true }]
+  const paths = list.map((w) => normPath(w.path))
+  const mainPath = normPath(list.find((w) => w.main)?.path ?? ws.path)
+  const placeOf = (x: Session) => worktreeOf(x, paths) ?? mainPath
+  // Same branch name twice (two clones, two «main»s): the folder tells them apart.
+  const names = new Map<string, number>()
+  for (const w of list) { const n = w.meta?.label || w.branch || basename(w.path); names.set(n, (names.get(n) ?? 0) + 1) }
+  return list.map((wt) => {
+    const here = mine.filter((s) => placeOf(s) === normPath(wt.path))
+    const terms = myTerminals.filter((t) => placeOf(t) === normPath(wt.path))
+    const states = withKids(here, tree.kids).map(sessionVisualState)
+    const task = tasks.find((t) => t.id === wt.taskId || (!!wt.branch && t.branch === wt.branch))
+    const active = !!activeCwd && normPath(activeCwd) === normPath(wt.path)
+    const attention = states.some((v) => ATTENTION.has(v))
+    return {
+      ws, wt, here, terms, states, task, active, attention,
+      dup: (names.get(wt.meta?.label || wt.branch || basename(wt.path)) ?? 0) > 1,
+      matters: worktreeMatters(wt, here, wt.taskStatus ?? task?.status, active, now, terms.length),
+      rank: attention ? 0 : states.some((v) => BUSY.has(v)) ? 1 : 2,
+      last: Math.max(wt.lastActivityAt ?? 0, ...here.map((s) => s.lastActivityAt)),
+      name: wt.meta?.label || basename(wt.path),
+      created: wt.meta?.createdAt ?? (here.length ? Math.min(...here.map((s) => s.createdAt)) : 0),
+      changes: wt.dirty ?? 0,
+    }
+  })
+}
+
+/** The rows the filters keep (the ones needing you and the one on screen always stay), in the chosen order. */
+function arrange(rows: WtRow[], p: SbPrefs): WtRow[] {
+  return rows
+    .filter((r) => r.attention || r.active || !filteredOut(p, {
+      main: r.wt.main, detached: !!r.wt.detached || (!r.wt.branch && !!r.wt.head), sleeping: !!r.wt.meta?.sleeping,
+      createdBy: r.wt.meta?.createdBy ?? r.wt.createdBy, empty: !r.here.length && !r.terms.length && !(r.wt.dirty ?? 0) && !(r.wt.ahead ?? 0),
+    }))
+    .sort(compareRows(p.sort))
+}
+
+/** «Группировать по»: Нет (one list), Статус or PR — every repository's worktrees together, its name beside each. */
+function GroupedWorktrees({ projects, tree }: { projects: Workspace[]; tree: Tree }) {
+  const prefs = useSbPrefs()
+  const worktrees = useStore((s) => s.worktrees)
+  const tasks = useStore((s) => s.tasks)
+  const prs = useStore((s) => s.prs)
+  const activeCwd = useActiveCwd()
+  const now = useNow()
+  const [more, setMore] = useState(false)
+  const key = projects.filter((w) => w.isGit).map((w) => w.id).join()
+  useEffect(() => {
+    for (const id of key.split(',').filter(Boolean)) if (!(id in getState().worktrees)) void loadWorktrees(id).then(() => loadWorktrees(id, true))
+  }, [key])
+  const rows = useMemo(() => arrange(projects.flatMap((ws) => worktreeRows(ws, worktrees[ws.id], tree, tasks, activeCwd, now)), prefs),
+    [projects, worktrees, tree, tasks, activeCwd, now, prefs])
+  const prOf = (r: WtRow) => {
+    const c = prs[wtKey(r.wt.path)]
+    return (c && typeof c === 'object' && 'state' in c ? c : null) ?? r.wt.pr ?? r.task?.pr ?? null
+  }
+  useEffect(() => {
+    if (prefs.group === 'pr') for (const r of rows) if (r.wt.branch && !r.wt.main && !r.wt.pr && !r.task?.pr) loadPr(r.wt.path)
+  }, [prefs.group, rows])
+  const shown = more ? rows : rows.filter((r) => r.matters)
+  const groupOf = (r: WtRow): string => prefs.group === 'status'
+    ? statusGroup(r.states, !!r.wt.meta?.lastError, (r.wt.taskStatus ?? r.task?.status) === 'done')
+    : prefs.group === 'pr' ? prGroup(prOf(r), r.wt.taskStatus ?? r.task?.status) : ''
+  const groups: [string, string][] = prefs.group === 'status' ? STATUS_GROUPS : prefs.group === 'pr' ? PR_GROUPS : [['', '']]
+  const quietCount = rows.length - rows.filter((r) => r.matters).length
+  return (
+    <div className="tree-group tree-flat">
+      {groups.map(([g, label]) => {
+        const list = shown.filter((r) => groupOf(r) === g)
+        if (!list.length) return null
+        return (
+          <div key={g} role="group" aria-label={label || 'Рабочие деревья'}>
+            {label && <div className="tree-note sb-group">{label} <span className="num">· {list.length}</span></div>}
+            {list.map((r) => (
+              <WorktreeNode key={r.wt.path} ws={r.ws} wt={r.wt} sessions={r.here} terminals={r.terms} dup={r.dup} kids={tree.kids} active={r.active}
+                fromOf={(id) => tree.from.get(id)} project={r.ws.name} />
+            ))}
+          </div>
+        )
+      })}
+      {quietCount > 0 && (
+        <button type="button" className="tree-row tree-more" style={depth(1)} aria-expanded={more} onClick={() => setMore(!more)}>
+          <Ellipsis aria-hidden />
+          {more ? 'Свернуть тихие рабочие деревья' : `Ещё ${quietCount} ${plural(quietCount, 'рабочее дерево', 'рабочих дерева', 'рабочих деревьев')}`}
+        </button>
+      )}
+    </div>
+  )
+}
+
+function ProjectNode({ ws, tree, filtering, drag }: {
+  ws: Workspace; tree: Tree; filtering: boolean
+  drag?: { onMove: (id: string) => void; onStep: (dir: -1 | 1) => void } // «Порядок проектов → Вручную»
+}) {
   const mine = tree.roots.filter((s) => tree.owner(s) === ws.id)
   const activeCwd = useActiveCwd()
   const worktrees = useStore((s) => s.worktrees[ws.id])
@@ -308,11 +431,7 @@ function ProjectNode({ ws, tree, filtering }: { ws: Workspace; tree: Tree; filte
   const expanded = open || filtering
   const loaded = worktrees !== undefined
 
-  // Git's worktrees only: a session in a subfolder belongs to the worktree containing it (no pseudo-worktree rows).
-  const list = useMemo<Worktree[]>(() => (worktrees?.length ? worktrees : [{ path: ws.path, branch: null, head: '', main: true }]), [worktrees, ws.path])
-  const paths = useMemo(() => list.map((w) => normPath(w.path)), [list])
-  const mainPath = normPath(list.find((w) => w.main)?.path ?? ws.path)
-  const placeOf = (x: Session) => worktreeOf(x, paths) ?? mainPath
+  const prefs = useSbPrefs()
   const myTerminals = tree.terminals.filter((t) => tree.owner(t) === ws.id)
   // Lazy: only an expanded project asks for its (enriched, slower) worktree list, and again when its sessions change.
   const sig = mine.map((s) => s.id + s.status).join()
@@ -320,22 +439,7 @@ function ProjectNode({ ws, tree, filtering }: { ws: Workspace; tree: Tree; filte
     if (expanded && ws.isGit && !plain) void loadWorktrees(ws.id).then(() => loadWorktrees(ws.id, true)) // rows at once, badges next
   }, [expanded, ws.id, ws.isGit, plain, sig])
 
-  const rows = useMemo(() => {
-    // Same branch name twice (two clones, two «main»s): the folder tells them apart.
-    const names = new Map<string, number>()
-    for (const w of list) { const n = w.meta?.label || w.branch || basename(w.path); names.set(n, (names.get(n) ?? 0) + 1) }
-    const out = list.map((wt) => {
-      const here = mine.filter((s) => placeOf(s) === normPath(wt.path))
-      const terms = myTerminals.filter((t) => placeOf(t) === normPath(wt.path))
-      const dup = (names.get(wt.meta?.label || wt.branch || basename(wt.path)) ?? 0) > 1
-      const states = withKids(here, tree.kids).map(sessionVisualState)
-      const task = wt.taskStatus ?? tasks.find((t) => t.id === wt.taskId || (!!wt.branch && t.branch === wt.branch))?.status
-      const active = !!activeCwd && normPath(activeCwd) === normPath(wt.path)
-      const last = Math.max(wt.lastActivityAt ?? 0, ...here.map((s) => s.lastActivityAt))
-      return { wt, here, terms, dup, active, last, rank: states.some((v) => ATTENTION.has(v)) ? 0 : states.some((v) => BUSY.has(v)) ? 1 : 2, matters: worktreeMatters(wt, here, task, active, now, terms.length) }
-    })
-    return out.sort((a, b) => a.rank - b.rank || b.last - a.last || (a.wt.branch ?? a.wt.path).localeCompare(b.wt.branch ?? b.wt.path))
-  }, [list, mine, tree.kids, tasks, activeCwd, now, myTerminals, paths, mainPath])
+  const rows = useMemo(() => arrange(worktreeRows(ws, worktrees, tree, tasks, activeCwd, now), prefs), [ws, worktrees, tree, tasks, activeCwd, now, prefs])
   const visible = filtering ? rows.filter((r) => r.here.length > 0) : moreChoice ? rows : rows.filter((r) => r.matters)
   const hidden = filtering ? 0 : rows.length - rows.filter((r) => r.matters).length
 
@@ -345,7 +449,17 @@ function ProjectNode({ ws, tree, filtering }: { ws: Workspace; tree: Tree; filte
 
   return (
     <div className="tree-group" data-open={expanded || undefined} data-root={isRoot || undefined}>
-      <div ref={projRow} className="tree-row tree-project" role="button" tabIndex={0} aria-expanded={expanded} data-tip={plain ? ws.path : ws.name} data-tip-trunc onClick={toggle} onKeyDown={activate(toggle)}
+      <div ref={projRow} className="tree-row tree-project" role="button" tabIndex={0} aria-expanded={expanded} data-tip={plain ? ws.path : ws.name} data-tip-trunc onClick={toggle}
+        onKeyDown={(e) => {
+          if (drag && e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) { e.preventDefault(); drag.onStep(e.key === 'ArrowUp' ? -1 : 1); return }
+          activate(toggle)(e)
+        }}
+        aria-keyshortcuts={drag ? 'Alt+ArrowUp Alt+ArrowDown' : undefined}
+        draggable={!!drag}
+        onDragStart={drag && ((e) => { e.dataTransfer.setData(DRAG_TYPE, ws.id); e.dataTransfer.effectAllowed = 'move' })}
+        onDragOver={drag && ((e) => { if (e.dataTransfer.types.includes(DRAG_TYPE)) { e.preventDefault(); e.currentTarget.dataset.dropOver = '' } })}
+        onDragLeave={drag && ((e) => { delete e.currentTarget.dataset.dropOver })}
+        onDrop={drag && ((e) => { delete e.currentTarget.dataset.dropOver; const id = e.dataTransfer.getData(DRAG_TYPE); if (id && id !== ws.id) drag.onMove(id) })}
         style={depth(0)} onContextMenu={(e) => { e.preventDefault(); setMenu(true) }}>
         <ChevronRight className="chev" aria-hidden />
         {plain ? <Folder aria-hidden /> : <FolderGit2 aria-hidden />}
@@ -380,9 +494,10 @@ function ProjectNode({ ws, tree, filtering }: { ws: Workspace; tree: Tree; filte
   )
 }
 
-function WorktreeNode({ ws, wt, sessions, terminals, dup, kids, active, fromOf }: {
+function WorktreeNode({ ws, wt, sessions, terminals, dup, kids, active, fromOf, project }: {
   ws: Workspace; wt: Worktree; sessions: Session[]; terminals: Session[]; dup: boolean; kids: Map<string, Session[]>; active: boolean
   fromOf: (id: string) => Session | undefined
+  project?: string // grouped lists: whose worktree it is
 }) {
   const changed = useStore((s) => s.git[normPath(wt.path)]?.status?.files.length ?? wt.dirty ?? 0)
   const task = useStore((s) => (wt.taskId ? s.tasks.find((t) => t.id === wt.taskId) : s.tasks.find((t) => !!wt.branch && t.branch === wt.branch)))
@@ -436,6 +551,7 @@ function WorktreeNode({ ws, wt, sessions, terminals, dup, kids, active, fromOf }
           {wt.main && <House className="wt-house" aria-label="основная копия" />}
           {showBranch && <span className="tree-path"> {wt.branch}</span>}
           {dup && <span className="tree-path"> · {basename(wt.path)}</span>}
+          {project && <span className="tree-path"> · {project}</span>}
         </span>
         {wt.meta?.pinned && <Pin className="wt-pin" aria-label="закреплено" />}
         {unread && <span className="wt-unread" aria-label="непрочитано" />}
@@ -575,7 +691,11 @@ function SessionRow({ s, nested, level = 0, caret, subs, via, from }: {
   const sub = (s.role === 'subagent' || s.virtual) ? /^([\w.-]{2,40}):\s+(.+)$/.exec(s.title)?.slice(1, 3) : undefined
   // What it is doing: the tool in use («Выполняет: Edit»), a coordinator watching its workers, else the last line.
   const watching = s.role === 'coordinator' && v === 'running' && !tool
-  const doing = v === 'running' ? (tool ? `Выполняет: ${tool}` : watching ? 'Наблюдает за исполнителями' : '') : !nested && (v === 'idle' || v === 'done') ? preview : ''
+  const cards = useSbPrefs() // «Отображение карточек»
+  const doing = !cards.showAction ? '' : v === 'running' ? (tool ? `Выполняет: ${tool}` : watching ? 'Наблюдает за исполнителями' : '') : !nested && (v === 'idle' || v === 'done') ? preview : ''
+  const detailed = cards.cards === 'detailed' && !!doing
+  const model = cards.showModel ? (s.kind === 'terminal' ? 'shell' : s.model ?? s.agent) : ''
+  const when = cards.showTime ? relTime(s.lastActivityAt, now) : ''
   return (
     <>
     <div
@@ -584,6 +704,7 @@ function SessionRow({ s, nested, level = 0, caret, subs, via, from }: {
       role="button"
       data-s={v}
       data-nested={nested || undefined}
+      data-detail={detailed || undefined}
       data-enter={s.createdAt > APP_START || undefined}
       data-leaving={leaving || s.archived || undefined}
       tabIndex={0}
@@ -603,12 +724,15 @@ function SessionRow({ s, nested, level = 0, caret, subs, via, from }: {
           onKeyDown={(e) => { e.stopPropagation(); if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') { e.currentTarget.value = s.title; setEditing(false) } }} />
       ) : (
         <span className="label">
-          {nested && <span className="sub-glyph" aria-hidden>↳ </span>}
-          {s.role === 'reviewer' && <span className="sess-doing">ревью · </span>}
-          {sub ? <>{sub[0]}<span className="sess-doing">: {sub[1]}</span></> : <span className="sess-title">{s.title || s.id}</span>}
-          {via && <span className="sess-doing"> · через {via}</span>}
-          {from && <span className="sess-doing"> · от: <button type="button" className="sess-from" onClick={(e) => { e.stopPropagation(); openSession(from.id) }}>{from.title}</button></span>}
-          {doing && <span className="sess-doing"> - {doing}</span>}
+          <span className="sess-l1">
+            {nested && <span className="sub-glyph" aria-hidden>↳ </span>}
+            {s.role === 'reviewer' && <span className="sess-doing">ревью · </span>}
+            {sub ? <>{sub[0]}<span className="sess-doing">: {sub[1]}</span></> : <span className="sess-title">{s.title || s.id}</span>}
+            {via && <span className="sess-doing"> · через {via}</span>}
+            {from && <span className="sess-doing"> · от: <button type="button" className="sess-from" onClick={(e) => { e.stopPropagation(); openSession(from.id) }}>{from.title}</button></span>}
+            {doing && !detailed && <span className="sess-doing"> - {doing}</span>}
+          </span>
+          {detailed && <span className="sess-l2">{doing}</span>}
         </span>
       )}
       {subs && (
@@ -619,9 +743,11 @@ function SessionRow({ s, nested, level = 0, caret, subs, via, from }: {
       )}
       {s.interrupted && <span className="badge-interrupted" data-tip={s.interrupted.lastActivity ? `Прервана на: ${s.interrupted.lastActivity}` : 'Перезапуск прервал ход'}>прервана</span>}
       {s.warm !== undefined && <span className="sess-warm" data-warm={s.warm || undefined} aria-label={s.warm ? 'процесс запущен' : 'процесс выгружен'}>{s.warm ? '●' : '○'}</span>}
-      <span className="sess-state" data-s={v}>
-        {v === 'stalled' || v === 'starting' ? line : <><span className="agent">{s.kind === 'terminal' ? 'shell' : s.model ?? s.agent}</span> · {relTime(s.lastActivityAt, now)}</>}
-      </span>
+      {(v === 'stalled' || v === 'starting' || model || when) && (
+        <span className="sess-state" data-s={v}>
+          {v === 'stalled' || v === 'starting' ? line : <>{model && <span className="agent">{model}</span>}{model && when && ' · '}{when}</>}
+        </span>
+      )}
       {caret && (
         <button
           type="button"
