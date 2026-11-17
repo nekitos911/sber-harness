@@ -23,7 +23,7 @@ import { createModelCatalog, scanModelRefs } from './models.js';
 import { readSdd } from './sdd.js';
 import { runJob, jobStep, JOB_ID_RE } from './jobs.js';
 import { DEMO_PORT, demoOverrides, seedDemoRepos, seedDemoTasks } from './demo.js';
-import { importTasks, transitionTask, getExternal, getTransitions, importChildren, syncColumn } from './integrations/tasks.js';
+import { importTasks, importIssue, transitionTask, getExternal, getTransitions, importChildren, syncColumn } from './integrations/tasks.js';
 import { createPullRequest, prStatus, refreshTaskPr } from './integrations/pr.js';
 
 const MAX_BODY = 1024 * 1024;
@@ -37,7 +37,7 @@ const NO_BUILD_HTML = '<!doctype html><meta charset="utf-8"><title>Harness</titl
 const GRADES = ['default', 'fast', 'review', 'explore'];
 // optional API groups this server implements (docs/ARCHITECTURE.md "Feature flags"); a flag ships with its route
 export const FEATURES = ['branches', 'fs-search', 'pr-status', 'agent-info', 'models-refresh', 'tracker-links', 'board-columns', 'review-loop',
-  'subagents', 'virtual-sessions', 'worker-run', 'skills-install', 'demo', 'worktree-meta', 'open', 'sdd', 'health', 'folders', 'include-dirs', 'questions', 'permissions', 'activity', 'rework', 'fs-raw'];
+  'subagents', 'virtual-sessions', 'worker-run', 'skills-install', 'demo', 'worktree-meta', 'open', 'sdd', 'health', 'folders', 'include-dirs', 'questions', 'permissions', 'activity', 'rework', 'fs-raw', 'tracker-import'];
 // titles of operations the UI may follow by sending x-job-id (WS { t: 'job' } frames)
 const JOB_TITLES = {
   'POST /api/tasks/sync': 'Синхронизация с трекером',
@@ -330,7 +330,13 @@ export async function startServer(opts = {}) {
         if (typeof t.enabled !== 'boolean') fail(400, 'integrations.tasks.enabled must be a boolean');
         p.enabled = t.enabled;
       }
-      for (const k of ['space', 'urlTemplate']) {
+      if ('space' in t) {
+        // one space or several (sync iterates all of them)
+        const list = [t.space].flat();
+        if (!list.length || list.some((x) => typeof x !== 'string' || !x.trim())) fail(400, 'integrations.tasks.space must be a space code or an array of them');
+        p.space = Array.isArray(t.space) ? t.space.map((x) => x.trim()) : t.space.trim();
+      }
+      for (const k of ['urlTemplate']) {
         if (!(k in t)) continue;
         if (typeof t[k] !== 'string') fail(400, `integrations.tasks.${k} must be a string`);
         p[k] = t[k].trim();
@@ -778,6 +784,7 @@ export async function startServer(opts = {}) {
 
   // tasks
   route('POST', '/api/tasks/sync', () => runSync());
+  route('POST', '/api/tasks/import', ({ body }) => importIssue({ config, mcp, tasks, ref: check(body, { ref: 'string' }).ref }));
   route('POST', '/api/tasks', ({ body }) => tasks.create(pick(body, ['title', 'description', 'status', 'priority', 'deps', 'labels', 'workspaceId', 'parentId', 'targets'])));
   // a human editing the status pins the column: tracker sync no longer moves the card
   route('PATCH', '/api/tasks/:id', ({ params, body }) => tasks.update(params.id, 'status' in body ? { ...body, statusManual: true } : body));

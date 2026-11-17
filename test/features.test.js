@@ -42,6 +42,7 @@ test('each feature flag has a working route (not 404/405)', async () => {
       activity: ['GET', '/api/settings', (b) => Number.isInteger(b.session?.stallSec)],
       rework: ['POST', `/api/tasks/${task.id}/rework`, null, { notes: 'x' }],
       'fs-raw': ['GET', `/api/fs/raw?cwd=${q}&path=..%2Fout.png`],
+      'tracker-import': ['POST', '/api/tasks/import', null, { ref: 'PROJ-1' }],
       sdd: ['GET', `/api/sdd?cwd=${q}`, (b) => Array.isArray(b.plans)],
     };
     for (const flag of FEATURES) {

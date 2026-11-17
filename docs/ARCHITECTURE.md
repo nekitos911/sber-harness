@@ -817,6 +817,12 @@ for rework):
   only changed tasks are broadcast (signature = key + status + title). On failure the board keeps the local snapshot
   and `GET /api/state` → `integrations.tasksProblem: { error, at } | null` is shown as a banner ("tracker unavailable,
   showing snapshot from HH:MM"). JSON format: `limit` goes into the tool args (server-side limit).
+- `integrations.tasks.space` is a space code or an array of them: the sync walks every space (`assignee: "me"`, paged)
+  and merges by key; /api/settings accepts both forms (the key stays `space`).
+- `POST /api/tasks/import { ref }` (flag `tracker-import`): `ref` = a key (`PROJ-1234`) or any tracker link containing
+  one (`/([A-Z][A-Z0-9_]+-\d+)/`) → `tools.get` → upserted as an imported task (deduped by externalId, status via
+  columns/statusMap, description from the issue markdown, externalUrl from `urlTemplate`, else the given link), also
+  when it is not assigned to me; returns the task. onework-markdown only (else 501).
 
 ## Console MCP: servers, secrets and failures
 Three separate MCP layers — never mix them:

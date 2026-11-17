@@ -9,7 +9,7 @@ import { createMcpManager, serverDefs, toolResultValue } from '../server/mcp-cli
 import { createStore } from '../server/store.js';
 import { createBus } from '../server/bus.js';
 import { createTasks } from '../server/tasks.js';
-import { importTasks, getExternal, getTransitions, transitionTask, importChildren, parseFindIssues, parseIssueMeta } from '../server/integrations/tasks.js';
+import { importTasks, importIssue, getExternal, getTransitions, transitionTask, importChildren, parseFindIssues, parseIssueMeta } from '../server/integrations/tasks.js';
 import { createPullRequest, prStatus, refreshTaskPr } from '../server/integrations/pr.js';
 import { sessionSettings } from '../server/launchers.js';
 import * as git from '../server/git.js';
@@ -98,6 +98,35 @@ test('onework import: pages while has_next, closed skipped locally, statuses/pri
   const limited = config({ limit: 2 });
   await importTasks({ config: limited, mcp: createMcpManager(limited), tasks });
   assert.equal(calls().length, 1, 'limit stops paging');
+});
+
+test('several spaces: the sync walks each (assignee me) and merges the results', async () => {
+  fs.writeFileSync(path.join(fixtures, 'onework.sbertrack_findIssues.OPS.0.json'), text([
+    'Found 2 issues on this page (page 0, 100 per page, has_next: False)',
+    '',
+    '1. **OPS-7** — Ротация логов [todo | mid] @***',
+    '2. **PROJ-14904** — BACK. S54. Оптимизация расчёта [development | low] @***',
+  ].join('\n')));
+  fs.rmSync(log, { force: true });
+  const cfg = config({ space: ['PROJ', 'OPS'] });
+  assert.deepEqual(await importTasks({ config: cfg, mcp: createMcpManager(cfg), tasks }), { imported: 1, updated: 0 });
+  assert.deepEqual(calls().map((c) => [c.args.space_code, c.args.page_number, c.args.assignee]), [['PROJ', 0, 'me'], ['PROJ', 1, 'me'], ['OPS', 0, 'me']]);
+  assert.equal(tasks.all().filter((t) => t.externalId === 'PROJ-14904').length, 1, 'merged by key');
+  assert.equal(tasks.all().find((t) => t.externalId === 'OPS-7').title, 'Ротация логов');
+});
+
+test('import one issue by key or tracker link, even if not assigned to me; deduped', async () => {
+  const cfg = config();
+  const mcp = createMcpManager(cfg);
+  const before = tasks.all().length;
+  const byLink = await importIssue({ config: cfg, mcp, tasks, ref: ' https://tracker.example/swtr/units/all/unit/PROJ-14904?tab=info ' });
+  assert.equal(tasks.all().length, before, 'already imported by the sync: the same task');
+  assert.equal(byLink.externalId, 'PROJ-14904');
+  assert.match(byLink.description, /кешировать справочник/);
+  fs.copyFileSync(path.join(fixtures, 'onework.sbertrack_getIssue.json'), path.join(fixtures, 'onework.sbertrack_getIssue.PROJ-20001.json'));
+  const fresh = await importIssue({ config: { ...cfg, integrations: { ...cfg.integrations, tasks: { ...cfg.integrations.tasks, urlTemplate: '' } } }, mcp, tasks, ref: 'https://other.example/unit/PROJ-20001' });
+  assert.deepEqual([fresh.externalId, fresh.status, fresh.externalUrl, tasks.all().length], ['PROJ-20001', 'in_progress', 'https://other.example/unit/PROJ-20001', before + 1]);
+  await assert.rejects(importIssue({ config: cfg, mcp, tasks, ref: 'нет ключа' }), (e) => e.status === 400);
 });
 
 test('onework details, transitions, status change; tool errors become errors', async () => {

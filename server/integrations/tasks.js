@@ -174,15 +174,18 @@ export async function importTasks({ config, mcp, tasks }) {
   const count = (r) => { if (r) counts[r]++; };
 
   if (markdown(cfg)) {
-    if (!cfg.space) throw Object.assign(new Error('integrations.tasks.space (tracker space code) is not set'), { status: 400 });
+    const spaces = [cfg.space].flat().filter(Boolean); // one space code or several
+    if (!spaces.length) throw Object.assign(new Error('integrations.tasks.space (tracker space code) is not set'), { status: 400 });
     const find = toolOf(cfg, 'find');
     const limit = cfg.limit > 0 ? cfg.limit : Infinity;
     const found = new Map();
-    for (let page = 0; page < MAX_PAGES && found.size < limit; page++) {
-      jobStep(`Трекер: страница ${page + 1}`);
-      const { items, hasNext } = parseFindIssues(await callText(mcp, cfg, find, { ...cfg.args, space_code: cfg.space, assignee: 'me', page_size: 100, page_number: page }));
-      for (const it of items) if (!found.has(it.key)) found.set(it.key, it);
-      if (!hasNext || !items.length) break;
+    for (const space of spaces) {
+      for (let page = 0; page < MAX_PAGES && found.size < limit; page++) {
+        jobStep(`Трекер ${space}: страница ${page + 1}`);
+        const { items, hasNext } = parseFindIssues(await callText(mcp, cfg, find, { ...cfg.args, space_code: space, assignee: 'me', page_size: 100, page_number: page }));
+        for (const it of items) if (!found.has(it.key)) found.set(it.key, it);
+        if (!hasNext || !items.length) break;
+      }
     }
     const priorities = cfg.priorityMap || ONEWORK_PRIORITY_MAP;
     for (const it of [...found.values()].slice(0, Number.isFinite(limit) ? limit : undefined)) {
@@ -219,6 +222,29 @@ export async function importTasks({ config, mcp, tasks }) {
     count(upsert(config, tasks, source, externalId, fields, closed.has(String(externalStatus).toLowerCase())));
   }
   return counts;
+}
+
+/**
+ * One issue by key or tracker link (even if not assigned to me): getIssue -> upsert as an imported task (deduped by
+ * externalId, status via the board columns / statusMap); returns the task.
+ */
+export async function importIssue({ config, mcp, tasks, ref }) {
+  const cfg = settings(config);
+  if (!markdown(cfg)) throw disabled('Import by key is only available for the onework-markdown tracker');
+  const text = String(ref ?? '').trim();
+  const key = text.match(/([A-Z][A-Z0-9_]+-\d+)/)?.[1];
+  if (!key) throw Object.assign(new Error('ref must be a task key (PROJ-1234) or a tracker link'), { status: 400 });
+  const issue = parseIssue(await callText(mcp, cfg, toolOf(cfg, 'get'), { key }));
+  const priorities = cfg.priorityMap || ONEWORK_PRIORITY_MAP;
+  const source = cfg.source || cfg.server;
+  upsert(config, tasks, source, key, {
+    title: issue.title || key,
+    description: issue.description,
+    externalStatus: issue.fields.Status ?? null,
+    priority: priorities[String(issue.fields.Priority ?? '').toLowerCase()] ?? null,
+    externalUrl: cfg.urlTemplate ? fillTemplate(cfg.urlTemplate, { key }) : /^https?:\/\//i.test(text) ? text : null,
+  }, false);
+  return tasks.all().find((t) => t.source === source && t.externalId === key);
 }
 
 // ---- issue details and status changes ----

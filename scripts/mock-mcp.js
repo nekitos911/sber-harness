@@ -24,7 +24,8 @@ function fixtureTools() {
 
 function fixtureCall(name, args = {}) {
   const variant = args.page_number ?? args.key ?? args.state;
-  const file = [variant != null && `${serverName}.${name}.${variant}.json`, `${serverName}.${name}.json`]
+  const spaced = args.space_code != null && variant != null && `${serverName}.${name}.${args.space_code}.${variant}.json`; // several spaces
+  const file = [spaced, variant != null && `${serverName}.${name}.${variant}.json`, `${serverName}.${name}.json`]
     .filter(Boolean).map((n) => path.join(fixtures, n)).find((p) => fs.existsSync(p));
   if (!file) throw new Error(`no fixture for ${name}`);
   let value = JSON.parse(fs.readFileSync(file, 'utf8'));
