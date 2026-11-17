@@ -39,26 +39,26 @@ export function WorkspacePanel() {
   return (
     <aside className="wpanel" aria-label="Файлы и изменения">
       <div className="wpanel-head" role="tablist" aria-label="Раздел панели">
-        <button type="button" role="tab" className="wpanel-tab" aria-selected={tab === 'files'} onClick={() => setState({ panelTab: 'files' })}>
+        <button type="button" role="tab" className="wpanel-tab" aria-selected={tab === 'files'} onClick={() => setState({ panelTab: 'files' })} data-tip="Файлы" data-tip-trunc>
           <Files aria-hidden />
-          <span className="wtab-text">Файлы</span>
+          <span className="wtab-text ellipsis">Файлы</span>
         </button>
-        <button type="button" role="tab" className="wpanel-tab" aria-selected={tab === 'changes'} onClick={() => setState({ panelTab: 'changes' })}>
+        <button type="button" role="tab" className="wpanel-tab" aria-selected={tab === 'changes'} onClick={() => setState({ panelTab: 'changes' })} data-tip="Изменения" data-tip-trunc>
           <GitCompareArrows aria-hidden />
-          <span className="wtab-text">Изменения</span>
+          <span className="wtab-text ellipsis">Изменения</span>
           {changed > 0 && <span className="count count-run" aria-label={`изменённых файлов: ${changed}`}>{changed}</span>}
         </button>
         {!!plans?.length && (
-          <button type="button" role="tab" className="wpanel-tab" aria-selected={tab === 'verdicts'} onClick={() => setState({ panelTab: 'verdicts' })}>
+          <button type="button" role="tab" className="wpanel-tab" aria-selected={tab === 'verdicts'} onClick={() => setState({ panelTab: 'verdicts' })} data-tip="Вердикты" data-tip-trunc>
             <ShieldCheck aria-hidden />
-            <span className="wtab-text">Вердикты</span>
+            <span className="wtab-text ellipsis">Вердикты</span>
             {fails > 0 && <span className="count count-fail" aria-label={`провалено шагов: ${fails}`}>{fails}</span>}
           </button>
         )}
         {historyOn && (
           <button type="button" role="tab" className="wpanel-tab" aria-selected={tab === 'history'} onClick={() => setState({ panelTab: 'history' })} data-tip="История GigaCode: сессии, начатые в CLI">
             <History aria-hidden />
-            <span className="wtab-text">История</span>
+            <span className="wtab-text ellipsis">История</span>
           </button>
         )}
         <span className="grow" />
@@ -70,7 +70,7 @@ export function WorkspacePanel() {
         <button type="button" className="icon-btn" data-tip="Обновить" aria-label="Обновить git-статус" onClick={() => refreshGit(cwd)}>
           <RefreshCw />
         </button>
-        <button type="button" className="icon-btn" data-tip="Скрыть панель" aria-label="Скрыть панель" onClick={() => setState({ panel: false })}>
+        <button type="button" className="icon-btn" data-tip="Скрыть панель" aria-label="Скрыть панель" onClick={() => setState({ panel: false, panelOverlay: false })}>
           <X />
         </button>
       </div>

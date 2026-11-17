@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { ArrowDown, ArrowUp, ChevronRight, GitPullRequest, RotateCcw, Upload } from 'lucide-react'
 import { api, qs, tryApi } from '../../api'
-import { openDialog, openTab, openTask, toast, useFeature, useStore } from '../../store'
-import { normPath, relTime, shortHash } from '../../lib/format'
+import { openDialog, openTab, openTask, openWorktree, showPanel, toast, useFeature, useStore } from '../../store'
+import { basename, normPath, plural, relTime, shortHash } from '../../lib/format'
 import { loadDraft, saveDraft } from '../../lib/draft'
 import { diffOf, gsLetter, refreshGit, splitPath, useGit } from '../../lib/git'
 import { useNow } from '../../lib/useNow'
@@ -49,9 +49,7 @@ export function ChangesTab({ cwd }: { cwd: string }) {
     return () => { live = false }
   }, [cwd, filesSig, branch, ready])
 
-  if (git?.error) {
-    return <div className="empty"><p>Здесь нет git-репозитория или git недоступен.</p><p className="mono" style={{ fontSize: 11 }}>{git.error}</p></div>
-  }
+  if (git?.error) return <LinkedWorktrees cwd={cwd} error={git.error} />
   if (!status) return <div className="wpanel-section"><Skeleton rows={4} /></div>
 
   const edit = (next: { title?: string; body?: string }) => {
@@ -247,5 +245,54 @@ function PrSection({ cwd, enabled, branch, base }: { cwd: string; enabled: boole
         <p className="muted">Ветка <span className="mono">{branch ?? '—'}</span> совпадает с базовой: PR создаётся из ветки задачи.</p>
       )}
     </section>
+  )
+}
+
+/**
+ * A folder without git (the projects folder): the work happens in worktrees its chats made — the task's worktrees and
+ * the ones created by its agents — each with its changes; a click shows that worktree's changes.
+ */
+function LinkedWorktrees({ cwd, error }: { cwd: string; error: string }) {
+  const sessions = useStore((s) => s.sessions)
+  const tasks = useStore((s) => s.tasks)
+  const workspaces = useStore((s) => s.workspaces)
+  const lists = useStore((s) => s.worktrees)
+  const here = sessions.filter((x) => normPath(x.cwd) === normPath(cwd))
+  const ids = new Set(here.map((x) => x.id))
+  const rows = new Map<string, { path: string; branch: string | null; repo?: string; dirty?: number | null }>()
+  for (const t of tasks.filter((t) => here.some((x) => x.taskId === t.id))) {
+    for (const w of t.worktrees ?? []) rows.set(normPath(w.path), { path: w.path, branch: w.branch, repo: workspaces.find((x) => x.id === w.workspaceId)?.name, dirty: w.dirty })
+  }
+  for (const [wsId, list] of Object.entries(lists)) {
+    for (const w of list) {
+      if (w.meta?.createdBy !== 'agent' || !ids.has(w.meta.createdBySession ?? '')) continue
+      rows.set(normPath(w.path), { path: w.path, branch: w.branch, repo: workspaces.find((x) => x.id === wsId)?.name, dirty: w.dirty })
+    }
+  }
+  const list = [...rows.values()]
+  if (!list.length) {
+    return (
+      <div className="empty">
+        <p>Здесь нет git-репозитория: изменения появятся в рабочих деревьях, которые создадут агенты этого чата.</p>
+        <p className="mono" style={{ fontSize: 11 }}>{error}</p>
+      </div>
+    )
+  }
+  return (
+    <div className="wpanel-section">
+      <h3>Рабочие деревья этой работы</h3>
+      <ul className="linked-wts">
+        {list.map((w) => (
+          <li key={w.path}>
+            <button type="button" className="linked-wt" data-tip={w.path} onClick={() => { openWorktree(w.path); showPanel('changes') }}>
+              <span className="ellipsis"><strong>{w.repo ?? basename(w.path)}</strong>{w.branch && <span className="mono muted"> {w.branch}</span>}</span>
+              {(w.dirty ?? 0) > 0
+                ? <span className="num" data-tip={`${w.dirty} ${plural(w.dirty!, 'изменённый файл', 'изменённых файла', 'изменённых файлов')}`}>±{w.dirty}</span>
+                : <span className="muted">без изменений</span>}
+            </button>
+          </li>
+        ))}
+      </ul>
+    </div>
   )
 }

@@ -16,9 +16,10 @@ export function TooltipLayer() {
     let timer = 0
     let lastHidden = 0
     let current: HTMLElement | null = null
+    let pressed: HTMLElement | null = null
     const show = (el: HTMLElement) => {
       const text = offline() && el.matches(MUTATING) ? 'Нет связи с сервером' : el.dataset.tip
-      if (!text || el === current) return
+      if (!text || el === current || el === pressed) return
       // Rows and titles: a tooltip only when the visible label is actually truncated, and a bit later.
       const trunc = el.hasAttribute('data-tip-trunc')
       if (trunc) {
@@ -39,6 +40,7 @@ export function TooltipLayer() {
     const over = (e: PointerEvent) => {
       if (e.pointerType === 'touch') return
       const el = (e.target as Element).closest<HTMLElement>(offline() ? `${MUTATING}, [data-tip]` : '[data-tip]')
+      if (pressed && el !== pressed) pressed = null // left what was clicked: its tooltip may come back next time
       if (el) show(el)
       else if (current) hide()
     }
@@ -48,7 +50,9 @@ export function TooltipLayer() {
     }
     const key = (e: KeyboardEvent) => { if (e.key === 'Escape') hide() }
     document.addEventListener('pointerover', over)
-    document.addEventListener('pointerdown', hide, true)
+    // a click hides the tooltip, and it stays hidden while the pointer is still on what was clicked
+    const down = (e: PointerEvent) => { pressed = (e.target as Element).closest?.<HTMLElement>('[data-tip]') ?? null; hide() }
+    document.addEventListener('pointerdown', down, true)
     document.addEventListener('focusin', focus)
     document.addEventListener('focusout', hide)
     document.addEventListener('keydown', key)
@@ -56,7 +60,7 @@ export function TooltipLayer() {
     return () => {
       window.clearTimeout(timer)
       document.removeEventListener('pointerover', over)
-      document.removeEventListener('pointerdown', hide, true)
+      document.removeEventListener('pointerdown', down, true)
       document.removeEventListener('focusin', focus)
       document.removeEventListener('focusout', hide)
       document.removeEventListener('keydown', key)

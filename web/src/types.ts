@@ -86,7 +86,7 @@ export interface Workspace { id: string; name: string; path: string; isGit: bool
 export interface WorktreeMeta {
   label?: string; note?: string; pinned?: boolean; sleeping?: boolean
   lastError?: { text?: string; op?: string; message?: string; at?: number } | string | null // server: { text: «Не удалось удалить: …», at }
-  createdBy?: 'user' | 'agent' | 'external'; createdAt?: number
+  createdBy?: 'user' | 'agent' | 'external'; createdBySession?: string; parentWorktree?: string; createdAt?: number
 }
 /** Newer servers enrich the list with git/task/session facts (for the context menu and cleanup). */
 export interface Worktree {

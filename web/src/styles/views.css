@@ -408,7 +408,11 @@ button.chip.chip-mono[aria-pressed="true"] { background: var(--signal-soft); col
 .wpanel .pr-off .mono { overflow-wrap: anywhere; }
 .wpanel-head { min-width: 0; overflow: hidden; }
 /* Three tabs do not fit 280px with labels: inactive ones keep only the icon (label in the tooltip/aria). */
-.wpanel-head:has(.wpanel-tab:nth-of-type(3)) .wpanel-tab:not([aria-selected="true"]) .wtab-text { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+/* a narrow panel: the other tabs as icons (their names as tooltips); a wide one names every tab */
+.wpanel { container-type: inline-size; }
+@container (max-width: 399px) {
+  .wpanel-head:has(.wpanel-tab:nth-of-type(3)) .wpanel-tab:not([aria-selected="true"]) .wtab-text { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+}
 
 .settings-adv { margin-top: 4px; }
 .settings-adv > .disclosure-head .disclosure-toggle { height: 30px; color: var(--ink-3); font-size: 12.5px; }
@@ -461,3 +465,7 @@ button.chip.chip-mono[aria-pressed="true"] { background: var(--signal-soft); col
   .set-row, .set-row[data-wide] { grid-template-columns: minmax(0, 1fr); gap: 6px; }
   .set-label { padding-top: 0; }
 }
+.linked-wts { display: grid; gap: 2px; margin: 6px 0 0; padding: 0; list-style: none; }
+.linked-wt { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 30px; padding: 0 8px; border: 0; border-radius: var(--r-1); background: none; color: var(--ink-2); text-align: left; }
+.linked-wt:hover { background: var(--deck-2); color: var(--ink); }
+.linked-wt .ellipsis { flex: 1; min-width: 0; }
