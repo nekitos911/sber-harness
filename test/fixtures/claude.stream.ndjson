@@ -1,0 +1,10 @@
+{"type":"system","subtype":"hook_started","hook_name":"SessionStart:startup","session_id":"c5cfa35b-dc12-4713-8b92-a065641e82bb"}
+{"type":"system","subtype":"session_state_changed","state":"running","session_id":"c5cfa35b-dc12-4713-8b92-a065641e82bb"}
+{"type":"system","subtype":"init","cwd":"/work/demo","session_id":"c5cfa35b-dc12-4713-8b92-a065641e82bb","tools":["Bash","Read","Edit"],"mcp_servers":[{"name":"harness","status":"connected"}],"model":"claude-opus-5-5","permissionMode":"default"}
+{"type":"assistant","message":{"model":"claude-opus-5-5","id":"msg_011Ch8mM1vadAvYU2AHL3HKB","type":"message","role":"assistant","content":[{"type":"tool_use","id":"toolu_0167ojCd8j7wcE1cqdaBcn2C","name":"Read","input":{"file_path":"/work/demo/package.json"},"caller":{"type":"direct"}}],"stop_reason":null},"parent_tool_use_id":null,"session_id":"c5cfa35b-dc12-4713-8b92-a065641e82bb"}
+{"type":"rate_limit_event","rate_limit_info":{"status":"allowed"},"session_id":"c5cfa35b-dc12-4713-8b92-a065641e82bb"}
+{"type":"user","message":{"role":"user","content":[{"tool_use_id":"toolu_0167ojCd8j7wcE1cqdaBcn2C","type":"tool_result","content":"1\t{\"name\":\"demo-pkg\"}\n2\t"}]},"parent_tool_use_id":null,"session_id":"c5cfa35b-dc12-4713-8b92-a065641e82bb"}
+{"type":"assistant","message":{"model":"claude-opus-5-5","id":"msg_011Ch8mMDNALRqdSB3anNkHN","type":"message","role":"assistant","content":[{"type":"thinking","thinking":""}],"stop_reason":null},"parent_tool_use_id":null,"session_id":"c5cfa35b-dc12-4713-8b92-a065641e82bb"}
+{"type":"assistant","message":{"model":"claude-opus-5-5","id":"msg_011Ch8mMDNALRqdSB3anNkHN","type":"message","role":"assistant","content":[{"type":"text","text":"demo-pkg"}],"stop_reason":null},"parent_tool_use_id":null,"session_id":"c5cfa35b-dc12-4713-8b92-a065641e82bb"}
+{"type":"result","subtype":"success","is_error":false,"duration_ms":5204,"num_turns":2,"result":"demo-pkg","stop_reason":"end_turn","session_id":"c5cfa35b-dc12-4713-8b92-a065641e82bb","total_cost_usd":0.01}
+{"type":"system","subtype":"session_state_changed","state":"idle","session_id":"c5cfa35b-dc12-4713-8b92-a065641e82bb"}

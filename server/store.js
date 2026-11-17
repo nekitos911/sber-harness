@@ -44,6 +44,7 @@ export function createStore(dataDir) {
   const termLogs = new Map(); // sid -> string (ring)
   const dirty = new Set(); // 'db' | 't:<sid>' | 'term:<sid>'
   let timer = null;
+  let closed = false;
 
   const fileFor = (key) => {
     if (key === 'db') return [dbFile, () => JSON.stringify(db, null, 1)];
@@ -67,6 +68,7 @@ export function createStore(dataDir) {
   }
 
   function mark(key) {
+    if (closed) return;
     dirty.add(key);
     timer ||= setTimeout(flush, DEBOUNCE_MS);
   }
@@ -123,6 +125,7 @@ export function createStore(dataDir) {
     },
     close() {
       flush();
+      closed = true;
       process.off('exit', onExit);
     },
   };

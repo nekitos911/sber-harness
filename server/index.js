@@ -297,7 +297,7 @@ export async function startServer(opts = {}) {
       return serveStatic(req, res, u.pathname);
     } catch (e) {
       const status = Number.isInteger(e.status) ? e.status : 500;
-      if (status >= 500) console.error(`[harness] ${req.method} ${u.pathname}:`, e);
+      if (!Number.isInteger(e.status)) console.error(`[harness] ${req.method} ${u.pathname}:`, e);
       if (!res.headersSent) sendJson(res, status, { error: e.message || String(e) });
       else res.end();
     }

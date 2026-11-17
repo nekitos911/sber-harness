@@ -242,6 +242,7 @@ export function createSessions({ config, store, bus, getUrl }) {
     });
     r.pty = p;
     p.onData((data) => {
+      if (r.pty !== p) return; // killed or replaced
       store.appendTermLog(s.id, data);
       bus.send({ t: 'term', id: s.id, data });
     });

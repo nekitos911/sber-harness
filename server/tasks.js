@@ -8,6 +8,7 @@ const EDITABLE = ['title', 'description', 'status', 'order', 'priority', 'deps',
 
 const fail = (status, message) => { throw Object.assign(new Error(message), { status }); };
 const isStrArr = (v) => Array.isArray(v) && v.every((x) => typeof x === 'string');
+const defined = (f) => Object.fromEntries(Object.entries(f).filter(([, v]) => v !== undefined));
 
 export function createTasks({ store, bus, defaultBase = 'main' }) {
   const db = store.db;
@@ -88,7 +89,8 @@ export function createTasks({ store, bus, defaultBase = 'main' }) {
         .sort((a, b) => STATUSES.indexOf(a.status) - STATUSES.indexOf(b.status) || a.order - b.order);
     },
 
-    create(f, by = 'user') {
+    create(fields, by = 'user') {
+      const f = defined(fields);
       validate(f);
       if (typeof f.title !== 'string') fail(400, 'title is required');
       const parent = f.parentId ? find(f.parentId) : null;
@@ -120,7 +122,8 @@ export function createTasks({ store, bus, defaultBase = 'main' }) {
       return emit(task);
     },
 
-    update(id, f, by = 'user') {
+    update(id, fields, by = 'user') {
+      const f = defined(fields);
       const task = get(id);
       validate(f, id);
       const statusChanged = 'status' in f && f.status !== task.status;
