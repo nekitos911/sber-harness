@@ -88,7 +88,7 @@ export const TaskCard = memo(function TaskCard({ task, ctx }: { task: Task; ctx:
       {(session || task.externalUrl) && (
         <div className="card-foot">
           {task.agentState && session ? <AgentBadge task={task} session={session} ctx={ctx} /> : session && (
-            <span className="card-agent" data-tip={session.title}>
+            <span className="card-agent" data-tip={session.title} data-tip-trunc>
               <StatusIcon session={session} />
               <span>{ctx.agents.get(session.agent)?.label ?? session.agent}</span>
               <span className="muted">{statusText(session)}</span>

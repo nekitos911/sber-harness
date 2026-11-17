@@ -85,7 +85,7 @@ function TabBar({ cwd }: { cwd: string }) {
       <div className="tabbar" role="tablist" aria-label="Вкладки рабочего дерева">
         {tabs.map((t) => {
           const key = tabKey(t)
-          const { icon, title, hint, badge, file } = describeTab(t, sessions, git?.status ?? null)
+          const { icon, title, badge, file } = describeTab(t, sessions, git?.status ?? null)
           return (
             <div
               key={`${k}|${key}`}
@@ -96,7 +96,7 @@ function TabBar({ cwd }: { cwd: string }) {
               data-enter={!seen.current!.has(`${k}|${key}`) || undefined}
               data-leaving={closing === key || undefined}
               data-file={file || undefined}
-              data-tip={hint}
+              data-tip={title} data-tip-trunc
               onClick={() => activateTab(cwd, key)}
               onAuxClick={(e) => { if (e.button === 1) close(key, true) }}
               onKeyDown={(e) => {

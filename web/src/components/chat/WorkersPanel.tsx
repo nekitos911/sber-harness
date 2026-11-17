@@ -6,7 +6,7 @@ import { plural, relTime, tokens } from '../../lib/format'
 import { useNow } from '../../lib/useNow'
 import { useCurrentTool, useStartingLabel } from '../../lib/live'
 import type { Session, SubAgent } from '../../types'
-import { StatusIcon, statusText, SubStateIcon, subStateLabel } from '../bits'
+import { StatusIcon, SubStateIcon, subStateLabel } from '../bits'
 
 const BUSY = new Set(['working', 'restarting', 'compacting'])
 
@@ -73,7 +73,7 @@ function WorkerRow({ w, now, nested }: { w: Session; now: number; nested?: boole
   return (
     <div className="worker-row" data-nested={nested || undefined} data-enter={w.createdAt > Date.now() - 3000 || undefined}>
       <StatusIcon session={w} />
-      <button type="button" className="worker-title ellipsis" onClick={() => openSession(w.id)} data-tip={`${w.title}: ${statusText(w)}`}>
+      <button type="button" className="worker-title ellipsis" onClick={() => openSession(w.id)} data-tip={w.title} data-tip-trunc>
         {(w.role === 'reviewer' || w.role === 'subagent') && <span className="role-tag">{w.role === 'reviewer' ? 'ревью' : 'субагент'}</span>}
         {w.title}
         {doing && <span className="muted"> · {doing}</span>}
@@ -93,7 +93,7 @@ function InternalRow({ a, now }: { a: SubAgent; now: number }) {
   const doing = a.activity?.tool ?? a.lastText?.split('\n').filter(Boolean).pop()
   const at = a.activity?.since ?? a.lastActivity
   return (
-    <div className="worker-row worker-internal" data-state={a.state} data-tip={`${a.name}: ${subStateLabel(a.state)}${a.lastText ? `\n${a.lastText}` : ''}`}>
+    <div className="worker-row worker-internal" data-state={a.state} aria-label={`${a.name}: ${subStateLabel(a.state)}`}>
       <SubStateIcon state={a.state} />
       <span className="worker-title ellipsis">
         {a.name}

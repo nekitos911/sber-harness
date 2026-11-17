@@ -106,7 +106,7 @@ function AgentCard({ s, nested, parent }: { s: Session; nested: boolean; parent?
     <article className="agent-card" data-nested={nested} data-s={s.status}>
       <div className="agent-top">
         <StatusIcon session={s} />
-        <button type="button" className="agent-title ellipsis" onClick={() => openSession(s.id)} data-tip="Открыть чат">{s.title || s.id}</button>
+        <button type="button" className="agent-title ellipsis" onClick={() => openSession(s.id)} data-tip={s.title || s.id} data-tip-trunc>{s.title || s.id}</button>
         {s.role !== 'solo' && <span className="role" data-role={s.role}>{ROLE[s.role]}</span>}
       </div>
       <div className="agent-meta">
@@ -119,7 +119,7 @@ function AgentCard({ s, nested, parent }: { s: Session; nested: boolean; parent?
         )}
       </div>
       {task && (
-        <button type="button" className="agent-task" onClick={() => openTask(task.id)} data-tip="Открыть задачу">
+        <button type="button" className="agent-task" onClick={() => openTask(task.id)} data-tip={task.title} data-tip-trunc>
           <span className="mono">{task.externalId ?? task.id}</span>
           <span className="ellipsis">{task.title}</span>
         </button>
@@ -127,7 +127,7 @@ function AgentCard({ s, nested, parent }: { s: Session; nested: boolean; parent?
       {!nested && parent && (
         <button type="button" className="agent-parent" onClick={() => openSession(parent.id)}>↳ от {parent.title}</button>
       )}
-      {s.branch && <div className="agent-where" data-tip={s.cwd}><Branch name={s.branch} /></div>}
+      {s.branch && <div className="agent-where"><Branch name={s.branch} /></div>}
       {s.preview && <p className="agent-preview">{s.preview}</p>}
       <div className="agent-foot" data-open={mode !== null || undefined}>
         <span className="muted num">{relTime(s.lastActivityAt, now)}</span>

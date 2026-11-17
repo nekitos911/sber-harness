@@ -16,10 +16,16 @@ export function TooltipLayer() {
     const show = (el: HTMLElement) => {
       const text = el.dataset.tip
       if (!text || el === current) return
+      // Rows and titles: a tooltip only when the visible label is actually truncated, and a bit later.
+      const trunc = el.hasAttribute('data-tip-trunc')
+      if (trunc) {
+        const label = el.matches('.label, .ellipsis, .tab-title') ? el : el.querySelector<HTMLElement>('.label, .ellipsis, .tab-title')
+        if (!label || label.scrollWidth <= label.clientWidth) return
+      }
       current = el
       window.clearTimeout(timer)
       const warm = Date.now() - lastHidden < 400
-      timer = window.setTimeout(() => setTip({ text, el }), warm ? 0 : 450)
+      timer = window.setTimeout(() => setTip({ text, el }), warm ? 0 : trunc ? 600 : 450)
     }
     const hide = () => {
       window.clearTimeout(timer)

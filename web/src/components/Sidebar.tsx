@@ -186,7 +186,7 @@ function ProjectNode({ ws, tree, filtering }: { ws: Workspace; tree: Tree; filte
 
   return (
     <div className="tree-group">
-      <div ref={projRow} className="tree-row tree-project" role="button" tabIndex={0} aria-expanded={expanded} data-tip={ws.path} onClick={toggle} onKeyDown={activate(toggle)}
+      <div ref={projRow} className="tree-row tree-project" role="button" tabIndex={0} aria-expanded={expanded} data-tip={ws.name} data-tip-trunc onClick={toggle} onKeyDown={activate(toggle)}
         onContextMenu={(e) => { e.preventDefault(); setMenu(true) }}>
         <ChevronRight className="chev" aria-hidden />
         <FolderGit2 aria-hidden />
@@ -224,7 +224,7 @@ function WorktreeNode({ ws, wt, sessions, kids, active }: { ws: Workspace; wt: W
   return (
     <div className="wt" data-active={active} data-sleeping={sleeping || undefined}>
       <div ref={row} className="tree-row tree-wt" role="button" tabIndex={0}
-        data-tip={`${wt.main ? 'Основная рабочая копия' : 'Рабочее дерево'}${wt.meta?.note ? `\n${wt.meta.note}` : ''}\n${wt.path}`}
+        data-tip={name} data-tip-trunc
         aria-current={active ? 'location' : undefined} onClick={pick}
         onKeyDown={(e) => { onWorktreeKey(e, ws, wt); activate(pick)(e) }}
         onContextMenu={(e) => { e.preventDefault(); setMenu(true) }}>
@@ -266,7 +266,7 @@ function SessionNode({ s, kids, level = 0 }: { s: Session; kids: Map<string, Ses
             <div
               key={a.id}
               className="tree-row tree-sess tree-sub"
-              data-tip={`${a.name}: ${subStateLabel(a.state)} (внутренний агент, только просмотр)${a.lastText ? `\n${a.lastText}` : ''}`}
+              data-tip={a.name} data-tip-trunc aria-label={`${a.name}: ${subStateLabel(a.state)}, внутренний агент`}
             >
               <SubStateIcon state={a.state} />
               <span className="label">
@@ -301,7 +301,7 @@ function SessionRow({ s, nested, level = 0, caret }: { s: Session; nested: boole
       data-enter={s.createdAt > APP_START || undefined}
       tabIndex={0}
       aria-current={current ? 'true' : undefined}
-      data-tip={`${s.title}${preview ? `\n${preview}` : ''}\n${s.cwd}`}
+      data-tip={s.title || s.id} data-tip-trunc
       onClick={open}
       onKeyDown={activate(open)}
       style={depth(0)}
