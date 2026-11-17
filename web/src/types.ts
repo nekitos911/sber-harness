@@ -95,6 +95,7 @@ export interface Worktree {
   pr?: { state: 'open' | 'merged' | 'declined'; url: string } | null
   sessions?: number; running?: number; lastActivityAt?: number | null; meta?: WorktreeMeta
   createdBy?: 'user' | 'agent' | 'external'; detached?: boolean
+  orphan?: boolean // a folder left after a removal that failed part-way (git no longer lists it)
 }
 
 export type SessionKind = 'chat' | 'terminal'
@@ -113,6 +114,7 @@ export interface Session {
   role: SessionRole
   parentId: string | null
   taskId: string | null
+  errorKind?: 'not_started' | 'turn' | string | null // why status is error: never produced output vs this turn failed
   status: SessionStatus
   phase?: 'starting' | 'streaming' | 'auth' | null
   lastEventAt?: number | null // last stdout event of the current turn (newer servers)
@@ -190,6 +192,8 @@ export interface Notification {
   text: string
   options?: string[] | null
   link?: string | null
+  actions?: ('open' | 'rework' | 'accept')[] // escalations: what the person can do right from the inbox
+  count?: number // the same escalation again: ×N
 }
 
 /** A model in an agent's catalog (config may give a plain string; servers normalize it to {id}). */
@@ -292,6 +296,7 @@ export interface AgentSettings {
 }
 
 export interface Settings {
+  permissions?: { allowedToolsByWorkspace?: Record<string, string[]> } // «Разрешать всегда в этом проекте»
   reworkPromptPresets?: string[] // «Доработать» templates offered for every agent
   workspaces?: { root?: string | null } // projects folder; null = auto (deepest common parent)
   session?: { stallSec?: number } // «нет вывода» after this many seconds of silence (≥ 30)

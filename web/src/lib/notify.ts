@@ -39,7 +39,7 @@ export function desktopNotify(n: Note) {
 /** The tab title counts what waits for the person («Ждёт меня»), else unread notifications. */
 export function useUnreadTitle() {
   const unread = useStore((s) => s.notifications.filter((n) => !n.read).length)
-  const pending = useStore((s) => pendingCount(s.sessions, s.tasks))
+  const pending = useStore((s) => pendingCount(s.sessions, s.tasks, s.notifications))
   const n = pending || unread
   useEffect(() => { document.title = n ? `(${n}) Harness` : 'Harness' }, [n])
 }

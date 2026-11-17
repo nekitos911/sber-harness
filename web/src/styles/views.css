@@ -472,3 +472,11 @@ button.chip.chip-mono[aria-pressed="true"] { background: var(--signal-soft); col
 .inbox-wait-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
 .inbox-actions { display: flex; flex-wrap: wrap; gap: 4px; }
 .inbox-waiting h2 .count { margin-left: 4px; vertical-align: 1px; }
+.inbox-esc-icon { width: 14px; height: 14px; color: var(--signal); flex: none; }
+.project-tools { display: grid; gap: 8px; margin: 0; }
+.project-tools-row { display: grid; grid-template-columns: minmax(100px, 180px) minmax(0, 1fr); gap: 8px; align-items: start; }
+.project-tools-row dt { padding-top: 3px; color: var(--ink-2); }
+.project-tools-row dd { margin: 0; }
+.inbox-esc-head { flex-wrap: nowrap; align-items: flex-start; }
+.inbox-esc-head .inbox-esc-icon { margin-top: 3px; }
+.inbox-esc-text { flex: 1; min-width: 0; }

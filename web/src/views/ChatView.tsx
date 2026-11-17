@@ -205,7 +205,7 @@ export function ChatView({ id, active }: { id: string; active: boolean }) {
           <SlowStartHint session={session} />
           {session.status === 'error' && (
             <div className="chat-alert" role="alert">
-              Агент не запустился. Проверьте команду агента в конфигурации и лог.
+              {errorLine(session, list)}
               <span className="grow" />
               <button type="button" className="btn btn-sm" onClick={() => void showLog()}>Лог</button>
               <button type="button" className="btn btn-sm" onClick={reset}>Сбросить статус</button>
@@ -457,4 +457,15 @@ function SddStrip({ cwd }: { cwd: string }) {
       {last && <><span className="muted">шаг {last.n}</span><VerdictChip status={last.status} /></>}
     </button>
   )
+}
+
+/**
+ * Why the chat stopped: only a session that never produced output «не запустился» (check the command); a failed turn
+ * says what happened (no first event in time, a stall, a forced exit, a crash) in the words of its error message.
+ */
+function errorLine(s: Session, list: Message[]): string {
+  if (s.errorKind === 'not_started') return 'Агент не запустился. Проверьте команду агента в конфигурации и лог.'
+  // «Агент завершился с ошибкой (код 1):» is followed by the CLI's own words on the next line
+  const last = [...list].reverse().find((m) => m.kind === 'error')?.text.split('\n').map((l) => l.trim()).filter(Boolean).slice(0, 2).join(' ').slice(0, 240)
+  return last ? `Ход прервался: ${last}` : 'Ход завершился с ошибкой — подробности в логе.'
 }

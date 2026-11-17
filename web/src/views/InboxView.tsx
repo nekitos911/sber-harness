@@ -3,7 +3,7 @@ import { useEffect } from 'react'
 import { CheckCheck, CircleAlert, CircleCheck, CircleHelp, GitCommitHorizontal, GitCompare, GitPullRequest, Inbox, Info, Megaphone, RotateCcw, ShieldAlert, TriangleAlert, Wrench } from 'lucide-react'
 import { tryApi } from '../api'
 import { openDialog, openSession, openTab, openTask, openWorktree, setState, showPanel, useFeature, useStore } from '../store'
-import { doneForReview, waitsForMe } from '../lib/pending'
+import { doneForReview, openEscalation, waitsForMe } from '../lib/pending'
 import { ReworkPopover } from '../components/board/Rework'
 import { fullTime, NOTIFY_KIND, relTime } from '../lib/format'
 import { useNow } from '../lib/useNow'
@@ -35,15 +35,59 @@ function Interrupted() {
 function WaitingForYou() {
   const sessions = useStore((s) => s.sessions)
   const tasks = useStore((s) => s.tasks)
+  const notifications = useStore((s) => s.notifications)
   const waiting = useMemo(() => sessions.filter(waitsForMe), [sessions])
   const done = useMemo(() => tasks.filter(doneForReview), [tasks])
-  if (!waiting.length && !done.length) return null
+  const escalations = useMemo(() => notifications.filter(openEscalation), [notifications])
+  const n = waiting.length + done.length + escalations.length
+  if (!n) return null
   return (
     <section className="inbox-waiting" aria-label="Ждёт меня">
-      <h2>Ждёт меня <span className="count count-signal">{waiting.length + done.length}</span></h2>
+      <h2>Ждёт меня <span className="count count-signal">{n}</span></h2>
       {waiting.map((x) => <WaitingItem key={x.id} s={x} />)}
+      {escalations.map((e) => <EscalationItem key={e.id} n={e} />)}
       {done.map((t) => <DoneItem key={t.id} t={t} s={sessions.find((x) => x.id === t.assigneeSessionId)} />)}
     </section>
+  )
+}
+
+/**
+ * An agent stopped without a report (or with an error): open the chat, send the task back, or accept the result as
+ * is (the task goes to review). Any of them settles the entry (read).
+ */
+function EscalationItem({ n }: { n: Notification }) {
+  const session = useStore((s) => (n.sessionId ? s.sessions.find((x) => x.id === n.sessionId) : undefined))
+  const task = useStore((s) => (n.taskId ? s.tasks.find((t) => t.id === n.taskId) : undefined))
+  const [reworking, setReworking] = useState(false)
+  const reworkRef = useRef<HTMLButtonElement>(null)
+  const settle = () => { markRead([n.id]); void tryApi('POST', `/notifications/${encodeURIComponent(n.id)}/read`) }
+  const actions = n.actions ?? ['open']
+  const accept = async () => {
+    if (!task) return
+    const t = await tryApi<Task>('PATCH', `/tasks/${encodeURIComponent(task.id)}`, { status: 'review' })
+    if (!t) return
+    setState((s) => ({ tasks: s.tasks.map((x) => (x.id === t.id ? t : x)) }))
+    settle()
+  }
+  return (
+    <div className="inbox-wait">
+      <span className="inbox-wait-head inbox-esc-head">
+        <Megaphone aria-hidden className="inbox-esc-icon" />
+        <span className="inbox-esc-text">{n.text}</span>
+        {(n.count ?? 1) > 1 && <span className="count" data-tip="Сколько раз повторилось">×{n.count}</span>}
+      </span>
+      <span className="inbox-actions">
+        {actions.includes('open') && session && <button type="button" className="btn btn-sm" onClick={() => { settle(); openSession(session.id) }}>Открыть чат</button>}
+        {actions.includes('rework') && task && (
+          <>
+            <button ref={reworkRef} type="button" className="btn btn-sm" aria-expanded={reworking} onClick={() => setReworking(true)}><Wrench />Доработать</button>
+            {reworking && <ReworkPopover task={task} anchor={reworkRef} open onClose={() => setReworking(false)} onSent={settle} />}
+          </>
+        )}
+        {actions.includes('accept') && task && <button type="button" className="btn btn-sm" onClick={() => void accept()} data-tip="Задача уйдёт на проверку как есть"><CircleCheck />Принять результат</button>}
+        <button type="button" className="btn btn-sm btn-ghost" onClick={settle}>Прочитано</button>
+      </span>
+    </div>
   )
 }
 
@@ -172,6 +216,7 @@ function Item({ n }: { n: Notification }) {
           <span className="inbox-kind">{NOTIFY_KIND[n.kind]}</span>
           {session && <button type="button" className="chip" onClick={open}>{session.title}</button>}
           {task && <button type="button" className="chip chip-mono" onClick={() => { void read(); openTask(task.id) }}>{task.externalId ?? task.id}</button>}
+          {(n.count ?? 1) > 1 && <span className="count" data-tip="Сколько раз повторилось">×{n.count}</span>}
           <span className="grow" />
           <time className="muted num" data-tip={fullTime(n.at)}>{relTime(n.at, now)}</time>
         </div>

@@ -268,6 +268,7 @@ function AgentSection({ id, form, update, fieldError, primary }: SectionProps & 
         )}
         {primary && <McpServersRow id={id} a={a} set={set} />}
         {primary && a.allowedTools !== undefined && <AllowedToolsRow a={a} set={set} />}
+        {primary && form.permissions?.allowedToolsByWorkspace !== undefined && <ProjectToolsRow form={form} update={update} />}
       </div>
       <Advanced id={`agent-${id}`}>
       <div className="set-rows">
@@ -423,6 +424,29 @@ function CommandRow({ id, a, set, error }: { id: string; a: AgentSettings; set: 
       )}
       {unknown && <span className="field-warn"><TriangleAlert aria-hidden />Команда /{cmd} не встречалась в сессиях GigaCode. Проверьте, что она установлена.</span>}
       {known.length > 0 && <span className="set-hint">Известные команды: <span className="mono">{known.slice(0, 12).join(' ')}{known.length > 12 ? ' …' : ''}</span></span>}
+    </Row>
+  )
+}
+
+/** «Разрешённые команды по проектам»: what «Разрешать всегда в этом проекте» saved, per project; × takes one back. */
+function ProjectToolsRow({ form, update }: { form: Settings; update: (s: Settings) => void }) {
+  const workspaces = useStore((s) => s.workspaces)
+  const by = form.permissions?.allowedToolsByWorkspace ?? {}
+  const entries = Object.entries(by).filter(([, list]) => list.length)
+  const set = (id: string, list: string[]) =>
+    update({ ...form, permissions: { ...form.permissions, allowedToolsByWorkspace: { ...by, [id]: list } } })
+  return (
+    <Row label="Разрешённые команды по проектам" hint="Добавляются кнопкой «Разрешать всегда в этом проекте» в карточке разрешения; действуют во всех чатах проекта." wide>
+      {entries.length ? (
+        <dl className="project-tools">
+          {entries.map(([id, list]) => (
+            <div key={id} className="project-tools-row">
+              <dt>{workspaces.find((w) => w.id === id)?.name ?? id}</dt>
+              <dd className="chips">{list.map((t) => <Chip key={t} mono onRemove={() => set(id, list.filter((x) => x !== t))} removeLabel={`Убрать ${t}`}>{t}</Chip>)}</dd>
+            </div>
+          ))}
+        </dl>
+      ) : <span className="set-hint">Пока нет: появятся из карточек разрешений.</span>}
     </Row>
   )
 }

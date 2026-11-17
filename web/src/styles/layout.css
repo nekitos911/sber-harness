@@ -271,3 +271,5 @@
 .app[data-rail] .nav-item .end { position: absolute; top: 1px; right: 1px; margin: 0; }
 .app[data-rail] .nav-item .count { min-width: 14px; height: 14px; padding: 0 3px; font-size: 9px; line-height: 14px; }
 .app[data-rail] .sb-foot { justify-content: center; padding-left: 4px; padding-right: 4px; }
+.wt-orphan { cursor: default; }
+.wt-orphan .wt-mark svg { color: var(--signal); }

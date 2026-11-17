@@ -4,6 +4,8 @@ import { getState, openDialog, openScreen, openSession, openWorktree, setState, 
 import { useHistory } from '../lib/history'
 import { archiveSession, renameSession, sessionMenu } from '../lib/sessionActions'
 import { loadWorktrees } from '../ws'
+import { api } from '../api'
+import { runJob } from '../lib/jobs'
 import { useCurrentTool, useStateLine } from '../lib/live'
 import { dur, sessionVisualState } from '../lib/sessionState'
 import { basename, normPath, plural, relTime, tokens } from '../lib/format'
@@ -33,7 +35,7 @@ export function Sidebar() {
   const workspaces = useStore((s) => s.workspaces)
   const sessions = useStore((s) => s.sessions)
   const unread = useStore((s) => s.notifications.filter((n) => !n.read).length)
-  const pending = useStore((s) => pendingCount(s.sessions, s.tasks)) // «Ждёт меня»
+  const pending = useStore((s) => pendingCount(s.sessions, s.tasks, s.notifications)) // «Ждёт меня»
   const scheme = useStore((s) => s.scheme)
   const width = useStore((s) => s.sidebarWidth)
   const [query, setQuery] = useState('')
@@ -306,7 +308,7 @@ function SystemGroup({ sessions }: { sessions: Session[] }) {
 
 /** Whether a worktree is worth a row by default: it is where something is, was recently, or is about to happen. */
 function worktreeMatters(wt: Worktree, here: Session[], taskStatus: string | null | undefined, active: boolean, now: number, terminals = 0) {
-  return wt.main || active || here.length > 0 || terminals > 0 || (wt.dirty ?? 0) > 0 || (wt.ahead ?? 0) > 0 || !!wt.meta?.pinned ||
+  return wt.main || !!wt.orphan || active || here.length > 0 || terminals > 0 || (wt.dirty ?? 0) > 0 || (wt.ahead ?? 0) > 0 || !!wt.meta?.pinned ||
     taskStatus === 'in_progress' || taskStatus === 'review' || (!!wt.lastActivityAt && now - wt.lastActivityAt < WEEK)
 }
 const WEEK = 7 * 24 * 3600 * 1000
@@ -355,7 +357,7 @@ function worktreeRows(ws: Workspace, worktrees: Worktree[] | undefined, tree: Tr
 /** The rows the filters keep (the ones needing you and the one on screen always stay), in the chosen order. */
 function arrange(rows: WtRow[], p: SbPrefs): WtRow[] {
   return rows
-    .filter((r) => r.attention || r.active || !filteredOut(p, {
+    .filter((r) => r.attention || r.active || r.wt.orphan || !filteredOut(p, {
       main: r.wt.main, detached: !!r.wt.detached || (!r.wt.branch && !!r.wt.head), sleeping: !!r.wt.meta?.sleeping,
       createdBy: r.wt.meta?.createdBy ?? r.wt.createdBy, empty: !r.here.length && !r.terms.length && !(r.wt.dirty ?? 0) && !(r.wt.ahead ?? 0),
     }))
@@ -500,10 +502,39 @@ function ProjectNode({ ws, tree, filtering, drag }: {
   )
 }
 
-function WorktreeNode({ ws, wt, sessions, terminals, dup, kids, active, fromOf, project }: {
+function WorktreeNode(props: {
   ws: Workspace; wt: Worktree; sessions: Session[]; terminals: Session[]; dup: boolean; kids: Map<string, Session[]>; active: boolean
   fromOf: (id: string) => Session | undefined
   project?: string // grouped lists: whose worktree it is
+}) {
+  return props.wt.orphan ? <OrphanRow ws={props.ws} wt={props.wt} /> : <WorktreeRow {...props} />
+}
+
+/** A folder left after a removal that failed part-way: say so, and finish the job on request. */
+function OrphanRow({ ws, wt }: { ws: Workspace; wt: Worktree }) {
+  const remove = () => openDialog({
+    kind: 'confirm', title: 'Удалить оставшуюся папку?', danger: true, ok: 'Удалить папку',
+    text: `${wt.path} — git её больше не знает; папка и всё в ней будут удалены.`,
+    // runJob shows a failure (with «Повторить») itself
+    onConfirm: () => void runJob('Удаление папки', (jobId) => api('DELETE', `/workspaces/${encodeURIComponent(ws.id)}/worktrees`, { path: wt.path, orphan: true }, { jobId }))
+      .then((r) => { if (r !== undefined) void loadWorktrees(ws.id, true) }),
+  })
+  return (
+    <div className="wt" data-orphan>
+      <div className="tree-row tree-wt wt-orphan" style={depth(1)} data-tip={`Папка осталась после неудачного удаления
+${wt.path}`}>
+        <span className="wt-mark" data-mark="attention"><TriangleAlert aria-hidden /></span>
+        <span className="label">{wt.meta?.label || basename(wt.path)} <span className="tree-path">папка осталась после неудачного удаления</span></span>
+        <button type="button" className="btn btn-xs" onClick={remove}>Удалить папку</button>
+      </div>
+    </div>
+  )
+}
+
+function WorktreeRow({ ws, wt, sessions, terminals, dup, kids, active, fromOf, project }: {
+  ws: Workspace; wt: Worktree; sessions: Session[]; terminals: Session[]; dup: boolean; kids: Map<string, Session[]>; active: boolean
+  fromOf: (id: string) => Session | undefined
+  project?: string
 }) {
   const changed = useStore((s) => s.git[normPath(wt.path)]?.status?.files.length ?? wt.dirty ?? 0)
   const task = useStore((s) => (wt.taskId ? s.tasks.find((t) => t.id === wt.taskId) : s.tasks.find((t) => !!wt.branch && t.branch === wt.branch)))
