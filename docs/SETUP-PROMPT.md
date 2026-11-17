@@ -40,8 +40,9 @@ Order of work:
    "Create PR" in the Changes panel on a test branch of <TEST_REPOSITORY>.
 4. If sbertrack or other MCP servers are needed by agents during their work, add them to agentMcpServers
    (or make sure they are inherited from ~/.gigacode/settings.json via inheritUserMcpFrom).
-4a. The full-task command: set agents.gigacode.taskPromptTemplate = "/full-task {key}" and check that headless
-   gigacode -p "/full-task <KEY>" really runs the command (task + SDD). If not, see section 1 step 9 of INTEGRATION.md.
+4a. The task command: set agents.gigacode.taskPromptTemplate = "/full-task-ui {taskUrl}{notes}" (Settings screen
+   in the UI or harness.config.local.json) and check that headless gigacode -p "/full-task-ui <url>" really runs the
+   command (task + SDD). If not, see section 1 step 9 of INTEGRATION.md.
 4b. Branches: check git.defaultBase (develop), git.branchTemplate (feature/{key}), and the commit/PR templates
    against the team's conventions and the repositories' hooks/CI (section 4 of INTEGRATION.md).
 5. Full check: a chat with role "coordinator" in <TEST_REPOSITORY>: "Create two tasks on the board and start a
