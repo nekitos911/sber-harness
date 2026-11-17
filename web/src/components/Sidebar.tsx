@@ -1,14 +1,16 @@
 import { useEffect, useMemo, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react'
-import { Bot, ChevronRight, FolderGit2, FolderPlus, GitBranch, GitBranchPlus, Inbox, MessageSquarePlus, Moon, Search, Settings, SquareKanban, SquareTerminal, Sun } from 'lucide-react'
-import { openDialog, openSession, openTab, setState, tabKey, useActiveCwd, useStore } from '../store'
+import { Bot, ChevronDown, ChevronRight, FolderGit2, FolderPlus, GitBranch, GitBranchPlus, House, Inbox, MessageSquarePlus, Moon, Search, Settings, SquareKanban, SquareTerminal, Sun } from 'lucide-react'
+import { openDialog, openScreen, openSession, openWorktree, setState, useActiveCwd, useStore, type Screen } from '../store'
 import { loadWorktrees } from '../ws'
+import { useCurrentTool, useStartingLabel } from '../lib/live'
 import { basename, normPath, relTime, tokens } from '../lib/format'
-import { currentWhere, newChat } from '../lib/actions'
+import { newChat, newTerminal } from '../lib/actions'
 import type { Session, Workspace, Worktree } from '../types'
 import { StatusIcon, SubStateIcon, subStateLabel } from './bits'
 import { useNow } from '../lib/useNow'
 
 const depth = (d: number) => ({ '--depth': d }) as CSSProperties
+const APP_START = Date.now() // rows for sessions born after this animate in; the initial list does not
 
 const activate = (fn: () => void) => (e: KeyboardEvent) => {
   if (e.target !== e.currentTarget) return
@@ -18,15 +20,13 @@ const activate = (fn: () => void) => (e: KeyboardEvent) => {
 export function Sidebar() {
   const workspaces = useStore((s) => s.workspaces)
   const sessions = useStore((s) => s.sessions)
-  const notifications = useStore((s) => s.notifications)
+  const unread = useStore((s) => s.notifications.filter((n) => !n.read).length)
   const scheme = useStore((s) => s.scheme)
   const width = useStore((s) => s.sidebarWidth)
   const [query, setQuery] = useState('')
 
-  const unread = notifications.filter((n) => !n.read).length
   const running = sessions.filter((s) => s.kind === 'chat' && s.status === 'running').length
-  const agents = sessions.filter((s) => s.kind === 'chat').length
-
+  const chats = sessions.filter((s) => s.kind === 'chat').length
   const tree = useMemo(() => buildTree(sessions, query), [sessions, query])
 
   return (
@@ -35,31 +35,24 @@ export function Sidebar() {
         <Search aria-hidden />
         <input className="input" type="search" placeholder="Поиск" aria-label="Поиск по сессиям и проектам" value={query} onChange={(e) => setQuery(e.target.value)} />
       </div>
-      <div className="sb-new">
-        <button type="button" className="btn" onClick={() => void newChat(currentWhere())} title="Чат с агентом по умолчанию в текущей папке">
-          <MessageSquarePlus />
-          Новый чат
-        </button>
-      </div>
 
       <div className="nav">
-        <NavItem tab="board" icon={<SquareKanban />} label="Задачи" />
+        <NavItem screen="board" icon={<SquareKanban />} label="Задачи" />
         <NavItem
-          tab="agents"
+          screen="agents"
           icon={<Bot />}
           label="Агенты"
-          end={agents > 0 && <>{running > 0 && <span className="dot" aria-label={`работают: ${running}`} />}<span className="count">{agents}</span></>}
+          end={running > 0
+            ? <span className="count count-run" title={`Работают: ${running} из ${chats}`}>{running}</span>
+            : chats > 0 && <span className="count" title={`Чатов: ${chats}`}>{chats}</span>}
         />
-        <NavItem tab="inbox" icon={<Inbox />} label="Входящие" end={unread > 0 && <span className="count count-run" aria-label={`непрочитанных: ${unread}`}>{unread}</span>} />
+        <NavItem screen="inbox" icon={<Inbox />} label="Входящие" end={unread > 0 && <span className="count count-signal" aria-label={`непрочитанных: ${unread}`}>{unread}</span>} />
       </div>
 
       <div className="sb-head">
         <span>Проекты</span>
         <button type="button" className="icon-btn icon-btn-sm" title="Добавить проект" aria-label="Добавить проект" onClick={() => openDialog({ kind: 'workspace' })}>
           <FolderPlus />
-        </button>
-        <button type="button" className="icon-btn icon-btn-sm" title="Новое рабочее дерево" aria-label="Новое рабочее дерево" onClick={() => openDialog({ kind: 'worktree' })}>
-          <GitBranchPlus />
         </button>
       </div>
 
@@ -70,23 +63,22 @@ export function Sidebar() {
         {tree.loose.length > 0 && (
           <div className="tree-group">
             <div className="tree-note" style={depth(-1)}>Вне проектов</div>
-            {tree.loose.map((s) => <SessionNode key={s.id} s={s} kids={tree.kids} d={0} />)}
+            {tree.loose.map((s) => <SessionNode key={s.id} s={s} kids={tree.kids} />)}
           </div>
         )}
         {workspaces.length === 0 && (
-          <div className="tree-note" style={depth(-1)}>
-            Добавьте папку проекта, чтобы запускать агентов в её рабочих копиях.
+          <div className="sb-empty">
+            <p>Добавьте папку проекта: агенты работают в её рабочих деревьях.</p>
+            <button type="button" className="btn btn-sm" onClick={() => openDialog({ kind: 'workspace' })}>
+              <FolderPlus />
+              Добавить проект
+            </button>
           </div>
         )}
       </div>
 
       <div className="sb-foot">
-        <button type="button" className="icon-btn" title="Настройки" aria-label="Настройки" onClick={() => openTab({ kind: 'settings' })}>
-          <Settings />
-        </button>
-        <button type="button" className="icon-btn" title="Новый терминал" aria-label="Новый терминал" onClick={() => openDialog({ kind: 'terminal' })}>
-          <SquareTerminal />
-        </button>
+        <NavItem screen="settings" icon={<Settings />} label="Настройки" />
         <span className="grow" />
         <button
           type="button"
@@ -124,10 +116,10 @@ export function Sidebar() {
 
 const clampWidth = (w: number) => Math.round(Math.min(520, Math.max(220, w)))
 
-function NavItem({ tab, icon, label, end }: { tab: 'board' | 'agents' | 'inbox'; icon: ReactNode; label: string; end?: ReactNode }) {
-  const active = useStore((s) => s.active === tab)
+function NavItem({ screen, icon, label, end }: { screen: Screen; icon: ReactNode; label: string; end?: ReactNode }) {
+  const active = useStore((s) => s.view.kind === 'screen' && s.view.screen === screen)
   return (
-    <button type="button" className="nav-item" aria-current={active ? 'page' : undefined} onClick={() => openTab({ kind: tab })}>
+    <button type="button" className="nav-item" aria-current={active ? 'page' : undefined} onClick={() => openScreen(screen)}>
       {icon}
       {label}
       {end && <span className="end">{end}</span>}
@@ -152,7 +144,7 @@ function buildTree(sessions: Session[], query: string): Tree {
   const q = query.trim().toLowerCase()
   if (q) {
     const hit = (s: Session): boolean =>
-      [s.title, s.agent, s.taskId ?? '', s.branch ?? '', s.cwd].some((v) => v.toLowerCase().includes(q)) ||
+      [s.title, s.agent, s.model ?? '', s.taskId ?? '', s.branch ?? '', s.cwd].some((v) => v.toLowerCase().includes(q)) ||
       (kids.get(s.id) ?? []).some(hit)
     roots = roots.filter(hit)
   }
@@ -165,10 +157,16 @@ function ProjectNode({ ws, tree, filtering }: { ws: Workspace; tree: Tree; filte
   const activeCwd = useActiveCwd()
 
   const mine = tree.roots.filter((s) => s.workspaceId === ws.id)
-  const list: Worktree[] = worktrees?.length ? worktrees : [{ path: ws.path, branch: null, head: '', main: true }]
-  const known = new Set(list.map((w) => normPath(w.path)))
-  const unknown = mine.some((s) => !known.has(normPath(s.cwd)))
   const loaded = worktrees !== undefined
+  // Git worktrees, plus folders sessions run in that git does not list (so every session sits under a worktree).
+  const list = useMemo(() => {
+    const out: Worktree[] = worktrees?.length ? [...worktrees] : [{ path: ws.path, branch: null, head: '', main: true }]
+    for (const s of mine) {
+      if (!out.some((w) => normPath(w.path) === normPath(s.cwd))) out.push({ path: s.cwd, branch: s.branch, head: '', main: false })
+    }
+    return out
+  }, [worktrees, ws.path, mine])
+  const unknown = loaded && list.length > (worktrees?.length || 1)
 
   useEffect(() => {
     if (open && ws.isGit && (!loaded || unknown)) void loadWorktrees(ws.id)
@@ -184,102 +182,117 @@ function ProjectNode({ ws, tree, filtering }: { ws: Workspace; tree: Tree; filte
         <ChevronRight className="chev" aria-hidden />
         <FolderGit2 aria-hidden />
         <span className="label">{ws.name}</span>
-        <span className="actions">
-          <RowAction label="Новый чат здесь" icon={<MessageSquarePlus />} onClick={() => void newChat({ workspaceId: ws.id, cwd: ws.path })} />
-          <RowAction label="Новый терминал здесь" icon={<SquareTerminal />} onClick={() => openDialog({ kind: 'terminal', workspaceId: ws.id, cwd: ws.path })} />
-          {ws.isGit && <RowAction label="Новое рабочее дерево" icon={<GitBranchPlus />} onClick={() => openDialog({ kind: 'worktree', workspaceId: ws.id })} />}
-        </span>
+        {ws.isGit && (
+          <span className="actions">
+            <RowAction label="Новое рабочее дерево" icon={<GitBranchPlus />} onClick={() => openDialog({ kind: 'worktree', workspaceId: ws.id })} />
+          </span>
+        )}
       </div>
-      {expanded && (
-        <div>
-          {list.map((wt) => {
-            const here = mine.filter((s) => normPath(s.cwd) === normPath(wt.path))
-            if (filtering && here.length === 0) return null
-            return <WorktreeNode key={wt.path} ws={ws} wt={wt} sessions={here} kids={tree.kids} active={!!activeCwd && normPath(activeCwd) === normPath(wt.path)} />
-          })}
-          {mine.filter((s) => !list.some((w) => normPath(w.path) === normPath(s.cwd))).map((s) => (
-            <SessionNode key={s.id} s={s} kids={tree.kids} d={1} />
-          ))}
-        </div>
-      )}
+      {expanded && list.map((wt) => {
+        const here = mine.filter((s) => normPath(s.cwd) === normPath(wt.path))
+        if (filtering && here.length === 0) return null
+        return <WorktreeNode key={wt.path} ws={ws} wt={wt} sessions={here} kids={tree.kids} active={!!activeCwd && normPath(activeCwd) === normPath(wt.path)} />
+      })}
     </div>
   )
 }
 
 function WorktreeNode({ ws, wt, sessions, kids, active }: { ws: Workspace; wt: Worktree; sessions: Session[]; kids: Map<string, Session[]>; active: boolean }) {
-  const pick = () => setState({ cwd: wt.path, panel: true })
-  const name = wt.branch ?? (wt.main ? 'основная копия' : basename(wt.path))
+  const changed = useStore((s) => s.git[normPath(wt.path)]?.status?.files.length ?? 0)
+  const pick = () => openWorktree(wt.path)
+  const name = wt.branch ?? (wt.main ? ws.name : basename(wt.path))
+  const where = { workspaceId: ws.id, cwd: wt.path }
   return (
     <div className="wt" data-active={active}>
-      <div className="tree-row" role="button" style={depth(1)} tabIndex={0} title={wt.path} onClick={pick} onKeyDown={activate(pick)}>
-        <GitBranch aria-hidden />
-        <span className="label mono" style={{ fontSize: 12 }}>{name}</span>
-        {wt.main && wt.branch && <span className="meta">основная</span>}
+      <div className="tree-row tree-wt" role="button" tabIndex={0} title={`${wt.main ? 'Основная рабочая копия' : 'Рабочее дерево'}\n${wt.path}`} aria-current={active ? 'location' : undefined} onClick={pick} onKeyDown={activate(pick)}>
+        {wt.main ? <House aria-label="основная копия" /> : <GitBranch aria-hidden />}
+        <span className="label">{name}</span>
+        {changed > 0 && <span className="wt-changes num" title={`Изменённых файлов: ${changed}`}>{changed}</span>}
         <span className="actions">
-          <RowAction label="Новый чат в этом дереве" icon={<MessageSquarePlus />} onClick={() => void newChat({ workspaceId: ws.id, cwd: wt.path })} />
-          <RowAction label="Новый терминал в этом дереве" icon={<SquareTerminal />} onClick={() => openDialog({ kind: 'terminal', workspaceId: ws.id, cwd: wt.path })} />
+          <RowAction label="Новый чат в этом дереве" icon={<MessageSquarePlus />} onClick={() => void newChat(where)} />
+          <RowAction label="Новый терминал в этом дереве" icon={<SquareTerminal />} onClick={() => void newTerminal(where)} />
         </span>
       </div>
-      {sessions.map((s) => <SessionNode key={s.id} s={s} kids={kids} d={2} />)}
+      {sessions.map((s) => <SessionNode key={s.id} s={s} kids={kids} />)}
     </div>
   )
 }
 
-function SessionNode({ s, kids, d }: { s: Session; kids: Map<string, Session[]>; d: number }) {
+/** A top-level session and, under it, its workers (harness chats) and the agent's own internal sub-agents. */
+function SessionNode({ s, kids }: { s: Session; kids: Map<string, Session[]> }) {
   const children = kids.get(s.id) ?? []
+  const internal = useStore((st) => st.subagents[s.id])
+  const [open, setOpen] = useState(true)
+  const has = children.length > 0 || !!internal?.items.length
   return (
     <>
-      <SessionRow s={s} d={d} />
-      {children.length > 0 && (
-        <div className="rail" style={depth(d)} aria-label={`Исполнители ${s.title}`}>
-          {children.map((c) => <SessionNode key={c.id} s={c} kids={kids} d={0} />)}
+      <SessionRow s={s} nested={false} caret={has ? { open, toggle: () => setOpen(!open) } : undefined} />
+      {has && open && (
+        <div className="tree-kids" role="group" aria-label={`Агенты сессии ${s.title}`}>
+          {children.map((c) => <SessionRow key={c.id} s={c} nested />)}
+          {internal?.items.map((a) => (
+            <div
+              key={a.id}
+              className="tree-row tree-sess tree-sub"
+              title={`${a.name}: ${subStateLabel(a.state)} (внутренний агент, только просмотр)${a.lastText ? `\n${a.lastText}` : ''}`}
+            >
+              <SubStateIcon state={a.state} />
+              <span className="label">
+                {a.name}
+                {a.activity?.tool && <span className="sess-doing"> · {a.activity.tool}</span>}
+              </span>
+              {a.tokensIn + a.tokensOut > 0 && <span className="meta">{tokens(a.tokensIn + a.tokensOut)}</span>}
+              {a.model && <span className="agent">{a.model}</span>}
+            </div>
+          ))}
         </div>
       )}
-      <InternalAgents sessionId={s.id} d={d} />
     </>
   )
 }
 
-/** Agent-internal sub-agents (read-only registry rows): no chat of their own, so no actions. */
-function InternalAgents({ sessionId, d }: { sessionId: string; d: number }) {
-  const sub = useStore((st) => st.subagents[sessionId])
-  if (!sub?.items.length) return null
-  return (
-    <div className="rail rail-sub" style={depth(d)} aria-label="Внутренние агенты">
-      <div className="tree-sublabel">внутренние · {sub.items.length}</div>
-      {sub.items.map((a) => (
-        <div key={a.id} className="tree-row tree-sub" title={`${a.name} — ${subStateLabel(a.state)}${a.lastText ? `
-${a.lastText}` : ''}`}>
-          <SubStateIcon state={a.state} />
-          <span className="label">{a.name}</span>
-          <span className="agent">{a.activity?.tool ?? a.model ?? ''}</span>
-          {a.tokensIn + a.tokensOut > 0 && <span className="meta">{tokens(a.tokensIn + a.tokensOut)}</span>}
-        </div>
-      ))}
-    </div>
-  )
-}
-
-function SessionRow({ s, d }: { s: Session; d: number }) {
-  const current = useStore((st) => st.active === tabKey({ kind: 'session', id: s.id }))
+function SessionRow({ s, nested, caret }: { s: Session; nested: boolean; caret?: { open: boolean; toggle: () => void } }) {
+  const current = useStore((st) => st.view.kind === 'wt' && st.wt[normPath(st.view.cwd)]?.active === `s:${s.id}`)
   const now = useNow()
+  const tool = useCurrentTool(s)
+  const starting = useStartingLabel(s)
   const open = () => openSession(s.id)
+  const preview = s.preview.split('\n').map((l) => l.trim()).filter(Boolean).pop()
+  const doing = starting || (nested ? (tool || (s.status === 'running' ? 'работает' : '')) : (tool || preview))
   return (
     <div
-      className="tree-row"
+      className="tree-row tree-sess"
       role="button"
       data-s={s.status}
-      style={depth(d)}
+      data-nested={nested || undefined}
+      data-enter={s.createdAt > APP_START || undefined}
       tabIndex={0}
-      aria-current={current}
-      title={`${s.title}\n${s.cwd}`}
+      aria-current={current ? 'true' : undefined}
+      title={`${s.title}${preview ? `\n${preview}` : ''}\n${s.cwd}`}
       onClick={open}
       onKeyDown={activate(open)}
+      style={depth(0)}
     >
-      {s.kind === 'terminal' && s.status !== 'exited' ? <SquareTerminal aria-label="терминал" /> : <StatusIcon session={s} />}
-      <span className="label">{s.title || s.id}</span>
-      <span className="agent">{s.model ?? s.agent}</span>
-      <span className="meta">{relTime(s.lastActivityAt, now)}</span>
+      {s.kind === 'terminal' && s.status !== 'exited' ? <SquareTerminal className="st" aria-label="терминал" /> : <StatusIcon session={s} />}
+      <span className="label">
+        {s.title || s.id}
+        {doing && <span className="sess-doing">{nested ? ' · ' : ' - '}{doing}</span>}
+      </span>
+      <span className="agent">{s.kind === 'terminal' ? 'shell' : s.model ?? s.agent}</span>
+      {caret ? (
+        <button
+          type="button"
+          className="caret"
+          aria-expanded={caret.open}
+          aria-label={caret.open ? 'Свернуть агентов' : 'Показать агентов'}
+          onClick={(e) => { e.stopPropagation(); caret.toggle() }}
+          onKeyDown={(e) => e.stopPropagation()}
+        >
+          <ChevronDown />
+        </button>
+      ) : (
+        <span className="meta">{relTime(s.lastActivityAt, now)}</span>
+      )}
     </div>
   )
 }

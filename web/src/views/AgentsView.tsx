@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { Bot, ListPlus, MessageSquarePlus, Send, Square, Trash2 } from 'lucide-react'
 import { tryApi } from '../api'
 import { openDialog, openSession, openTask, setState, useStore, without } from '../store'
-import { basename, relTime, ROLE, tokens } from '../lib/format'
+import { relTime, ROLE, tokens } from '../lib/format'
 import { useNow } from '../lib/useNow'
 import type { Session, SessionStatus } from '../types'
 import { Branch, StatusIcon, statusText } from '../components/bits'
@@ -39,7 +39,7 @@ export function AgentsView() {
         <span className="grow" />
         <button type="button" className="btn" onClick={() => openDialog({ kind: 'chat' })}>
           <MessageSquarePlus />
-          Новый чат
+          Новый чат…
         </button>
       </header>
       {chats.length === 0 ? (
@@ -106,10 +106,11 @@ function AgentCard({ s, nested, parent }: { s: Session; nested: boolean; parent?
       <div className="agent-top">
         <StatusIcon session={s} />
         <button type="button" className="agent-title ellipsis" onClick={() => openSession(s.id)} title="Открыть чат">{s.title || s.id}</button>
-        <span className="role" data-role={s.role}>{ROLE[s.role]}</span>
+        {s.role !== 'solo' && <span className="role" data-role={s.role}>{ROLE[s.role]}</span>}
       </div>
       <div className="agent-meta">
-        <span className="mono">{agents.find((a) => a.id === s.agent)?.label ?? s.agent}</span>
+        <span>{agents.find((a) => a.id === s.agent)?.label ?? s.agent}</span>
+        {s.model && <span className="mono muted">{s.model}</span>}
         <span className="muted">{statusText(s)}</span>
         {s.queued > 0 && <span className="chip chip-run">в очереди: {s.queued}</span>}
         {s.tokensIn + s.tokensOut > 0 && (
@@ -125,12 +126,9 @@ function AgentCard({ s, nested, parent }: { s: Session; nested: boolean; parent?
       {!nested && parent && (
         <button type="button" className="agent-parent" onClick={() => openSession(parent.id)}>↳ от {parent.title}</button>
       )}
-      <div className="agent-where" title={s.cwd}>
-        <span className="ellipsis">{basename(s.cwd)}</span>
-        <Branch name={s.branch} />
-      </div>
+      {s.branch && <div className="agent-where" title={s.cwd}><Branch name={s.branch} /></div>}
       {s.preview && <p className="agent-preview">{s.preview}</p>}
-      <div className="agent-foot">
+      <div className="agent-foot" data-open={mode !== null || undefined}>
         <span className="muted num">{relTime(s.lastActivityAt, now)}</span>
         <span className="grow" />
         <button type="button" className="icon-btn icon-btn-sm" aria-label="Написать агенту" title="Написать" aria-pressed={mode === 'message'} onClick={() => setMode(mode === 'message' ? null : 'message')}><Send /></button>

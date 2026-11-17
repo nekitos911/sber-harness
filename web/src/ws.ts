@@ -1,5 +1,5 @@
-import { api, errorText, wsUrl } from './api'
-import { closeTab, getState, setState, tabKey, toast, upsert, without, type Tab } from './store'
+import { api, ApiError, errorText, wsUrl } from './api'
+import { closeSessionTab, getState, setState, tabKey, toast, upsert, without, type WtTabs } from './store'
 import type { AppState, ClientEvent, Message, ServerEvent, SubAgent, Worktree } from './types'
 
 type TermListener = (data: string, replay: boolean) => void
@@ -11,6 +11,7 @@ const terms = new Map<string, TermListener>()
 
 export function connect() {
   window.clearTimeout(retryTimer)
+  if (getState().authExpired) return
   setState({ conn: 'connecting' })
   const ws = new WebSocket(wsUrl())
   socket = ws
@@ -29,6 +30,9 @@ export function connect() {
     if (socket !== ws) return
     socket = null
     setState({ conn: 'closed' })
+    if (getState().authExpired) return
+    // A restarted server rejects our old token: the probe flips authExpired and reconnecting stops making sense.
+    api('GET', '/state').catch((e) => { if (e instanceof ApiError && e.status === 401) window.clearTimeout(retryTimer) })
     const delay = Math.min(15000, 500 * 2 ** retry++) * (0.8 + Math.random() * 0.4)
     retryTimer = window.setTimeout(connect, delay)
   }
@@ -58,16 +62,20 @@ async function refreshState() {
   try {
     const st = await api<AppState>('GET', '/state')
     setState((s) => {
+      // Session tabs of sessions deleted while we were away disappear from their worktrees.
       const ids = new Set(st.sessions.map((x) => x.id))
-      const kept = s.tabs.filter((t) => t.kind !== 'session' || ids.has(t.id))
-      const tabs: Tab[] = kept.length ? kept : [{ kind: 'board' }]
-      const active = tabs.some((t) => tabKey(t) === s.active) ? s.active : tabKey(tabs[0])
+      const wt: Record<string, WtTabs> = {}
+      for (const [k, e] of Object.entries(s.wt)) {
+        const tabs = e.tabs.filter((t) => t.kind !== 'session' || ids.has(t.id))
+        const active = tabs.some((t) => tabKey(t) === e.active) ? e.active : tabs[0] ? tabKey(tabs[0]) : null
+        wt[k] = tabs.length === e.tabs.length ? e : { ...e, tabs, active }
+      }
       return {
         loaded: true,
         tasks: st.tasks, sessions: st.sessions, workspaces: st.workspaces, notifications: st.notifications,
         agents: st.agents, defaultAgent: st.defaultAgent ?? null,
         shell: st.shell?.command ?? '', integrations: st.integrations ?? { tasks: false, pr: false },
-        tabs, active,
+        wt,
       }
     })
     // Messages may have been missed while disconnected: reload the transcripts we hold.
@@ -92,6 +100,12 @@ export async function loadMessages(sessionId: string) {
   } finally {
     loading.delete(sessionId)
   }
+}
+
+/** Load a transcript once (sidebar and workers panel read the current tool from it); WS keeps it live after. */
+export function ensureMessages(sessionId: string) {
+  if (getState().messages[sessionId] || loading.has(sessionId)) return
+  loadMessages(sessionId).catch(() => undefined)
 }
 
 /** Agent-internal sub-agents of a session (read-only registry); live updates come over WS. */
@@ -122,7 +136,7 @@ function apply(ev: ServerEvent) {
       setState((s) => ({ sessions: upsert(s.sessions, ev.session) }))
       break
     case 'session.del':
-      closeTab(tabKey({ kind: 'session', id: ev.id }))
+      closeSessionTab(ev.id)
       setState((s) => {
         const messages = { ...s.messages }
         const subagents = { ...s.subagents }

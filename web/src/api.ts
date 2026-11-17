@@ -1,4 +1,4 @@
-import { toast } from './store'
+import { setState, toast } from './store'
 
 const token = document.querySelector<HTMLMetaElement>('meta[name="harness-token"]')?.content ?? ''
 
@@ -30,6 +30,11 @@ export async function api<T>(method: Method, path: string, body?: unknown): Prom
   if (text) {
     try { data = JSON.parse(text) } catch { data = text }
   }
+  if (res.status === 401) {
+    // The page holds the token of a previous server run; only a reload picks up the new one.
+    setState({ authExpired: true })
+    throw new ApiError('Сервер перезапущен — обновите страницу', 401)
+  }
   if (!res.ok) {
     const err = data && typeof data === 'object' && 'error' in data ? String(data.error) : `HTTP ${res.status}`
     throw new ApiError(err, res.status)
@@ -42,7 +47,7 @@ export async function tryApi<T>(method: Method, path: string, body?: unknown): P
   try {
     return await api<T>(method, path, body)
   } catch (e) {
-    toast(errorText(e), 'error')
+    if (!(e instanceof ApiError && e.status === 401)) toast(errorText(e), 'error')
     return undefined
   }
 }

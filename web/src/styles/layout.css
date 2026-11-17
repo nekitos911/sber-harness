@@ -1,7 +1,7 @@
 /* ---------- shell: top bar / sidebar | main | panel / status bar ---------- */
 
 .app {
-  --sb-w: 300px;
+  --sb-w: 288px;
   display: grid; height: 100%;
   grid-template-rows: 36px minmax(0, 1fr) 24px;
   grid-template-columns: var(--sb-w) minmax(0, 1fr) auto;
@@ -12,23 +12,23 @@
   grid-column: 1 / -1; display: flex; align-items: stretch; min-width: 0;
   border-bottom: 1px solid var(--rule); background: var(--ground);
 }
-.topbar-left { display: flex; align-items: center; gap: 2px; padding: 0 6px 0 10px; flex-shrink: 0; width: max(var(--sb-w), 132px); }
-.topbar-left .brand-mark { width: 16px; height: 16px; margin-right: 6px; color: var(--ink); }
-.topbar-right { display: flex; align-items: center; gap: 2px; padding: 0 6px; flex-shrink: 0; border-left: 1px solid var(--rule-soft); }
-.topbar-right .btn { height: 24px; font-size: 12px; }
+.topbar-left { display: flex; align-items: center; gap: 2px; padding: 0 6px 0 12px; flex-shrink: 0; width: max(var(--sb-w), 132px); border-right: 1px solid var(--rule); }
+.topbar-left .brand-mark { width: 16px; height: 16px; margin-right: 8px; color: var(--ink); }
+.topbar-right { display: flex; align-items: center; gap: 2px; padding: 0 6px; flex-shrink: 0; }
+.topbar-right .btn { height: 24px; font-size: 12px; color: var(--ink-3); }
 
 .statusbar {
   grid-column: 1 / -1; display: flex; align-items: center; gap: 14px; padding: 0 10px; min-width: 0;
   border-top: 1px solid var(--rule); background: var(--ground); color: var(--ink-3); font-size: 11.5px;
 }
-.statusbar > span { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.statusbar > span { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .statusbar .end { margin-left: auto; }
 .statusbar .conn::after { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--lamp-done); }
 .statusbar .conn[data-state="closed"] { color: var(--lamp-fail); }
 .statusbar .conn[data-state="closed"]::after { background: var(--lamp-fail); }
 .statusbar .conn[data-state="connecting"]::after { background: var(--lamp-run); }
 
-.main { grid-column: 2; grid-row: 2; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.main { grid-column: 2; grid-row: 2; display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--canvas); }
 
 .banner {
   display: flex; align-items: center; gap: 10px; padding: 6px 12px; flex-shrink: 0;
@@ -49,14 +49,15 @@
 }
 .sb-resize:hover, .sb-resize:focus-visible { background: var(--rule-strong); outline: none; }
 
-.sb-search { position: relative; padding: 10px 10px 6px; }
-.sb-search svg { position: absolute; left: 19px; top: 17px; width: 14px; height: 14px; color: var(--ink-4); pointer-events: none; }
-.sb-search .input { padding-left: 28px; background: var(--deck); }
+.sb-search { position: relative; padding: 10px 8px 6px; }
+.sb-search svg { position: absolute; left: 17px; top: 17px; width: 14px; height: 14px; color: var(--ink-4); pointer-events: none; }
+.sb-search .input { height: 28px; padding-left: 28px; background: var(--well); }
 
-.nav { display: grid; gap: 1px; padding: 2px 6px 8px; }
+.nav { display: grid; gap: 1px; padding: 2px 6px 10px; }
 .nav-item {
-  display: flex; align-items: center; gap: 10px; height: 28px; padding: 0 8px;
+  display: flex; align-items: center; gap: 9px; height: 28px; padding: 0 8px; width: 100%;
   border: 0; border-radius: var(--r-1); background: transparent; color: var(--ink-2); text-align: left;
+  transition: background-color var(--t-fast) ease, color var(--t-fast) ease;
 }
 .nav-item svg { width: 15px; height: 15px; color: var(--ink-3); flex-shrink: 0; }
 .nav-item:hover { background: var(--deck-2); color: var(--ink); }
@@ -65,72 +66,96 @@
 .nav-item .end { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; }
 
 .sb-head {
-  display: flex; align-items: center; gap: 2px; height: 30px; padding: 0 6px 0 14px; flex-shrink: 0;
-  color: var(--ink-3); font-size: 12px; font-weight: 600;
+  display: flex; align-items: center; gap: 2px; height: 28px; padding: 0 6px 0 14px; flex-shrink: 0;
+  border-top: 1px solid var(--rule-soft); color: var(--ink-3); font-size: 11.5px; font-weight: 600;
 }
 .sb-head span { flex: 1; }
 
 .tree { flex: 1; min-height: 0; overflow: auto; padding: 0 6px 12px; }
-.tree-group { margin-bottom: 6px; }
+.tree-group { margin-bottom: 8px; }
 .tree-row {
   position: relative; display: flex; align-items: center; gap: 7px;
   height: 26px; padding: 0 4px 0 calc(6px + var(--depth, 0) * 16px);
-  border: 1px solid transparent; border-radius: var(--r-2); color: var(--ink-2); cursor: pointer; user-select: none;
+  border-radius: var(--r-1); color: var(--ink-2); cursor: pointer; user-select: none;
+  transition: background-color var(--t-fast) ease;
 }
 .tree-row:hover { background: var(--deck-2); color: var(--ink); }
 .tree-row:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
 .tree-row > svg { width: 14px; height: 14px; flex-shrink: 0; color: var(--ink-3); }
 .tree-row .label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tree-row .meta { font-size: 11px; color: var(--ink-4); flex-shrink: 0; font-variant-numeric: tabular-nums; }
-.tree-row .agent { font-family: var(--font-mono); font-size: 11px; color: var(--ink-3); flex-shrink: 0; max-width: 72px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tree-row .actions { display: none; }
+.tree-row .meta { font-size: 11px; color: var(--ink-3); flex-shrink: 0; font-variant-numeric: tabular-nums; min-width: 34px; text-align: right; }
+.tree-row .agent { font-family: var(--font-mono); font-size: 11px; color: var(--ink-3); flex-shrink: 0; max-width: 84px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tree-row .actions { display: none; gap: 1px; }
 .tree-row:hover .actions, .tree-row:focus-within .actions { display: flex; }
-.tree-row:has(.actions):hover .meta, .tree-row:has(.actions):focus-within .meta { display: none; }
+.tree-row:has(.actions):hover .wt-changes, .tree-row:has(.actions):focus-within .wt-changes { display: none; }
 
 .tree-project { font-weight: 600; color: var(--ink); }
-.tree-project .chev { width: 12px; height: 12px; color: var(--ink-4); transition: transform 120ms var(--ease-out); }
+.tree-project .chev { width: 12px; height: 12px; color: var(--ink-4); transition: transform var(--t-fast) var(--ease-out); }
 .tree-project[aria-expanded="true"] .chev { transform: rotate(90deg); }
 
-/* A worktree and its sessions form a card; the one holding the active tab is highlighted. */
-.wt { border: 1px solid transparent; border-radius: var(--r-2); margin: 1px 0; }
+/* A worktree and its sessions form a card; the one on screen is highlighted. */
+.wt { border: 1px solid transparent; border-radius: var(--r-2); margin: 2px 0 2px 10px; padding: 1px 0; transition: background-color var(--t-fast) ease, border-color var(--t-fast) ease; }
 .wt[data-active="true"] { background: var(--deck); border-color: var(--rule); }
-.wt .tree-row:hover { background: var(--deck-2); }
+.tree-wt { padding-left: 6px; }
+.tree-wt .label { font-weight: 500; color: var(--ink); }
+.wt-changes { flex-shrink: 0; padding: 0 5px; border-radius: 3px; background: var(--run-soft); color: var(--lamp-run); font-size: 10.5px; font-weight: 600; line-height: 16px; }
 
-.tree-row[data-s="failed"], .tree-row[data-s="error"] { color: var(--lamp-fail); }
-.tree-row[aria-current="true"] { background: var(--deck-3); color: var(--ink); }
+/* Session activity rows: status, title - what it is doing, model, time. */
+.tree-sess { height: 22px; gap: 6px; padding-left: 22px; font-size: 12.5px; }
+.tree-sess .label { color: var(--ink); }
+.tree-sess .st { width: 13px; height: 13px; }
+.sess-doing { color: var(--ink-3); }
+.tree-sess[data-s="failed"] .label, .tree-sess[data-s="error"] .label { color: var(--lamp-fail); }
+.tree-sess[aria-current="true"] { background: var(--deck-3); }
+.tree-sess[data-nested] { padding-left: 40px; }
+.tree-kids { position: relative; }
+.tree-kids::before { content: ""; position: absolute; left: 28px; top: 0; bottom: 8px; width: 1px; background: var(--rule-strong); }
+.tree-sub { cursor: default; padding-left: 40px; opacity: 0.72; }
+.tree-sub:hover { background: transparent; }
+.tree-sess[data-enter] { animation: slide-in 200ms var(--ease-out); }
 
-/* Rails: coordinator -> worker connectors. */
-.rail { position: relative; margin-left: calc(13px + var(--depth, 0) * 16px); }
-.rail::before { content: ""; position: absolute; left: 0; top: -3px; bottom: 13px; width: 1px; background: var(--rule-strong); }
-.rail > .tree-row { padding-left: 14px; }
-.rail > .tree-row::before { content: ""; position: absolute; left: 0; top: 50%; width: 9px; height: 1px; background: var(--rule-strong); }
+.caret {
+  display: grid; place-items: center; width: 34px; height: 18px; flex-shrink: 0; padding: 0;
+  border: 0; border-radius: 3px; background: transparent; color: var(--ink-3);
+}
+.caret:hover { background: var(--deck-3); color: var(--ink); }
+.caret svg { width: 13px; height: 13px; transition: transform var(--t-fast) var(--ease-out); }
+.caret[aria-expanded="false"] svg { transform: rotate(-90deg); }
 
-.tree-note { padding: 2px 6px 4px calc(28px + var(--depth, 0) * 16px); font-size: 12px; color: var(--ink-4); }
+.tree-note { padding: 2px 6px 4px calc(28px + var(--depth, 0) * 16px); font-size: 12px; color: var(--ink-3); }
+.sb-empty { display: grid; gap: 10px; justify-items: start; padding: 8px 10px; color: var(--ink-3); font-size: 12.5px; }
 
-.sb-foot { display: flex; align-items: center; gap: 2px; padding: 6px; flex-shrink: 0; border-top: 1px solid var(--rule-soft); }
-.sb-foot .btn { flex: 1; justify-content: flex-start; }
+.sb-foot { display: flex; align-items: center; gap: 2px; padding: 4px 6px; flex-shrink: 0; border-top: 1px solid var(--rule-soft); }
+.sb-foot .nav-item { width: auto; flex: 1; }
 
-/* ---------- tabs (inside the top bar) ---------- */
+/* ---------- worktree tabs (inside the top bar) ---------- */
 
+.tabstrip { display: flex; align-items: stretch; flex: 1; min-width: 0; }
 .tabbar { display: flex; align-items: stretch; flex: 0 1 auto; min-width: 0; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
 .tabbar::-webkit-scrollbar { display: none; }
-.tabbar > .icon-btn { align-self: center; margin: 0 4px; }
+.tabstrip > .menu-anchor { align-self: center; margin: 0 4px; }
 
 .tab {
   position: relative; display: flex; align-items: center; gap: 7px; flex-shrink: 0;
   max-width: 220px; padding: 0 4px 0 12px;
   border-right: 1px solid var(--rule-soft); color: var(--ink-3); cursor: pointer; user-select: none; font-size: 12.5px;
+  transition: background-color var(--t-fast) ease, color var(--t-fast) ease, opacity var(--t-fast) var(--ease-in), transform var(--t-fast) var(--ease-in);
 }
-.tab:first-child { border-left: 1px solid var(--rule-soft); }
 .tab:hover { color: var(--ink-2); background: var(--deck); }
-.tab[aria-selected="true"] { color: var(--ink); background: var(--deck-2); }
+/* The active tab takes the canvas colour and covers the bar's rule: it reads as attached to the content below. */
+.tab[aria-selected="true"] { color: var(--ink); background: var(--canvas); box-shadow: 0 1px 0 var(--canvas); }
 .tab > svg { width: 14px; height: 14px; flex-shrink: 0; }
+.tab .st { width: 13px; height: 13px; }
 .tab-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tab[data-file] .tab-title { font-style: italic; }
+.tab .gs { width: auto; margin-left: -3px; }
 .tab-close { opacity: 0; }
 .tab:hover .tab-close, .tab[aria-selected="true"] .tab-close, .tab-close:focus-visible { opacity: 1; }
 .tab-dirty { width: 7px; height: 7px; border-radius: 50%; background: var(--ink-2); flex-shrink: 0; margin: 0 8px; }
 .tab:hover .tab-dirty { display: none; }
 .tab:not(:hover) .tab-dirty + .tab-close { display: none; }
+.tab[data-enter] { animation: rise-in var(--t-base) var(--ease-out); }
+.tab[data-leaving] { opacity: 0; transform: translateY(-3px); pointer-events: none; }
 
 .panels { position: relative; flex: 1; min-height: 0; }
 .tabpanel { position: absolute; inset: 0; display: flex; flex-direction: column; min-height: 0; }
@@ -150,26 +175,15 @@
 
 /* ---------- popover menu ---------- */
 
+.menu-anchor { position: relative; align-self: center; }
 .menu {
-  position: absolute; z-index: 30; min-width: 200px; padding: 4px;
+  position: absolute; z-index: 30; min-width: 220px; padding: 4px;
   border-radius: var(--r-2); background: var(--deck); box-shadow: var(--shadow-pop);
-  animation: menu-in 140ms var(--ease-out); transform-origin: top left;
+  animation: pop-in 140ms var(--ease-out);
 }
 .menu button {
   display: flex; align-items: center; gap: 8px; width: 100%; height: 28px; padding: 0 8px;
-  border: 0; border-radius: var(--r-1); background: transparent; color: var(--ink-2); text-align: left;
+  border: 0; border-radius: var(--r-1); background: transparent; color: var(--ink-2); text-align: left; white-space: nowrap;
 }
 .menu button:hover, .menu button:focus-visible { background: var(--deck-2); color: var(--ink); outline: none; }
 .menu svg { width: 14px; height: 14px; color: var(--ink-3); }
-@keyframes menu-in { from { opacity: 0; transform: scale(0.97); } }
-
-.sb-new { padding: 0 10px 8px; }
-.sb-new .btn { width: 100%; justify-content: flex-start; }
-
-/* Agent-internal sub-agents: dashed rail, no actions (they have no chat of their own). */
-.rail-sub::before { background: none; border-left: 1px dashed var(--rule-strong); width: 0; }
-.rail-sub > .tree-row::before { background: none; border-top: 1px dashed var(--rule-strong); height: 0; }
-.tree-sublabel { padding: 2px 0 0 14px; color: var(--ink-4); font-size: 11px; }
-.tree-sub { cursor: default; height: 24px; font-size: 12px; color: var(--ink-3); }
-.tree-sub:hover { background: transparent; color: var(--ink-2); }
-.tree-sub .st { width: 13px; height: 13px; }

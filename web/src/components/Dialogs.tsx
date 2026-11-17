@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api, errorText, qs, tryApi } from '../api'
-import { closeDialog, setState, toast, useStore, type DialogRequest } from '../store'
+import { closeDialog, openWorktree, setState, toast, useStore, type DialogRequest } from '../store'
 import { adoptSession } from '../lib/actions'
 import { loadWorktrees } from '../ws'
 import { basename, isAbsolutePath } from '../lib/format'
@@ -51,7 +51,8 @@ function WorkspaceDialog() {
       onSubmit={() => run(async () => {
         const ws = await tryApi<Workspace>('POST', '/workspaces', { path: path.trim(), name: name.trim() || undefined })
         if (!ws) return
-        setState((s) => ({ workspaces: s.workspaces.some((w) => w.id === ws.id) ? s.workspaces : [...s.workspaces, ws], cwd: ws.path }))
+        setState((s) => ({ workspaces: s.workspaces.some((w) => w.id === ws.id) ? s.workspaces : [...s.workspaces, ws] }))
+        openWorktree(ws.path)
         toast(`Проект «${ws.name}» добавлен`, 'ok')
         closeDialog()
       })}
@@ -258,7 +259,7 @@ function WorktreeDialog({ workspaceId }: { workspaceId?: string }) {
         const wt = await tryApi<Worktree>('POST', `/workspaces/${encodeURIComponent(repo)}/worktrees`, { name: name.trim(), base: base.trim() || undefined })
         if (!wt) return
         await loadWorktrees(repo)
-        setState({ cwd: wt.path })
+        openWorktree(wt.path)
         toast(`Рабочее дерево ${wt.branch ?? name} создано`, 'ok')
         closeDialog()
       })}
@@ -327,6 +328,17 @@ function StartDialog({ taskId }: { taskId: string }) {
 
 // ---------- pull request ----------
 
+// sourcecontrol limits are bytes of UTF-8, not characters: a Cyrillic letter takes two.
+const PR_TITLE_BYTES = 100
+const PR_BODY_BYTES = 512
+const utf8 = new TextEncoder()
+const bytes = (s: string) => utf8.encode(s).length
+
+function ByteCount({ value, limit }: { value: string; limit: number }) {
+  const n = bytes(value)
+  return <span className="byte-count num" data-over={n > limit || undefined} aria-live="polite">{n}/{limit} байт</span>
+}
+
 function PrDialog({ cwd }: { cwd: string }) {
   const tasks = useStore((s) => s.tasks)
   const [suggest, setSuggest] = useState<GitSuggest | null>(null)
@@ -347,19 +359,20 @@ function PrDialog({ cwd }: { cwd: string }) {
   }, [cwd])
 
   const targets = tasks.find((t) => t.id === suggest?.taskId)?.targets ?? []
+  const over = bytes(title.trim()) > PR_TITLE_BYTES || bytes(body) > PR_BODY_BYTES
 
   return (
     <Modal
       title="Создать pull request"
       submitLabel="Создать PR"
       busy={busy}
-      disabled={!title.trim() || !base.trim()}
+      disabled={!title.trim() || !base.trim() || over}
       wide
       onClose={closeDialog}
       onSubmit={() => run(async () => {
-        const res = await tryApi<{ url: string }>('POST', '/git/pr', { cwd, title: title.trim(), body, base: base.trim() })
+        const res = await tryApi<{ url: string; existing?: boolean }>('POST', '/git/pr', { cwd, title: title.trim(), body, base: base.trim() })
         if (!res) return
-        toast('Pull request создан', 'ok', res.url)
+        toast(res.existing ? 'PR уже открыт' : 'Pull request создан', res.existing ? 'info' : 'ok', res.url)
         closeDialog()
       })}
     >
@@ -367,12 +380,12 @@ function PrDialog({ cwd }: { cwd: string }) {
         {suggest?.branch ? <>Из <span className="mono">{suggest.branch}</span> · {basename(cwd)}</> : basename(cwd)}
       </p>
       <label className="field">
-        <span>Заголовок</span>
-        <input className="input" value={title} onChange={(e) => setTitle(e.target.value)} placeholder={suggest ? '' : 'Загрузка…'} />
+        <span className="row" style={{ justifyContent: 'space-between' }}>Заголовок <ByteCount value={title.trim()} limit={PR_TITLE_BYTES} /></span>
+        <input className="input" aria-invalid={bytes(title.trim()) > PR_TITLE_BYTES} value={title} onChange={(e) => setTitle(e.target.value)} placeholder={suggest ? '' : 'Загрузка…'} />
       </label>
       <div className="field">
         <span className="row" style={{ justifyContent: 'space-between' }}>
-          <span id="pr-body-label">Описание</span>
+          <span id="pr-body-label">Описание <ByteCount value={body} limit={PR_BODY_BYTES} /></span>
           <span className="seg" role="group" aria-label="Режим описания">
             <button type="button" aria-pressed={!preview} onClick={() => setPreview(false)}>Текст</button>
             <button type="button" aria-pressed={preview} onClick={() => setPreview(true)}>Просмотр</button>
@@ -380,7 +393,7 @@ function PrDialog({ cwd }: { cwd: string }) {
         </span>
         {preview
           ? <div className="md-preview">{body.trim() ? <Markdown text={body} /> : <p className="muted">Пусто</p>}</div>
-          : <textarea className="textarea" rows={10} aria-labelledby="pr-body-label" value={body} onChange={(e) => setBody(e.target.value)} />}
+          : <textarea className="textarea" rows={10} aria-labelledby="pr-body-label" aria-invalid={bytes(body) > PR_BODY_BYTES} value={body} onChange={(e) => setBody(e.target.value)} />}
       </div>
       <label className="field">
         <span>В ветку</span>

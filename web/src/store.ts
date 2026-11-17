@@ -1,14 +1,23 @@
 import { useSyncExternalStore } from 'react'
-import type { AgentInfo, Integrations, Message, Notification, Session, SubAgent, Task, Workspace, Worktree } from './types'
+import type { AgentInfo, GitStatus, Integrations, Message, Notification, Session, SubAgent, Task, Workspace, Worktree } from './types'
+import type { DiffFile } from './lib/diff'
+import { normPath } from './lib/format'
 
+export type Screen = 'board' | 'agents' | 'inbox' | 'settings'
+
+/** A tab always lives in one worktree (cwd): chats and terminals by their session cwd, files and diffs by theirs. */
 export type Tab =
-  | { kind: 'board' }
-  | { kind: 'agents' }
-  | { kind: 'inbox' }
-  | { kind: 'settings' }
   | { kind: 'session'; id: string }
   | { kind: 'file'; cwd: string; path: string }
   | { kind: 'diff'; cwd: string; path: string | null }
+
+/** Main area: a full-screen global view, or one worktree with its own tab strip. */
+export type View = { kind: 'screen'; screen: Screen } | { kind: 'wt'; cwd: string }
+
+export interface WtTabs { cwd: string; tabs: Tab[]; active: string | null }
+
+/** A history entry for back/forward: a screen, or a worktree with the tab shown in it. */
+export type Loc = { screen: Screen } | { cwd: string; tab: string | null }
 
 export type DialogRequest =
   | { kind: 'workspace' }
@@ -18,25 +27,28 @@ export type DialogRequest =
   | { kind: 'pr'; cwd: string }
   | { kind: 'start'; taskId: string }
 
-export interface Toast { id: number; text: string; tone: 'info' | 'ok' | 'error'; href?: string }
+export interface Toast { id: number; text: string; tone: 'info' | 'ok' | 'error'; href?: string; leaving?: boolean }
+
+/** Git state of one worktree: status plus the whole-tree diff parsed once (per-file +N −M and inline diffs). */
+export interface GitInfo { status: GitStatus | null; error: string | null; files: DiffFile[] | null }
 
 type Theme = 'dark' | 'light'
 
 interface Prefs {
-  tabs: Tab[]
-  active: string
+  view: View
+  wt: Record<string, WtTabs> // key = normPath(cwd): every worktree remembers its tabs and active tab
   sidebar: boolean
   sidebarWidth: number
   panel: boolean
   panelTab: 'files' | 'changes'
-  theme: Theme | null // null = follow the OS
-  cwd: string | null // folder picked in the sidebar; the panel falls back to it
+  theme: Theme | null // null = default (dark)
   drafts: Record<string, string> // unsent composer text per chat session
 }
 
 export interface State extends Prefs {
   conn: 'connecting' | 'open' | 'closed'
   loaded: boolean
+  authExpired: boolean // server restarted with a new token: only a reload helps
   scheme: Theme
   tasks: Task[]
   sessions: Session[]
@@ -49,26 +61,34 @@ export interface State extends Prefs {
   messages: Record<string, Message[]>
   subagents: Record<string, { items: SubAgent[]; problems: string[] }>
   worktrees: Record<string, Worktree[]>
+  git: Record<string, GitInfo> // key = normPath(cwd)
   dirty: Record<string, boolean>
   toasts: Toast[]
   focusTaskId: string | null
   dialog: DialogRequest | null
-  back: string[] // tab navigation history (keys)
-  forward: string[]
+  back: Loc[]
+  forward: Loc[]
 }
 
 export const tabKey = (t: Tab): string => {
   switch (t.kind) {
     case 'session': return `s:${t.id}`
-    case 'file': return `f:${t.cwd}|${t.path}`
-    case 'diff': return `d:${t.cwd}|${t.path ?? ''}`
-    default: return t.kind
+    case 'file': return `f:${t.path}`
+    case 'diff': return `d:${t.path ?? ''}`
   }
 }
 
-const PREFS_KEY = 'harness.ui.v1'
+export const wtKey = (cwd: string) => normPath(cwd)
+
+const PREFS_KEY = 'harness.ui.v2'
 const defaultPrefs: Prefs = {
-  tabs: [{ kind: 'board' }], active: 'board', sidebar: true, sidebarWidth: 300, panel: false, panelTab: 'changes', theme: null, cwd: null, drafts: {},
+  view: { kind: 'screen', screen: 'board' }, wt: {}, sidebar: true, sidebarWidth: 288, panel: true, panelTab: 'changes', theme: null, drafts: {},
+}
+
+const SCREENS = new Set<Screen>(['board', 'agents', 'inbox', 'settings'])
+const validView = (v: unknown): v is View => {
+  const x = v as View | null
+  return !!x && ((x.kind === 'screen' && SCREENS.has(x.screen)) || (x.kind === 'wt' && typeof x.cwd === 'string'))
 }
 
 function readPrefs(): Prefs {
@@ -76,22 +96,25 @@ function readPrefs(): Prefs {
     const raw = localStorage.getItem(PREFS_KEY)
     if (!raw) return defaultPrefs
     const p = JSON.parse(raw) as Partial<Prefs>
-    return { ...defaultPrefs, ...p, tabs: Array.isArray(p.tabs) && p.tabs.length ? p.tabs : defaultPrefs.tabs }
+    const wt: Record<string, WtTabs> = {}
+    for (const [k, e] of Object.entries(p.wt ?? {})) {
+      if (e && typeof e.cwd === 'string' && Array.isArray(e.tabs)) wt[k] = { cwd: e.cwd, tabs: e.tabs, active: typeof e.active === 'string' ? e.active : null }
+    }
+    return { ...defaultPrefs, ...p, view: validView(p.view) ? p.view : defaultPrefs.view, wt }
   } catch {
     return defaultPrefs
   }
 }
 
-const media = window.matchMedia('(prefers-color-scheme: light)')
-const resolveScheme = (pref: Theme | null): Theme => pref ?? (media.matches ? 'light' : 'dark')
+const resolveScheme = (pref: Theme | null): Theme => pref ?? 'dark'
 
 const prefs = readPrefs()
 let state: State = {
   ...prefs,
-  conn: 'connecting', loaded: false, scheme: resolveScheme(prefs.theme),
+  conn: 'connecting', loaded: false, authExpired: false, scheme: resolveScheme(prefs.theme),
   tasks: [], sessions: [], workspaces: [], notifications: [], agents: [], defaultAgent: null, shell: '',
   integrations: { tasks: false, pr: false },
-  messages: {}, subagents: {}, worktrees: {}, dirty: {}, toasts: [], focusTaskId: null, dialog: null, back: [], forward: [],
+  messages: {}, subagents: {}, worktrees: {}, git: {}, dirty: {}, toasts: [], focusTaskId: null, dialog: null, back: [], forward: [],
 }
 
 const listeners = new Set<() => void>()
@@ -126,7 +149,6 @@ export function useStore<T>(selector: (s: State) => T): T {
 }
 
 document.documentElement.dataset.theme = state.scheme
-media.addEventListener('change', () => setState({ scheme: resolveScheme(state.theme) }))
 
 // ---------- collections ----------
 
@@ -143,78 +165,109 @@ export function upsert<T extends { id: string }>(list: T[], item: T): T[] {
 
 export const without = <T extends { id: string }>(list: T[], id: string) => list.filter((x) => x.id !== id)
 
-// ---------- tabs ----------
+// ---------- navigation: screens, worktrees, tabs ----------
 
-const navTo = (s: State, key: string) =>
-  s.active === key ? {} : { active: key, back: [...s.back.slice(-49), s.active].filter(Boolean), forward: [] }
+const locKey = (l: Loc) => ('screen' in l ? `@${l.screen}` : `${wtKey(l.cwd)}#${l.tab ?? ''}`)
 
+const currentLoc = (s: Pick<State, 'view' | 'wt'>): Loc =>
+  s.view.kind === 'screen' ? { screen: s.view.screen } : { cwd: s.view.cwd, tab: s.wt[wtKey(s.view.cwd)]?.active ?? null }
+
+/** View + per-worktree active tab for a location; tab null keeps the worktree's remembered tab. */
+function applyLoc(wt: Record<string, WtTabs>, loc: Loc): Pick<State, 'view' | 'wt'> {
+  if ('screen' in loc) return { view: { kind: 'screen', screen: loc.screen }, wt }
+  const k = wtKey(loc.cwd)
+  const entry = wt[k] ?? { cwd: loc.cwd, tabs: [], active: null }
+  const active = loc.tab ?? entry.active
+  return { view: { kind: 'wt', cwd: entry.cwd }, wt: wt[k] && entry.active === active ? wt : { ...wt, [k]: { ...entry, active } } }
+}
+
+/** Go somewhere and remember where we came from (unless it is the same place). */
+function go(s: State, loc: Loc, wt = s.wt): Partial<State> {
+  const from = currentLoc(s)
+  const next = applyLoc(wt, loc)
+  if (locKey(from) === locKey(currentLoc(next))) return next
+  return { ...next, back: [...s.back.slice(-49), from], forward: [] }
+}
+
+export const openScreen = (screen: Screen) => setState((s) => go(s, { screen }))
+export const openWorktree = (cwd: string) => setState((s) => go(s, { cwd, tab: null }))
+
+export function tabCwd(tab: Tab, sessions: Session[]): string | null {
+  return tab.kind === 'session' ? sessions.find((s) => s.id === tab.id)?.cwd ?? null : tab.cwd
+}
+
+/** Open a tab in its worktree (created next to the active one) and switch there. */
 export function openTab(tab: Tab) {
-  const key = tabKey(tab)
   setState((s) => {
-    if (s.tabs.some((t) => tabKey(t) === key)) return navTo(s, key)
-    const at = s.tabs.findIndex((t) => tabKey(t) === s.active)
-    const tabs = s.tabs.slice()
-    tabs.splice(at + 1, 0, tab)
-    return { tabs, ...navTo(s, key) }
+    const cwd = tabCwd(tab, s.sessions)
+    if (!cwd) return {}
+    const k = wtKey(cwd)
+    const entry = s.wt[k] ?? { cwd, tabs: [], active: null }
+    const key = tabKey(tab)
+    let tabs = entry.tabs
+    if (!tabs.some((t) => tabKey(t) === key)) {
+      const at = tabs.findIndex((t) => tabKey(t) === entry.active)
+      tabs = at < 0 ? [...tabs, tab] : [...tabs.slice(0, at + 1), tab, ...tabs.slice(at + 1)]
+    }
+    return go(s, { cwd: entry.cwd, tab: key }, { ...s.wt, [k]: { ...entry, tabs } })
   })
-}
-
-export const activateTab = (key: string) => setState((s) => navTo(s, key))
-
-/** Step through tab history, skipping tabs that were closed since. */
-export function navigate(dir: 'back' | 'forward') {
-  setState((s) => {
-    const open = new Set(s.tabs.map(tabKey))
-    const back = s.back.filter((k) => open.has(k))
-    const forward = s.forward.filter((k) => open.has(k))
-    const [from, to] = dir === 'back' ? [back, forward] : [forward, back]
-    const key = from.pop()
-    if (!key) return { back, forward }
-    if (s.active) to.push(s.active)
-    return { active: key, back, forward }
-  })
-}
-
-export function closeTab(key: string) {
-  const s = state
-  if (s.dirty[key] && !window.confirm('В файле есть несохранённые изменения. Закрыть без сохранения?')) return
-  const i = s.tabs.findIndex((t) => tabKey(t) === key)
-  if (i < 0) return
-  const tabs = s.tabs.filter((_, j) => j !== i)
-  const dirty = { ...s.dirty }
-  delete dirty[key]
-  if (!tabs.length) {
-    setState({ tabs: [{ kind: 'board' }], active: 'board', dirty, back: [], forward: [] })
-    return
-  }
-  if (s.active !== key) { setState({ tabs, dirty }); return }
-  // Closing the active tab returns to the one used before it (else the left neighbour).
-  const open = new Set(tabs.map(tabKey))
-  const back = s.back.filter((k) => open.has(k))
-  const next = back.pop() ?? tabKey(tabs[Math.max(0, i - 1)])
-  setState({ tabs, dirty, active: next, back })
 }
 
 export const openSession = (id: string) => openTab({ kind: 'session', id })
+export const activateTab = (cwd: string, key: string) => setState((s) => go(s, { cwd, tab: key }))
 
-export function tabCwd(tab: Tab | undefined, sessions: Session[]): string | null {
-  if (tab?.kind === 'session') return sessions.find((s) => s.id === tab.id)?.cwd ?? null
-  if (tab?.kind === 'file' || tab?.kind === 'diff') return tab.cwd
-  return null
+const hasTab = (s: State, l: Loc) => 'screen' in l || !l.tab || !!s.wt[wtKey(l.cwd)]?.tabs.some((t) => tabKey(t) === l.tab)
+
+/** Step through history across screens and worktree tabs, skipping tabs closed since. */
+export function navigate(dir: 'back' | 'forward') {
+  setState((s) => {
+    const back = s.back.filter((l) => hasTab(s, l))
+    const forward = s.forward.filter((l) => hasTab(s, l))
+    const [from, to] = dir === 'back' ? [back, forward] : [forward, back]
+    const here = locKey(currentLoc(s))
+    let loc = from.pop()
+    while (loc && locKey(loc) === here) loc = from.pop()
+    if (!loc) return { back, forward }
+    to.push(currentLoc(s))
+    return { ...applyLoc(s.wt, loc), back, forward }
+  })
 }
 
-/** Folder the workspace panel is bound to: active tab's cwd, else the sidebar pick, else the first workspace. */
-export function useActiveCwd(): string | null {
-  const tabs = useStore((s) => s.tabs)
-  const active = useStore((s) => s.active)
-  const sessions = useStore((s) => s.sessions)
-  const picked = useStore((s) => s.cwd)
-  const first = useStore((s) => s.workspaces[0]?.path ?? null)
-  return tabCwd(tabs.find((t) => tabKey(t) === active), sessions) ?? picked ?? first
+/** Unsaved-file flags are per worktree tab. */
+export const dirtyKey = (cwd: string, key: string) => `${wtKey(cwd)}|${key}`
+
+/** Close a tab of a worktree; if it was active, the tab used before it there (else its left neighbour) takes over. */
+export function closeTab(cwd: string, key: string) {
+  const s = state
+  const k = wtKey(cwd)
+  const entry = s.wt[k]
+  const i = entry ? entry.tabs.findIndex((t) => tabKey(t) === key) : -1
+  if (!entry || i < 0) return
+  const dk = dirtyKey(cwd, key)
+  if (s.dirty[dk] && !window.confirm('В файле есть несохранённые изменения. Закрыть без сохранения?')) return
+  const tabs = entry.tabs.filter((_, j) => j !== i)
+  const dirty = { ...s.dirty }
+  delete dirty[dk]
+  let active = entry.active
+  if (active === key) {
+    const open = new Set(tabs.map(tabKey))
+    const prev = [...s.back].reverse().find((l): l is { cwd: string; tab: string } => 'cwd' in l && wtKey(l.cwd) === k && !!l.tab && open.has(l.tab))
+    active = prev?.tab ?? (tabs.length ? tabKey(tabs[Math.max(0, i - 1)]) : null)
+  }
+  setState({ wt: { ...s.wt, [k]: { ...entry, tabs, active } }, dirty })
 }
+
+/** A deleted session disappears from whichever worktree holds its tab. */
+export function closeSessionTab(id: string) {
+  const key = tabKey({ kind: 'session', id })
+  for (const e of Object.values(state.wt)) if (e.tabs.some((t) => tabKey(t) === key)) closeTab(e.cwd, key)
+}
+
+/** Folder the workspace panel and «new chat here» are bound to: the worktree on screen. */
+export const useActiveCwd = () => useStore((s) => (s.view.kind === 'wt' ? s.view.cwd : null))
 
 export function openTask(id: string) {
-  openTab({ kind: 'board' })
+  openScreen('board')
   setState({ focusTaskId: id })
 }
 
@@ -248,6 +301,9 @@ export function toast(text: string, tone: Toast['tone'] = 'info', href?: string)
   window.setTimeout(() => dismissToast(id), tone === 'error' ? 9000 : 5000)
 }
 
+/** Mark as leaving first so the exit transition can run, then drop it. */
 export function dismissToast(id: number) {
-  if (state.toasts.some((t) => t.id === id)) setState((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) }))
+  if (!state.toasts.some((t) => t.id === id && !t.leaving)) return
+  setState((s) => ({ toasts: s.toasts.map((t) => (t.id === id ? { ...t, leaving: true } : t)) }))
+  window.setTimeout(() => setState((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })), 160)
 }

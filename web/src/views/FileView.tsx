@@ -15,7 +15,7 @@ import { sql } from '@codemirror/lang-sql'
 import { yaml } from '@codemirror/lang-yaml'
 import { FileWarning, Save } from 'lucide-react'
 import { api, errorText, qs, tryApi } from '../api'
-import { setDirty, tabKey, toast } from '../store'
+import { dirtyKey, setDirty, tabKey, toast } from '../store'
 import type { FsFile } from '../types'
 import { Loading } from '../components/bits'
 
@@ -54,11 +54,11 @@ const highlight = HighlightStyle.define([
 ])
 
 const theme = EditorView.theme({
-  '&': { height: '100%', backgroundColor: 'var(--ground)', color: 'var(--ink)', fontSize: '13px' },
-  '.cm-scroller': { fontFamily: 'var(--font-mono)', lineHeight: '1.55', fontVariantLigatures: 'none' },
+  '&': { height: '100%', backgroundColor: 'var(--canvas)', color: 'var(--ink)', fontSize: '13px' },
+  '.cm-scroller': { fontFamily: 'var(--font-mono)', fontWeight: '350', lineHeight: '1.55', fontVariantLigatures: 'none' },
   '.cm-content': { caretColor: 'var(--ink)' },
   '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--ink)' },
-  '.cm-gutters': { backgroundColor: 'var(--ground)', color: 'var(--ink-4)', border: 'none', borderRight: '1px solid var(--rule-soft)' },
+  '.cm-gutters': { backgroundColor: 'var(--canvas)', color: 'var(--ink-4)', border: 'none', borderRight: '1px solid var(--rule-soft)' },
   '.cm-activeLine': { backgroundColor: 'var(--deck)' },
   '.cm-activeLineGutter': { backgroundColor: 'var(--deck)', color: 'var(--ink-2)' },
   '&.cm-focused .cm-selectionBackground, .cm-selectionBackground, ::selection': { backgroundColor: 'var(--term-sel) !important' },
@@ -74,7 +74,7 @@ const theme = EditorView.theme({
 type Load = { state: 'loading' } | { state: 'error'; error: string } | { state: 'binary'; size: number } | { state: 'ready'; content: string }
 
 export default function FileView({ cwd, path }: { cwd: string; path: string }) {
-  const key = tabKey({ kind: 'file', cwd, path })
+  const key = dirtyKey(cwd, tabKey({ kind: 'file', cwd, path }))
   const [load, setLoad] = useState<Load>({ state: 'loading' })
   const [dirty, setLocalDirty] = useState(false)
   const [saving, setSaving] = useState(false)

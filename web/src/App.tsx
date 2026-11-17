@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useState, type CSSProperties } from 'react'
-import { WifiOff } from 'lucide-react'
-import { tabKey, useStore, type Tab } from './store'
+import { RotateCw, WifiOff } from 'lucide-react'
+import { tabKey, useStore, wtKey, type Screen, type Tab } from './store'
 import { reconnectNow } from './ws'
 import { TopBar } from './components/TopBar'
 import { Sidebar } from './components/Sidebar'
@@ -16,6 +16,8 @@ import { InboxView } from './views/InboxView'
 import { SettingsView } from './views/SettingsView'
 import { ChatView } from './views/ChatView'
 import { DiffView } from './views/DiffView'
+import { WorktreeHome } from './views/WorktreeHome'
+import { useGitWatch } from './lib/git'
 
 // Heavy editors load on first use.
 const TerminalView = lazy(() => import('./views/TerminalView'))
@@ -25,8 +27,8 @@ export function App() {
   const sidebar = useStore((s) => s.sidebar)
   const width = useStore((s) => s.sidebarWidth)
   const panel = useStore((s) => s.panel)
-  const tabs = useStore((s) => s.tabs)
-  const active = useStore((s) => s.active)
+  const view = useStore((s) => s.view)
+  const wt = useStore((s) => s.wt)
   const [palette, setPalette] = useState(false)
 
   useEffect(() => {
@@ -37,6 +39,13 @@ export function App() {
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
+  // The worktree on screen keeps its git state fresh (tab badges, panel, sidebar counts).
+  useGitWatch(view.kind === 'wt' ? view.cwd : null)
+
+  const here = view.kind === 'wt' ? wtKey(view.cwd) : null
+  const hereTabs = here ? wt[here] : undefined
+  const showsTab = !!hereTabs?.tabs.some((t) => tabKey(t) === hereTabs.active)
+
   return (
     <div className="app" data-sidebar={sidebar} style={{ '--sb-w': sidebar ? `${width}px` : '0px' } as CSSProperties}>
       <TopBar onCommand={() => setPalette(true)} />
@@ -44,31 +53,49 @@ export function App() {
       <main className="main">
         <ConnectionBanner />
         <div className="panels">
-          {tabs.map((t) => {
+          {view.kind === 'screen' && (
+            <section className="tabpanel" key={view.screen}>
+              <ScreenContent screen={view.screen} />
+            </section>
+          )}
+          {/* Every worktree's tabs stay mounted (terminals, scroll, drafts); only the active one of the shown worktree is visible. */}
+          {Object.entries(wt).flatMap(([k, e]) => e.tabs.map((t) => {
             const key = tabKey(t)
+            const shown = k === here && e.active === key
             return (
-              <section key={key} className="tabpanel" hidden={key !== active}>
-                <TabContent tab={t} active={key === active} />
+              <section key={`${k}|${key}`} className="tabpanel" hidden={!shown}>
+                <TabContent tab={t} active={shown} />
               </section>
             )
-          })}
+          }))}
+          {view.kind === 'wt' && !showsTab && (
+            <section className="tabpanel" key={`home:${here}`}>
+              <WorktreeHome cwd={view.cwd} />
+            </section>
+          )}
         </div>
       </main>
-      {panel && <WorkspacePanel />}
+      {view.kind === 'wt' && panel && <WorkspacePanel />}
       <StatusBar />
       <Dialogs />
       {palette && <CommandPalette onClose={() => setPalette(false)} />}
       <Toasts />
+      <AuthExpired />
     </div>
   )
 }
 
-function TabContent({ tab, active }: { tab: Tab; active: boolean }) {
-  switch (tab.kind) {
+function ScreenContent({ screen }: { screen: Screen }) {
+  switch (screen) {
     case 'board': return <BoardView />
     case 'agents': return <AgentsView />
     case 'inbox': return <InboxView />
     case 'settings': return <SettingsView />
+  }
+}
+
+function TabContent({ tab, active }: { tab: Tab; active: boolean }) {
+  switch (tab.kind) {
     case 'session': return <SessionTab id={tab.id} active={active} />
     case 'file': return <Suspense fallback={<Loading />}><FileView cwd={tab.cwd} path={tab.path} /></Suspense>
     case 'diff': return <DiffView cwd={tab.cwd} path={tab.path} />
@@ -85,12 +112,35 @@ function SessionTab({ id, active }: { id: string; active: boolean }) {
 function ConnectionBanner() {
   const conn = useStore((s) => s.conn)
   const loaded = useStore((s) => s.loaded)
-  if (conn !== 'closed') return null
+  const expired = useStore((s) => s.authExpired)
+  if (conn !== 'closed' || expired) return null
   return (
     <div className="banner" role="alert">
       <WifiOff aria-hidden />
       {loaded ? 'Связь с сервером потеряна. Переподключаемся…' : 'Сервер harness недоступен. Запустите его (npm start) — подключимся автоматически.'}
       <button type="button" className="btn btn-sm" onClick={reconnectNow}>Повторить</button>
+    </div>
+  )
+}
+
+/** The server restarted with a new token: nothing works until the page reloads, so block and say so. */
+function AuthExpired() {
+  const expired = useStore((s) => s.authExpired)
+  const dirty = useStore((s) => Object.values(s.dirty).some(Boolean))
+  if (!expired) return null
+  return (
+    <div className="auth-scrim" role="alertdialog" aria-modal="true" aria-labelledby="auth-title" aria-describedby="auth-text">
+      <div className="auth-card">
+        <h2 id="auth-title">Сервер перезапущен — обновите страницу</h2>
+        <p id="auth-text">
+          Страница держит ключ доступа прошлого запуска сервера. После обновления всё продолжит работать: вкладки и черновики сохранятся.
+          {dirty && ' Несохранённые правки в открытых файлах будут потеряны.'}
+        </p>
+        <button type="button" className="btn btn-primary" autoFocus onClick={() => window.location.reload()}>
+          <RotateCw />
+          Обновить
+        </button>
+      </div>
     </div>
   )
 }

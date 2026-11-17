@@ -1,8 +1,9 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { ArrowUp, Square } from 'lucide-react'
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
+import { ArrowUp, AtSign, Plus, Slash, Square } from 'lucide-react'
 import { tryApi } from '../../api'
 import { setDraft, setState, toast, upsert, useStore } from '../../store'
 import type { Session } from '../../types'
+import { MenuButton } from '../Menu'
 
 const FULL_ACCESS = new Set(['auto', 'yolo', 'bypassPermissions'])
 const MODE_LABEL: Record<string, string> = {
@@ -31,6 +32,20 @@ export function Composer({ session, active }: { session: Session; active: boolea
 
   const update = (v: string) => setDraft(session.id, v)
 
+  /** The agent CLI understands @file mentions and /commands; the menu just types the trigger for you. */
+  const insert = (ch: string) => {
+    const el = ref.current
+    const at = el ? el.selectionStart : text.length
+    const before = text.slice(0, at)
+    const lead = before && !/\s$/.test(before) ? ' ' : ''
+    update(`${before}${lead}${ch}${text.slice(at)}`)
+    requestAnimationFrame(() => {
+      el?.focus()
+      const pos = at + lead.length + 1
+      el?.setSelectionRange(pos, pos)
+    })
+  }
+
   const send = async () => {
     const body = text.trim()
     if (!body || sending) return
@@ -58,7 +73,7 @@ export function Composer({ session, active }: { session: Session; active: boolea
         ref={ref}
         rows={1}
         className="composer-input"
-        placeholder={running ? 'Сообщение встанет в очередь' : session.status === 'stopped' ? 'Остановлено. Следующее сообщение продолжит работу' : 'Задайте вопрос или опишите задачу'}
+        placeholder={running ? 'Сообщение встанет в очередь' : session.status === 'stopped' ? 'Остановлено. Следующее сообщение продолжит работу' : 'Задайте вопрос; @ — файлы, / — команды'}
         aria-label="Сообщение агенту"
         value={text}
         onChange={(e) => update(e.target.value)}
@@ -67,6 +82,15 @@ export function Composer({ session, active }: { session: Session; active: boolea
         }}
       />
       <div className="composer-bar">
+        <MenuButton
+          label="Вставить"
+          icon={<Plus />}
+          up
+          items={[
+            { label: 'Упомянуть файл', hint: '@', icon: <AtSign />, onSelect: () => insert('@') },
+            { label: 'Команда агента', hint: '/', icon: <Slash />, onSelect: () => insert('/') },
+          ]}
+        />
         {modes.length > 0 && (
           <label className={FULL_ACCESS.has(mode) ? 'mode-chip chip-access' : 'mode-chip'} title="Режим подтверждений агента">
             <span aria-hidden>{modeLabel(mode)}</span>
@@ -77,7 +101,7 @@ export function Composer({ session, active }: { session: Session; active: boolea
         )}
         {session.queued > 0 && <span className="chip chip-run">в очереди: {session.queued}</span>}
         <span className="grow" />
-        <ModelField session={session} placeholder={agent?.label ?? session.agent} />
+        <ModelField session={session} placeholder="модель" models={agent?.models ?? []} />
         {running && (
           <button type="button" className="icon-btn composer-stop" onClick={stop} aria-label="Остановить агента" title="Остановить">
             <Square />
@@ -91,8 +115,9 @@ export function Composer({ session, active }: { session: Session; active: boolea
   )
 }
 
-/** Model override for this chat; empty = the agent's default. */
-function ModelField({ session, placeholder }: { session: Session; placeholder: string }) {
+/** Model override for this chat (the agent's models as suggestions, free text allowed); empty = the agent's default. */
+function ModelField({ session, placeholder, models }: { session: Session; placeholder: string; models: string[] }) {
+  const listId = useId()
   const [v, setV] = useState(session.model ?? '')
   useEffect(() => setV(session.model ?? ''), [session.model])
   const save = async () => {
@@ -103,8 +128,10 @@ function ModelField({ session, placeholder }: { session: Session; placeholder: s
     else setV(session.model ?? '')
   }
   return (
+    <>
     <input
       className="composer-model"
+      list={models.length ? listId : undefined}
       aria-label="Модель (пусто — по умолчанию агента)"
       title="Модель (пусто — по умолчанию агента)"
       placeholder={placeholder}
@@ -113,5 +140,7 @@ function ModelField({ session, placeholder }: { session: Session; placeholder: s
       onBlur={() => void save()}
       onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur() }}
     />
+    {models.length > 0 && <datalist id={listId}>{models.map((m) => <option key={m} value={m} />)}</datalist>}
+    </>
   )
 }

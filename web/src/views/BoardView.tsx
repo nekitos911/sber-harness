@@ -48,8 +48,9 @@ export function BoardView() {
       agents: new Map(agents.map((a) => [a.id, a])),
       onOpen: setOpenId,
       onStart: (t) => openDialog({ kind: 'start', taskId: t.id }),
+      showRepo: !repo && workspaces.length > 1,
     }
-  }, [tasks, byId, sessions, workspaces, agents])
+  }, [tasks, byId, sessions, workspaces, agents, repo])
 
   const cols = useMemo<Cols>(() => {
     const q = query.trim().toLowerCase()
@@ -155,20 +156,22 @@ export function BoardView() {
   return (
     <div className="board-view">
       <header className="view-head">
-        <h1>Доска задач</h1>
+        <h1>Задачи</h1>
         <span className="count">{tasks.length}</span>
         <span className="grow" />
         <div className="search">
           <Search aria-hidden />
           <input className="input" type="search" placeholder="Поиск задач" aria-label="Поиск задач" value={query} onChange={(e) => setQuery(e.target.value)} />
         </div>
-        <select className="select" aria-label="Фильтр по репозиторию" value={repo} onChange={(e) => setRepo(e.target.value)}>
-          <option value="">Все репозитории</option>
-          {workspaces.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
-        </select>
+        {workspaces.length > 1 && (
+          <select className="select" aria-label="Фильтр по репозиторию" value={repo} onChange={(e) => setRepo(e.target.value)}>
+            <option value="">Все репозитории</option>
+            {workspaces.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
+          </select>
+        )}
         <button type="button" className="btn btn-ghost" aria-pressed={showHidden} onClick={() => setShowHidden(!showHidden)} title="Скрытые с доски задачи">
           {showHidden ? <Eye /> : <EyeOff />}
-          Показывать скрытые
+          Скрытые
         </button>
         {syncEnabled && (
           <button type="button" className="btn" onClick={sync} disabled={syncing}>

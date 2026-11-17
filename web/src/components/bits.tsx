@@ -64,3 +64,12 @@ export function SubStateIcon({ state }: { state: SubAgentState }) {
   const { icon: Icon, tone } = SUB[state] ?? SUB.unverifiable
   return <Icon className="st" data-s={tone} role="img" aria-label={subStateLabel(state)} />
 }
+
+/** Placeholder rows shaped like the content that is loading (no spinner in the middle of a list). */
+export function Skeleton({ rows = 3, label = 'Загрузка…' }: { rows?: number; label?: string }) {
+  return (
+    <div className="skeleton" role="status" aria-label={label}>
+      {Array.from({ length: rows }, (_, i) => <span key={i} style={{ width: `${88 - ((i * 23) % 40)}%` }} />)}
+    </div>
+  )
+}

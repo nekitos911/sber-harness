@@ -1,8 +1,13 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Bot, FileText, FolderPlus, GitBranchPlus, Inbox, MessageSquare, Moon, PanelLeft, PanelRight, Settings, SquareKanban, SquareTerminal } from 'lucide-react'
-import { getState, openDialog, openSession, openTab, openTask, setState, useStore } from '../store'
+import { getState, openDialog, openScreen, openSession, openTask, setState, useStore } from '../store'
 import { StatusIcon } from './bits'
-import { currentWhere, newChat } from '../lib/actions'
+import { currentWhere, newChat, newTerminal } from '../lib/actions'
+
+const dialogWhere = () => {
+  const w = currentWhere()
+  return { cwd: w.cwd ?? undefined, workspaceId: w.workspaceId ?? undefined }
+}
 
 interface Command { id: string; label: string; hint?: string; icon: ReactNode; run: () => void }
 
@@ -21,14 +26,15 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
 
   const commands = useMemo<Command[]>(() => [
     { id: 'chat', label: 'Новый чат', icon: <MessageSquare />, run: () => void newChat(currentWhere()) },
-    { id: 'chat-form', label: 'Новый чат с настройками…', icon: <MessageSquare />, run: () => openDialog({ kind: 'chat' }) },
+    { id: 'chat-form', label: 'Новый чат с настройками…', icon: <MessageSquare />, run: () => openDialog({ kind: 'chat', ...dialogWhere() }) },
     { id: 'worktree', label: 'Новое рабочее дерево', icon: <GitBranchPlus />, run: () => openDialog({ kind: 'worktree' }) },
-    { id: 'settings', label: 'Настройки', icon: <Settings />, run: () => openTab({ kind: 'settings' }) },
-    { id: 'term', label: 'Новый терминал', icon: <SquareTerminal />, run: () => openDialog({ kind: 'terminal' }) },
+    { id: 'settings', label: 'Настройки', icon: <Settings />, run: () => openScreen('settings') },
+    { id: 'term', label: 'Новый терминал', icon: <SquareTerminal />, run: () => { const w = currentWhere(); if (w.cwd) void newTerminal(w); else openDialog({ kind: 'terminal' }) } },
+    { id: 'term-form', label: 'Новый терминал с настройками…', icon: <SquareTerminal />, run: () => openDialog({ kind: 'terminal', ...dialogWhere() }) },
     { id: 'ws', label: 'Добавить проект', icon: <FolderPlus />, run: () => openDialog({ kind: 'workspace' }) },
-    { id: 'board', label: 'Доска задач', icon: <SquareKanban />, run: () => openTab({ kind: 'board' }) },
-    { id: 'agents', label: 'Агенты', icon: <Bot />, run: () => openTab({ kind: 'agents' }) },
-    { id: 'inbox', label: 'Входящие', icon: <Inbox />, run: () => openTab({ kind: 'inbox' }) },
+    { id: 'board', label: 'Доска задач', icon: <SquareKanban />, run: () => openScreen('board') },
+    { id: 'agents', label: 'Агенты', icon: <Bot />, run: () => openScreen('agents') },
+    { id: 'inbox', label: 'Входящие', icon: <Inbox />, run: () => openScreen('inbox') },
     { id: 'sidebar', label: 'Показать/скрыть боковую панель', icon: <PanelLeft />, run: () => setState((s) => ({ sidebar: !s.sidebar })) },
     { id: 'panel', label: 'Показать/скрыть панель файлов', icon: <PanelRight />, run: () => setState((s) => ({ panel: !s.panel })) },
     { id: 'theme', label: 'Переключить тему', icon: <Moon />, run: () => setState({ theme: getState().scheme === 'dark' ? 'light' : 'dark' }) },

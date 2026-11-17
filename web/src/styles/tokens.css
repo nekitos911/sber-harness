@@ -3,10 +3,11 @@
 :root {
   color-scheme: dark;
 
-  --ground: #161616;      /* canvas, sidebar, bars */
-  --deck: #1c1c1c;        /* cards, raised panels */
-  --deck-2: #232323;      /* hover */
-  --deck-3: #2a2a2a;      /* selected */
+  --canvas: #161616;      /* main work area: chat, board, editors */
+  --ground: #1a1a1a;      /* chrome: sidebar, bars, right panel (one step lighter) */
+  --deck: #1f1f1f;        /* cards, raised panels */
+  --deck-2: #262626;      /* hover */
+  --deck-3: #2e2e2e;      /* selected */
   --well: #121212;        /* inputs, terminal: inset */
 
   --rule: #2a2a2a;
@@ -15,8 +16,8 @@
 
   --ink: #e8e8e8;
   --ink-2: #b9b9b9;
-  --ink-3: #8b8b8b;
-  --ink-4: #5f5f5f;
+  --ink-3: #8f8f8f;      /* secondary text, meta: >= 4.5:1 on every surface */
+  --ink-4: #6a6a6a;      /* placeholders, disabled, rules-as-text only */
 
   --primary: #e8e8e8;     /* primary button: light on dark */
   --primary-ink: #161616;
@@ -42,6 +43,8 @@
   --del-bg: rgba(239, 96, 96, 0.12);
   --del-ink: #f39494;
   --hunk-bg: rgba(106, 167, 245, 0.07);
+  --add-mark: rgba(79, 191, 120, 0.3);
+  --del-mark: rgba(239, 96, 96, 0.3);
 
   --syn-keyword: #c792ea;
   --syn-string: #a5d6a7;
@@ -52,43 +55,48 @@
   --syn-prop: #d6d6d6;
   --syn-meta: #ef8fb0;
 
-  --term-bg: #121212;
+  --term-bg: #141414;
   --term-fg: #dadada;
   --term-cursor: #e8e8e8;
   --term-sel: rgba(106, 167, 245, 0.3);
 
   --shadow-pop: 0 0 0 1px #333, 0 12px 32px rgba(0, 0, 0, 0.5);
+  --shadow-lift: 0 0 0 1px #3a3a3a, 0 10px 24px rgba(0, 0, 0, 0.45);
   --scrim: rgba(0, 0, 0, 0.55);
 
   --font-ui: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
-  --font-mono: "Cascadia Code", "Cascadia Mono", "JetBrains Mono", Consolas, monospace;
+  --font-mono: "Cascadia Code", "Cascadia Mono", Consolas, monospace;
 
   --r-1: 4px;
   --r-2: 6px;
   --r-3: 10px;
   --h-ctl: 28px;
 
-  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);      /* enter */
+  --ease-in: cubic-bezier(0.55, 0, 1, 0.45);       /* exit: short, gets out of the way */
   --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+  --t-fast: 120ms;
+  --t-base: 180ms;
 }
 
 :root[data-theme="light"] {
   color-scheme: light;
 
-  --ground: #f7f7f7;
+  --canvas: #ffffff;
+  --ground: #f5f5f4;
   --deck: #ffffff;
-  --deck-2: #efefef;
-  --deck-3: #e6e6e6;
-  --well: #f2f2f2;
+  --deck-2: #efefee;
+  --deck-3: #e5e5e4;
+  --well: #f7f7f6;
 
-  --rule: #e1e1e1;
-  --rule-soft: #ebebeb;
-  --rule-strong: #cfcfcf;
+  --rule: #e0e0de;
+  --rule-soft: #ececea;
+  --rule-strong: #cbcbc9;
 
-  --ink: #1c1c1c;
-  --ink-2: #474747;
-  --ink-3: #6d6d6d;
-  --ink-4: #9d9d9d;
+  --ink: #1b1b1b;
+  --ink-2: #444444;
+  --ink-3: #686868;
+  --ink-4: #949494;
 
   --primary: #1c1c1c;
   --primary-ink: #ffffff;
@@ -114,6 +122,8 @@
   --del-bg: rgba(211, 59, 59, 0.09);
   --del-ink: #b32626;
   --hunk-bg: rgba(47, 111, 209, 0.06);
+  --add-mark: rgba(35, 145, 77, 0.24);
+  --del-mark: rgba(211, 59, 59, 0.2);
 
   --syn-keyword: #8a3fd1;
   --syn-string: #2e7d32;
@@ -130,5 +140,6 @@
   --term-sel: rgba(47, 111, 209, 0.22);
 
   --shadow-pop: 0 0 0 1px rgba(0, 0, 0, 0.08), 0 2px 4px rgba(0, 0, 0, 0.05), 0 12px 28px rgba(0, 0, 0, 0.12);
+  --shadow-lift: 0 0 0 1px rgba(0, 0, 0, 0.1), 0 8px 20px rgba(0, 0, 0, 0.14);
   --scrim: rgba(0, 0, 0, 0.25);
 }

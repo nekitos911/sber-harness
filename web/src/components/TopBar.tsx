@@ -1,10 +1,12 @@
-import { ArrowLeft, ArrowRight, Bot, Command, FileText, GitCompare, Inbox, MessageSquare, PanelLeft, PanelRight, Plus, Settings, SquareKanban, SquareTerminal, X } from 'lucide-react'
-import { activateTab, closeTab, navigate, openDialog, setState, tabKey, useStore, type Tab } from '../store'
+import { useLayoutEffect, useRef, useState } from 'react'
+import { ArrowLeft, ArrowRight, Command, FileText, GitCompare, MessageSquare, MessageSquarePlus, PanelLeft, PanelRight, Plus, SquareTerminal, X } from 'lucide-react'
+import { activateTab, closeTab, dirtyKey, navigate, openDialog, setState, tabKey, useStore, wtKey, type Tab } from '../store'
 import { basename } from '../lib/format'
-import type { Session } from '../types'
+import { useGit } from '../lib/git'
+import type { GitStatus, Session } from '../types'
 import { StatusIcon } from './bits'
 import { MenuButton } from './Menu'
-import { currentWhere, newChat } from '../lib/actions'
+import { newChat, newTerminal, workspaceFor } from '../lib/actions'
 
 export function BrandMark() {
   return (
@@ -18,8 +20,9 @@ export function BrandMark() {
 export function TopBar({ onCommand }: { onCommand: () => void }) {
   const sidebar = useStore((s) => s.sidebar)
   const panel = useStore((s) => s.panel)
-  const back = useStore((s) => s.back)
-  const forward = useStore((s) => s.forward)
+  const canBack = useStore((s) => s.back.length > 0)
+  const canForward = useStore((s) => s.forward.length > 0)
+  const cwd = useStore((s) => (s.view.kind === 'wt' ? s.view.cwd : null))
   return (
     <header className="topbar">
       <div className="topbar-left">
@@ -27,62 +30,88 @@ export function TopBar({ onCommand }: { onCommand: () => void }) {
         <button type="button" className="icon-btn" aria-pressed={sidebar} aria-label="Боковая панель" title="Боковая панель" onClick={() => setState({ sidebar: !sidebar })}>
           <PanelLeft />
         </button>
-        <button type="button" className="icon-btn" disabled={!back.length} aria-label="Назад" title="Назад" onClick={() => navigate('back')}>
+        <button type="button" className="icon-btn" disabled={!canBack} aria-label="Назад" title="Назад" onClick={() => navigate('back')}>
           <ArrowLeft />
         </button>
-        <button type="button" className="icon-btn" disabled={!forward.length} aria-label="Вперёд" title="Вперёд" onClick={() => navigate('forward')}>
+        <button type="button" className="icon-btn" disabled={!canForward} aria-label="Вперёд" title="Вперёд" onClick={() => navigate('forward')}>
           <ArrowRight />
         </button>
       </div>
-      <TabBar />
+      {cwd ? <TabBar key={wtKey(cwd)} cwd={cwd} /> : <div className="grow" />}
       <div className="topbar-right">
         <button type="button" className="btn btn-ghost" onClick={onCommand} title="Команды (Ctrl+K)">
           <Command />
           Команда
         </button>
-        <button type="button" className="icon-btn" aria-pressed={panel} aria-label="Панель файлов и изменений" title="Панель файлов и изменений" onClick={() => setState({ panel: !panel })}>
-          <PanelRight />
-        </button>
+        {cwd && (
+          <button type="button" className="icon-btn" aria-pressed={panel} aria-label="Панель файлов и изменений" title="Панель файлов и изменений" onClick={() => setState({ panel: !panel })}>
+            <PanelRight />
+          </button>
+        )}
       </div>
     </header>
   )
 }
 
-function TabBar() {
-  const tabs = useStore((s) => s.tabs)
-  const active = useStore((s) => s.active)
+const reduceMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches
+
+/** The tab strip of one worktree: its chats, terminals, files and diffs. */
+function TabBar({ cwd }: { cwd: string }) {
+  const k = wtKey(cwd)
+  const entry = useStore((s) => s.wt[k])
   const sessions = useStore((s) => s.sessions)
   const dirty = useStore((s) => s.dirty)
+  const git = useGit(cwd)
+  const [closing, setClosing] = useState<string | null>(null)
+  const tabs = entry?.tabs ?? []
+  const active = entry?.active ?? null
+
+  // Only tabs opened while this strip is on screen animate in; switching worktrees must not replay every tab.
+  const seen = useRef<Set<string> | null>(null)
+  if (!seen.current) seen.current = new Set(tabs.map((t) => `${k}|${tabKey(t)}`))
+  useLayoutEffect(() => { for (const t of tabs) seen.current!.add(`${k}|${tabKey(t)}`) })
+
+  const close = (key: string, animate: boolean) => {
+    if (!animate || dirty[dirtyKey(cwd, key)] || reduceMotion()) { closeTab(cwd, key); return }
+    setClosing(key)
+    window.setTimeout(() => { setClosing(null); closeTab(cwd, key) }, 120)
+  }
+
+  const where = () => ({ cwd, workspaceId: workspaceFor(cwd) })
 
   return (
-    <>
-      <div className="tabbar" role="tablist" aria-label="Открытые вкладки">
+    <div className="tabstrip">
+      <div className="tabbar" role="tablist" aria-label="Вкладки рабочего дерева">
         {tabs.map((t) => {
           const key = tabKey(t)
-          const { icon, title, hint } = describeTab(t, sessions)
+          const { icon, title, hint, badge, file } = describeTab(t, sessions, git?.status ?? null)
           return (
             <div
-              key={key}
+              key={`${k}|${key}`}
               className="tab"
               role="tab"
               tabIndex={key === active ? 0 : -1}
               aria-selected={key === active}
+              data-enter={!seen.current!.has(`${k}|${key}`) || undefined}
+              data-leaving={closing === key || undefined}
+              data-file={file || undefined}
               title={hint}
-              onClick={() => activateTab(key)}
-              onAuxClick={(e) => { if (e.button === 1) closeTab(key) }}
+              onClick={() => activateTab(cwd, key)}
+              onAuxClick={(e) => { if (e.button === 1) close(key, true) }}
               onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); activateTab(key) }
-                if (e.key === 'Delete') closeTab(key)
+                if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); activateTab(cwd, key) }
+                if (e.key === 'Delete') close(key, false)
               }}
             >
               {icon}
               <span className="tab-title">{title}</span>
-              {dirty[key] && <span className="tab-dirty" aria-label="не сохранено" />}
+              {badge && <span className="gs" data-s={badge}>{badge}</span>}
+              {dirty[dirtyKey(cwd, key)] && <span className="tab-dirty" aria-label="не сохранено" />}
               <button
                 type="button"
                 className="icon-btn icon-btn-sm tab-close"
                 aria-label={`Закрыть «${title}»`}
-                onClick={(e) => { e.stopPropagation(); closeTab(key) }}
+                onClick={(e) => { e.stopPropagation(); close(key, true) }}
               >
                 <X />
               </button>
@@ -91,35 +120,35 @@ function TabBar() {
         })}
       </div>
       <MenuButton
-        label="Новая вкладка"
+        label="Новая вкладка в этом дереве"
         icon={<Plus />}
         items={[
-          { label: 'Новый чат', icon: <MessageSquare />, onSelect: () => void newChat(currentWhere()) },
-          { label: 'Новый чат с настройками…', icon: <MessageSquare />, onSelect: () => openDialog({ kind: 'chat' }) },
-          { label: 'Новый терминал', icon: <SquareTerminal />, onSelect: () => openDialog({ kind: 'terminal' }) },
+          { label: 'Новый чат', icon: <MessageSquarePlus />, onSelect: () => void newChat(where()) },
+          { label: 'Новый терминал', icon: <SquareTerminal />, onSelect: () => void newTerminal(where()) },
+          { label: 'Новый чат с настройками…', icon: <MessageSquare />, onSelect: () => openDialog({ kind: 'chat', cwd, workspaceId: workspaceFor(cwd) ?? undefined }) },
         ]}
       />
       <div className="grow" />
-    </>
+    </div>
   )
 }
 
-function describeTab(t: Tab, sessions: Session[]) {
+function describeTab(t: Tab, sessions: Session[], status: GitStatus | null) {
   switch (t.kind) {
-    case 'board': return { icon: <SquareKanban />, title: 'Задачи', hint: 'Доска задач' }
-    case 'agents': return { icon: <Bot />, title: 'Агенты', hint: 'Агенты' }
-    case 'inbox': return { icon: <Inbox />, title: 'Входящие', hint: 'Входящие' }
-    case 'settings': return { icon: <Settings />, title: 'Настройки', hint: 'Настройки' }
     case 'session': {
       const s = sessions.find((x) => x.id === t.id)
       if (!s) return { icon: <MessageSquare />, title: 'Сессия', hint: t.id }
       return {
         icon: s.kind === 'terminal' ? <SquareTerminal /> : <StatusIcon session={s} />,
         title: s.title || s.id,
-        hint: `${s.title} — ${s.cwd}`,
+        hint: `${s.title}\n${s.cwd}`,
       }
     }
-    case 'file': return { icon: <FileText />, title: basename(t.path), hint: `${t.path} — ${t.cwd}` }
-    case 'diff': return { icon: <GitCompare />, title: t.path ? basename(t.path) : `Изменения ${basename(t.cwd)}`, hint: `diff: ${t.path ?? 'все файлы'} — ${t.cwd}` }
+    case 'file': {
+      const p = t.path.replace(/\\/g, '/')
+      const badge = status?.files.find((f) => f.path.replace(/\\/g, '/') === p)?.status
+      return { icon: <FileText />, title: basename(t.path), hint: t.path, badge, file: true }
+    }
+    case 'diff': return { icon: <GitCompare />, title: t.path ? basename(t.path) : 'Все изменения', hint: `Изменения: ${t.path ?? 'все файлы'}` }
   }
 }

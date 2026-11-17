@@ -3,23 +3,50 @@
 .wpanel {
   grid-column: 3; grid-row: 2; display: flex; flex-direction: column; width: 300px; min-height: 0;
   border-left: 1px solid var(--rule); background: var(--ground);
+  animation: fade-in var(--t-base) var(--ease-out);
 }
 .wpanel-head { display: flex; align-items: center; gap: 2px; height: 36px; padding: 0 4px 0 6px; flex-shrink: 0; border-bottom: 1px solid var(--rule); }
 .wpanel-tab {
-  position: relative; display: inline-flex; align-items: center; gap: 4px; height: 28px; padding: 0 7px;
-  border: 0; border-radius: var(--r-1); background: transparent; color: var(--ink-3);
+  position: relative; display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 8px;
+  border: 0; border-radius: var(--r-1); background: transparent; color: var(--ink-3); font-size: 12.5px; font-weight: 500;
+  transition: background-color var(--t-fast) ease, color var(--t-fast) ease;
 }
-.wpanel-tab svg { width: 15px; height: 15px; }
+.wpanel-tab svg { width: 14px; height: 14px; }
 .wpanel-tab:hover { color: var(--ink); background: var(--deck-2); }
 .wpanel-tab[aria-selected="true"] { color: var(--ink); background: var(--deck-3); }
 .wpanel-tab .count { min-width: 16px; height: 16px; font-size: 10px; padding: 0 4px; }
-.wpanel-where { display: grid; gap: 2px; padding: 8px 12px; flex-shrink: 0; border-bottom: 1px solid var(--rule-soft); }
+.wpanel-where { display: grid; gap: 2px; padding: 8px 12px 9px; flex-shrink: 0; border-bottom: 1px solid var(--rule-soft); }
 .wpanel-where strong { font-size: 13px; font-weight: 600; }
+.wpanel-body > * { animation: fade-in 140ms var(--ease-out); }
 .wpanel-body { flex: 1; min-height: 0; overflow: auto; }
 
 .wpanel-section { display: grid; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--rule-soft); }
-.wpanel-section h3 { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; color: var(--ink-2); min-height: 24px; }
-.wpanel-section > div { margin: 0 -6px; }
+.wpanel-section h3 { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 600; color: var(--ink-2); min-height: 24px; }
+.wpanel-section h3 .ahead { display: inline-flex; align-items: center; font-weight: 400; }
+.wpanel-section > div:not(.skeleton):not(.commit-box) { margin: 0 -6px; }
+
+/* Changed files: letter, name (strong) + dir (muted), +N -M; the chevron expands the diff in place. */
+.change-list { list-style: none; margin: 0 -8px; padding: 0; }
+.change-row { display: flex; align-items: center; height: 26px; border-radius: var(--r-1); }
+.change-row:hover { background: var(--deck-2); }
+.change-chev {
+  display: grid; place-items: center; width: 20px; height: 26px; flex-shrink: 0; padding: 0;
+  border: 0; background: transparent; color: var(--ink-4);
+}
+.change-chev:hover { color: var(--ink); }
+.change-chev svg { width: 12px; height: 12px; transition: transform var(--t-fast) var(--ease-out); }
+.change-chev[aria-expanded="true"] svg { transform: rotate(90deg); }
+.change-open {
+  display: flex; align-items: center; gap: 7px; flex: 1; min-width: 0; height: 26px; padding: 0 6px 0 0;
+  border: 0; background: transparent; color: var(--ink); text-align: left; font-size: 12.5px;
+}
+.change-name { flex-shrink: 0; max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.change-dir { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-3); font-size: 11.5px; direction: rtl; text-align: left; }
+.change-open .diff-stat { margin-left: auto; padding-left: 6px; }
+.change .collapse > div > * { margin: 2px 0 8px 20px; border: 1px solid var(--rule); border-radius: var(--r-1); background: var(--canvas); }
+.change .diff-table { font-size: 11.5px; line-height: 18px; max-height: 420px; overflow: auto; }
+.change .dr { grid-template-columns: 30px 30px 14px minmax(0, 1fr); }
+.change .dn { padding-right: 4px; }
 .wpanel-section .commit-box { margin: 0; }
 
 .files-search { width: auto; margin: 8px 10px; }
@@ -34,14 +61,11 @@
 .file-row > svg { width: 14px; height: 14px; flex-shrink: 0; color: var(--ink-3); }
 .file-row .chev { width: 12px; height: 12px; flex-shrink: 0; transition: transform 120ms var(--ease-out); }
 .file-row[aria-expanded="true"] .chev { transform: rotate(90deg); }
-.file-row[data-git="M"], .file-row[data-git="R"] { color: var(--lamp-run); }
-.file-row[data-git="A"], .file-row[data-git="?"] { color: var(--lamp-done); }
-.file-row[data-git="D"], .file-row[data-git="U"] { color: var(--lamp-fail); }
 .file-row .dir {
   margin-left: auto; min-width: 0; max-width: 55%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   color: var(--ink-4); font-size: 11px; direction: rtl; text-align: left;
 }
-.gs { width: 14px; flex-shrink: 0; text-align: center; font-family: var(--font-mono); font-size: 11px; font-weight: 700; }
+.gs { width: 14px; flex-shrink: 0; text-align: center; font-family: var(--font-mono); font-size: 11px; font-weight: 600; }
 .gs[data-s="M"], .gs[data-s="R"] { color: var(--lamp-run); }
 .gs[data-s="A"], .gs[data-s="?"] { color: var(--lamp-done); }
 .gs[data-s="D"], .gs[data-s="U"] { color: var(--lamp-fail); }
@@ -51,6 +75,7 @@
 .commit-box .textarea { min-height: 72px; max-height: 260px; font-size: 12.5px; }
 .commit-box .actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .commit-box .actions .btn-primary { flex: 1 1 100%; }
+.commit-box .input { font-weight: 500; }
 .commit-box .actions .btn:not(.btn-primary) { flex: 1; }
 
 .commit-row { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 0 8px; padding: 4px 6px; font-size: 12.5px; }
@@ -62,8 +87,8 @@
 
 .term-view { display: flex; flex-direction: column; height: 100%; min-height: 0; background: var(--term-bg); }
 .term-bar {
-  display: flex; align-items: center; gap: 10px; padding: 6px 12px; flex-shrink: 0;
-  background: var(--deck-2); border-bottom: 1px solid var(--rule); color: var(--ink-2);
+  display: flex; align-items: center; gap: 10px; padding: 5px 12px; flex-shrink: 0;
+  background: var(--ground); border-bottom: 1px solid var(--rule); color: var(--ink-3); font-size: 12.5px;
 }
 .term-host { flex: 1; min-height: 0; padding: 8px 0 4px 12px; }
 .term-host .xterm { height: 100%; }
@@ -73,27 +98,39 @@
 
 .file-view, .diff-view { display: flex; flex-direction: column; height: 100%; min-height: 0; }
 .file-bar {
-  display: flex; align-items: center; gap: 8px; height: 36px; padding: 0 8px 0 14px; flex-shrink: 0;
-  border-bottom: 1px solid var(--rule); font-size: 12px; color: var(--ink-2);
+  display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 8px 0 14px; flex-shrink: 0;
+  border-bottom: 1px solid var(--rule); font-size: 12px; color: var(--ink-2); background: var(--canvas);
 }
 .file-editor { flex: 1; min-height: 0; overflow: hidden; }
 
 .diff-scroll { flex: 1; min-height: 0; overflow: auto; padding: 12px 16px 32px; }
-.diff-file { margin-bottom: 12px; border: 1px solid var(--rule); border-radius: var(--r-2); background: var(--deck); overflow: hidden; }
+.diff-file { margin-bottom: 12px; border: 1px solid var(--rule); border-radius: var(--r-2); background: var(--deck); }
 .diff-file-head {
   display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 10px; cursor: pointer;
-  background: var(--deck-2); font-size: 12px; position: sticky; top: 0;
+  background: var(--deck); border-radius: var(--r-2) var(--r-2) 0 0; font-size: 12.5px; position: sticky; top: -12px; z-index: 1;
 }
 .diff-file[open] .diff-file-head { border-bottom: 1px solid var(--rule); }
-.diff-table { font-family: var(--font-mono); font-size: 12px; line-height: 20px; }
-.dr { display: grid; grid-template-columns: 46px 46px minmax(0, 1fr); }
-.dn { padding: 0 8px; text-align: right; color: var(--ink-4); user-select: none; font-variant-numeric: tabular-nums; }
+.diff-file-head .chev { width: 12px; height: 12px; color: var(--ink-3); transition: transform var(--t-fast) var(--ease-out); }
+.diff-file[open] .diff-file-head .chev { transform: rotate(90deg); }
+.diff-file-head strong { font-weight: 600; }
+
+/* Unified diff: old/new line numbers, sign, text; adds green, removes red, hunk headers as quiet separators. */
+.diff-table { font-family: var(--font-mono); font-size: 12px; line-height: 20px; overflow-x: auto; }
+.dr { display: grid; grid-template-columns: 44px 44px 18px minmax(0, 1fr); }
+.diff-table[data-numbers="false"] .dr { grid-template-columns: 22px minmax(0, 1fr); }
+.dn { padding: 0 8px 0 0; text-align: right; color: var(--ink-4); user-select: none; font-variant-numeric: tabular-nums; }
+.dr .dl-sign { text-align: center; color: var(--ink-4); user-select: none; }
 .dc { padding-right: 12px; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink-2); }
 .dr[data-k="add"] { background: var(--add-bg); }
 .dr[data-k="del"] { background: var(--del-bg); }
 .dr[data-k="add"] .dc, .dr[data-k="del"] .dc { color: var(--ink); }
-.dr[data-k="hunk"] { background: var(--hunk-bg); }
-.dr[data-k="hunk"] .dc { color: var(--ink-3); }
+.dr[data-k="add"] .dl-sign, .dr[data-k="add"] .dn { color: var(--add-ink); }
+.dr[data-k="del"] .dl-sign, .dr[data-k="del"] .dn { color: var(--del-ink); }
+.dr[data-k="add"] mark { background: var(--add-mark); color: inherit; border-radius: 2px; }
+.dr[data-k="del"] mark { background: var(--del-mark); color: inherit; border-radius: 2px; }
+.dr[data-k="hunk"] { display: block; padding: 2px 12px; margin: 4px 0; background: var(--hunk-bg); color: var(--ink-3); font-size: 11.5px; }
+.dr[data-k="hunk"]:first-child { margin-top: 0; }
+.dr[data-k="hunk"] .dc { color: var(--ink-3); padding: 0; }
 .dr[data-k="note"] .dc { color: var(--ink-4); font-style: italic; }
 .diff-note { padding: 10px 12px; }
 .diff-more { margin: 6px 12px; }
@@ -122,3 +159,24 @@
 .settings-grades { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); }
 .settings-actions { position: sticky; bottom: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 0; background: var(--ground); }
 .settings-actions .field-error { flex-basis: 100%; }
+
+/* ---------- worktree home (no tabs open) ---------- */
+
+.wt-home { overflow-y: auto; height: 100%; padding: 56px 32px 40px; }
+.wt-home > * { max-width: 640px; margin-left: auto; margin-right: auto; }
+.wt-home-head { display: flex; gap: 12px; align-items: flex-start; }
+.wt-home-head > svg { width: 18px; height: 18px; margin-top: 3px; color: var(--ink-3); flex-shrink: 0; }
+.wt-home-head h1 { font-size: 18px; font-weight: 600; letter-spacing: -0.01em; overflow-wrap: anywhere; }
+.wt-home-head p { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-top: 2px; }
+.wt-home-path { color: var(--ink-3); font-size: 11.5px; overflow-wrap: anywhere; }
+.wt-home-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 20px; margin-bottom: 28px; }
+.wt-home-actions .count { margin-left: 2px; }
+.wt-home-section { margin-bottom: 22px; }
+.wt-home-section h2 { margin-bottom: 4px; font-size: 12px; font-weight: 600; color: var(--ink-3); }
+.wt-home-section ul { list-style: none; margin: 0 -8px; padding: 0; }
+.wt-home-row {
+  display: flex; align-items: center; gap: 10px; width: 100%; height: 30px; padding: 0 8px;
+  border: 0; border-radius: var(--r-1); background: transparent; color: var(--ink); text-align: left;
+}
+.wt-home-row:hover { background: var(--deck-2); }
+.wt-home-row .mono { font-size: 11.5px; }
