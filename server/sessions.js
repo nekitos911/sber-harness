@@ -1,6 +1,7 @@
 // Session manager: chat sessions (one CLI process per turn, queue of deliveries that wakes the session),
 // terminal sessions (PTY), statuses, transcripts. Orchestration plugs in through hooks (preamble, turnEnded).
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { CODE_ROOT } from './config.js';
@@ -83,7 +84,19 @@ async function loadPty() {
   return ptyModule;
 }
 
-export function createSessions({ config, store, bus, getUrl, catalog = null }) {
+/** Why a running turn could not be continued: the machine rebooted after it started, the harness crashed, or a restart. */
+export function interruptReason({ startedAt, bootTime, crashed }) {
+  if (startedAt && bootTime > startedAt) return 'reboot';
+  return crashed ? 'crash' : 'harness_restart';
+}
+
+const brief = (input) => {
+  if (input == null) return '';
+  const text = String(typeof input === 'string' ? input : input.command ?? input.file_path ?? input.path ?? JSON.stringify(input));
+  return text.length > 160 ? `${text.slice(0, 160)}…` : text;
+};
+
+export function createSessions({ config, store, bus, getUrl, catalog = null, crashed = false }) {
   const db = store.db;
   const rt = new Map(); // sid -> runtime state (not persisted)
   const hooks = { preamble: () => '', turnEnded: () => {} };
@@ -220,6 +233,16 @@ export function createSessions({ config, store, bus, getUrl, catalog = null }) {
   // ---- startup recovery ----
   const toReattach = []; // turns that kept running (or finished) while the harness was down
   const toRespawn = []; // terminals that were alive: PTYs cannot outlive the server
+  const startupAt = Date.now();
+  /** session.interrupted { at, reason, lastActivity }: listed by GET /api/recovery until resumed or dismissed. */
+  function markInterrupted(s) {
+    const msgs = store.messages(s.id);
+    const tool = msgs.findLast((m) => m.kind === 'tool' && m.tool);
+    const said = msgs.findLast((m) => m.kind === 'assistant' && m.text);
+    const lastActivity = tool ? `${tool.tool.name} ${brief(tool.tool.input)}`.trim() : said ? brief(said.text) : null;
+    s.interrupted = { at: Date.now(), reason: interruptReason({ startedAt: s.pidStartedAt || s.lastActivityAt, bootTime: Date.now() - os.uptime() * 1000, crashed }), lastActivity };
+    addMessage(s, { kind: 'system', text: INTERRUPTED });
+  }
   const INTERRUPTED = 'harness restarted, the turn was interrupted; send a message to continue (context is kept by --resume)';
   for (const s of db.sessions) {
     if (s.kind === 'chat') {
@@ -242,7 +265,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null }) {
     s.pid = null;
     if (s.kind === 'chat' && s.status === 'running') {
       s.status = 'idle';
-      addMessage(s, { kind: 'system', text: INTERRUPTED });
+      markInterrupted(s);
     } else if (s.kind === 'terminal' && s.status !== 'exited') {
       if (config.terminal?.autoRespawn !== false) toRespawn.push(s);
       else {
@@ -569,9 +592,10 @@ export function createSessions({ config, store, bus, getUrl, catalog = null }) {
     if (!launcher || !outFile) {
       r.running = false;
       Object.assign(s, { status: 'idle', pid: null });
-      addMessage(s, { kind: 'system', text: INTERRUPTED });
+      markInterrupted(s);
       emit(s);
-      return startTurn(s);
+      startTurn(s);
+      return null;
     }
     r.running = true;
     r.unadopted = !ours;
@@ -597,7 +621,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null }) {
     });
     r.handle = handle;
     if (r.stopRequested) handle.stop();
-    handle.done.then((res) => { if (!res.detached) finishTurn(s, res); });
+    return handle.done.then((res) => { if (!res.detached) finishTurn(s, res); });
   }
 
   function finishTurn(s, res) {
@@ -617,7 +641,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null }) {
       addMessage(s, { kind: 'system', text: 'Stopped by user' });
     } else if (unadopted && !res.sawResult) {
       // the saved pid is gone or now belongs to another process: what the file had is shown, the rest is lost
-      addMessage(s, { kind: 'system', text: INTERRUPTED });
+      markInterrupted(s);
     } else if (res.error) {
       addMessage(s, { kind: 'error', text: `${res.error}${tail(res.stderrTail)}`, ...(res.action ? { action: res.action } : {}) });
       status = 'error';
@@ -952,6 +976,7 @@ ${note.trim()}` : text });
         return { queued: false };
       }
       if (s.waitingFor === 'answer' || s.waitingFor === 'permission') s.waitingFor = null; // answered (by anyone)
+      if (s.interrupted) s.interrupted = null; // continued
       s.queue.push({ id: newId('q'), from, text, at: Date.now(), ...(options ? { options } : {}) });
       if (!r.running) {
         startTurn(s);
@@ -1064,9 +1089,43 @@ ${note.trim()}` : text });
     async resumeRuns() {
       const runs = toReattach.splice(0);
       const ours = await Promise.all(runs.map((s) => sameProcess(s.pid, s.pidStartedAt).catch(() => false)));
-      runs.forEach((s, i) => { if (find(s.id)) reattach(s, ours[i]); });
+      const drains = runs.map((s, i) => (find(s.id) ? reattach(s, ours[i]) : null));
+      await Promise.all(drains.filter((d, i) => d && !ours[i])); // not adopted: only the file is read, at once
+      const cut = db.sessions.filter((s) => s.interrupted && s.interrupted.at >= startupAt);
+      if (cut.length) {
+        hooks.notify?.({ kind: 'recovery', text: `Прервано сессий: ${cut.length}` });
+        if (config.recovery?.autoResume) api.recoveryResume(cut.map((s) => s.id));
+      }
       for (const s of db.sessions) if (s.kind === 'chat' && !s.virtual && s.queue?.length && !runtime(s.id).running) startTurn(s);
       await Promise.all(toRespawn.splice(0).filter((s) => find(s.id)).map(respawnTerminal));
+    },
+
+    // ---- recovery after a restart ----
+    recoveryList() {
+      return {
+        sessions: db.sessions.filter((s) => s.interrupted).map((s) => ({
+          id: s.id, title: s.title, cwd: s.cwd, taskId: s.taskId, role: s.role, reason: s.interrupted.reason, at: s.interrupted.at, lastActivity: s.interrupted.lastActivity,
+        })),
+        message: config.recovery?.message || '',
+      };
+    },
+    /** Sends the message to each interrupted session (workers/reviewers before their coordinators). */
+    recoveryResume(ids, message) {
+      if (!Array.isArray(ids) || ids.some((x) => typeof x !== 'string')) fail(400, 'sessionIds must be an array of session ids');
+      const text = (typeof message === 'string' && message.trim()) || config.recovery?.message;
+      if (!text) fail(400, 'message is required (recovery.message is empty)');
+      const list = ids.map(get).filter((s) => s.interrupted).sort((a, b) => (a.role === 'coordinator') - (b.role === 'coordinator'));
+      for (const s of list) api.deliver(s.id, { from: 'user', text });
+      return { resumed: list.map((s) => s.id) };
+    },
+    recoveryDismiss(ids) {
+      if (!Array.isArray(ids) || ids.some((x) => typeof x !== 'string')) fail(400, 'sessionIds must be an array of session ids');
+      const list = ids.map(get).filter((s) => s.interrupted);
+      for (const s of list) {
+        s.interrupted = null;
+        emit(s);
+      }
+      return { dismissed: list.map((s) => s.id) };
     },
 
     /** Harness shutdown: agent turns keep running (re-attached on the next start); terminals are closed. */

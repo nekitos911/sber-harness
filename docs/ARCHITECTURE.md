@@ -1023,6 +1023,11 @@ Durable state (all in `<dataDir>`, atomic writes):
   { sessionIds }` clears it without sending. Config `recovery: { autoResume: false, message: "Был перезапуск, твой
   предыдущий ход прервался. Продолжи с того места, где остановился — сначала проверь текущее состояние рабочего дерева." }`
   (in /api/settings); `autoResume: true` resumes all on startup (coordinators after their workers). Feature flag `recovery`.
+- Implementation: a turn whose saved pid is not adopted but whose file already has the `result` (it finished while the
+  harness was down) is NOT interrupted. Any delivery to the session clears `interrupted` (it was continued). The turn
+  start for `reboot` is `pidStartedAt` (else `lastActivityAt`); boot time = now − `os.uptime()`. `lastActivity` = the last
+  tool call («name input…») of the transcript, else the start of the last answer. The notification is sent once per
+  startup, after the identity checks.
 
 ## Feature flags (client/server version skew)
 

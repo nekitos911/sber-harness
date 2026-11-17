@@ -37,7 +37,7 @@ const NO_BUILD_HTML = '<!doctype html><meta charset="utf-8"><title>Harness</titl
 const GRADES = ['default', 'fast', 'review', 'explore'];
 // optional API groups this server implements (docs/ARCHITECTURE.md "Feature flags"); a flag ships with its route
 export const FEATURES = ['branches', 'fs-search', 'pr-status', 'agent-info', 'models-refresh', 'tracker-links', 'board-columns', 'review-loop',
-  'subagents', 'virtual-sessions', 'worker-run', 'skills-install', 'demo', 'worktree-meta', 'open', 'sdd', 'health', 'folders', 'include-dirs', 'questions', 'permissions', 'activity', 'rework', 'fs-raw', 'tracker-import', 'pr-decline', 'task-suggest'];
+  'subagents', 'virtual-sessions', 'worker-run', 'skills-install', 'demo', 'worktree-meta', 'open', 'sdd', 'health', 'folders', 'include-dirs', 'questions', 'permissions', 'activity', 'rework', 'fs-raw', 'tracker-import', 'pr-decline', 'task-suggest', 'recovery'];
 // titles of operations the UI may follow by sending x-job-id (WS { t: 'job' } frames)
 const JOB_TITLES = {
   'POST /api/tasks/sync': 'Синхронизация с трекером',
@@ -127,6 +127,7 @@ export async function startServer(opts = {}) {
   }
   const serverJson = path.join(config.dataDir, 'server.json');
   await assertSingleInstance(serverJson, config.dataDir);
+  const crashed = fs.existsSync(serverJson); // a clean shutdown removes it
   const store = createStore(config.dataDir);
   const db = store.db;
   const bus = createBus();
@@ -134,7 +135,7 @@ export async function startServer(opts = {}) {
   let url = '';
   const tasks = createTasks({ store, bus, defaultBase: config.git.defaultBase });
   const catalog = createModelCatalog({ config, store, getUrl: () => url });
-  const sessions = createSessions({ config, store, bus, getUrl: () => url, catalog });
+  const sessions = createSessions({ config, store, bus, getUrl: () => url, catalog, crashed });
   const orch = createOrchestration({ config, store, bus, tasks, sessions });
   const mcp = createMcpManager(config);
   const tokenBuf = Buffer.from(store.token);
@@ -258,6 +259,7 @@ export async function startServer(opts = {}) {
       tasks: { refreshSec: t.refreshSec ?? 0 },
       board: config.board,
       session: { stallSec: config.session.stallSec },
+      recovery: { autoResume: !!config.recovery.autoResume, message: config.recovery.message },
       ide: config.ide ?? null,
       orchestration: { reviewMode: config.orchestration.reviewMode, subagents: config.orchestration.subagents, workerMayCommit: !!config.orchestration.workerMayCommit, review: config.orchestration.review },
       integrations: {
@@ -466,6 +468,13 @@ export async function startServer(opts = {}) {
       patch.git = body.git;
     }
     if (body.board !== undefined) patch.board = boardPatch(body.board);
+    if (body.recovery !== undefined) {
+      const rc = body.recovery;
+      if (!isObj(rc) || Object.keys(rc).some((k) => !['autoResume', 'message'].includes(k)) || ('autoResume' in rc && typeof rc.autoResume !== 'boolean') || ('message' in rc && (typeof rc.message !== 'string' || !rc.message.trim()))) {
+        fail(400, 'recovery accepts { autoResume?: boolean, message?: non-empty string }');
+      }
+      patch.recovery = rc;
+    }
     if (body.session !== undefined) {
       const sec = body.session?.stallSec;
       if (!isObj(body.session) || Object.keys(body.session).some((k) => k !== 'stallSec') || !Number.isInteger(sec) || sec < 30) fail(400, 'session accepts { stallSec: integer >= 30 }');
@@ -645,6 +654,9 @@ export async function startServer(opts = {}) {
     integrations: { tasks: !!config.integrations.tasks?.enabled, pr: !!config.integrations.pr?.enabled, tasksProblem },
   }));
   route('GET', '/api/settings', () => settingsView());
+  route('GET', '/api/recovery', () => sessions.recoveryList());
+  route('POST', '/api/recovery/resume', ({ body }) => sessions.recoveryResume(body.sessionIds, check(body, { message: 'string?' }).message));
+  route('POST', '/api/recovery/dismiss', ({ body }) => sessions.recoveryDismiss(body.sessionIds));
   route('GET', '/api/agents/:id/info', ({ params }) => agentInfo(params.id));
   route('POST', '/api/agents/:id/commands/install', ({ params, body }) => installShipped(params.id, 'commands', check(body, { name: 'string', force: 'boolean?' }).name, body.force));
   route('POST', '/api/agents/:id/skills/install', ({ params, body }) => installShipped(params.id, 'skills', body.name || 'harness-orchestration', check(body, { force: 'boolean?' }).force));
