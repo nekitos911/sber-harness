@@ -244,3 +244,14 @@
 .link-btn-out { justify-self: start; margin-top: 4px; text-decoration: none; }
 .msg-wrap > .link-btn-out { align-self: center; }
 .worker-row[data-nested] { padding-left: 32px; }
+
+/* @mentions: the textarea is transparent over a mirror that draws @path tokens as chips. */
+.composer-field { position: relative; overflow: hidden; }
+.composer-field .composer-input { position: relative; z-index: 1; background: transparent; }
+.composer-mirror {
+  position: absolute; inset: 0; z-index: 0; pointer-events: none; color: transparent;
+  font-size: 14px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: break-word; word-break: break-word;
+}
+.composer-mirror mark { color: transparent; background: var(--signal-soft); border-radius: 3px; box-shadow: 0 0 0 1px color-mix(in srgb, var(--signal) 30%, transparent); }
+.suggest { min-width: 320px; }
+.suggest .option-label strong { font-weight: 600; color: var(--ink); }

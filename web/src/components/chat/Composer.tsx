@@ -4,6 +4,7 @@ import { tryApi } from '../../api'
 import { setDraft, setState, toast, upsert, useStore } from '../../store'
 import type { Session } from '../../types'
 import { MenuButton, Select } from '../ui'
+import { MentionMirror, useComposerSuggest } from './Suggest'
 import { ModelPicker } from '../pickers/ModelPicker'
 import { FULL_ACCESS, modeShort } from '../../lib/agents'
 
@@ -12,6 +13,8 @@ export function Composer({ session, active }: { session: Session; active: boolea
   // Draft lives in the store: survives tab switches, remounts and reloads.
   const text = useStore((s) => s.drafts[session.id] ?? '')
   const [sending, setSending] = useState(false)
+  const [caret, setCaret] = useState(0)
+  const [scroll, setScroll] = useState(0)
   const ref = useRef<HTMLTextAreaElement>(null)
   const running = session.status === 'running'
 
@@ -25,6 +28,14 @@ export function Composer({ session, active }: { session: Session; active: boolea
   useLayoutEffect(() => { if (active) ref.current?.focus() }, [active])
 
   const update = (v: string) => setDraft(session.id, v)
+  const suggest = useComposerSuggest({
+    input: ref, text, caret, cwd: session.cwd, agentId: session.agent,
+    onInsert: (start, end, value) => {
+      update(text.slice(0, start) + value + text.slice(end))
+      const pos = start + value.length
+      requestAnimationFrame(() => { ref.current?.focus(); ref.current?.setSelectionRange(pos, pos); setCaret(pos) })
+    },
+  })
 
   /** The agent CLI understands @file mentions and /commands; the menu just types the trigger for you. */
   const insert = (ch: string) => {
@@ -64,6 +75,8 @@ export function Composer({ session, active }: { session: Session; active: boolea
 
   return (
     <div className="composer">
+      <div className="composer-field">
+      <MentionMirror text={text} scrollTop={scroll} />
       <textarea
         ref={ref}
         rows={1}
@@ -71,11 +84,16 @@ export function Composer({ session, active }: { session: Session; active: boolea
         placeholder={running ? 'Сообщение встанет в очередь' : session.status === 'stopped' ? 'Остановлено. Следующее сообщение продолжит работу' : 'Задайте вопрос; @ — файлы, / — команды'}
         aria-label="Сообщение агенту"
         value={text}
-        onChange={(e) => update(e.target.value)}
+        onChange={(e) => { update(e.target.value); setCaret(e.target.selectionStart) }}
+        onSelect={(e) => setCaret(e.currentTarget.selectionStart)}
+        onScroll={(e) => setScroll(e.currentTarget.scrollTop)}
         onKeyDown={(e) => {
+          if (suggest.onKeyDown(e)) return
           if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void send() }
         }}
       />
+      </div>
+      {suggest.popover}
       <div className="composer-bar">
         <MenuButton
           label="Вставить"
