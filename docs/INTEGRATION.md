@@ -45,8 +45,12 @@ reconstruction: fix the normalizer in `server/launchers.js` (stream) or the pars
 1. `agents.gigacode.command` = `C:/Program Files/.gigacode/bin/gigacode.cmd` (the default). The harness reads `ROOT=%~dp0..`
    and the identity from the shim and starts `ROOT\runtime\node\node.exe --max-old-space-size=6144 ROOT\lib\cli-entry.js …`
    without a shell. If the layout is different, set the explicit pair `agents.gigacode.node` + `agents.gigacode.cliEntry`.
-2. Models: in Settings (or in `agents.gigacode` locally) fill in `models` (the catalog from `/models`) and the grades
-   `settings.agents.modelGrades` (`default/fast/review/explore`) + `allowedGrades`, the same values as in the old console.
+2. Models: the catalog is pulled from GigaCode itself (`-p "/models"`, button "Refresh model list" in the picker
+   and in Settings). Check that the discovery found all models (compare with `/models` in interactive mode); if the
+   output format is not recognized, set the regex `agents.gigacode.modelsDiscovery.pattern` in the local config
+   (with no code changes) or fix the parser + its test. Select the grades (`default/fast/review/explore`) in Settings,
+   as in the old console. When models are renamed, nothing needs rewriting: the old ones become "unavailable", grades
+   without a model fall back to the CLI default, and Settings shows a warning.
 3. Check in the UI: New chat → GigaCode → "Hi, which MCP tools do you have?". Expected:
    - while the CLI is starting (30–60 s), the chat shows "Starting… waiting for MCP";
    - a "MCP: …" line with server statuses;
