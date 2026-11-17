@@ -1,7 +1,7 @@
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
 import { ArrowUpToLine, Ellipsis, ExternalLink, EyeOff, GitMerge, Lock, Pencil, Play, Plus, Send, SquareArrowOutUpRight, Trash2, UserPlus, Wrench, X } from 'lucide-react'
 import { api, ApiError, errorText, tryApi } from '../../api'
-import { getState, openDialog, openSession, setState, toast, upsert, useFeature, useStore, without } from '../../store'
+import { getState, openDialog, openSession, setState, toast, upsert, useFeature, useStore, without, upsertSession } from '../../store'
 import { COLUMNS, fullTime, PRIORITY, relTime } from '../../lib/format'
 import { isImported, pendingDeps, taskKey } from '../../lib/tasks'
 import { useNow } from '../../lib/useNow'
@@ -692,7 +692,7 @@ function AssignForm({ task, onDone }: { task: Task; onDone: () => void }) {
     const s = await tryApi<Session>('POST', `/tasks/${encodeURIComponent(task.id)}/assign`, { agent, workspaceId: repo || undefined, worktree })
     setBusy(false)
     if (!s) return
-    setState((st) => ({ sessions: upsert(st.sessions, s) }))
+    setState((st) => ({ sessions: upsertSession(st.sessions, s) }))
     onDone()
     openSession(s.id)
   }

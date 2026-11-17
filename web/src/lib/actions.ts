@@ -1,5 +1,5 @@
 import { tryApi } from '../api'
-import { getState, openSession, setState, toast, upsert } from '../store'
+import { getState, openSession, setState, toast, upsert, upsertSession } from '../store'
 import { normPath } from './format'
 import type { Session, Workspace } from '../types'
 
@@ -7,7 +7,7 @@ export interface Where { workspaceId?: string | null; cwd?: string | null }
 
 /** Keep the session we just got from the API (the WS echo may arrive later) and open its tab in its worktree. */
 export function adoptSession(s: Session) {
-  setState((st) => ({ sessions: upsert(st.sessions, s) }))
+  setState((st) => ({ sessions: upsertSession(st.sessions, s) }))
   openSession(s.id)
 }
 

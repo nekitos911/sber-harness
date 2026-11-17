@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { ArrowDown, Check, Copy, Ellipsis, ExternalLink, FolderPlus, KeyRound, Wrench, GitCompareArrows, MessageSquare, RotateCcw, ScrollText, Square, Trash2 } from 'lucide-react'
 import { api, errorText, tryApi } from '../api'
-import { openSession, openTask, setState, showPanel, upsert, useFeature, useStore, without } from '../store'
+import { openSession, openTask, setState, showPanel, useFeature, useStore, without, upsertSession } from '../store'
 import { loadMessages, loadSubagents } from '../ws'
 import { basename, normPath, ROLE } from '../lib/format'
 import { useGit } from '../lib/git'
@@ -239,7 +239,7 @@ function ChatHeader({ session, onLog, onReset, onDelete }: { session: Session; o
     const t = title.trim()
     if (!t || t === session.title) { setTitle(session.title); return }
     const s = await tryApi<Session>('PATCH', `/sessions/${session.id}`, { title: t })
-    if (s) setState((st) => ({ sessions: upsert(st.sessions, s) }))
+    if (s) setState((st) => ({ sessions: upsertSession(st.sessions, s) }))
   }
 
   return (
@@ -304,7 +304,7 @@ function IncludeDirs({ session }: { session: Session }) {
   const anchor = useRef<HTMLButtonElement>(null)
   const save = async (next: string[]) => {
     const s = await tryApi<Session>('PATCH', `/sessions/${session.id}`, { includeDirs: next })
-    if (s) setState((st) => ({ sessions: upsert(st.sessions, s) }))
+    if (s) setState((st) => ({ sessions: upsertSession(st.sessions, s) }))
   }
   return (
     <>

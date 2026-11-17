@@ -587,6 +587,14 @@ function OrchestrationSection({ form, update }: Omit<SectionProps, 'fieldError'>
         </Row>
       </div>
       <Advanced id="orchestration">
+        {form.session?.stallSec !== undefined && (
+          <div className="set-rows">
+            <Row label="«Нет вывода» через" hint="Работающий агент без единого события дольше этого считается зависшим: красный значок и предложение остановить.">
+              <Select label="«Нет вывода» через" value={String(form.session.stallSec)} onChange={(v) => update({ ...form, session: { ...form.session, stallSec: Number(v) } })}
+                options={[...new Set([30, 60, 120, 300, 600, 900, form.session.stallSec])].sort((x, y) => x - y).map((s) => ({ value: String(s), label: s < 60 ? `${s} с` : `${s / 60} мин` }))} />
+            </Row>
+          </div>
+        )}
         {mode === 'harness' && <div className="set-rows"><ReviewRows form={form} update={update} /></div>}
         <p className="set-note">Ручная команда /full-task-harness больше не нужна: субагенты идут через harness автоматически. Её можно установить для старых сценариев.</p>
         <InstallFile id={agentId} kind="commands" name="full-task-harness" target="~/.gigacode/commands/full-task-harness.md" title="команда /full-task-harness" action="Установить в ~/.gigacode/commands" />
@@ -747,7 +755,7 @@ function GeneralSection({ form, update }: Omit<SectionProps, 'fieldError'>) {
             options={Object.keys(form.agents).filter((k) => form.agents[k].enabled !== false || k === form.defaultAgent)
               .map((k) => ({ value: k, label: labels.find((x) => x.id === k)?.label ?? k, hint: k }))} />
         </Row>
-        {foldersOn && (
+        {foldersOn && form.workspaces !== undefined && ( // only when the server's settings carry it (else a save would drop it)
           <Row label="Папка с проектами" hint="«Все проекты» в боковой панели и место нового чата, когда ничего не выбрано.">
             <ProjectsFolder value={form.workspaces?.root ?? null} onChange={(root) => update({ ...form, workspaces: { ...form.workspaces, root } })} />
           </Row>

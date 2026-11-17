@@ -1,6 +1,7 @@
 import { useState, type ReactNode, type RefObject } from 'react'
 import { Play, Wrench } from 'lucide-react'
-import { tryApi } from '../../api'
+import { api } from '../../api'
+import { runJob } from '../../lib/jobs'
 import { getState, openDialog, setState, toast, upsert } from '../../store'
 import { adoptSession } from '../../lib/actions'
 import { loadDraft, saveDraft } from '../../lib/draft'
@@ -74,7 +75,7 @@ export function ReworkPopover({ task, anchor, open, onClose, onSent, onMoveOnly 
       primary={{
         label: 'Отправить агенту', icon: <Wrench />,
         run: async (notes) => {
-          const res = await tryApi<{ task?: Task; session?: Session }>('POST', `/tasks/${encodeURIComponent(task.id)}/rework`, { notes })
+          const res = await runJob('Доработка', (jobId) => api<{ task?: Task; session?: Session }>('POST', `/tasks/${encodeURIComponent(task.id)}/rework`, { notes }, { jobId }))
           if (res === undefined) return false
           if (res?.task) setState((s) => ({ tasks: upsert(s.tasks, res.task!) }))
           toast(`${task.externalId ?? task.id}: правки отправлены агенту`, 'ok')
@@ -98,7 +99,7 @@ export function StartPopover({ task, anchor, open, onClose }: { task: Task; anch
         label: 'Взять в работу', icon: <Play />,
         run: async (notes) => {
           const st = getState()
-          const s = await tryApi<Session & { jumped?: boolean }>('POST', `/tasks/${encodeURIComponent(task.id)}/start`, { agent: st.defaultAgent ?? undefined, notes: notes || undefined })
+          const s = await runJob('Взять в работу', (jobId) => api<Session & { jumped?: boolean }>('POST', `/tasks/${encodeURIComponent(task.id)}/start`, { agent: st.defaultAgent ?? undefined, notes: notes || undefined }, { jobId }))
           if (!s) return false
           if (s.jumped) toast('Задача уже в работе — открыл текущую сессию')
           adoptSession(s)

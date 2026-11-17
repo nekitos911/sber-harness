@@ -1,7 +1,7 @@
 import { useLayoutEffect, useRef, useState } from 'react'
 import { ArrowUp, AtSign, Plus, Slash, Square } from 'lucide-react'
 import { tryApi } from '../../api'
-import { setDraft, setState, toast, upsert, useStore } from '../../store'
+import { setDraft, setState, toast, useStore, upsertSession } from '../../store'
 import type { Session } from '../../types'
 import { MenuButton, Select } from '../ui'
 import { MentionMirror, useComposerSuggest } from './Suggest'
@@ -66,7 +66,7 @@ export function Composer({ session, active }: { session: Session; active: boolea
 
   const patch = async (fields: Partial<Pick<Session, 'model' | 'approvalMode'>>) => {
     const s = await tryApi<Session>('PATCH', `/sessions/${session.id}`, fields)
-    if (s) setState((st) => ({ sessions: upsert(st.sessions, s) }))
+    if (s) setState((st) => ({ sessions: upsertSession(st.sessions, s) }))
   }
   const setMode = (approvalMode: string) => patch({ approvalMode })
 

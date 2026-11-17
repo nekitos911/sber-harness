@@ -270,6 +270,7 @@ export interface AgentSettings {
 
 export interface Settings {
   workspaces?: { root?: string | null } // projects folder; null = auto (deepest common parent)
+  session?: { stallSec?: number } // «нет вывода» after this many seconds of silence (≥ 30)
   agents: Record<string, AgentSettings>
   defaultAgent: string
   git: {
@@ -314,7 +315,7 @@ export type ServerEvent =
   | { t: 'sdd'; cwd: string; plans: SddPlan[] }
   | { t: 'term'; id: string; data: string }
   | { t: 'term.replay'; id: string; data: string }
-  | { t: 'job'; id: string; text?: string; step?: number; total?: number; done?: boolean; error?: string }
+  | { t: 'job'; id: string; title?: string; step?: string | null; progress?: { done: number; total: number }; done?: boolean; error?: string }
 
 export type ClientEvent =
   | { t: 'term.attach'; id: string }

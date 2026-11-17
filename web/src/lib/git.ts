@@ -26,6 +26,7 @@ async function load(cwd: string): Promise<GitInfo> {
 /** Re-read git status + diff of a worktree; a request while one is running queues exactly one more. */
 export function refreshGit(cwd: string) {
   const k = wtKey(cwd)
+  if (!getState().loaded) return // workspaces unknown yet; the watchers run again once /state arrives
   // The projects folder and plain folders are not repositories: say so without asking git.
   if (getState().workspaces.some((w) => (w.kind === 'root' || w.kind === 'folder') && wtKey(w.path) === k)) {
     if (!getState().git[k]) setState((s) => ({ git: { ...s.git, [k]: { status: null, error: 'не git-репозиторий', files: null } } }))
@@ -46,7 +47,8 @@ export const useGit = (cwd: string | null) => useStore((s) => (cwd ? s.git[wtKey
 /** Keep a worktree's git state fresh: on first look and whenever a session there changes status (a turn ends). */
 export function useGitWatch(cwd: string | null) {
   const sig = useStore((s) => (cwd ? s.sessions.filter((x) => normPath(x.cwd) === normPath(cwd)).map((x) => x.id + x.status).join() : ''))
-  useEffect(() => { if (cwd) refreshGit(cwd) }, [cwd, sig])
+  const loaded = useStore((s) => s.loaded)
+  useEffect(() => { if (cwd) refreshGit(cwd) }, [cwd, sig, loaded])
 }
 
 export const diffOf = (files: DiffFile[] | null | undefined, path: string) => {

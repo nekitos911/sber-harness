@@ -29,12 +29,12 @@ export async function runJob<T>(label: string, fn: (jobId: string) => Promise<T>
   }
 }
 
-/** WS `{ t: 'job', id, text?, step?, total?, done?, error? }` from the server. */
-export function applyJobEvent(ev: { id: string; text?: string; step?: number; total?: number; done?: boolean; error?: string }) {
+/** WS `{ t: 'job', id, title, step, progress?: { done, total }, done?, error? }` (server/jobs.js). */
+export function applyJobEvent(ev: { id: string; title?: string; step?: string | null; progress?: { done: number; total: number }; done?: boolean; error?: string }) {
   if (!getState().jobs.some((j) => j.id === ev.id)) return
-  if (ev.done && !ev.error) return // the request itself ends the job
-  const step = ev.text ?? (ev.step && ev.total ? `шаг ${ev.step}/${ev.total}` : null)
-  setState((s) => ({ jobs: s.jobs.map((j) => (j.id === ev.id ? { ...j, step: step ?? j.step, error: ev.error ?? j.error } : j)) }))
+  if (ev.done) return // the request's own answer ends the job (or reports its error)
+  const step = ev.step ? (ev.progress ? `${ev.step} ${ev.progress.done}/${ev.progress.total}` : ev.step) : null
+  setState((s) => ({ jobs: s.jobs.map((j) => (j.id === ev.id ? { ...j, label: j.label || ev.title || '', step: step ?? j.step } : j)) }))
 }
 
 /** The server's current step of a job shown inline (a dialog's submit button). */

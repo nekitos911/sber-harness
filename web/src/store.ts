@@ -190,6 +190,15 @@ export function upsert<T extends { id: string }>(list: T[], item: T): T[] {
 
 export const without = <T extends { id: string }>(list: T[], id: string) => list.filter((x) => x.id !== id)
 
+/**
+ * A session from an HTTP answer: kept only if not older than what WS already delivered (a slow response to «send»
+ * or «start» must not put a finished turn back to «running»).
+ */
+export function upsertSession(list: Session[], s: Session): Session[] {
+  const cur = list.find((x) => x.id === s.id)
+  return cur && cur.lastActivityAt > s.lastActivityAt ? list : upsert(list, s)
+}
+
 // ---------- navigation: screens, worktrees, tabs ----------
 
 const locKey = (l: Loc) => ('screen' in l ? `@${l.screen}` : `${wtKey(l.cwd)}#${l.tab ?? ''}`)
