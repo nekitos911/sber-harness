@@ -4,6 +4,7 @@
   "dataDir": "./data",
   "shell": { "command": "powershell.exe", "args": ["-NoLogo"] },
   "defaultAgent": "gigacode",
+  "workspaces": { "root": null, "repos": [] },
   "worktreeRoot": null,
   "git": {
     "defaultBase": "develop",
@@ -13,19 +14,27 @@
     "prTitleTemplate": "{key}: {title}"
   },
   "tasks": {
-    "promptTemplate": "{key}: {title}\n\n{description}\n\nTarget branches: {targets}\nLink: {url}"
+    "promptTemplate": "{key}: {title}\n\n{description}\n\nTarget branches: {targets}\nLink: {taskUrl}{notes}"
   },
+  "session": { "idleWindowSec": 90 },
+  "orchestration": { "workerMayCommit": false },
   "agents": {
     "gigacode": {
       "launcher": "gigacode",
       "label": "GigaCode",
-      "command": "gigacode",
-      "approvalMode": "yolo",
-      "approvalModes": ["plan", "default", "auto-edit", "yolo"],
+      "command": "C:/Program Files/.gigacode/bin/gigacode.cmd",
+      "node": null,
+      "cliEntry": null,
+      "nodeArgs": ["--max-old-space-size=6144"],
+      "approvalMode": "auto",
+      "approvalModes": ["plan", "default", "auto-edit", "auto"],
       "model": null,
-      "settingsEnv": "GIGACODE_CLI_SYSTEM_SETTINGS_PATH",
-      "settings": { "chatRecording": true },
-      "inheritUserMcpFrom": "~/.gigacode/settings.json",
+      "settingsEnv": "GIGACODE_SYSTEM_SETTINGS_PATH",
+      "settings": {
+        "agents": { "modelGrades": {}, "allowedGrades": [] },
+        "chatRecording": true
+      },
+      "taskPromptTemplate": null,
       "firstEventTimeoutMs": 30000,
       "env": {}
     },
@@ -40,13 +49,14 @@
     "mock": {
       "launcher": "mock",
       "label": "Mock agent (demo)",
-      "approvalMode": "yolo",
-      "approvalModes": ["plan", "default", "auto-edit", "yolo"]
+      "approvalMode": "auto",
+      "approvalModes": ["plan", "default", "auto-edit", "auto"]
     }
   },
   "agentMcpServers": {},
+  "mcpServersFrom": "~/.gigacode/settings.json",
   "mcpServers": {
-    "tracker": {
+    "mock-tracker": {
       "enabled": false,
       "transport": "stdio",
       "command": "node",
@@ -58,9 +68,18 @@
   "integrations": {
     "tasks": {
       "enabled": false,
-      "server": "tracker",
-      "tool": "list_issues",
+      "server": "onework",
+      "tools": {
+        "find": "sbertrack_findIssues",
+        "get": "sbertrack_getIssue",
+        "meta": "sbertrack_getIssueMeta",
+        "transition": "sbertrack_updateIssueStatus",
+        "links": "sbertrack_listLinks",
+        "me": "sbertrack_getUser"
+      },
       "args": {},
+      "limit": 30,
+      "refreshSec": 0,
       "itemsPath": "issues",
       "map": {
         "externalId": "key",
@@ -70,11 +89,13 @@
         "status": "status",
         "priority": "priority"
       },
-      "statusMap": { "Open": "todo", "In Progress": "in_progress", "Review": "review", "Done": "done" }
+      "statusMap": { "Open": "todo", "In Progress": "in_progress", "Review": "review", "Done": "done" },
+      "closedStatuses": ["Closed", "Cancelled", "Declined"],
+      "transition": { "args": { "key": "{key}", "status": "{status}", "comment": "{comment}" } }
     },
     "pr": {
       "enabled": false,
-      "server": "tracker",
+      "server": "sourcecontrol",
       "tool": "create_pull_request",
       "args": { "repo": "{repo}", "source": "{branch}", "target": "{base}", "title": "{title}", "description": "{body}" },
       "urlPath": "url"

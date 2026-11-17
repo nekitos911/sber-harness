@@ -333,7 +333,12 @@ GET    /api/fs/file?cwd=&path=  -> { path, content, size, binary: boolean }   (t
 PUT    /api/fs/file             {cwd, path, content} -> { ok: true }
        (all fs paths are resolved against cwd and must stay inside it, else 400)
 
-GET    /api/mcp/servers         -> [{ name, enabled, transport, ok, error?, tools: [{name, description}] }]
+GET    /api/mcp/servers         -> [{ name, enabled, transport, ok, error?, problem?, tools: [{name, description}] }]
+
+GET    /api/settings            -> { agents: { <id>: { approvalMode, approvalModes, model, modelGrades: { default?, fast?, review?, explore? }, allowedGrades, taskPromptTemplate } },
+                                     defaultAgent, git: {...}, tasks: { refreshSec } }
+PUT    /api/settings            same shape (partial) -> saved into harness.config.local.json (never secrets; approvalMode validated)
+                                 modelGrades/allowedGrades map to agents.<id>.settings.agents.{modelGrades,allowedGrades}
 POST   /api/notifications/:id/read
 POST   /api/notifications/read-all
 ```
@@ -407,6 +412,124 @@ coordinator/user; the board shows subtask progress (done/total).
   bullet list of changed files. `pr.title` = `prTitleTemplate`; `pr.body` = task description excerpt + external URL +
   last worker summary + `git log <base>..HEAD --oneline` as bullets.
 - Worker preamble tells agents: commit messages must start with `{key}: ` and the worker stays on its branch.
+
+## GigaCode launcher: known facts from the target machine (do not "simplify")
+
+- Installed at `C:\Program Files\.gigacode\bin\gigacode.cmd` (default `agents.gigacode.command`).
+- Real invocation (no shell, argv array, prompt = one element, `--approval-mode` AFTER the prompt, no invented flags —
+  anything else must be confirmed with `--help`):
+  new: `<node.exe> --max-old-space-size=6144 <cli-entry.js> -p <prompt> --approval-mode <mode> --output-format stream-json [--model <id>]`
+  resume: `<node.exe> --max-old-space-size=6144 <cli-entry.js> --resume <sessionId> -p <text> --approval-mode <mode> --output-format stream-json`
+- Agent process env (set only by the runner): `GIGACODE_SYSTEM_SETTINGS_PATH`, `GIGACODE_PACKAGE_IDENTITY`,
+  `GIGACODE_PACKAGE_LAUNCHER` (path of the .cmd shim), `MCP_SECRET_<NAME>` for every secret (see Console MCP),
+  `HARNESS_URL`, `HARNESS_TOKEN`, `HARNESS_SESSION_ID`.
+- If the configured launcher cannot start, show the error and stop. Never fall back to another launcher.
+- `agents.gigacode.command` points at the `gigacode.cmd` shim (or PATH name). The shim sits next to its bundled
+  runtime: resolve to `<shimDir>/runtime/node/node.exe` + `<shimDir>/lib/cli-entry.js` (fall back to parsing the
+  shim text for the entry, then to `process.execPath`). Optional explicit pair `agents.gigacode.node` +
+  `agents.gigacode.cliEntry` — both or neither, both must exist; checked BEFORE anything else is created (worktree).
+- **Package identity guard**: cli-entry.js requires env `GIGACODE_PACKAGE_IDENTITY` (64 hex) and
+  `GIGACODE_PACKAGE_LAUNCHER` (absolute path of the shim). Both are declared inside the shim text as
+  `set "GIGACODE_PACKAGE_IDENTITY=<64 hex>"`. Read the shim, extract, pass in env. Missing identity → fail
+  immediately with a clear message (otherwise the CLI says "the public launcher and standalone payload identities do not match").
+- Per-session settings: env `GIGACODE_SYSTEM_SETTINGS_PATH` → `<dataDir>/runs/<sid>/settings.json`, written as UTF-8.
+  It is layered over the user's `~/.gigacode/settings.json` (permissions and the user's own MCP servers come from
+  there; the harness never overrides them). Contents, exactly:
+  `{ "agents": { "modelGrades": {...}, "allowedGrades": [...] }, "chatRecording": true, "mcpServers": { "harness": {...} } }`
+  — `mcpServers` holds ONLY servers the harness deliberately gives the agent (`harness` + `agentMcpServers`).
+  Never write `permissions`. Empty grades map is valid. Write failure → session `error` (and a worktree created for
+  this start is removed), never a stuck "running".
+  Same path on every turn (resume), file removed when the session is deleted.
+- Approval modes: `plan | default | auto-edit | auto` (validated against `approvalModes`; unknown → refuse).
+- Resume requires `chatRecording: true`, the same cwd and the same settings path. A session never resumes with a
+  different cwd, settings path or launcher — refuse explicitly.
+- The user's task command: `taskPromptTemplate: "/full-task-ui {taskUrl}{notes}"` (takes the task + its SDD).
+
+### Prompt templates
+Single pass with a replacer FUNCTION (task text may contain `$&`, `$'`, `$$`); substituted text is never expanded
+again; unknown `{placeholders}` are left as is; a task template without any of `{taskUrl} {key} {id} {description}`
+is a config error (agent would start without the task); empty notes are fine.
+Vars: `{key} {id} {title} {description} {url} {taskUrl} {targets} {branch} {repo} {notes} {runId} {registryDir}
+{settingsPath} {approvalMode}`. `{notes}` = `" " + notes` when the user typed notes at start, else `""`.
+`{runId}` = session id, `{registryDir}` = `<dataDir>/runs/<sid>/registry`.
+
+### Run robustness
+- Stop = `taskkill /PID <pid> /T /F` (argv array, only our own pid) and the session becomes `stopped` immediately;
+  a late `exit` never overwrites `stopped`. The next message resumes normally.
+- `POST /api/tasks/:id/start` on a task that already has a live worker returns that session with `jumped: true`
+  (no second process, no second worktree). Concurrent starts of the same task → one process.
+- stdout: line buffer with a cap (lines > 8 MB are truncated with a marker); non-JSON lines are NOT dropped:
+  consecutive ones are shown in the feed as one `system` message (mono). stderr → `runs/<sid>/stderr.log`; its tail
+  goes into the error message when the process dies before the first event.
+- Usage: `result` events may carry token counts (`stats`/`usage`, `input_token_count`/`output_token_count`) →
+  cumulative `session.tokensIn` / `session.tokensOut` (0 when unknown).
+- Chat without a repository: cwd = `<dataDir>/chats/<sid>` (created, survives restarts), no worktree.
+- Worktrees: reuse the task's worktree in that repo if it exists; removal = `git worktree remove --force` +
+  `git worktree prune --expire now`, then the directory: on Windows rename to `.stale-<ts>` first, then
+  `fs.rm(..., { recursive, force, maxRetries })`.
+- Startup: sessions left `running` become `idle` with a system message ("harness restarted, the turn was interrupted;
+  send a message to continue — context is kept by --resume"); orphan locks are cleared.
+
+## Agent-internal sub-agent registry (read-only compatibility)
+
+Some task commands (e.g. `/full-task-ui`) run their own internal sub-agents and write a registry into
+`{registryDir}`: `<registryDir>/<agentId>/agent.json` (one object) + `log.jsonl` (append-only events).
+The harness only READS it (poll every 2 s while the session is running, on demand otherwise) and shows these as
+read-only rows nested under the session (`GET /api/sessions/:id/subagents`, WS `{ t: 'subagents', sessionId, items }`).
+`agent.json`: required `id, name, startedAt, state`; `state` ∈ `queued working restarting compacting waiting blocked
+idle done failed interrupted unverifiable`; optional `model role parentId worktree lastText lastActivity
+activity{tool,since} tokensIn tokensOut settledAt`. Reader rules: broken record → skipped (counted in a
+`problems` list, never crash); `working` whose `lastActivity` (or `startedAt` if null) is older than
+`session.idleWindowSec` (default 90) → shown as `unverifiable` (file never rewritten); terminal states without
+`settledAt` are flagged; tokens default to 0. These rows are separate from harness workers (which are real
+sessions with their own chats).
+
+## Board ↔ tracker semantics
+
+- Task fields added: `externalStatus: string | null` (raw tracker status), `statusManual: boolean` (set when a
+  human moves the card; import then never overwrites `status`), `hidden: boolean`, `takenAt: number | null`,
+  `snapshot: { title, description, externalStatus, at } | null` (frozen when taken into work).
+- Board = (imported, open, assigned to me) ∪ (taken into work through the harness, kept even if the tracker stops
+  returning them) ∪ local tasks, minus `hidden`. Imported tasks whose status is in `integrations.tasks.closedStatuses`
+  are not added (existing ones are kept). `DELETE` of an imported task = `hidden: true` (re-import keeps it hidden);
+  local tasks are really deleted. Search by key also finds hidden/closed ones; UI has a "show hidden" toggle.
+- Column comes from `statusMap(externalStatus)` on import unless `statusManual`. Moving a card NEVER changes the
+  tracker; changing tracker status is an explicit action: `POST /api/tasks/:id/tracker-status { status, comment? }`
+  → `transitionTask()` in `server/integrations/tasks.js` (501 when `integrations.tasks.transition` is not configured).
+- Periodic sync: `integrations.tasks.refreshSec` (0 = off, min 10) while at least one UI client is connected;
+  only changed tasks are broadcast (signature = key + status + title). On failure the board keeps the local snapshot
+  and `GET /api/state` → `integrations.tasksProblem: { error, at } | null` is shown as a banner ("tracker unavailable,
+  showing snapshot from HH:MM"). `limit` goes into the tool args (server-side limit).
+
+## Console MCP: servers, secrets and failures
+Three separate MCP layers — never mix them:
+1. **Console MCP** (the harness itself reads the tracker / creates PRs): server definitions come from
+   `config.mcpServers` merged over the `mcpServers` of `config.mcpServersFrom` (default `~/.gigacode/settings.json`,
+   env override `CONSOLE_MCP_SETTINGS`; a missing file is fine). Tracker access goes through the `onework` server
+   (tools `sbertrack_findIssues`, `sbertrack_listLinks`, `sbertrack_getIssue`, `sbertrack_getIssueMeta`,
+   `sbertrack_updateIssueStatus`, `sbertrack_getUser`). Never call the standalone `sbertrack` server for reading
+   tasks (it answers 403). PRs go through `sourcecontrol`.
+2. **Agent MCP** (what GigaCode sees in its run): only via the per-session settings.json `mcpServers`
+   (`harness` + `agentMcpServers`), plus whatever the user has in `~/.gigacode/settings.json`.
+3. **Extension mapping**: tool names differ per provider (prefixes), so which tool does find / get / meta /
+   transition / links / me is config data (`integrations.tasks.tools`), never hardcoded.
+
+Secrets:
+- Secrets file: `HARNESS_MCP_SECRETS` || `CONSOLE_MCP_SECRETS` || `config.mcpSecretsFile` || `<dataDir>/mcp-secrets.json`.
+  Formats: JSON `{ "<name>": "<value>" }`, or text lines `name=value` (`#` comments), or a single bare value
+  (no `=`) which means `onework/Authorization`. Names `scope/header` and `scope_header` are equivalent.
+- Config string values (env, headers, args, url) may reference secrets: `${env:NAME}` (process env, else secret NAME)
+  and `$secret:scope/header` / `${secret:scope/header}`. Resolved at call time; never logged, never returned by an API.
+- Every secret is also exported to stdio MCP children and agent processes as `MCP_SECRET_<NAME>`
+  (`/` → `_`, e.g. `MCP_SECRET_onework_Authorization`).
+- A server with a missing secret stays in the list with `problem: "missing secret <name>"`; other servers keep working
+  (never a 401 that wipes the whole map).
+- stdio servers: connect per call (spawn → initialize → call → close); timeout per call.
+- `node server/index.js --print-config` prints the resolved config: paths (and whether they exist), approval modes,
+  refresh period, which secrets are present (names only, never values). On startup, any config string that looks
+  like a token/password (long high-entropy value under a key like token/secret/password/authorization) is a loud warning.
+- `HARNESS_CONFIG` env selects the config file (default `harness.config.json` + `.local`), so work and test
+  configs never mix.
 
 ## Security
 
