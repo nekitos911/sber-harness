@@ -841,6 +841,26 @@ Secrets:
 - `HARNESS_CONFIG` env selects the config file (default `harness.config.json` + `.local`), so work and test
   configs never mix.
 
+## Where a chat runs: projects folder, any folder, extra directories
+
+- **Projects folder** (`workspaces.root`): when null, auto-detected as the deepest common parent of ≥ 2 registered
+  workspaces (shown as «Авто» in Settings). It is a first-class *folder workspace* (`{ id, name, path, isGit: false,
+  kind: 'root' }`, created/updated on startup) listed first in the sidebar as «Все проекты (<dirname>)». A chat there
+  sees every project under it (the CLI's typical "run in the projects folder" usage). Default location for «Новый чат»
+  when nothing is selected.
+- **Any folder**: `GET /api/fs/dirs?path=` → `{ path, parent, entries: [{ name, path }], roots: string[] }` (Windows:
+  drive letters as roots; POSIX: `/` and `~`; directories only; hidden dirs skipped unless `?hidden=1`; token-protected
+  like everything else). `POST /api/workspaces { path, kind: 'folder' }` registers it (non-git allowed) and the chat
+  starts there. `db.prefs.recentFolders` (last 10) returned by `/api/state` as `recentFolders`.
+- **Extra directories** (GigaCode `--include-directories` / `--add-dir`, the headless form of the interactive `/dir add`):
+  session field `includeDirs: string[]` (absolute, existing dirs, de-duplicated, excluding cwd and its ancestors).
+  The gigacode/qwen/gemini launchers add `--include-directories <dir>` once per dir on EVERY turn (each turn is a new
+  process, so changes apply from the next message; claude launcher: `--add-dir <dir>`). Editable via
+  `PATCH /api/sessions/:id { includeDirs }`. Auto-fill: a task worker's `includeDirs` = the repos (or existing task
+  worktrees) of the other subtasks of the same parent task + the parent task's explicit `includeDirs`; a coordinator at
+  the projects folder needs none. Terminal sessions with an agent CLI get the same flags at start.
+  `POST /api/sessions` accepts `includeDirs`. Feature flags: `folders`, `include-dirs`.
+
 ## Session activity states (what the UI shows)
 
 Session gains `lastEventAt: number | null` (last stdout event of the current turn), `waitingFor: 'answer' | 'auth' | null`
