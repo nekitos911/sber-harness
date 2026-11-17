@@ -5,7 +5,7 @@ import { useHistory } from '../lib/history'
 import { archiveSession, renameSession, sessionMenu } from '../lib/sessionActions'
 import { loadWorktrees } from '../ws'
 import { useCurrentTool, useStateLine } from '../lib/live'
-import { sessionVisualState, stateSummary } from '../lib/sessionState'
+import { dur, sessionVisualState } from '../lib/sessionState'
 import { basename, normPath, plural, relTime, tokens } from '../lib/format'
 import { loadDraft, saveDraft } from '../lib/draft'
 import { newChat, newTerminal } from '../lib/actions'
@@ -74,6 +74,7 @@ export function Sidebar() {
       </div>
 
       <div className="tree" aria-label="Проекты и сессии">
+        {!filtering && <AttentionSection tree={tree} />}
         {rootWs && <ProjectNode ws={rootWs} tree={tree} filtering={filtering} />}
         <div className="sb-head">
           <span>Проекты <span className="num">· {projects.length}</span></span>
@@ -97,10 +98,11 @@ export function Sidebar() {
         )}
         {tree.loose.length > 0 && (
           <div className="tree-group">
-            <div className="tree-note" style={depth(-1)}>Вне проектов</div>
+            <div className="tree-note">Вне проектов</div>
             {tree.loose.map((s) => <SessionNode key={s.id} s={s} kids={tree.kids} base={1} />)}
           </div>
         )}
+        {tree.system.length > 0 && <SystemGroup sessions={tree.system} />}
         {workspaces.length === 0 && (
           <div className="sb-empty">
             <p>Добавьте папку проекта: агенты работают в её рабочих деревьях.</p>
@@ -164,18 +166,33 @@ function NavItem({ screen, icon, label, end }: { screen: Screen; icon: ReactNode
 
 interface Tree {
   owner: (s: Session) => string | null // the project a session shows under: the one whose worktree it runs in, else its workspaceId
-  roots: Session[] // sessions without a (living) parent; workers hang under their coordinator
+  roots: Session[] // chats without a (living) parent; workers hang under their coordinator
   kids: Map<string, Session[]>
   loose: Session[] // roots that match no workspace
+  terminals: Session[] // shell tabs: counted on their worktree row, not listed
+  system: Session[] // harness-internal sessions: «Служебное»
+  all: Session[] // every listed chat (roots and their workers), for the attention section
+}
+
+/** The worktree a session belongs to: worktreePath from the server, else the longest known worktree containing its cwd. */
+export function worktreeOf(s: Session, paths: string[]): string | null {
+  if (s.worktreePath) return normPath(s.worktreePath)
+  const cwd = normPath(s.cwd)
+  return paths.filter((p) => cwd === p || cwd.startsWith(`${p}/`)).sort((a, b) => b.length - a.length)[0] ?? null
 }
 
 function buildTree(sessions: Session[], query: string, worktrees: Record<string, Worktree[]>): Tree {
   // A known worktree decides the project (a folder workspace may contain another project's worktrees).
   const byPath = new Map<string, string>()
   for (const [id, list] of Object.entries(worktrees)) for (const w of list) byPath.set(normPath(w.path), id)
-  const owner = (s: Session) => byPath.get(normPath(s.cwd)) ?? s.workspaceId
-  const ids = new Set(sessions.map((s) => s.id))
-  const sorted = [...sessions].sort((a, b) => a.createdAt - b.createdAt)
+  const paths = [...byPath.keys()]
+  const owner = (s: Session) => { const w = worktreeOf(s, paths); return (w && byPath.get(w)) ?? s.workspaceId }
+  const system = sessions.filter((s) => s.system)
+  const listed = sessions.filter((s) => !s.system)
+  const terminals = listed.filter((s) => s.kind === 'terminal')
+  const chats = listed.filter((s) => s.kind !== 'terminal')
+  const ids = new Set(chats.map((s) => s.id))
+  const sorted = [...chats].sort((a, b) => a.createdAt - b.createdAt)
   const kids = new Map<string, Session[]>()
   for (const s of sorted) {
     if (s.parentId && ids.has(s.parentId)) kids.set(s.parentId, [...(kids.get(s.parentId) ?? []), s])
@@ -188,12 +205,59 @@ function buildTree(sessions: Session[], query: string, worktrees: Record<string,
       (kids.get(s.id) ?? []).some(hit)
     roots = roots.filter(hit)
   }
-  return { owner, roots, kids, loose: roots.filter((s) => !owner(s)) }
+  return { owner, roots, kids, loose: roots.filter((s) => !owner(s)), terminals, system, all: sorted }
+}
+
+const WAITS: Partial<Record<string, string>> = { waiting_permission: 'разрешение', waiting_answer: 'вопрос', auth: 'вход', stalled: 'нет вывода' }
+
+/** «Требуют внимания»: every chat waiting for a person (or silent), longest waiting first; the tree stays calm. */
+function AttentionSection({ tree }: { tree: Tree }) {
+  const workspaces = useStore((s) => s.workspaces)
+  const now = useNow()
+  const list = tree.all
+    .filter((s) => WAITS[sessionVisualState(s)])
+    .sort((a, b) => (a.lastEventAt ?? a.lastActivityAt) - (b.lastEventAt ?? b.lastActivityAt))
+  if (!list.length) return null
+  return (
+    <section className="attention" aria-label="Требуют внимания">
+      <div className="attention-head">Требуют внимания <span className="num">· {list.length}</span></div>
+      {list.map((s) => {
+        const v = sessionVisualState(s)
+        const ws = workspaces.find((w) => w.id === tree.owner(s))
+        const where = [ws?.kind === 'root' ? 'Все проекты' : ws?.name, s.branch ?? (ws && normPath(ws.path) !== normPath(s.cwd) ? basename(s.cwd) : null)].filter(Boolean).join(' · ')
+        const since = s.lastEventAt ?? s.lastActivityAt
+        return (
+          <div key={s.id} className="tree-row tree-sess attention-row" role="button" tabIndex={0} style={depth(0)} data-s={v}
+            data-tip={s.title} data-tip-trunc onClick={() => openSession(s.id)} onKeyDown={activate(() => openSession(s.id))}>
+            <StatusIcon session={s} />
+            <span className="label"><strong>{s.title || s.id}</strong>{where && <span className="sess-doing"> · {where}</span>}</span>
+            <span className="sess-state">{v === 'stalled' ? `нет вывода ${dur(now - since)}` : WAITS[v]}</span>
+          </div>
+        )
+      })}
+    </section>
+  )
+}
+
+/** «Служебное»: harness-internal sessions (login terminal, discovery), folded at the bottom, never under a project. */
+function SystemGroup({ sessions }: { sessions: Session[] }) {
+  const [open, setOpenState] = useState(() => loadDraft<boolean>('sb:system') ?? false)
+  const toggle = () => { setOpenState(!open); saveDraft('sb:system', !open || null) }
+  return (
+    <div className="tree-group tree-system" data-open={open || undefined}>
+      <div className="tree-row tree-project tree-system-head" role="button" tabIndex={0} aria-expanded={open} style={depth(0)} onClick={toggle} onKeyDown={activate(toggle)}>
+        <ChevronRight className="chev" aria-hidden />
+        <Settings aria-hidden />
+        <span className="label">Служебное <span className="tree-path">{sessions.length}</span></span>
+      </div>
+      {open && <div className="tree-children">{sessions.map((s) => <SessionRow key={s.id} s={s} nested={false} level={1} />)}</div>}
+    </div>
+  )
 }
 
 /** Whether a worktree is worth a row by default: it is where something is, was recently, or is about to happen. */
-function worktreeMatters(wt: Worktree, here: Session[], taskStatus: string | null | undefined, active: boolean, now: number) {
-  return wt.main || active || here.length > 0 || (wt.dirty ?? 0) > 0 || (wt.ahead ?? 0) > 0 || !!wt.meta?.pinned ||
+function worktreeMatters(wt: Worktree, here: Session[], taskStatus: string | null | undefined, active: boolean, now: number, terminals = 0) {
+  return wt.main || active || here.length > 0 || terminals > 0 || (wt.dirty ?? 0) > 0 || (wt.ahead ?? 0) > 0 || !!wt.meta?.pinned ||
     taskStatus === 'in_progress' || taskStatus === 'review' || (!!wt.lastActivityAt && now - wt.lastActivityAt < WEEK)
 }
 const WEEK = 7 * 24 * 3600 * 1000
@@ -219,32 +283,34 @@ function ProjectNode({ ws, tree, filtering }: { ws: Workspace; tree: Tree; filte
   const expanded = open || filtering
   const loaded = worktrees !== undefined
 
-  // Git worktrees, plus folders sessions run in that git does not list (so every session sits under a worktree).
-  const list = useMemo(() => {
-    const out: Worktree[] = worktrees?.length ? [...worktrees] : [{ path: ws.path, branch: null, head: '', main: true }]
-    for (const s of mine) {
-      if (!out.some((w) => normPath(w.path) === normPath(s.cwd))) out.push({ path: s.cwd, branch: s.branch, head: '', main: false })
-    }
-    return out
-  }, [worktrees, ws.path, mine])
-  const unknown = loaded && list.length > (worktrees?.length || 1)
+  // Git's worktrees only: a session in a subfolder belongs to the worktree containing it (no pseudo-worktree rows).
+  const list = useMemo<Worktree[]>(() => (worktrees?.length ? worktrees : [{ path: ws.path, branch: null, head: '', main: true }]), [worktrees, ws.path])
+  const paths = useMemo(() => list.map((w) => normPath(w.path)), [list])
+  const mainPath = normPath(list.find((w) => w.main)?.path ?? ws.path)
+  const placeOf = (x: Session) => worktreeOf(x, paths) ?? mainPath
+  const myTerminals = tree.terminals.filter((t) => tree.owner(t) === ws.id)
   // Lazy: only an expanded project asks for its (enriched, slower) worktree list, and again when its sessions change.
   const sig = mine.map((s) => s.id + s.status).join()
   useEffect(() => {
     if (expanded && ws.isGit && !plain) void loadWorktrees(ws.id).then(() => loadWorktrees(ws.id, true)) // rows at once, badges next
-  }, [expanded, ws.id, ws.isGit, plain, sig, unknown])
+  }, [expanded, ws.id, ws.isGit, plain, sig])
 
   const rows = useMemo(() => {
+    // Same branch name twice (two clones, two «main»s): the folder tells them apart.
+    const names = new Map<string, number>()
+    for (const w of list) { const n = w.meta?.label || w.branch || basename(w.path); names.set(n, (names.get(n) ?? 0) + 1) }
     const out = list.map((wt) => {
-      const here = mine.filter((s) => normPath(s.cwd) === normPath(wt.path))
+      const here = mine.filter((s) => placeOf(s) === normPath(wt.path))
+      const terms = myTerminals.filter((t) => placeOf(t) === normPath(wt.path))
+      const dup = (names.get(wt.meta?.label || wt.branch || basename(wt.path)) ?? 0) > 1
       const states = withKids(here, tree.kids).map(sessionVisualState)
       const task = wt.taskStatus ?? tasks.find((t) => t.id === wt.taskId || (!!wt.branch && t.branch === wt.branch))?.status
       const active = !!activeCwd && normPath(activeCwd) === normPath(wt.path)
       const last = Math.max(wt.lastActivityAt ?? 0, ...here.map((s) => s.lastActivityAt))
-      return { wt, here, active, last, rank: states.some((v) => ATTENTION.has(v)) ? 0 : states.some((v) => BUSY.has(v)) ? 1 : 2, matters: worktreeMatters(wt, here, task, active, now) }
+      return { wt, here, terms, dup, active, last, rank: states.some((v) => ATTENTION.has(v)) ? 0 : states.some((v) => BUSY.has(v)) ? 1 : 2, matters: worktreeMatters(wt, here, task, active, now, terms.length) }
     })
     return out.sort((a, b) => a.rank - b.rank || b.last - a.last || (a.wt.branch ?? a.wt.path).localeCompare(b.wt.branch ?? b.wt.path))
-  }, [list, mine, tree.kids, tasks, activeCwd, now])
+  }, [list, mine, tree.kids, tasks, activeCwd, now, myTerminals, paths, mainPath])
   const visible = filtering ? rows.filter((r) => r.here.length > 0) : moreChoice ? rows : rows.filter((r) => r.matters)
   const hidden = filtering ? 0 : rows.length - rows.filter((r) => r.matters).length
 
@@ -259,6 +325,8 @@ function ProjectNode({ ws, tree, filtering }: { ws: Workspace; tree: Tree; filte
         <ChevronRight className="chev" aria-hidden />
         {plain ? <Folder aria-hidden /> : <FolderGit2 aria-hidden />}
         <span className="label">{name}{isRoot && <span className="tree-path"> {basename(ws.path)}</span>}</span>
+        {!expanded && <RowSummary sessions={withKids(mine, tree.kids)} />}
+        {plain && myTerminals.length > 0 && <TerminalCount terminals={myTerminals} />}
         {plain && <RowAction label={`Новый чат: ${name}`} icon={<MessageSquarePlus />} onClick={() => void newChat({ workspaceId: ws.id, cwd: ws.path })} />}
         <span className="actions">
           {ws.isGit && <RowAction label="Новое рабочее дерево" icon={<GitBranchPlus />} onClick={() => openDialog({ kind: 'worktree', workspaceId: ws.id })} />}
@@ -266,14 +334,13 @@ function ProjectNode({ ws, tree, filtering }: { ws: Workspace; tree: Tree; filte
         </span>
       </div>
       <Menu anchor={projRow} open={menu} onClose={() => setMenu(false)} items={projectMenu(ws)} label={`Проект ${ws.name}`} placement="bottom-end" />
-      {!expanded && <StateSummary sessions={withKids(mine, tree.kids)} />}
       {expanded && (
         <div className="tree-children">
           {plain ? mine.map((s) => <SessionNode key={s.id} s={s} kids={tree.kids} base={1} />)
             : !loaded && ws.isGit ? <div className="tree-skel"><Skeleton rows={2} label="Загрузка рабочих деревьев…" /></div>
               : (
                 <>
-                  {visible.map((r) => <WorktreeNode key={r.wt.path} ws={ws} wt={r.wt} sessions={r.here} kids={tree.kids} active={r.active} />)}
+                  {visible.map((r) => <WorktreeNode key={r.wt.path} ws={ws} wt={r.wt} sessions={r.here} terminals={r.terms} dup={r.dup} kids={tree.kids} active={r.active} />)}
                   {hidden > 0 && (
                     <button type="button" className="tree-row tree-more" style={depth(1)} aria-expanded={moreChoice} onClick={() => setMore(!moreChoice)}>
                       <Ellipsis aria-hidden />
@@ -288,7 +355,9 @@ function ProjectNode({ ws, tree, filtering }: { ws: Workspace; tree: Tree; filte
   )
 }
 
-function WorktreeNode({ ws, wt, sessions, kids, active }: { ws: Workspace; wt: Worktree; sessions: Session[]; kids: Map<string, Session[]> ; active: boolean }) {
+function WorktreeNode({ ws, wt, sessions, terminals, dup, kids, active }: {
+  ws: Workspace; wt: Worktree; sessions: Session[]; terminals: Session[]; dup: boolean; kids: Map<string, Session[]>; active: boolean
+}) {
   const changed = useStore((s) => s.git[normPath(wt.path)]?.status?.files.length ?? wt.dirty ?? 0)
   const task = useStore((s) => (wt.taskId ? s.tasks.find((t) => t.id === wt.taskId) : s.tasks.find((t) => !!wt.branch && t.branch === wt.branch)))
   const [menu, setMenu] = useState(false)
@@ -314,7 +383,7 @@ function WorktreeNode({ ws, wt, sessions, kids, active }: { ws: Workspace; wt: W
         onKeyDown={(e) => { onWorktreeKey(e, ws, wt); activate(pick)(e) }}
         onContextMenu={(e) => { e.preventDefault(); setMenu(true) }}>
         {sleeping ? <Moon aria-label="спит" /> : wt.main ? <House aria-label="основная копия" /> : <GitBranch aria-hidden />}
-        <span className="label">{name}</span>
+        <span className="label">{name}{dup && <span className="tree-path"> · {basename(wt.path)}</span>}</span>
         {wt.meta?.pinned && <Pin className="wt-pin" aria-label="закреплено" />}
         {unread && <span className="wt-unread" aria-label="непрочитано" />}
         {sessions.length === 0 && ownHistory > 0 && (
@@ -323,8 +392,10 @@ function WorktreeNode({ ws, wt, sessions, kids, active }: { ws: Workspace; wt: W
           </button>
         )}
         <span className="wt-badges">
+          <RowSummary sessions={withKids(sessions, kids)} />
           {changed > 0 && <span className="wt-stat num" data-tip={`${changed} ${plural(changed, 'изменённый файл', 'изменённых файла', 'изменённых файлов')}`}>±{changed}</span>}
           {ahead > 0 && <span className="wt-stat num" data-tip={`${ahead} ${plural(ahead, 'коммит', 'коммита', 'коммитов')} не в базовой ветке`}><ArrowUp aria-hidden />{ahead}</span>}
+          {terminals.length > 0 && <TerminalCount terminals={terminals} />}
         </span>
         <span className="actions">
           <RowAction label="Новый чат в этом дереве" icon={<MessageSquarePlus />} onClick={() => void newChat(where)} />
@@ -338,7 +409,6 @@ function WorktreeNode({ ws, wt, sessions, kids, active }: { ws: Workspace; wt: W
         </span>
       </div>
       <Menu anchor={row} open={menu} onClose={() => setMenu(false)} items={worktreeMenu(ws, wt, task, ideEnabled())} label={`Рабочее дерево ${name}`} placement="bottom-end" />
-      <StateSummary sessions={withKids(sessions, kids)} />
       {sessions.map((s) => <SessionNode key={s.id} s={s} kids={kids} base={2} />)}
     </div>
   )
@@ -404,6 +474,8 @@ function SessionRow({ s, nested, level = 0, caret, subs }: {
   const line = useStateLine(s)
   const open = () => openSession(s.id)
   const preview = s.preview.split('\n').map((l) => l.trim()).filter(Boolean).pop()
+  // A sub-agent's title «profile: task» reads as the profile with the task muted.
+  const sub = (s.role === 'subagent' || s.virtual) ? /^([\w.-]{2,40}):\s+(.+)$/.exec(s.title)?.slice(1, 3) : undefined
   // Running: the tool in use; calm top-level rows: the last line of the answer.
   const doing = v === 'running' ? tool : !nested && (v === 'idle' || v === 'done') ? preview : ''
   return (
@@ -432,8 +504,9 @@ function SessionRow({ s, nested, level = 0, caret, subs }: {
           onKeyDown={(e) => { e.stopPropagation(); if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') { e.currentTarget.value = s.title; setEditing(false) } }} />
       ) : (
         <span className="label">
-          {(s.role === 'reviewer' || s.role === 'subagent') && <span className="role-tag">{s.role === 'reviewer' ? 'ревью' : 'субагент'}</span>}
-          {s.title || s.id}
+          {nested && <span className="sub-glyph" aria-hidden>↳ </span>}
+          {s.role === 'reviewer' && <span className="sess-doing">ревью · </span>}
+          {sub ? <>{sub[0]}<span className="sess-doing">: {sub[1]}</span></> : s.title || s.id}
           {doing && <span className="sess-doing"> · {doing}</span>}
         </span>
       )}
@@ -477,14 +550,27 @@ function withKids(roots: Session[], kids: Map<string, Session[]>): Session[] {
   return out
 }
 
-/** «1 ждёт ответа · 2 работают»: attention first, only what is not calm; nothing when all is quiet. */
-function StateSummary({ sessions }: { sessions: Session[] }) {
-  const items = stateSummary(sessions)
-  if (!items.length) return null
+/** Right side of a worktree / collapsed project row: «2 ▶ · ⚠1», only non-zero, each explained in its tooltip. */
+function RowSummary({ sessions }: { sessions: Session[] }) {
+  const states = sessions.filter((x) => x.kind === 'chat').map(sessionVisualState)
+  const busy = states.filter((v) => BUSY.has(v)).length
+  const att = states.filter((v) => ATTENTION.has(v)).length
   return (
-    <span className="state-summary">
-      {items.map((i, n) => <span key={i.state} data-s={i.state}>{n > 0 && <span className="muted"> · </span>}{i.text}</span>)}
-    </span>
+    <>
+      {busy > 0 && <span className="wt-stat wt-stat-plain num" data-tip={`${busy} ${plural(busy, 'агент работает', 'агента работают', 'агентов работают')}`}>{busy} ▶</span>}
+      {att > 0 && <span className="wt-stat wt-stat-plain num" data-tip={`${att} ${plural(att, 'чат ждёт', 'чата ждут', 'чатов ждут')} вас или с ошибкой`}>⚠{att}</span>}
+    </>
+  )
+}
+
+/** «⌨ 2»: shells of this worktree live in its tab strip; the click opens the most recent one. */
+function TerminalCount({ terminals }: { terminals: Session[] }) {
+  const last = [...terminals].sort((a, b) => b.lastActivityAt - a.lastActivityAt)[0]
+  return (
+    <button type="button" className="wt-stat wt-term num" data-tip={`${terminals.length} ${plural(terminals.length, 'терминал', 'терминала', 'терминалов')}: открыть последний`}
+      onClick={(e) => { e.stopPropagation(); openSession(last.id) }} onKeyDown={(e) => e.stopPropagation()}>
+      ⌨{terminals.length}
+    </button>
   )
 }
 

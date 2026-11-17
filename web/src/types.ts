@@ -110,6 +110,8 @@ export interface Session {
   lastEventKind?: string | null // e.g. 'assistant_delta', 'assistant_final', 'tool', 'thought' (newer servers)
   turnClosing?: boolean // the answer is complete (result seen); the CLI is only shutting down
   warm?: boolean // ACP sessions only: the process is loaded (false = unloaded after idling)
+  system?: boolean // harness-internal (login terminal, discovery…): shown only under «Служебное»
+  worktreePath?: string | null // the worktree root the session runs in (its cwd may be a subfolder)
   waitingFor?: 'answer' | 'auth' | 'permission' | null // called `ask` and no reply yet, or needs a login (newer servers)
   stalled?: boolean // running, process alive, but silent for session.stallSec (newer servers)
   includeDirs?: string[] // extra directories the CLI may use (--include-directories), feature include-dirs
