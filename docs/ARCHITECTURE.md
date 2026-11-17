@@ -266,6 +266,21 @@ Reads `HARNESS_URL`, `HARNESS_TOKEN`, `HARNESS_SESSION_ID` from env; falls back 
 
 Every chat session gets the harness MCP server injected (settings.json `mcpServers.harness` or `--mcp-config`).
 
+**Sub-agents exist only through orchestration.** A worker is always a harness session created by
+`worker_start` (from a coordinator agent) or by `POST /api/tasks/:id/assign` (from the UI, same code path),
+so every sub-agent has its own chat in the UI. Built-in sub-agent tools of the CLIs are disabled where the
+CLI allows it (claude: `--disallowedTools Task Agent`; gigacode/qwen/gemini: `agents.<id>.settings` may carry the
+CLI's tool-exclude setting, VERIFY on target) and the coordinator/worker preambles forbid them explicitly.
+There are no pre-created agents: the Agents board shows only sessions that exist.
+
+Preambles (built in `orchestration.js`, prepended to the first prompt of a session):
+- coordinator (`role: 'coordinator'`): you coordinate; split work into tasks (`task_create` with deps),
+  start workers with `worker_start`, never use built-in sub-agent tools, after starting workers END YOUR TURN —
+  the harness wakes you with each worker report; answer worker questions with `send_message`.
+- worker: Task id/title, Session id, Parent id, cwd/branch; do only this task inside cwd; `ask` then end turn
+  for questions; finish with `worker_done(summary, status)`; commit changes to the current branch, do not push;
+  never use built-in sub-agent tools.
+
 ## UI HTTP API (all under `/api`, header `x-harness-token` required)
 
 ```
