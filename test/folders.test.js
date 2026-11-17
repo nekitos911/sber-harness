@@ -101,3 +101,17 @@ test('a subtask worker sees the other subtasks\' repositories (their task worktr
   await h.api('POST', `/api/sessions/${s.id}/stop`);
   gitIn(repoB, 'worktree', 'list'); // the repo is still healthy
 });
+
+test('settings: workspaces { root, repos } with the resolved projects folder; saving moves it and broadcasts', async () => {
+  const s = (await h.api('GET', '/api/settings')).body.workspaces;
+  assert.deepEqual(s, { root: null, repos: [], rootResolved: root, rootAuto: true });
+  assert.equal((await h.api('PUT', '/api/settings', { workspaces: { root: 'relative' } })).status, 400);
+  assert.equal((await h.api('PUT', '/api/settings', { workspaces: { root: path.join(root, 'нет') } })).status, 400);
+  assert.equal((await h.api('PUT', '/api/settings', { workspaces: { repos: 'x' } })).status, 400);
+  const set = (await h.api('PUT', '/api/settings', { workspaces: { root: extra1 } })).body.workspaces;
+  assert.deepEqual([set.root, set.rootResolved, set.rootAuto], [extra1, extra1, false]);
+  assert.deepEqual((await state()).workspaces.filter((w) => w.kind === 'root').map((w) => w.path), [extra1]);
+  const auto = (await h.api('PUT', '/api/settings', { workspaces: { root: null } })).body.workspaces;
+  assert.deepEqual([auto.root, auto.rootResolved, auto.rootAuto], [null, root, true]);
+  assert.equal((await state()).workspaces[0].path, root);
+});

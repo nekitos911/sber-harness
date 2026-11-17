@@ -14,6 +14,7 @@ const root = tmpDir();
 const repo = path.join(root, 'репо');
 let h;
 const servers = [];
+const sockets = []; // every connection to the fake remotes, destroyed on teardown even if a test fails
 
 before(async () => {
   makeRepo(repo);
@@ -21,22 +22,27 @@ before(async () => {
   h = await startTestServer({ git: { networkTimeoutSec: 2 } });
 });
 after(async () => {
-  for (const s of servers) s.close();
+  for (const s of sockets) s.destroy();
+  for (const s of servers) {
+    s.closeAllConnections?.();
+    s.close();
+  }
   await h.close();
   rmrf(root);
 });
 
-const listen = (srv) => new Promise((resolve) => srv.listen(0, '127.0.0.1', () => { servers.push(srv); resolve(srv.address().port); }));
+const listen = (srv) => new Promise((resolve) => {
+  srv.on('connection', (s) => { s.on('error', () => {}); sockets.push(s); });
+  srv.listen(0, '127.0.0.1', () => { servers.push(srv); resolve(srv.address().port); });
+});
 
 test('push to a remote that never answers fails after git.networkTimeoutSec with a clear message', async () => {
-  const sockets = [];
-  const port = await listen(net.createServer((s) => { s.on('error', () => {}); sockets.push(s); })); // accepts, never answers
+  const port = await listen(net.createServer(() => {})); // accepts, never answers
   gitIn(repo, 'remote', 'add', 'origin', `http://127.0.0.1:${port}/repo.git`);
   const t0 = Date.now();
   const r = await h.api('POST', '/api/git/push', { cwd: repo });
   assert.deepEqual([r.status, r.body.error], [504, 'Нет ответа от удалённого репозитория за 2 с']);
   assert.ok(Date.now() - t0 < 15000, `took ${Date.now() - t0} ms`);
-  for (const s of sockets) s.destroy();
   gitIn(repo, 'remote', 'remove', 'origin');
 });
 

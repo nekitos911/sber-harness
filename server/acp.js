@@ -113,7 +113,7 @@ export function createAcp() {
     for (const resolve of c.held.values()) resolve({ outcome: { outcome: 'cancelled' } });
     c.held.clear();
     try { c.child.stdin.end(); } catch {}
-    killTree(c.child.pid);
+    if (c.child.exitCode === null && c.child.signalCode === null) killTree(c.child.pid); // never a reused pid
   }
 
   /** Starts (or reuses) the agent process + ACP session. `externalSessionId` -> session/load when supported. */

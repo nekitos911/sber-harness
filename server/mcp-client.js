@@ -179,7 +179,8 @@ function stdioTransport(name, cfg, root) {
     close() {
       dead = true;
       child.stdin.end();
-      killTree(child.pid);
+      // only a live child: Windows reuses pids fast, a late taskkill /T could hit the next server we just spawned
+      if (child.exitCode === null && child.signalCode === null) killTree(child.pid);
     },
   };
 }

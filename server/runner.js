@@ -82,7 +82,14 @@ export function killTree(pid) {
     }
   };
   signal('SIGTERM');
-  setTimeout(() => { if (isAlive(pid)) signal('SIGKILL'); }, 3000).unref();
+  setTimeout(() => {
+    // the group even when its leader is gone (git-remote-http, MCP children survive it); a lone pid only while alive
+    try {
+      process.kill(-pid, 'SIGKILL');
+    } catch {
+      if (isAlive(pid)) try { process.kill(pid, 'SIGKILL'); } catch {}
+    }
+  }, 3000).unref();
 }
 
 const shortArg = (a) => JSON.stringify(a.length > 200 ? `${a.slice(0, 200)}...` : a);

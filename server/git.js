@@ -1,7 +1,7 @@
 // git CLI wrappers (execFile, never a shell). Errors become { status: 400 } with git's stderr as message.
 import fs from 'node:fs';
 import path from 'node:path';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { expandHome } from './config.js';
 import { killTree } from './runner.js';
 
@@ -20,27 +20,56 @@ const AUTH_RE = /could not read (Username|Password)|terminal prompts disabled|Au
 /** timeoutSec: network operations (push/fetch/...) are killed (whole tree) after it, with a clear message. */
 export function git(cwd, args, { ok = [0], timeoutSec = 0 } = {}) {
   if (typeof cwd !== 'string' || !path.isAbsolute(cwd) || !fs.existsSync(cwd)) fail(400, `cwd must be an existing absolute directory: ${cwd}`);
+  if (timeoutSec > 0) return gitNetwork(cwd, args, ok, timeoutSec);
   return new Promise((resolve, reject) => {
-    let timedOut = false;
-    // POSIX: a network op leads its own process group so the timeout kills git's remote helpers too
-    const detached = timeoutSec > 0 && process.platform !== 'win32';
-    const child = execFile('git', args, { cwd, maxBuffer: 64 * 1024 * 1024, windowsHide: true, env: gitEnv(), detached }, (err, stdout, stderr) => {
-      clearTimeout(timer);
-      if (timedOut) return reject(Object.assign(new Error(`Нет ответа от удалённого репозитория за ${timeoutSec} с`), { status: 504 }));
+    execFile('git', args, { cwd, maxBuffer: 64 * 1024 * 1024, windowsHide: true, env: gitEnv() }, (err, stdout, stderr) => {
       const code = err ? err.code : 0;
       if (err && typeof code !== 'number') return reject(Object.assign(new Error(`git failed: ${err.message}`), { status: 500 }));
-      if (!ok.includes(code)) {
-        const text = (stderr || stdout || err.message).trim();
-        if (timeoutSec && AUTH_RE.test(text)) {
-          return reject(Object.assign(new Error(`Git требует авторизацию — выполните ${args[0]} в терминале этого рабочего дерева.
-${text}`), { status: 401 }));
-        }
-        return reject(Object.assign(new Error(text), { status: 400 }));
-      }
+      if (!ok.includes(code)) return reject(Object.assign(new Error((stderr || stdout || err.message).trim()), { status: 400 }));
       resolve({ code, stdout, stderr });
     });
-    // killTree: on Windows git-remote-https / ssh children would otherwise keep the pipes (and this call) open
-    const timer = timeoutSec > 0 ? setTimeout(() => { timedOut = true; killTree(child.pid); }, timeoutSec * 1000) : null;
+  });
+}
+
+/**
+ * A network operation that can never hang: git aborts stalled HTTP itself (lowSpeed*), the whole tree (POSIX: the
+ * process group incl. git-remote-http) is killed at the deadline, and we settle on 'exit' (a surviving helper may keep
+ * the pipes open, so 'close' alone is not enough), with a hard deadline after the kill.
+ */
+function gitNetwork(cwd, args, ok, timeoutSec) {
+  return new Promise((resolve, reject) => {
+    const child = spawn('git', ['-c', 'http.lowSpeedLimit=1000', '-c', `http.lowSpeedTime=${timeoutSec}`, ...args], {
+      cwd, env: gitEnv(), windowsHide: true, detached: process.platform !== 'win32',
+    });
+    let stdout = '';
+    let stderr = '';
+    let timedOut = false;
+    let settled = false;
+    let hard = null;
+    child.stdout.setEncoding('utf8').on('data', (d) => { stdout += d; });
+    child.stderr.setEncoding('utf8').on('data', (d) => { stderr += d; });
+    const finish = (code, error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      clearTimeout(hard);
+      child.stdout.destroy();
+      child.stderr.destroy();
+      if (timedOut) return reject(Object.assign(new Error(`Нет ответа от удалённого репозитория за ${timeoutSec} с`), { status: 504 }));
+      if (error) return reject(Object.assign(new Error(`git failed: ${error.message}`), { status: 500 }));
+      if (ok.includes(code)) return resolve({ code, stdout, stderr });
+      const text = (stderr || stdout || `git exited with code ${code}`).trim();
+      if (AUTH_RE.test(text)) return reject(Object.assign(new Error(`Git требует авторизацию — выполните ${args[0]} в терминале этого рабочего дерева.\n${text}`), { status: 401 }));
+      reject(Object.assign(new Error(text), { status: 400 }));
+    };
+    const timer = setTimeout(() => {
+      timedOut = true;
+      killTree(child.pid);
+      hard = setTimeout(() => finish(null), 5000);
+    }, timeoutSec * 1000);
+    child.on('error', (e) => finish(null, e));
+    child.on('close', (code) => finish(code));
+    child.on('exit', (code) => setTimeout(() => finish(code), 500).unref()); // output normally arrives before this
   });
 }
 

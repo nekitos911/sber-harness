@@ -82,7 +82,7 @@ test('servers: config.mcpServers merged over mcpServersFrom', () => {
 test('missing secret: that server reports a problem, the others keep working', async () => {
   const mcp = createMcpManager(baseConfig({ mcpServers: { tracker: { ...MOCK }, broken: { ...MOCK, env: { TOKEN: '$secret:broken/token' } } } }));
   const rows = Object.fromEntries((await mcp.status()).map((r) => [r.name, r]));
-  assert.equal(rows.tracker.ok, true);
+  assert.equal(rows.tracker.ok, true, rows.tracker.error);
   assert.equal(rows.broken.ok, false);
   assert.match(rows.broken.problem, /missing secret broken\/token/);
   assert.ok(!JSON.stringify(rows).includes('Bearer'));

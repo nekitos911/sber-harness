@@ -882,6 +882,9 @@ Secrets:
   `recentFolders` is updated by `POST /api/workspaces { kind: 'folder' }` and by `POST /api/sessions` with an explicit
   cwd. The parent task's own extra folders: `PATCH /api/tasks/:id { includeDirs }`. Invalid `includeDirs` from the API →
   400; auto-filled ones that no longer exist are dropped silently.
+- `/api/settings` returns and accepts `workspaces: { root, repos }` (root: an existing absolute folder or null = auto;
+  repos: string[]) and returns `rootResolved` (the projects folder in use) + `rootAuto`; saving re-registers the
+  configured repos, re-runs the projects-folder detection and broadcasts `workspaces`.
 
 ## Agent questions and permission requests
 
@@ -980,7 +983,10 @@ Durable state (all in `<dataDir>`, atomic writes):
 ## Nothing looks frozen (git prompts, network timeouts, progress)
 
 - Every git child gets `GIT_TERMINAL_PROMPT=0`, `GCM_INTERACTIVE=never`, `GIT_ASKPASS=` and `GIT_SSH_COMMAND` = the
-  existing one or `ssh -o BatchMode=yes -o ConnectTimeout=15`. Network operations (push) are killed (whole tree) after
+  existing one or `ssh -o BatchMode=yes -o ConnectTimeout=15`. Network operations (push) run with
+  `-c http.lowSpeedLimit=1000 -c http.lowSpeedTime=<networkTimeoutSec>` (git aborts stalled HTTP itself), in their own
+  process group on POSIX, settle on 'exit' (a surviving `git-remote-http` may keep the pipes open) with a hard deadline
+  5 s after the kill; POSIX kill = SIGTERM to the group, SIGKILL to the group 3 s later. They are killed (whole tree) after
   `git.networkTimeoutSec` (default 120) → 504 «Нет ответа от удалённого репозитория за N с»; a credentials/ssh-key
   failure → 401 «Git требует авторизацию — выполните push в терминале этого рабочего дерева» (+ git's text).
 - Progress without API changes: a request with header `x-job-id: <8–64 chars [\w-]>` runs as a job; the server sends

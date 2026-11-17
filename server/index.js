@@ -263,6 +263,12 @@ export async function startServer(opts = {}) {
       git: pick(config.git, GIT_KEYS),
       tasks: { refreshSec: t.refreshSec ?? 0 },
       board: config.board,
+      workspaces: {
+        root: config.workspaces?.root ?? null,
+        repos: config.workspaces?.repos || [],
+        rootResolved: db.workspaces.find((w) => w.kind === 'root')?.path ?? null, // «Авто: <path>» when rootAuto
+        rootAuto: !config.workspaces?.root,
+      },
       session: { stallSec: config.session.stallSec },
       recovery: { autoResume: !!config.recovery.autoResume, message: config.recovery.message },
       ide: config.ide ?? null,
@@ -470,7 +476,7 @@ export async function startServer(opts = {}) {
     return p;
   }
 
-  function saveSettings(body) {
+  async function saveSettings(body) {
     const patch = {};
     if (body.agents !== undefined) {
       if (!isObj(body.agents)) fail(400, 'agents must be an object');
@@ -507,6 +513,14 @@ export async function startServer(opts = {}) {
       patch.ide = ide && { command: ide.command.trim(), args: ide.args || ['{path}'] };
     }
     if (body.orchestration !== undefined) patch.orchestration = orchestrationPatch(body.orchestration);
+    if (body.workspaces !== undefined) {
+      const w = body.workspaces;
+      const rootOk = (r) => r === null || (typeof r === 'string' && path.isAbsolute(expandHome(r)) && fs.existsSync(expandHome(r)) && fs.statSync(expandHome(r)).isDirectory());
+      if (!isObj(w) || Object.keys(w).some((k) => !['root', 'repos'].includes(k)) || ('root' in w && !rootOk(w.root)) || ('repos' in w && !isStrList(w.repos))) {
+        fail(400, 'workspaces accepts { root: an existing absolute folder or null (auto), repos: string[] }');
+      }
+      patch.workspaces = w;
+    }
     const integrations = integrationsPatch(body);
     if (Object.keys(integrations).length) patch.integrations = integrations;
     const next = Object.fromEntries(Object.entries(patch).map(([k, v]) => [k, deepMerge(config[k], v)]));
@@ -514,6 +528,11 @@ export async function startServer(opts = {}) {
     Object.assign(config, next);
     scheduleSync();
     schedulePrs();
+    if (patch.workspaces) {
+      await registerConfiguredWorkspaces();
+      syncRootWorkspace();
+      emitWorkspaces(); // the projects folder may have moved
+    }
     return settingsView();
   }
 
@@ -738,14 +757,16 @@ export async function startServer(opts = {}) {
     return ws;
   });
   // config.workspaces: { root, repos } — repos are names under root (or absolute paths); empty repos = every git repo directly under root
-  {
-    const { root = null, repos = [] } = config.workspaces || {};
+  async function registerConfiguredWorkspaces() {
+    const { repos = [] } = config.workspaces || {};
+    const root = expandHome(config.workspaces?.root ?? null);
     const list = repos.length ? repos.map((r) => (path.isAbsolute(r) ? r : path.join(root || '', r)))
       : root && fs.existsSync(root) ? fs.readdirSync(root, { withFileTypes: true })
         .filter((d) => d.isDirectory() && fs.existsSync(path.join(root, d.name, '.git'))).map((d) => path.join(root, d.name))
         : [];
     for (const p of list) await addWorkspace(p).catch((e) => console.warn(`workspaces: skip ${p}: ${e.message}`));
   }
+  await registerConfiguredWorkspaces();
   syncRootWorkspace();
   route('DELETE', '/api/workspaces/:id', ({ params }) => {
     getWs(params.id);
