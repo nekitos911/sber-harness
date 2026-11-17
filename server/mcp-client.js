@@ -95,7 +95,9 @@ export function serverDefs(config) {
   const defs = {};
   for (const name of new Set([...Object.keys(fromFile), ...Object.keys(config.mcpServers || {})])) {
     const cfg = deepMerge(fromFile[name] || {}, config.mcpServers?.[name] || {});
-    defs[name] = { ...cfg, transport: cfg.transport || (cfg.url || cfg.httpUrl ? 'http' : 'stdio'), url: cfg.url || cfg.httpUrl, enabled: cfg.enabled !== false };
+    // gemini/qwen settings format: { type: "http", url, headers } | { httpUrl } | { command, args, env }
+    const http = cfg.transport ? cfg.transport === 'http' : /^(http|streamable-http|sse)$/i.test(cfg.type || '') || !!cfg.httpUrl || (!!cfg.url && !cfg.command);
+    defs[name] = { ...cfg, transport: http ? 'http' : 'stdio', url: cfg.url || cfg.httpUrl, enabled: cfg.enabled !== false };
   }
   return defs;
 }
@@ -240,17 +242,18 @@ export function createMcpManager(config) {
     const def = serverDefs(config)[name] || fail(404, `MCP server "${name}" is not configured (mcpServers)`);
     if (!def.enabled) fail(400, `MCP server "${name}" is disabled (mcpServers.${name}.enabled)`);
     const secrets = loadSecrets(config);
-    const headers = {};
+    const own = {}; // "<server>/<Name>" secrets: headers of an http server, env of a stdio server
     const prefix = `${canon(name)}_`;
     for (const [key, { name: secretName, value }] of secrets) {
-      if (key.startsWith(prefix)) headers[secretName.slice(name.length + 1)] = value; // "<server>/<Header>" secrets
+      if (key.startsWith(prefix)) own[secretName.slice(name.length + 1)] = value;
     }
     const resolved = resolveRefs({ env: def.env || {}, headers: def.headers || {}, args: def.args || [], url: def.url || '' }, secrets);
+    const http = def.transport === 'http';
     return {
       ...def,
       ...resolved,
-      headers: { ...headers, ...resolved.headers },
-      env: { ...secretEnv(config), ...resolved.env },
+      headers: { ...(http ? own : {}), ...resolved.headers },
+      env: { ...secretEnv(config), ...(http ? {} : own), ...resolved.env },
     };
   }
 

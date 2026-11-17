@@ -3,8 +3,33 @@
 // Tools: list_issues -> { issues: [...] } (4 samples, one Closed), update_issue_status -> { ok, key, status },
 //        create_pull_request -> { url: "http://pr.local/<repo>/<n>" }.
 // MOCK_MCP_ISSUES (JSON file path) replaces the sample issues, so tests can change the tracker between syncs.
+// Fixture mode: `mock-mcp.js --fixtures <dir> --server <name>` serves <dir>/<name>.<tool>.json as the result of <tool>;
+// <name>.<tool>.<variant>.json wins when variant = args.page_number or args.key. A file with `content` is returned
+// as the MCP result as is (e.g. onework markdown), anything else is wrapped as JSON text + structuredContent.
+// MOCK_MCP_LOG (file path): every tools/call is appended as { tool, args } (tests assert the arguments).
 import fs from 'node:fs';
+import path from 'node:path';
 import readline from 'node:readline';
+
+const argv = process.argv.slice(2);
+const opt = (n) => (argv.includes(n) ? argv[argv.indexOf(n) + 1] : null);
+const fixtures = opt('--fixtures');
+const serverName = opt('--server');
+
+function fixtureTools() {
+  const prefix = `${serverName}.`;
+  const names = fs.readdirSync(fixtures).filter((n) => n.startsWith(prefix) && n.endsWith('.json')).map((n) => n.slice(prefix.length, -5).split('.')[0]);
+  return [...new Set(names)].map((name) => ({ name, description: `fixture ${name}`, inputSchema: { type: 'object' } }));
+}
+
+function fixtureCall(name, args = {}) {
+  const variant = args.page_number ?? args.key;
+  const file = [variant != null && `${serverName}.${name}.${variant}.json`, `${serverName}.${name}.json`]
+    .filter(Boolean).map((n) => path.join(fixtures, n)).find((p) => fs.existsSync(p));
+  if (!file) throw new Error(`no fixture for ${name}`);
+  const value = JSON.parse(fs.readFileSync(file, 'utf8'));
+  return value && Array.isArray(value.content) ? { isError: false, ...value } : { content: [{ type: 'text', text: JSON.stringify(value) }], structuredContent: value, isError: false };
+}
 
 const ISSUES = [
   { key: 'DEMO-1', summary: 'Add health endpoint', description: 'Expose GET /health returning {"ok":true}.', url: 'http://tracker.local/DEMO-1', status: 'Open', priority: 'High' },
@@ -60,9 +85,11 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
     case 'ping':
       return reply({});
     case 'tools/list':
-      return reply({ tools: TOOLS });
+      return reply({ tools: fixtures ? fixtureTools() : TOOLS });
     case 'tools/call':
       try {
+        if (process.env.MOCK_MCP_LOG) fs.appendFileSync(process.env.MOCK_MCP_LOG, `${JSON.stringify({ tool: msg.params?.name, args: msg.params?.arguments ?? {} })}\n`);
+        if (fixtures) return reply(fixtureCall(msg.params?.name, msg.params?.arguments));
         const value = callTool(msg.params?.name, msg.params?.arguments);
         return reply({ content: [{ type: 'text', text: JSON.stringify(value) }], structuredContent: value, isError: false });
       } catch (e) {
