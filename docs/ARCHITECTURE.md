@@ -861,6 +861,39 @@ Secrets:
   the projects folder needs none. Terminal sessions with an agent CLI get the same flags at start.
   `POST /api/sessions` accepts `includeDirs`. Feature flags: `folders`, `include-dirs`.
 
+## Agent questions and permission requests
+
+**Questions.** (a) harness `ask` (MCP) — already: question + `options`, `waitingFor: 'answer'`, answer delivered as the next
+message. (b) The CLI's own structured question tool: tool_use names listed in `agents.<id>.questionTools` (gigacode default
+`["ask_user_question", "ask_user", "AskUserQuestion"]`, VERIFY the real name) are normalized to a Message
+`{ kind: 'question', question: { id, text, options: [{label, description?}], multiSelect } }` + `waitingFor: 'answer'`;
+whatever the CLI returns for that call in headless is hidden; the user's choice is delivered as «Ответ на вопрос «…»: …».
+(c) The harness context block tells the agent: «вопросы человеку — через mcp__harness__ask (варианты в options), затем заверши ход».
+
+**Permissions, headless transport (default).** The CLI cannot wait for a confirmation in `-p` mode, so it denies. The
+normalizer detects a denied tool call (tool_result `is_error` whose text matches `agents.<id>.denialPattern`, default
+`/(requires? (user )?(approval|confirmation)|not allowed|denied|permission|подтвержд|запрещ)/i`, VERIFY real wording) and
+emits a Message `{ kind: 'permission', permission: { id, tool, input, reason, transport: 'headless',
+options: [{id:'allow_once',label:'Разрешить один раз'}, {id:'allow_session',label:'Разрешать в этой сессии'},
+{id:'reject',label:'Запретить'}] } }`, session `waitingFor: 'permission'`. `POST /api/sessions/:id/permission
+{ permissionId, optionId, note? }`: allow_once → next turn with approvalMode one step more permissive
+(`plan→default→auto-edit→auto`, from `approvalModes` order) for that turn only + message «Разрешаю: выполни <tool> <input
+summary>»; allow_session → PATCH session.approvalMode to that mode + same message; reject → message «Не выполняй это
+(<tool>); найди другой путь или спроси». The card shows the resolved choice afterwards.
+
+**Permissions, ACP transport (`agents.<id>.transport: "acp"`, VERIFY for GigaCode `--acp`).** One long-lived process per
+session (`<cli> --acp [--approval-mode m] [--model m] [--include-directories …]`), JSON-RPC 2.0 over stdio (ndjson):
+`initialize` (clientCapabilities fs.read/write true, terminal false) → `session/new {cwd, mcpServers:[harness + agentMcpServers]}`
+(or `session/load {sessionId}` when the agent supports loadSession and we have externalSessionId) → per message
+`session/prompt {sessionId, prompt:[{type:'text',text}]}`; `session/update` notifications map to the same Messages
+(agent_message_chunk → assistant text delta, agent_thought_chunk → thought, tool_call/tool_call_update → tool, plan →
+system plan note); `session/request_permission {toolCall, options[{optionId,name,kind}]}` → a `permission` Message with
+the agent's options (`transport: 'acp'`), the JSON-RPC request is held until `POST /api/sessions/:id/permission`
+answers `{outcome:{outcome:'selected', optionId}}` (or `cancelled` on Stop); `fs/read_text_file` / `fs/write_text_file`
+served inside cwd/includeDirs; Stop → `session/cancel`; the process is restarted lazily if it dies (load or new session +
+a system note). Same identity/launcher resolution as headless. A mock ACP agent (`scripts/mock-acp-agent.js`) covers tests.
+Feature flags: `questions`, `permissions`, `acp`.
+
 ## Session activity states (what the UI shows)
 
 Session gains `lastEventAt: number | null` (last stdout event of the current turn), `waitingFor: 'answer' | 'auth' | null`

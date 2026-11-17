@@ -185,7 +185,13 @@ others work. Transport per call. GigaCode's own encrypted store (`~/.gigacode/mc
 6. Headless `-p` without authorization: output, link format, waits or exits, exit code; where the login is stored.
 7. `-p "/models"` raw output (→ model discovery parser).
 8. stdin + `-p` order with slash commands; max argv length on Windows (40K chars?) (→ long prompts via stdin).
-9. `auto` approval mode in headless when the classifier wants a confirmation: event? deny/skip/stop?
+9. `auto` approval mode in headless when the classifier wants a confirmation: event? deny/skip/stop? Exact denial text
+   (→ `denialPattern`).
+10. The built-in structured question tool (asking the human with options): exact name and inputSchema; what headless
+    returns for it (→ `questionTools`).
+11. `--acp` mode: does it work with the identity env + per-session settings; `initialize` capabilities (loadSession?),
+    `session/request_permission` for tool confirmations, MCP servers passed in `session/new`, auth behaviour
+    (→ `transport: "acp"` for real interactive permissions).
 
 ## 9. Machine pitfalls
 
