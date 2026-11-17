@@ -1,15 +1,15 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { CircleCheck, CircleX, LogIn, RefreshCw, TriangleAlert } from 'lucide-react'
+import { ArrowDown, ArrowUp, CircleCheck, CircleX, LogIn, Plus, RefreshCw, TriangleAlert, X } from 'lucide-react'
 import { api, ApiError, errorText, qs, tryApi } from '../api'
 import { setState, toast, useStore } from '../store'
 import { adoptSession } from '../lib/actions'
 import { COLUMNS, relTime } from '../lib/format'
 import { FULL_ACCESS, GRADES, loadAgentMeta, loadSettings, modeShort, normModels, useAgentMeta } from '../lib/agents'
 import { useNow } from '../lib/useNow'
-import type { AgentSettings, GitBranches, Session, Settings } from '../types'
+import type { AgentSettings, BoardColumn, BoardSettings, GitBranches, Grade, Session, Settings, TaskStatus } from '../types'
 import { Skeleton } from '../components/bits'
 import { ModelPicker } from '../components/pickers/ModelPicker'
-import { Button, Chip, Disclosure, Input, Segmented, Select, Switch, Textarea } from '../components/ui'
+import { Button, Chip, Disclosure, IconButton, Input, Segmented, Select, SuggestInput, Switch, Textarea } from '../components/ui'
 
 const MAIN = 'gigacode'
 const VARS = ['{taskUrl}', '{notes}', '{key}', '{title}', '{description}', '{targets}', '{branch}', '{repo}']
@@ -96,6 +96,7 @@ export function SettingsView() {
       <form className="settings" onSubmit={(e) => { e.preventDefault(); if (changes) void save() }}>
         <div className="settings-body">
           <AgentSection id={main} form={form} update={update} fieldError={fieldError} primary />
+          <BoardSection form={form} update={update} />
           <OrchestrationSection form={form} update={update} />
           <TrackerSection form={form} update={update} fieldError={fieldError} />
           <GitSection form={form} update={update} fieldError={fieldError} />
@@ -488,17 +489,18 @@ function PrSection({ form, update }: Omit<SectionProps, 'fieldError'>) {
 
 function OrchestrationSection({ form, update }: Omit<SectionProps, 'fieldError'>) {
   const o = form.orchestration ?? {}
-  const mode = o.reviewMode ?? 'internal'
+  const mode = o.reviewMode ?? 'builtin'
   return (
     <section className="settings-section" id="set-orchestration">
       <h2>Оркестрация</h2>
       <div className="set-rows">
-        <Row label="Ревью" wide hint={mode === 'internal'
+        <Row label="Ревью" wide hint={mode === 'builtin'
           ? 'Как в CLI: /full-task сам запускает субагента-ревьюера; его шаги и вывод видны в карточке субагента в чате.'
           : 'Через харнесс: ревью идёт отдельными чатами-исполнителями, их видно в боковой панели и в панели агентов.'}>
           <Segmented label="Режим ревью" value={mode} onChange={(v) => update({ ...form, orchestration: { ...o, reviewMode: v } })}
-            options={[{ value: 'internal', label: 'Внутри агента (как в CLI)' }, { value: 'harness', label: 'Через харнесс (отдельные чаты)' }]} />
+            options={[{ value: 'builtin', label: 'Внутри агента (как в CLI)' }, { value: 'harness', label: 'Через харнесс (отдельные чаты)' }]} />
         </Row>
+        {mode === 'harness' && <ReviewRows form={form} update={update} />}
       </div>
     </section>
   )
@@ -515,5 +517,107 @@ function StartTransitionRow({ value, statuses, onChange }: { value: string; stat
         options={[{ value: '', label: 'Не переводить', text: 'Не переводить' }, ...known.map((k) => ({ value: k, label: k })), { value: CUSTOM, label: 'Свой…', text: 'Свой' }]} />
       {custom && <Input mono aria-label="Свой статус" value={value} placeholder="development" onChange={(e) => onChange(e.target.value.trim())} />}
     </Row>
+  )
+}
+
+const REVIEW_VARS = ['{key}', '{title}', '{description}', '{branch}', '{base}', '{cwd}', '{round}', '{previous}']
+
+/** Harness-run review: which model grade reviews, in which mode, how many rounds, with what prompt. */
+function ReviewRows({ form, update }: Omit<SectionProps, 'fieldError'>) {
+  const o = form.orchestration ?? {}
+  const r = o.review ?? {}
+  const set = (patch: Partial<NonNullable<typeof r>>) => update({ ...form, orchestration: { ...o, review: { ...r, ...patch } } })
+  const agentId = r.agent ?? (form.agents[MAIN] ? MAIN : form.defaultAgent)
+  const agent = form.agents[agentId]
+  const catalog = normModels(agent?.models)
+  const grade = (r.grade ?? 'review') as Grade
+  const resolved = agent?.modelGrades[grade]
+  const area = useRef<HTMLTextAreaElement>(null)
+  const tpl = r.promptTemplate ?? ''
+  const insert = (v: string) => {
+    const at = area.current?.selectionStart ?? tpl.length
+    set({ promptTemplate: tpl.slice(0, at) + v + tpl.slice(at) })
+  }
+  return (
+    <>
+      <p className="set-note set-row-note">Работает независимо от содержимого /full-task: после worker_done harness запускает ревьюера другой моделью и возвращает замечания исполнителю.</p>
+      <Row label="Модель ревьюера" hint={resolved ? <>уровень {grade}: <span className="mono">{catalog.find((m) => m.id === resolved)?.label ?? resolved}</span></> : 'Уровень не настроен: модель по умолчанию CLI.'}>
+        <Select label="Уровень модели ревьюера" mono value={grade} onChange={(v) => set({ grade: v })} options={GRADES.map((g) => ({ value: g, label: g, hint: agent?.modelGrades[g] ?? 'не задан' }))} />
+      </Row>
+      <Row label="Режим ревьюера" hint="По умолчанию «План»: ревьюер только читает.">
+        <Select label="Режим ревьюера" value={r.approvalMode ?? 'plan'} onChange={(v) => set({ approvalMode: v })}
+          options={(agent?.approvalModes ?? ['plan']).map((m) => ({ value: m, label: modeShort(m), hint: agent?.approvalModeLabels?.[m] }))} />
+      </Row>
+      <Row label="Раундов ревью, не больше" hint="После последнего раунда придёт уведомление с замечаниями.">
+        <Select label="Максимум раундов" value={String(r.maxRounds ?? 2)} onChange={(v) => set({ maxRounds: Number(v) })} options={[1, 2, 3, 4, 5].map((n) => ({ value: String(n), label: String(n) }))} />
+      </Row>
+      <Row label="Промпт ревьюера" wide hint="Пусто: встроенный (ревью diff с базовой веткой, находки CRITICAL/HIGH/MEDIUM/LOW, VERDICT в конце).">
+        <Textarea ref={area} mono rows={5} aria-label="Промпт ревьюера" value={tpl} onChange={(e) => set({ promptTemplate: e.target.value || undefined })} />
+        <div className="chips">{REVIEW_VARS.map((v) => <Chip key={v} mono onClick={() => insert(v)} tip="Вставить в промпт">{v}</Chip>)}</div>
+      </Row>
+    </>
+  )
+}
+
+const SEMANTIC: { value: TaskStatus; label: string }[] = [
+  { value: 'backlog', label: 'бэклог' }, { value: 'todo', label: 'к работе' }, { value: 'in_progress', label: 'в работе' },
+  { value: 'review', label: 'на проверке' }, { value: 'done', label: 'готово' },
+]
+
+/** Board columns of the team workflow and how they talk to the tracker. */
+function BoardSection({ form, update }: Omit<SectionProps, 'fieldError'>) {
+  const tasks = useStore((s) => s.tasks)
+  const b = form.board
+  if (!b) return null
+  const set = (patch: Partial<BoardSettings>) => update({ ...form, board: { ...b, ...patch } })
+  const cols = b.columns
+  const setCol = (i: number, patch: Partial<BoardColumn>) => set({ columns: cols.map((c, j) => (j === i ? { ...c, ...patch } : c)) })
+  const move = (i: number, d: -1 | 1) => { const next = [...cols]; [next[i], next[i + d]] = [next[i + d], next[i]]; set({ columns: next }) }
+  const known = [...new Set([...tasks.map((t) => t.externalStatus).filter((x): x is string => !!x), ...cols.flatMap((c) => c.trackerStatuses), ...Object.keys(form.integrations?.tasks?.statusMap ?? {})])].sort()
+  const reviewCol = cols.find((c) => c.status === 'review')
+  const free = SEMANTIC.filter((s) => !cols.some((c) => c.status === s.value))
+  return (
+    <section className="settings-section" id="set-board">
+      <h2>Доска</h2>
+      <p className="set-note">Колонки и их порядок; у каждой свой внутренний статус и статусы трекера, которые в неё попадают при импорте.</p>
+      <div className="board-cols">
+        {cols.map((c, i) => (
+          <div key={`${c.status}-${i}`} className="board-col-row">
+            <div className="board-col-order">
+              <IconButton size="sm" label="Выше" icon={<ArrowUp />} disabled={i === 0} onClick={() => move(i, -1)} />
+              <IconButton size="sm" label="Ниже" icon={<ArrowDown />} disabled={i === cols.length - 1} onClick={() => move(i, 1)} />
+            </div>
+            <Input aria-label="Название колонки" value={c.label} invalid={!c.label.trim()} onChange={(e) => setCol(i, { label: e.target.value })} />
+            <Select label="Статус колонки" value={c.status} onChange={(v) => setCol(i, { status: v as TaskStatus })}
+              options={SEMANTIC.filter((s) => s.value === c.status || !cols.some((x) => x.status === s.value)).map((s) => ({ value: s.value, label: s.label }))} />
+            <IconButton size="sm" label="Убрать колонку" icon={<X />} disabled={cols.length <= 1} onClick={() => set({ columns: cols.filter((_, j) => j !== i) })} />
+            <div className="chips board-col-statuses" aria-label="Статусы трекера">
+              {known.map((k) => (
+                <Chip key={k} mono pressed={c.trackerStatuses.includes(k)}
+                  onClick={() => setCol(i, { trackerStatuses: c.trackerStatuses.includes(k) ? c.trackerStatuses.filter((x) => x !== k) : [...c.trackerStatuses, k] })}>{k}</Chip>
+              ))}
+            </div>
+            {b.moveSyncsTracker && (
+              <div className="board-col-transition">
+                <SuggestInput mono label={`Переход для «${c.label}»`} placeholder="переход: подбирается автоматически" value={b.columnTransitions?.[c.status] ?? ''}
+                  suggestions={c.trackerStatuses} onChange={(v) => set({ columnTransitions: { ...b.columnTransitions, [c.status]: v || undefined } })} />
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+      {free.length > 0 && (
+        <Button size="sm" icon={<Plus />} onClick={() => set({ columns: [...cols, { status: free[0].value, label: free[0].label[0].toUpperCase() + free[0].label.slice(1), trackerStatuses: [] }] })}>Добавить колонку</Button>
+      )}
+      <div className="set-rows">
+        <Row label="Когда агент закончил" hint="Карточка получает отметку агента в любом случае.">
+          <Segmented label="Когда агент закончил" value={b.onWorkerDone ?? 'stay'} onChange={(v) => set({ onWorkerDone: v })}
+            options={[{ value: 'stay' as const, label: 'Оставить в колонке' }, ...(reviewCol ? [{ value: 'review' as const, label: `Перенести в «${reviewCol.label}»` }] : [])]} />
+        </Row>
+        <Row label="Двигать задачу в трекере" hint="При переносе карточки (и при «Взять в работу»): переход подбирается автоматически из доступных в трекере.">
+          <Switch label="Двигать задачу в трекере при переносе карточки" checked={!!b.moveSyncsTracker} onChange={(v) => set({ moveSyncsTracker: v })} />
+        </Row>
+      </div>
+    </section>
   )
 }

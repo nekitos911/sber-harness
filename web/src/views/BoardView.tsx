@@ -5,7 +5,7 @@ import {
 } from '@dnd-kit/core'
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { CloudOff, Eye, EyeOff, Plus, RefreshCw, Search } from 'lucide-react'
+import { CloudOff, Columns3, Eye, EyeOff, Plus, RefreshCw, Search } from 'lucide-react'
 import { api, errorText, tryApi } from '../api'
 import { getState, openDialog, setState, toast, upsert, useStore } from '../store'
 import { COLUMNS, statusLabel } from '../lib/format'
@@ -27,7 +27,18 @@ export function BoardView() {
   const syncEnabled = useStore((s) => s.integrations.tasks)
   const trackerProblem = useStore((s) => s.integrations.tasksProblem)
   const focusTaskId = useStore((s) => s.focusTaskId)
-  const statusMap = useSettings()?.integrations?.tasks?.statusMap
+  const settings = useSettings()
+  const board = settings?.board
+  const notifications = useStore((s) => s.notifications)
+  const [allStatuses, setAllStatuses] = useState(false)
+  const [trackerSync, setTrackerSync] = useState<Record<string, { text: string; from: string | null; at: number }>>({})
+  // Lanes: the team's configured columns; the other semantic statuses only on «Все статусы» (muted).
+  const lanes = useMemo(() => {
+    const conf = board?.columns?.length ? board.columns : COLUMNS.map((c) => ({ status: c.id, label: c.label, trackerStatuses: [] as string[] }))
+    const extra = COLUMNS.filter((c) => !conf.some((x) => x.status === c.id)).map((c) => ({ status: c.id, label: c.label, trackerStatuses: [] as string[], muted: true }))
+    return [...conf.map((c) => ({ ...c, muted: false })), ...(allStatuses ? extra : [])]
+  }, [board, allStatuses])
+  const hiddenStatuses = (board?.columns?.length ?? 5) < 5
 
   const [query, setQuery] = useState('')
   const [repo, setRepo] = useState('')
@@ -41,6 +52,24 @@ export function BoardView() {
   }, [focusTaskId])
 
   const byId = useMemo(() => new Map(tasks.map((t) => [t.id, t])), [tasks])
+
+  useEffect(() => {
+    const ids = Object.keys(trackerSync)
+    if (!ids.length) return
+    let changed = false
+    const next = { ...trackerSync }
+    for (const id of ids) {
+      const t = byId.get(id)
+      const p = next[id]
+      const note = notifications.find((n) => n.taskId === id && n.at >= p.at && (n.kind === 'error' || n.kind === 'failed' || n.kind === 'info'))
+      if (t && t.externalStatus !== p.from && !p.text.endsWith('✓')) { next[id] = { ...p, text: `трекер: ${t.externalStatus} ✓` }; changed = true }
+      else if (note && !p.text.endsWith('✓')) { toast(note.text, 'error'); delete next[id]; changed = true }
+      else if (Date.now() - p.at > 20_000) { delete next[id]; changed = true }
+    }
+    if (changed) setTrackerSync(next)
+    const t = window.setTimeout(() => setTrackerSync((m) => Object.fromEntries(Object.entries(m).filter(([, v]) => !v.text.endsWith('✓') && Date.now() - v.at < 20_000))), 4000)
+    return () => window.clearTimeout(t)
+  }, [byId, notifications, trackerSync])
   const ctx = useMemo<BoardCtx>(() => {
     const kids = new Map<string, Task[]>()
     for (const t of tasks) if (t.parentId) kids.set(t.parentId, [...(kids.get(t.parentId) ?? []), t])
@@ -52,8 +81,9 @@ export function BoardView() {
       onOpen: setOpenId,
       onStart: (t) => openDialog({ kind: 'start', taskId: t.id }),
       showRepo: !repo && workspaces.length > 1,
+      trackerSync,
     }
-  }, [tasks, byId, sessions, workspaces, agents, repo])
+  }, [tasks, byId, sessions, workspaces, agents, repo, trackerSync])
 
   const cols = useMemo<Cols>(() => {
     const q = query.trim().toLowerCase()
@@ -132,6 +162,10 @@ export function BoardView() {
     try {
       const saved = await api<Task>('POST', `/tasks/${encodeURIComponent(id)}/move`, { status, beforeId })
       setState((s) => ({ tasks: upsert(s.tasks, saved) }))
+      // The harness moves the tracker on its own; show it on the card until the tracker status changes or a warning comes.
+      if (board?.moveSyncsTracker && original.externalId && status !== original.status) {
+        setTrackerSync((m) => ({ ...m, [id]: { text: 'трекер: перевод…', from: original.externalStatus, at: Date.now() } }))
+      }
     } catch (e) {
       const current = getState().tasks.find((t) => t.id === id)
       if (current) setState((s) => ({ tasks: upsert(s.tasks, original) }))
@@ -169,6 +203,12 @@ export function BoardView() {
         {workspaces.length > 1 && (
           <Select label="Фильтр по репозиторию" value={repo} onChange={setRepo} options={[{ value: '', label: 'Все репозитории' }, ...workspaces.map((w) => ({ value: w.id, label: w.name }))]} />
         )}
+        {hiddenStatuses && (
+          <button type="button" className="btn btn-ghost" aria-pressed={allStatuses} onClick={() => setAllStatuses(!allStatuses)} data-tip="Показать статусы вне рабочего процесса (бэклог, готово)">
+            <Columns3 />
+            Все статусы
+          </button>
+        )}
         <button type="button" className="btn btn-ghost" aria-pressed={showHidden} onClick={() => setShowHidden(!showHidden)} data-tip="Скрытые с доски задачи">
           {showHidden ? <Eye /> : <EyeOff />}
           Скрытые
@@ -200,8 +240,9 @@ export function BoardView() {
         }}
       >
         <div className="board">
-          {COLUMNS.map((c) => (
-            <Column key={c.id} status={c.id} label={c.label} ids={shown[c.id]} ctx={ctx} repo={repo} dragging={!!drag} tip={columnTip(c.id, statusMap)} />
+          {lanes.map((c) => (
+            <Column key={c.status} status={c.status} label={c.label} ids={shown[c.status]} ctx={ctx} repo={repo} dragging={!!drag} muted={c.muted}
+              tip={columnTip(c.trackerStatuses.length ? c.trackerStatuses : Object.entries(settings?.integrations?.tasks?.statusMap ?? {}).filter(([, v]) => v === c.status).map(([k]) => k))} />
           ))}
         </div>
         <DragOverlay dropAnimation={{ duration: 180, easing: 'cubic-bezier(0.23, 1, 0.32, 1)' }}>
@@ -215,17 +256,16 @@ export function BoardView() {
 }
 
 /** What a column means: which tracker statuses land in it, and that moving a card never changes the tracker. */
-function columnTip(status: TaskStatus, map: Record<string, string> | undefined) {
-  const from = Object.entries(map ?? {}).filter(([, col]) => col === status).map(([ext]) => ext)
+function columnTip(from: string[]) {
   return `Колонка доски.${from.length ? ` Статусы трекера: ${from.join(', ')}.` : ''}\nПеренос карточки не меняет статус в трекере.`
 }
 
-function Column({ status, label, ids, ctx, repo, dragging, tip }: { status: TaskStatus; label: string; ids: string[]; ctx: BoardCtx; repo: string; dragging: boolean; tip: string }) {
+function Column({ status, label, ids, ctx, repo, dragging, tip, muted }: { status: TaskStatus; label: string; ids: string[]; ctx: BoardCtx; repo: string; dragging: boolean; tip: string; muted?: boolean }) {
   const { setNodeRef, isOver } = useDroppable({ id: COL_PREFIX + status })
   const [adding, setAdding] = useState(false)
 
   return (
-    <section className="col" aria-labelledby={`col-${status}`} data-over={isOver}>
+    <section className="col" aria-labelledby={`col-${status}`} data-over={isOver} data-muted={muted || undefined}>
       <header className="col-head">
         <span className="col-mark" data-s={status} aria-hidden />
         <h2 id={`col-${status}`} data-tip={tip}>{label}</h2>

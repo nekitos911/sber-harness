@@ -1,10 +1,11 @@
 import { memo, type KeyboardEvent, type MouseEvent, type PointerEvent } from 'react'
-import { ExternalLink, FolderGit2, GitMerge, Link2, ListChecks, Lock, Play } from 'lucide-react'
+import { Check, CircleDot, LoaderCircle, X, ExternalLink, FolderGit2, GitMerge, Link2, ListChecks, Lock, Play } from 'lucide-react'
 import { PRIORITY } from '../../lib/format'
 import { pendingDeps, taskKey, trackerDiffers, unusualTargets } from '../../lib/tasks'
 import type { AgentInfo, Priority, Session, Task, Workspace } from '../../types'
 import { StatusIcon, statusText } from '../bits'
 import { PrGlyph } from '../PrChip'
+import { openSession } from '../../store'
 
 export interface BoardCtx {
   byId: Map<string, Task>
@@ -15,6 +16,7 @@ export interface BoardCtx {
   onOpen: (id: string) => void
   onStart: (task: Task) => void
   showRepo: boolean // only when the board mixes repositories; one repo on every card is noise
+  trackerSync: Record<string, { text: string }> // «трекер: перевод…» after a move with tracker sync
 }
 
 const stop = (e: MouseEvent | KeyboardEvent | PointerEvent) => e.stopPropagation()
@@ -82,9 +84,10 @@ export const TaskCard = memo(function TaskCard({ task, ctx }: { task: Task; ctx:
           Взять в работу
         </button>
       )}
+      {ctx.trackerSync[task.id] && <span className="card-sync" role="status">{ctx.trackerSync[task.id].text}</span>}
       {(session || task.externalUrl) && (
         <div className="card-foot">
-          {session && (
+          {task.agentState && session ? <AgentBadge task={task} session={session} ctx={ctx} /> : session && (
             <span className="card-agent" data-tip={session.title}>
               <StatusIcon session={session} />
               <span>{ctx.agents.get(session.agent)?.label ?? session.agent}</span>
@@ -112,5 +115,30 @@ function PriorityMark({ p }: { p: Priority }) {
         <rect key={i} x={1 + i * 4} y={8 - i * 3} width="2.5" height={3 + i * 3} rx="0.6" opacity={i < level ? 1 : 0.25} />
       ))}
     </svg>
+  )
+}
+
+const AGENT_STATE: Record<NonNullable<Task['agentState']>, { text: string; tone: string; spin?: boolean }> = {
+  running: { text: 'агент работает', tone: 'run', spin: true },
+  waiting: { text: 'ждёт ответа', tone: 'wait' },
+  done: { text: 'агент закончил', tone: 'done' },
+  failed: { text: 'агент: ошибка', tone: 'fail' },
+  reviewing: { text: 'ревью…', tone: 'run', spin: true },
+  approved: { text: 'ревью ✓', tone: 'done' },
+  changes_requested: { text: 'замечания ревью', tone: 'run' },
+}
+
+/** What the agent (and the harness review) is doing; click opens that chat (the reviewer's while reviewing). */
+function AgentBadge({ task, session, ctx }: { task: Task; session: Session; ctx: BoardCtx }) {
+  const st = AGENT_STATE[task.agentState!]
+  const reviewer = [...ctx.sessions.values()].filter((x) => x.parentId === session.id && x.role === 'reviewer').sort((a, b) => b.createdAt - a.createdAt)[0]
+  const target = (task.agentState === 'reviewing' || task.agentState === 'approved' || task.agentState === 'changes_requested') && reviewer ? reviewer : session
+  const Icon = st.spin ? LoaderCircle : task.agentState === 'failed' ? X : task.agentState === 'waiting' ? CircleDot : Check
+  return (
+    <button type="button" className="agent-badge" data-tone={st.tone} data-tip={`${target.title}: открыть чат`}
+      onPointerDown={stop} onKeyDown={stop} onClick={(e) => { e.stopPropagation(); openSession(target.id) }}>
+      <Icon className={st.spin ? 'spinner' : undefined} aria-hidden />
+      {st.text}
+    </button>
   )
 }

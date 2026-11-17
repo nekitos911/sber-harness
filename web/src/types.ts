@@ -38,9 +38,21 @@ export interface Task {
   snapshot: { title: string; description: string; externalStatus: string | null; at: number } | null
   log: TaskLogEntry[]
   pr?: TaskPr | null // newer servers: PR of task.branch, refreshed in the background
+  agentState?: AgentState | null // what the assigned agent (and the harness review) is doing
   createdAt: number
   updatedAt: number
 }
+
+export type AgentState = 'running' | 'waiting' | 'done' | 'failed' | 'reviewing' | 'approved' | 'changes_requested'
+
+export interface BoardColumn { status: TaskStatus; label: string; trackerStatuses: string[] }
+export interface BoardSettings {
+  columns: BoardColumn[]
+  onWorkerDone?: 'stay' | 'review'
+  moveSyncsTracker?: boolean
+  columnTransitions?: Partial<Record<TaskStatus, string>>
+}
+export interface ReviewSettings { grade?: string; approvalMode?: string; maxRounds?: number; agent?: string | null; promptTemplate?: string }
 
 export interface TaskPr { index: number; state: 'open' | 'merged' | 'declined'; url: string; updatedAt: number }
 
@@ -68,7 +80,7 @@ export interface Worktree {
 
 export type SessionKind = 'chat' | 'terminal'
 export type SessionStatus = 'idle' | 'running' | 'stopped' | 'done' | 'failed' | 'exited' | 'error'
-export type SessionRole = 'solo' | 'coordinator' | 'worker'
+export type SessionRole = 'solo' | 'coordinator' | 'worker' | 'reviewer'
 
 export interface Session {
   id: string
@@ -238,7 +250,8 @@ export interface Settings {
     prTitleTemplate?: string
   }
   tasks: { refreshSec: number }
-  orchestration?: { reviewMode?: 'internal' | 'harness'; workerMayCommit?: boolean }
+  orchestration?: { reviewMode?: 'builtin' | 'harness'; workerMayCommit?: boolean; review?: ReviewSettings }
+  board?: BoardSettings
   integrations?: {
     tasks?: { enabled?: boolean; space?: string; urlTemplate?: string; statusMap?: Record<string, string>; closedStatuses?: string[]; onStartTransition?: string | null }
     pr?: { enabled?: boolean; limits?: { titleBytes?: number; bodyBytes?: number } }

@@ -16,6 +16,8 @@ const BUSY = new Set(['working', 'restarting', 'compacting'])
  */
 export function WorkersPanel({ sessionId, workers }: { sessionId: string; workers: Session[] }) {
   const sub = useStore((s) => s.subagents[sessionId])
+  const all = useStore((s) => s.sessions)
+  const reviewers = all.filter((s) => s.role === 'reviewer' && workers.some((w) => w.id === s.parentId))
   const [open, setOpen] = useState(true)
   const now = useNow()
   const internal = sub?.items ?? []
@@ -34,7 +36,12 @@ export function WorkersPanel({ sessionId, workers }: { sessionId: string; worker
       </button>
       <div className="collapse" data-open={open}>
         <div>
-          {workers.map((w) => <WorkerRow key={w.id} w={w} now={now} />)}
+          {workers.map((w) => (
+            <div key={w.id} role="presentation">
+              <WorkerRow w={w} now={now} />
+              {reviewers.filter((r) => r.parentId === w.id).map((r) => <WorkerRow key={r.id} w={r} now={now} nested />)}
+            </div>
+          ))}
           {internal.length > 0 && (
             <>
               <div className="workers-sub">
@@ -50,15 +57,16 @@ export function WorkersPanel({ sessionId, workers }: { sessionId: string; worker
   )
 }
 
-function WorkerRow({ w, now }: { w: Session; now: number }) {
+function WorkerRow({ w, now, nested }: { w: Session; now: number; nested?: boolean }) {
   const tool = useCurrentTool(w)
   const starting = useStartingLabel(w)
   const last = w.preview.split('\n').map((l) => l.trim()).filter(Boolean).pop()
   const doing = starting || tool || (w.status === 'running' ? 'работает' : last)
   return (
-    <div className="worker-row" data-enter={w.createdAt > Date.now() - 3000 || undefined}>
+    <div className="worker-row" data-nested={nested || undefined} data-enter={w.createdAt > Date.now() - 3000 || undefined}>
       <StatusIcon session={w} />
       <button type="button" className="worker-title ellipsis" onClick={() => openSession(w.id)} data-tip={`${w.title}: ${statusText(w)}`}>
+        {w.role === 'reviewer' && <span className="role-tag">ревью</span>}
         {w.title}
         {doing && <span className="muted"> · {doing}</span>}
       </button>

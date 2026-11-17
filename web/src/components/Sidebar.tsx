@@ -251,17 +251,17 @@ function WorktreeNode({ ws, wt, sessions, kids, active }: { ws: Workspace; wt: W
 }
 
 /** A top-level session and, under it, its workers (harness chats) and the agent's own internal sub-agents. */
-function SessionNode({ s, kids }: { s: Session; kids: Map<string, Session[]> }) {
+function SessionNode({ s, kids, level = 0 }: { s: Session; kids: Map<string, Session[]>; level?: number }) {
   const children = kids.get(s.id) ?? []
   const internal = useStore((st) => st.subagents[s.id])
   const [open, setOpen] = useState(true)
   const has = children.length > 0 || !!internal?.items.length
   return (
     <>
-      <SessionRow s={s} nested={false} caret={has ? { open, toggle: () => setOpen(!open) } : undefined} />
+      <SessionRow s={s} nested={level > 0} level={level} caret={has ? { open, toggle: () => setOpen(!open) } : undefined} />
       {has && open && (
         <div className="tree-kids" role="group" aria-label={`Агенты сессии ${s.title}`}>
-          {children.map((c) => <SessionRow key={c.id} s={c} nested />)}
+          {children.map((c) => <SessionNode key={c.id} s={c} kids={kids} level={level + 1} />)}
           {internal?.items.map((a) => (
             <div
               key={a.id}
@@ -283,7 +283,7 @@ function SessionNode({ s, kids }: { s: Session; kids: Map<string, Session[]> }) 
   )
 }
 
-function SessionRow({ s, nested, caret }: { s: Session; nested: boolean; caret?: { open: boolean; toggle: () => void } }) {
+function SessionRow({ s, nested, level = 0, caret }: { s: Session; nested: boolean; level?: number; caret?: { open: boolean; toggle: () => void } }) {
   const current = useStore((st) => st.view.kind === 'wt' && st.wt[normPath(st.view.cwd)]?.active === `s:${s.id}`)
   const now = useNow()
   const tool = useCurrentTool(s)
@@ -297,6 +297,7 @@ function SessionRow({ s, nested, caret }: { s: Session; nested: boolean; caret?:
       role="button"
       data-s={s.status}
       data-nested={nested || undefined}
+      data-depth={level > 1 ? level : undefined}
       data-enter={s.createdAt > APP_START || undefined}
       tabIndex={0}
       aria-current={current ? 'true' : undefined}
@@ -307,6 +308,7 @@ function SessionRow({ s, nested, caret }: { s: Session; nested: boolean; caret?:
     >
       {s.phase === 'auth' ? <KeyRound className="st st-auth" aria-label="ждёт авторизацию" /> : s.kind === 'terminal' && s.status !== 'exited' ? <SquareTerminal className="st" aria-label="терминал" /> : <StatusIcon session={s} />}
       <span className="label">
+        {s.role === 'reviewer' && <span className="role-tag">ревью</span>}
         {s.title || s.id}
         {doing && <span className="sess-doing">{nested ? ' · ' : ' - '}{doing}</span>}
       </span>

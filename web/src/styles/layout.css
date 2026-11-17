@@ -176,3 +176,6 @@
 .wt[data-sleeping] > .tree-row, .wt[data-sleeping] > .tree-sess { opacity: 0.55; }
 .wt-pin { width: 11px !important; height: 11px !important; color: var(--ink-4) !important; }
 .wt-unread { width: 7px; height: 7px; border-radius: 50%; background: var(--signal); flex-shrink: 0; }
+.tree-sess[data-depth="2"] { padding-left: 58px; }
+.tree-sess[data-depth="3"] { padding-left: 76px; }
+.role-tag { display: inline-block; margin-right: 5px; padding: 0 4px; border-radius: 3px; background: var(--signal-soft); color: var(--signal); font-size: 10.5px; line-height: 15px; vertical-align: 1px; }
