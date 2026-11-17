@@ -1,5 +1,5 @@
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
-import { ArrowUpToLine, Ellipsis, ExternalLink, EyeOff, GitMerge, Lock, Pencil, Play, Plus, Send, SquareArrowOutUpRight, Trash2, UserPlus, X } from 'lucide-react'
+import { ArrowUpToLine, Ellipsis, ExternalLink, EyeOff, GitMerge, Lock, Pencil, Play, Plus, Send, SquareArrowOutUpRight, Trash2, UserPlus, Wrench, X } from 'lucide-react'
 import { api, ApiError, errorText, tryApi } from '../../api'
 import { getState, openDialog, openSession, setState, toast, upsert, useFeature, useStore, without } from '../../store'
 import { COLUMNS, fullTime, PRIORITY, relTime } from '../../lib/format'
@@ -12,6 +12,7 @@ import { Markdown } from '../Markdown'
 import { ChipsInput } from '../ChipsInput'
 import { Checkbox, Disclosure, IconButton, MenuButton, Segmented, Select, SuggestInput } from '../ui'
 import { useSettings } from '../../lib/agents'
+import { ReworkPopover, StartPopover } from './Rework'
 import { PrChip } from '../PrChip'
 import { openPrSettings, usePr } from '../../lib/pr'
 import type { BoardCtx } from './TaskCard'
@@ -66,6 +67,13 @@ export function TaskDrawer({ task, ctx, onClose }: { task: Task; ctx: BoardCtx; 
   const parent = task.parentId ? ctx.byId.get(task.parentId) : undefined
   const session = task.assigneeSessionId ? ctx.sessions.get(task.assigneeSessionId) : undefined
   const blocked = pendingDeps(task, ctx.byId)
+  const reworkOn = useFeature('rework')
+  const reworkable = reworkOn && !!session && (session.status !== 'running' || task.status === 'review')
+  const repoCount = useStore((s) => s.workspaces.filter((w) => w.isGit).length)
+  // The popover covers the usual case; choosing a repository (several, none set) needs the full dialog.
+  const needsDialog = !task.workspaceId && !(ctx.kids.get(task.id)?.length) && repoCount >= 2
+  const [pop, setPop] = useState<'start' | 'rework' | null>(null)
+  const primaryRef = useRef<HTMLButtonElement>(null)
   const patch = (fields: Partial<Task>) => patchTask(task.id, fields)
 
   const imported = isImported(task)
@@ -118,17 +126,32 @@ export function TaskDrawer({ task, ctx, onClose }: { task: Task; ctx: BoardCtx; 
         )}
 
         <div className="drawer-actions">
-          {session ? (
+          {/* One primary action: take into work → open the running session → send back for rework once it finished. */}
+          {!session ? (
+            <button ref={primaryRef} type="button" className="btn btn-primary" disabled={blocked.length > 0} data-tip={blocked.length ? `Ждёт: ${blocked.join(', ')}` : undefined}
+              onClick={() => (needsDialog ? openDialog({ kind: 'start', taskId: task.id }) : setPop('start'))}>
+              <Play />
+              Взять в работу
+            </button>
+          ) : reworkable ? (
+            <>
+              <button ref={primaryRef} type="button" className="btn btn-primary" onClick={() => setPop('rework')}>
+                <Wrench />
+                Доработать
+              </button>
+              <button type="button" className="btn" onClick={() => openSession(session.id)}>
+                <StatusIcon session={session} />
+                Открыть сессию
+              </button>
+            </>
+          ) : (
             <button type="button" className="btn btn-primary" onClick={() => openSession(session.id)}>
               <StatusIcon session={session} />
               Открыть сессию
             </button>
-          ) : (
-            <button type="button" className="btn btn-primary" disabled={blocked.length > 0} data-tip={blocked.length ? `Ждёт: ${blocked.join(', ')}` : undefined} onClick={() => openDialog({ kind: 'start', taskId: task.id })}>
-              <Play />
-              Взять в работу
-            </button>
           )}
+          {!session && <StartPopover task={task} anchor={primaryRef} open={pop === 'start'} onClose={() => setPop(null)} />}
+          {reworkable && <ReworkPopover task={task} anchor={primaryRef} open={pop === 'rework'} onClose={() => setPop(null)} />}
           <span className="grow" />
           <Select size="sm" className="chip-select" label="Статус" value={task.status} onChange={(v) => void patch({ status: v as TaskStatus })} options={COLUMNS.map((c) => ({ value: c.id, label: c.label }))} />
           <Select size="sm" className="chip-select" label="Приоритет" value={task.priority ?? ''} onChange={(v) => void patch({ priority: (v || null) as Task['priority'] })}

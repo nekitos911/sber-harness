@@ -1,0 +1,111 @@
+import { useState, type ReactNode, type RefObject } from 'react'
+import { Play, Wrench } from 'lucide-react'
+import { tryApi } from '../../api'
+import { getState, openDialog, setState, toast, upsert } from '../../store'
+import { adoptSession } from '../../lib/actions'
+import { loadDraft, saveDraft } from '../../lib/draft'
+import { isMac } from '../../lib/keys'
+import { useSettings } from '../../lib/agents'
+import type { Session, Task } from '../../types'
+import { Button, Popover } from '../ui'
+
+export const DEFAULT_REWORK = '/full-task {taskUrl} Задача готова, но нужны правки: {notes}'
+
+/** First line of what the agent will receive: «/full-task <url> Задача готова, но нужны правки: …». */
+function reworkPreview(template: string, task: Task, notes: string) {
+  const url = task.externalUrl ?? task.externalId ?? task.id
+  return template.replaceAll('{taskUrl}', url).replaceAll('{key}', task.externalId ?? task.id).replaceAll('{notes}', notes.trim().split('\n')[0] || '…').split('\n')[0]
+}
+
+const sendKey = isMac ? '⌘↵' : 'Ctrl+Enter'
+
+/** A text field popover with a draft that survives a reload; Ctrl/⌘+Enter runs the primary action. */
+function NotesPopover({ anchor, open, onClose, label, draftKey, placeholder, required, preview, primary, extra }: {
+  anchor: RefObject<HTMLElement | null>
+  open: boolean
+  onClose: () => void
+  label: string
+  draftKey: string
+  placeholder: string
+  required?: boolean
+  preview?: (notes: string) => ReactNode
+  primary: { label: string; icon?: ReactNode; run: (notes: string) => Promise<boolean> }
+  extra?: ReactNode
+}) {
+  const [notes, setNotes] = useState(() => loadDraft<string>(draftKey) ?? '')
+  const [busy, setBusy] = useState(false)
+  const edit = (v: string) => { setNotes(v); saveDraft(draftKey, v || null) }
+  const go = async () => {
+    if (busy || (required && !notes.trim())) return
+    setBusy(true)
+    const ok = await primary.run(notes.trim())
+    setBusy(false)
+    if (ok) { saveDraft(draftKey, null); setNotes(''); onClose() }
+  }
+  return (
+    <Popover anchor={anchor} open={open} onClose={onClose} placement="bottom-start" label={label} className="notes-pop">
+      <label className="field">
+        <span>{label}</span>
+        <textarea className="textarea" rows={3} autoFocus placeholder={placeholder} value={notes} onChange={(e) => edit(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); void go() } }} />
+      </label>
+      {preview && <p className="notes-preview mono" data-tip="Первая строка сообщения агенту">{preview(notes)}</p>}
+      <div className="notes-actions">
+        <Button variant="primary" size="sm" icon={primary.icon} busy={busy} disabled={required && !notes.trim()} onClick={() => void go()} tip={sendKey}>{primary.label}</Button>
+        {extra}
+      </div>
+    </Popover>
+  )
+}
+
+/** «Что поправить»: sends the task back to its agent (POST /tasks/:id/rework). `onMoveOnly` adds «Просто перенести». */
+export function ReworkPopover({ task, anchor, open, onClose, onSent, onMoveOnly }: {
+  task: Task; anchor: RefObject<HTMLElement | null>; open: boolean; onClose: () => void; onSent?: () => void; onMoveOnly?: () => void
+}) {
+  const settings = useSettings()
+  const agent = getState().sessions.find((s) => s.taskId === task.id && s.role !== 'reviewer')?.agent ?? getState().defaultAgent ?? ''
+  const template = settings?.agents[agent]?.reworkPromptTemplate || DEFAULT_REWORK
+  return (
+    <NotesPopover
+      anchor={anchor} open={open} onClose={onClose}
+      label="Что поправить?" draftKey={`rework:${task.id}`} required
+      placeholder="Например: кнопка «Сохранить» не блокируется во время запроса; тест на пустой список падает"
+      preview={(n) => reworkPreview(template, task, n)}
+      primary={{
+        label: 'Отправить агенту', icon: <Wrench />,
+        run: async (notes) => {
+          const res = await tryApi<{ task?: Task; session?: Session }>('POST', `/tasks/${encodeURIComponent(task.id)}/rework`, { notes })
+          if (res === undefined) return false
+          if (res?.task) setState((s) => ({ tasks: upsert(s.tasks, res.task!) }))
+          toast(`${task.externalId ?? task.id}: правки отправлены агенту`, 'ok')
+          onSent?.()
+          return true
+        },
+      }}
+      extra={onMoveOnly && <Button size="sm" variant="ghost" onClick={() => { onMoveOnly(); onClose() }}>Просто перенести</Button>}
+    />
+  )
+}
+
+/** «Взять в работу» with optional notes; «Настроить…» opens the full dialog (agent, repository). */
+export function StartPopover({ task, anchor, open, onClose }: { task: Task; anchor: RefObject<HTMLElement | null>; open: boolean; onClose: () => void }) {
+  return (
+    <NotesPopover
+      anchor={anchor} open={open} onClose={onClose}
+      label="Дополнительно" draftKey={`start:${task.id}`}
+      placeholder="например: только бэкенд, фронт не трогать"
+      primary={{
+        label: 'Взять в работу', icon: <Play />,
+        run: async (notes) => {
+          const st = getState()
+          const s = await tryApi<Session & { jumped?: boolean }>('POST', `/tasks/${encodeURIComponent(task.id)}/start`, { agent: st.defaultAgent ?? undefined, notes: notes || undefined })
+          if (!s) return false
+          if (s.jumped) toast('Задача уже в работе — открыл текущую сессию')
+          adoptSession(s)
+          return true
+        },
+      }}
+      extra={<Button size="sm" variant="ghost" onClick={() => { onClose(); openDialog({ kind: 'start', taskId: task.id }) }}>Настроить…</Button>}
+    />
+  )
+}

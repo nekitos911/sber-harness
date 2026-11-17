@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { ArrowDown, Check, Copy, Ellipsis, ExternalLink, FolderPlus, KeyRound, GitCompareArrows, MessageSquare, RotateCcw, ScrollText, Square, Trash2 } from 'lucide-react'
+import { ArrowDown, Check, Copy, Ellipsis, ExternalLink, FolderPlus, KeyRound, Wrench, GitCompareArrows, MessageSquare, RotateCcw, ScrollText, Square, Trash2 } from 'lucide-react'
 import { api, errorText, tryApi } from '../api'
 import { openSession, openTask, setState, showPanel, upsert, useFeature, useStore, without } from '../store'
 import { loadMessages, loadSubagents } from '../ws'
@@ -14,6 +14,7 @@ import { Branch, Loading, Skeleton, StatusIcon, statusText } from '../components
 import { MenuButton } from '../components/ui/Menu'
 import { Button, Chip, Popover } from '../components/ui'
 import { FolderPicker } from '../components/FolderPicker'
+import { ReworkPopover } from '../components/board/Rework'
 import { BranchPicker } from '../components/pickers/BranchPicker'
 import { MessageItem } from '../components/chat/MessageItem'
 import { ActivityLine, buildItems, StallBanner, ToolRun, TurnFiles, TurnHead } from '../components/chat/Turn'
@@ -224,6 +225,9 @@ export function ChatView({ id, active }: { id: string; active: boolean }) {
 function ChatHeader({ session, onLog, onReset, onDelete }: { session: Session; onLog: () => void; onReset: () => void; onDelete: () => void }) {
   const changed = useGit(session.cwd)?.status?.files.length ?? 0
   const dirsOn = useFeature('include-dirs')
+  const reworkOn = useFeature('rework')
+  const [reworkOpen, setReworkOpen] = useState(false)
+  const reworkRef = useRef<HTMLButtonElement>(null)
   const task = useStore((s) => (session.taskId ? s.tasks.find((t) => t.id === session.taskId) : undefined))
   const [title, setTitle] = useState(session.title)
   useEffect(() => setTitle(session.title), [session.title])
@@ -255,6 +259,15 @@ function ChatHeader({ session, onLog, onReset, onDelete }: { session: Session; o
       )}
       <span className="grow" />
       {dirsOn && !session.virtual && <IncludeDirs session={session} />}
+      {reworkOn && task && session.status !== 'running' && session.role !== 'reviewer' && !session.virtual && (
+        <>
+          <button ref={reworkRef} type="button" className="btn btn-sm" onClick={() => setReworkOpen(true)} data-tip="Отправить задачу агенту на доработку">
+            <Wrench />
+            Доработать
+          </button>
+          <ReworkPopover task={task} anchor={reworkRef} open={reworkOpen} onClose={() => setReworkOpen(false)} />
+        </>
+      )}
       {session.status === 'running' && (
         <button type="button" className="btn btn-sm" onClick={() => void tryApi('POST', `/sessions/${session.id}/stop`)}>
           <Square />

@@ -1,6 +1,7 @@
-import { memo, useEffect, useMemo, useState, type CSSProperties } from 'react'
+import { memo, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { runJob } from '../lib/jobs'
 import { Skeleton } from '../components/bits'
+import { ReworkPopover } from '../components/board/Rework'
 import {
   closestCorners, DndContext, DragOverlay, KeyboardSensor, PointerSensor, useDroppable, useSensor, useSensors,
   type Announcements, type DragEndEvent, type DragOverEvent, type DragStartEvent,
@@ -9,7 +10,7 @@ import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, v
 import { CSS } from '@dnd-kit/utilities'
 import { CloudOff, Columns3, Eye, EyeOff, Plus, RefreshCw, Search } from 'lucide-react'
 import { api, errorText, tryApi } from '../api'
-import { getState, openDialog, setState, toast, upsert, useStore } from '../store'
+import { getState, openDialog, setState, toast, upsert, useFeature, useStore } from '../store'
 import { COLUMNS, statusLabel } from '../lib/format'
 import { byOrder } from '../lib/tasks'
 import type { Task, TaskStatus } from '../types'
@@ -49,6 +50,9 @@ export function BoardView() {
   const [showHidden, setShowHidden] = useState(false)
   const [openId, setOpenId] = useState<string | null>(null)
   const [drag, setDrag] = useState<{ id: string; cols: Cols; from: TaskStatus } | null>(null)
+  const reworkOn = useFeature('rework')
+  const [reworkDrop, setReworkDrop] = useState<{ id: string; beforeId: string | null; afterId: string | null } | null>(null)
+  const dropAnchor = useRef<HTMLElement | null>(null)
   const [syncing, setSyncing] = useState(false)
 
   useEffect(() => {
@@ -152,6 +156,12 @@ export function BoardView() {
     const at = list.indexOf(id)
     const beforeId = list[at + 1] ?? null
     if (col === d.from && cols[col][cols[col].indexOf(id) + 1] === (beforeId ?? undefined)) return
+    // Back from testing to work with an agent on it: ask what to fix (or just move).
+    if (reworkOn && d.from === 'review' && col === 'in_progress' && getState().sessions.some((x) => x.taskId === id && x.role !== 'reviewer')) {
+      dropAnchor.current = document.querySelector<HTMLElement>(`[data-task-id="${window.CSS.escape(id)}"]`)
+      setReworkDrop({ id, beforeId, afterId: list[at - 1] ?? null })
+      return
+    }
     void move(id, col, beforeId, list[at - 1] ?? null)
   }
 
@@ -256,6 +266,11 @@ export function BoardView() {
         </DragOverlay>
       </DndContext>
 
+      {reworkDrop && byId.get(reworkDrop.id) && (
+        <ReworkPopover task={byId.get(reworkDrop.id)!} anchor={dropAnchor} open onClose={() => setReworkDrop(null)}
+          onSent={() => void move(reworkDrop.id, 'in_progress', reworkDrop.beforeId, reworkDrop.afterId)}
+          onMoveOnly={() => void move(reworkDrop.id, 'in_progress', reworkDrop.beforeId, reworkDrop.afterId)} />
+      )}
       {openTaskObj && <ErrorBoundary area="карточку задачи"><TaskDrawer key={openTaskObj.id} task={openTaskObj} ctx={ctx} onClose={() => setOpenId(null)} /></ErrorBoundary>}
     </div>
   )
@@ -302,6 +317,7 @@ const SortableCard = memo(function SortableCard({ task, ctx }: { task: Task; ctx
       ref={setNodeRef}
       style={style}
       className="card"
+      data-task-id={task.id}
       data-placeholder={isDragging}
       data-status={task.status}
       data-hidden={task.hidden}

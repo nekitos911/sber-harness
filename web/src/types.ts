@@ -260,6 +260,8 @@ export interface AgentSettings {
   allowedGrades: string[]
   taskPromptTemplate: string | null
   taskPromptPresets?: string[]
+  reworkPromptTemplate?: string | null // «Доработать»: {taskUrl} {key} {notes} (feature rework)
+  reworkPromptPresets?: string[]
   firstEventTimeoutMs?: number
   inheritUserMcp?: boolean
   enabled?: boolean

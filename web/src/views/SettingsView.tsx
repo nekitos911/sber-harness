@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { DEFAULT_REWORK } from '../components/board/Rework'
 import { FolderPicker } from '../components/FolderPicker'
 import { ArrowDown, ArrowUp, Check, CircleCheck, Pencil, CircleX, LogIn, Plus, RefreshCw, TriangleAlert, X } from 'lucide-react'
 import { api, ApiError, errorText, qs, tryApi } from '../api'
@@ -178,6 +179,7 @@ function AgentSection({ id, form, update, fieldError, primary }: SectionProps & 
   const catalog = normModels(a.models)
   const [gradesOpen, setGradesOpen] = useState(false)
   const acpOn = useFeature('acp')
+  const reworkOn = useFeature('rework')
   const unavailable = (m: string | undefined) => !!m && catalog.find((x) => x.id === m)?.available === false
 
   return (
@@ -245,6 +247,7 @@ function AgentSection({ id, form, update, fieldError, primary }: SectionProps & 
 
       <div className="set-rows">
         <CommandRow id={id} a={a} set={set} error={fieldError('command')} />
+        {primary && reworkOn && <ReworkRow a={a} set={set} />}
         {primary && acpOn && (
           <Row label={<>Транспорт <span className="badge-verify">проверяется на целевой машине</span></>}
             hint={(a.transport ?? 'headless') === 'acp'
@@ -408,6 +411,21 @@ function CommandRow({ id, a, set, error }: { id: string; a: AgentSettings; set: 
       )}
       {unknown && <span className="field-warn"><TriangleAlert aria-hidden />Команда /{cmd} не встречалась в сессиях GigaCode. Проверьте, что она установлена.</span>}
       {known.length > 0 && <span className="set-hint">Известные команды: <span className="mono">{known.slice(0, 12).join(' ')}{known.length > 12 ? ' …' : ''}</span></span>}
+    </Row>
+  )
+}
+
+/** «Доработать»: the message the agent gets with the person's notes; presets (the default first) or a custom template. */
+function ReworkRow({ a, set }: { a: AgentSettings; set: (p: Partial<AgentSettings>) => void }) {
+  const presets = [...new Set([DEFAULT_REWORK, ...(a.reworkPromptPresets ?? [])])]
+  const value = a.reworkPromptTemplate || DEFAULT_REWORK
+  const [custom, setCustom] = useState(!presets.includes(value))
+  return (
+    <Row label="Команда доработки" hint="Сообщение агенту по кнопке «Доработать»: {notes} — что поправить, {taskUrl} — ссылка на задачу." wide>
+      <Select label="Команда доработки" mono value={custom ? CUSTOM : value}
+        onChange={(v) => { if (v === CUSTOM) setCustom(true); else { setCustom(false); set({ reworkPromptTemplate: v === DEFAULT_REWORK ? null : v }) } }}
+        options={[...presets.map((p) => ({ value: p, label: p.split('\n')[0], text: p, hint: p === DEFAULT_REWORK ? 'по умолчанию' : undefined })), { value: CUSTOM, label: 'Свой…', text: 'Свой шаблон' }]} />
+      {custom && <Textarea mono rows={2} aria-label="Шаблон доработки" placeholder={DEFAULT_REWORK} value={a.reworkPromptTemplate ?? ''} onChange={(e) => set({ reworkPromptTemplate: e.target.value || null })} />}
     </Row>
   )
 }

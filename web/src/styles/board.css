@@ -304,3 +304,9 @@
 .agent-badge[data-s] { color: var(--state-ink, var(--ink-2)); }
 .agent-badge[data-s] .st { width: 12px; height: 12px; }
 .agent-badge-name { color: var(--ink); }
+
+/* «Что поправить?» / «Дополнительно» popovers */
+.notes-pop { display: grid; gap: 8px; width: min(420px, calc(100vw - 32px)); padding: 12px; }
+.notes-pop .textarea { width: 100%; }
+.notes-preview { margin: 0; padding: 6px 8px; border-radius: var(--r-1); background: var(--well); color: var(--ink-3); font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.notes-actions { display: flex; align-items: center; gap: 6px; }
