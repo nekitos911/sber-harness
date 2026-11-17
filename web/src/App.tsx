@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useState, type CSSProperties } from 'react'
+import { useCompact, useRail } from './lib/useMedia'
 import { RotateCw, WifiOff } from 'lucide-react'
-import { closeTab, getState, tabKey, useStore, wtKey, type Screen, type Tab } from './store'
+import { closeTab, getState, setState, tabKey, useStore, wtKey, type Screen, type Tab } from './store'
 import { reconnectNow } from './ws'
 import { TopBar } from './components/TopBar'
 import { Sidebar } from './components/Sidebar'
@@ -36,6 +37,10 @@ export function App() {
   const sidebar = useStore((s) => s.sidebar)
   const width = useStore((s) => s.sidebarWidth)
   const panel = useStore((s) => s.panel)
+  const sbOverlay = useStore((s) => s.sbOverlay)
+  const panelOverlay = useStore((s) => s.panelOverlay)
+  const compact = useCompact()
+  const rail = useRail()
   const view = useStore((s) => s.view)
   const wt = useStore((s) => s.wt)
   const conn = useStore((s) => s.conn)
@@ -70,6 +75,18 @@ export function App() {
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
+  // Overlays (narrow window) close on navigation (the panel stays with its worktree) and on Esc.
+  useEffect(() => { setState(view.kind === 'wt' ? { sbOverlay: false } : { sbOverlay: false, panelOverlay: false }) }, [view])
+  useEffect(() => {
+    if (!sbOverlay && !panelOverlay) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || document.querySelector('dialog[open], .popover')) return
+      setState({ sbOverlay: false, panelOverlay: false })
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [sbOverlay, panelOverlay])
+
   useUnreadTitle()
   // The worktree on screen keeps its git state fresh (tab badges, panel, sidebar counts).
   useGitWatch(view.kind === 'wt' ? view.cwd : null)
@@ -79,7 +96,8 @@ export function App() {
   const showsTab = !!hereTabs?.tabs.some((t) => tabKey(t) === hereTabs.active)
 
   return (
-    <div className="app" data-sidebar={sidebar} data-conn={conn} style={{ '--sb-w': sidebar ? `${width}px` : '0px' } as CSSProperties}>
+    <div className="app" data-sidebar={rail || sidebar} data-conn={conn} data-compact={compact || undefined} data-rail={(rail && !sbOverlay) || undefined} data-sb-overlay={(rail && sbOverlay) || undefined}
+      style={{ '--sb-w': rail ? '48px' : sidebar ? `${width}px` : '0px' } as CSSProperties}>
       <ErrorBoundary area="верхнюю панель"><TopBar onCommand={() => setPalette(true)} /></ErrorBoundary>
       <ErrorBoundary area="боковую панель"><Sidebar /></ErrorBoundary>
       <main className="main">
@@ -107,7 +125,10 @@ export function App() {
           )}
         </div>
       </main>
-      {view.kind === 'wt' && panel && <ErrorBoundary area="панель файлов и изменений"><WorkspacePanel /></ErrorBoundary>}
+      {view.kind === 'wt' && (compact ? panelOverlay : panel) && <ErrorBoundary area="панель файлов и изменений"><WorkspacePanel /></ErrorBoundary>}
+      {((rail && sbOverlay) || (compact && panelOverlay && view.kind === 'wt')) && (
+        <div className="overlay-scrim" aria-hidden onClick={() => setState({ sbOverlay: false, panelOverlay: false })} />
+      )}
       <StatusBar />
       <ErrorBoundary area="диалог"><Dialogs /></ErrorBoundary>
       {palette && <ErrorBoundary area="палитру команд"><CommandPalette onClose={() => setPalette(false)} /></ErrorBoundary>}

@@ -8,7 +8,8 @@ import {
 } from '@dnd-kit/core'
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { CloudOff, Columns3, Eye, EyeOff, Plus, RefreshCw, Search, SquareKanban } from 'lucide-react'
+import { CloudOff, Columns3, Eye, EyeOff, ListFilter, Plus, RefreshCw, Search, SquareKanban } from 'lucide-react'
+import { useMedia } from '../lib/useMedia'
 import { api, errorText, tryApi } from '../api'
 import { getState, openDialog, setState, toast, upsert, useFeature, useStore } from '../store'
 import { COLUMNS, statusLabel } from '../lib/format'
@@ -53,6 +54,9 @@ export function BoardView() {
   const reworkOn = useFeature('rework')
   const importOn = useFeature('tracker-import')
   const [importOpen, setImportOpen] = useState(false)
+  const narrow = useMedia('(max-width: 1279px)')
+  const [filtersOpen, setFiltersOpen] = useState(false)
+  const filtersRef = useRef<HTMLButtonElement>(null)
   const importRef = useRef<HTMLButtonElement>(null)
   const [creating, setCreating] = useState(false)
   const [reworkDrop, setReworkDrop] = useState<{ id: string; beforeId: string | null; afterId: string | null } | null>(null)
@@ -210,6 +214,26 @@ export function BoardView() {
 
   if (!loaded) return <div className="board-view"><div className="board-loading"><Skeleton rows={8} label="Загрузка задач…" /></div></div>
 
+  // Below 1280 px the filters fold into one «Фильтры» menu.
+  const filters = (
+    <>
+      {workspaces.length > 1 && (
+        <Select label="Фильтр по репозиторию" value={repo} onChange={setRepo} options={[{ value: '', label: 'Все репозитории' }, ...workspaces.map((w) => ({ value: w.id, label: w.name }))]} />
+      )}
+      {hiddenStatuses && (
+        <button type="button" className="btn btn-ghost" aria-pressed={allStatuses} onClick={() => setAllStatuses(!allStatuses)} data-tip="Показать статусы вне рабочего процесса (бэклог, готово)">
+          <Columns3 />
+          Все статусы
+        </button>
+      )}
+      <button type="button" className="btn btn-ghost" aria-pressed={showHidden} onClick={() => setShowHidden(!showHidden)} data-tip="Скрытые с доски задачи">
+        {showHidden ? <Eye /> : <EyeOff />}
+        Скрытые
+      </button>
+    </>
+  )
+  const activeFilters = Number(!!repo) + Number(!!hiddenStatuses && allStatuses) + Number(showHidden)
+
   return (
     <div className="board-view">
       <header className="view-head">
@@ -220,19 +244,17 @@ export function BoardView() {
           <Search aria-hidden />
           <input className="input" type="search" placeholder="Поиск задач" aria-label="Поиск задач" value={query} onChange={(e) => setQuery(e.target.value)} />
         </div>
-        {workspaces.length > 1 && (
-          <Select label="Фильтр по репозиторию" value={repo} onChange={setRepo} options={[{ value: '', label: 'Все репозитории' }, ...workspaces.map((w) => ({ value: w.id, label: w.name }))]} />
-        )}
-        {hiddenStatuses && (
-          <button type="button" className="btn btn-ghost" aria-pressed={allStatuses} onClick={() => setAllStatuses(!allStatuses)} data-tip="Показать статусы вне рабочего процесса (бэклог, готово)">
-            <Columns3 />
-            Все статусы
-          </button>
-        )}
-        <button type="button" className="btn btn-ghost" aria-pressed={showHidden} onClick={() => setShowHidden(!showHidden)} data-tip="Скрытые с доски задачи">
-          {showHidden ? <Eye /> : <EyeOff />}
-          Скрытые
-        </button>
+        {narrow ? (
+          <>
+            <button ref={filtersRef} type="button" className="btn btn-ghost" aria-expanded={filtersOpen} onClick={() => setFiltersOpen(!filtersOpen)}>
+              <ListFilter />
+              Фильтры{activeFilters > 0 && <span className="count">{activeFilters}</span>}
+            </button>
+            <Popover anchor={filtersRef} open={filtersOpen} onClose={() => setFiltersOpen(false)} placement="bottom-end" label="Фильтры" className="filters-pop">
+              <div className="filters-body">{filters}</div>
+            </Popover>
+          </>
+        ) : filters}
         {importOn && (
           <>
             <button ref={importRef} type="button" className="btn" aria-expanded={importOpen} onClick={() => setImportOpen(!importOpen)} data-tip="Добавить задачу из трекера по ключу или ссылке">
@@ -256,6 +278,7 @@ export function BoardView() {
         </div>
       )}
 
+      <div className="board-area">
       <DndContext
         sensors={sensors}
         collisionDetection={closestCorners}
@@ -296,6 +319,7 @@ export function BoardView() {
           onMoveOnly={() => void move(reworkDrop.id, 'in_progress', reworkDrop.beforeId, reworkDrop.afterId)} />
       )}
       {openTaskObj && <ErrorBoundary area="карточку задачи"><TaskDrawer key={openTaskObj.id} task={openTaskObj} ctx={ctx} onClose={() => setOpenId(null)} /></ErrorBoundary>}
+      </div>
     </div>
   )
 }

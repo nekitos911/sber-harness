@@ -257,3 +257,17 @@
 .sess-l1 { display: block; overflow: hidden; text-overflow: ellipsis; }
 .sess-l2 { display: block; overflow: hidden; text-overflow: ellipsis; font-size: 11px; color: var(--ink-3); }
 .tree-sess[data-detail] { height: auto; min-height: 24px; padding-top: 3px; padding-bottom: 3px; }
+
+/* ---------- narrow windows: panel and sidebar over the content ---------- */
+.overlay-scrim { position: fixed; inset: 36px 0 24px 0; z-index: 29; background: var(--scrim); animation: fade-in var(--t-base) var(--ease-out); }
+.app[data-compact] .wpanel { position: fixed; top: 36px; bottom: 24px; right: 0; z-index: 30; width: min(380px, 92vw); box-shadow: var(--shadow-lift); }
+.app[data-sb-overlay] .sidebar { position: fixed; top: 36px; bottom: 24px; left: 0; z-index: 30; width: min(320px, 90vw); box-shadow: var(--shadow-lift); }
+.app[data-sb-overlay] .sb-resize { display: none; }
+/* the rail: section icons only */
+.app[data-rail] .sb-search, .app[data-rail] .tree, .app[data-rail] .sb-resize, .app[data-rail] .sb-foot > :not(.nav-item) { display: none; }
+.app[data-rail] .nav { padding: 6px 4px; }
+.app[data-rail] .nav-item { position: relative; justify-content: center; height: 36px; padding: 0; font-size: 0; }
+.app[data-rail] .nav-item svg { width: 18px; height: 18px; }
+.app[data-rail] .nav-item .end { position: absolute; top: 1px; right: 1px; margin: 0; }
+.app[data-rail] .nav-item .count { min-width: 14px; height: 14px; padding: 0 3px; font-size: 9px; line-height: 14px; }
+.app[data-rail] .sb-foot { justify-content: center; padding-left: 4px; padding-right: 4px; }

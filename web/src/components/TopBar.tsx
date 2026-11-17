@@ -1,4 +1,5 @@
 import { useLayoutEffect, useRef, useState } from 'react'
+import { useCompact, useRail } from '../lib/useMedia'
 import { Archive, ArrowLeft, ArrowRight, ClipboardCopy, Command, FileText, FolderOpen, History, GitCompare, MessageSquare, MessageSquarePlus, PanelLeft, PanelRight, Plus, SquareTerminal, X } from 'lucide-react'
 import { activateTab, closeTab, dirtyKey, hasFeature, navigate, openDialog, setState, tabKey, toast, useStore, wtKey, type Tab } from '../store'
 import { loadDraft, saveDraft } from '../lib/draft'
@@ -23,6 +24,13 @@ export function BrandMark() {
 export function TopBar({ onCommand }: { onCommand: () => void }) {
   const sidebar = useStore((s) => s.sidebar)
   const panel = useStore((s) => s.panel)
+  const sbOverlay = useStore((s) => s.sbOverlay)
+  const panelOverlay = useStore((s) => s.panelOverlay)
+  // narrow window: the buttons open the sidebar / panel over the content instead of resizing the layout
+  const rail = useRail()
+  const compact = useCompact()
+  const sbOn = rail ? sbOverlay : sidebar
+  const panelOn = compact ? panelOverlay : panel
   const canBack = useStore((s) => s.back.length > 0)
   const canForward = useStore((s) => s.forward.length > 0)
   const cwd = useStore((s) => (s.view.kind === 'wt' ? s.view.cwd : null))
@@ -30,7 +38,7 @@ export function TopBar({ onCommand }: { onCommand: () => void }) {
     <header className="topbar">
       <div className="topbar-left">
         <BrandMark />
-        <button type="button" className="icon-btn" aria-pressed={sidebar} aria-label="Боковая панель" data-tip="Боковая панель" onClick={() => setState({ sidebar: !sidebar })}>
+        <button type="button" className="icon-btn" aria-pressed={sbOn} aria-label="Боковая панель" data-tip="Боковая панель" onClick={() => setState(rail ? { sbOverlay: !sbOverlay, panelOverlay: false } : { sidebar: !sidebar })}>
           <PanelLeft />
         </button>
         <button type="button" className="icon-btn" disabled={!canBack} aria-label="Назад" data-tip="Назад" onClick={() => navigate('back')}>
@@ -47,7 +55,7 @@ export function TopBar({ onCommand }: { onCommand: () => void }) {
           Команда
         </button>
         {cwd && (
-          <button type="button" className="icon-btn" aria-pressed={panel} aria-label="Панель файлов и изменений" data-tip="Панель файлов и изменений" onClick={() => setState({ panel: !panel })}>
+          <button type="button" className="icon-btn" aria-pressed={panelOn} aria-label="Панель файлов и изменений" data-tip="Панель файлов и изменений" onClick={() => setState(compact ? { panelOverlay: !panelOverlay, sbOverlay: false } : { panel: !panel })}>
             <PanelRight />
           </button>
         )}

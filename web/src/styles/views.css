@@ -452,3 +452,12 @@ button.chip.chip-mono[aria-pressed="true"] { background: var(--signal-soft); col
 .set-line { display: block; }
 .chat-hint { display: flex; align-items: center; gap: 8px; padding: 6px 6px 6px 12px; border: 1px solid var(--rule); border-radius: var(--r-2); background: var(--deck); font-size: 12.5px; color: var(--ink-2); }
 .quick-tools { margin-top: 6px; }
+
+/* narrow window: settings in one column, the section list on top */
+@media (max-width: 999px) {
+  .settings-layout { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+  .settings-nav { display: flex; gap: 2px; padding: 8px 12px; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--rule-soft); }
+  .settings-nav a { flex: none; }
+  .set-row, .set-row[data-wide] { grid-template-columns: minmax(0, 1fr); gap: 6px; }
+  .set-label { padding-top: 0; }
+}

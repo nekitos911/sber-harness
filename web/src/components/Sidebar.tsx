@@ -18,6 +18,7 @@ import { Skeleton, StatusIcon, SubStateIcon, subStateLabel } from './bits'
 import { Button, Menu, Popover } from './ui'
 import { ideEnabled, isUnread, onWorktreeKey, projectMenu, setUnread, worktreeMenu } from './WorktreeMenu'
 import { useNow } from '../lib/useNow'
+import { useRail } from '../lib/useMedia'
 
 const depth = (d: number) => ({ '--depth': d }) as CSSProperties
 const APP_START = Date.now() // rows for sessions born after this animate in; the initial list does not
@@ -189,8 +190,9 @@ const clampWidth = (w: number) => Math.round(Math.min(520, Math.max(220, w)))
 
 function NavItem({ screen, icon, label, end }: { screen: Screen; icon: ReactNode; label: string; end?: ReactNode }) {
   const active = useStore((s) => s.view.kind === 'screen' && s.view.screen === screen)
+  const rail = useRail() // icons only: the name comes as a tooltip
   return (
-    <button type="button" className="nav-item" aria-current={active ? 'page' : undefined} onClick={() => openScreen(screen)}>
+    <button type="button" className="nav-item" aria-current={active ? 'page' : undefined} data-tip={rail ? label : undefined} onClick={() => openScreen(screen)}>
       {icon}
       {label}
       {end && <span className="end">{end}</span>}
