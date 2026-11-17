@@ -36,6 +36,12 @@ reconstruction: fix the normalizer in `server/launchers.js` (stream) or the pars
 
 ## 2. GigaCode
 
+0. **Authorization.** On first run GigaCode asks you to log in through the browser/a link. Settings → "Sign in to
+   GigaCode" opens interactive GigaCode in a terminal tab (links are clickable). Check and record in `docs/GIGACODE-FACTS.md`:
+   what a headless `-p` prints when not logged in (stdout or stderr, link/code format, whether it waits for login
+   or exits), and where the login is stored. The harness detects the link in the stream (`phase: 'auth'`, a card with
+   the link in the chat, the timeout is suspended up to `authTimeoutMs`); if the real format is not detected, fix the
+   regex in `server/runner.js` / `launchers.js` and the test with the `#auth` mock.
 1. `agents.gigacode.command` = `C:/Program Files/.gigacode/bin/gigacode.cmd` (the default). The harness reads `ROOT=%~dp0..`
    and the identity from the shim and starts `ROOT\runtime\node\node.exe --max-old-space-size=6144 ROOT\lib\cli-entry.js …`
    without a shell. If the layout is different, set the explicit pair `agents.gigacode.node` + `agents.gigacode.cliEntry`.
