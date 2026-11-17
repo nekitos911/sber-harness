@@ -860,14 +860,14 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
    * The workspace a cwd belongs to: the git repository one of whose worktrees contains it (worktrees usually live
    * outside the repo folder), else the deepest registered folder containing it (a projects folder is the last resort).
    */
-  async function workspaceFor(cwd, fresh = false) {
+  async function workspaceFor(cwd, fresh = false, retry = true) {
     let best = null;
     for (const w of db.workspaces.filter((x) => x.isGit)) {
       for (const t of await worktreesOf(w.path, fresh)) {
         if (insideDir(t.path, cwd) && (!best || t.path.length > best.len)) best = { id: w.id, len: t.path.length };
       }
     }
-    if (!best && !fresh) return workspaceFor(cwd, true); // a worktree created in the last 30 s
+    if (!best && !fresh && retry) return workspaceFor(cwd, true); // a worktree created in the last 30 s
     return best?.id ?? db.workspaces.filter((w) => insideDir(w.path, cwd)).sort((a, b) => b.path.length - a.path.length)[0]?.id ?? null;
   }
 
@@ -1186,6 +1186,28 @@ ${note.trim()}` : text });
     importMessages(sid, msgs) {
       get(sid);
       for (const m of msgs) store.putMessage(sid, { from: null, tool: null, ...m, sessionId: sid, turn: 0, imported: true });
+    },
+
+    /**
+     * Startup, one pass over the cached worktree lists: sessions saved before the repo-first rule that sit in a
+     * repository's worktree but are attached to a folder workspace merely containing it move to that repository.
+     */
+    async reresolveWorkspaces() {
+      let moved = 0;
+      for (const s of db.sessions.filter((x) => !x.archived && !x.virtual && x.cwd)) {
+        const cur = db.workspaces.find((w) => w.id === s.workspaceId);
+        if (cur?.isGit) continue;
+        const id = await workspaceFor(s.cwd, false, false);
+        if (id && id !== s.workspaceId && db.workspaces.find((w) => w.id === id)?.isGit) {
+          s.workspaceId = id;
+          moved++;
+        }
+      }
+      if (moved) {
+        store.save();
+        console.log(`[harness] ${moved} session(s) re-attached to the repository that owns their worktree`);
+      }
+      return moved;
     },
 
     // ---- recovery after a restart ----

@@ -824,6 +824,7 @@ export async function startServer(opts = {}) {
   }
   await registerConfiguredWorkspaces();
   syncRootWorkspace();
+  await sessions.reresolveWorkspaces(); // data saved before the repo-first rule
   route('DELETE', '/api/workspaces/:id', ({ params }) => {
     getWs(params.id);
     db.workspaces = db.workspaces.filter((w) => w.id !== params.id);

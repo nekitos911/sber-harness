@@ -6,7 +6,7 @@ import path from 'node:path';
 import { startServer } from '../server/index.js';
 import { CODE_ROOT } from '../server/config.js';
 import { isAlive } from '../server/runner.js';
-import { tmpDir, rmrf, waitFor } from './helpers.js';
+import { tmpDir, rmrf, waitFor, makeRepo } from './helpers.js';
 
 const root = tmpDir();
 const cwd = path.join(root, 'рабочая папка');
@@ -77,6 +77,29 @@ test('a turn that finished while the harness was down is drained from its file o
     assert.ok(!msgs.some((m) => m.kind === 'error'));
     await h.api('DELETE', `/api/sessions/${s.id}`);
     await waitFor(() => !fs.existsSync(path.join(h.dataDir, 'runs', s.id)), { what: 'turn files removed with the session' });
+  } finally {
+    await h.srv.close();
+  }
+});
+
+test('on start, sessions saved under a containing folder move to the repository that owns their worktree', async () => {
+  const repo = path.join(root, 'репо c');
+  makeRepo(repo);
+  let h = await harness('c');
+  const wsRepo = await h.api('POST', '/api/workspaces', { path: repo });
+  const wt = await h.api('POST', `/api/workspaces/${wsRepo.id}/worktrees`, { name: 'feature/old-data' });
+  const folder = await h.api('POST', '/api/workspaces', { path: root, kind: 'folder' });
+  const chat = await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', cwd: wt.path });
+  assert.equal(chat.workspaceId, wsRepo.id, 'new sessions already follow the repo-first rule');
+  await h.srv.close();
+  // data written before the rule: attached to the folder that merely contains the worktree
+  const dbFile = path.join(h.dataDir, 'db.json');
+  const db = JSON.parse(fs.readFileSync(dbFile, 'utf8'));
+  db.sessions.find((s) => s.id === chat.id).workspaceId = folder.id;
+  fs.writeFileSync(dbFile, JSON.stringify(db));
+  h = await harness('c');
+  try {
+    assert.equal((await h.session(chat.id)).workspaceId, wsRepo.id);
   } finally {
     await h.srv.close();
   }

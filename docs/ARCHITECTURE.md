@@ -729,7 +729,9 @@ NOT confirmed (it may print a URL / device code and wait for the browser callbac
   — when enriched or cached — its newest commit time (`git log -1 --format=%ct`); never the index mtime. Every git child
   runs with `GIT_OPTIONAL_LOCKS=0`, so reads (status, diff, log, …) never refresh/rewrite the index. A session's
   `workspaceId` = the git repository whose worktree list contains its cwd (worktrees usually live outside the repo
-  folder), else the deepest registered folder. Feature flag `worktree-lazy`.
+  folder), else the deepest registered folder; on startup one pass (cached worktree lists) moves existing
+  non-archived sessions attached to a folder workspace to the repository that owns their worktree (count logged).
+  Feature flag `worktree-lazy`.
 - `PATCH /api/worktrees/meta { path, label?, note?, pinned?, sleeping? }` → meta. `sleeping: true` stops terminal PTYs
   in that cwd (chat sessions are idle between turns anyway; a running turn is NOT killed — 409 unless `force`).
 - `DELETE /api/workspaces/:id/worktrees { path, force?, deleteBranch?: 'no'|'safe'|'force' }`: refuses the main worktree
