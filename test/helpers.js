@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { startServer } from '../server/index.js';
-import { CODE_ROOT } from '../server/config.js';
+import { CODE_ROOT, deepMerge } from '../server/config.js';
 
 export const tmpDir = (prefix = 'харнесс тест ') => fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
 
@@ -62,7 +62,8 @@ export async function startTestServer(configOverrides = {}) {
     dataDir,
     configFile,
     port: 0,
-    configOverrides: { defaultAgent: 'mock', worktreeRoot: null, mcpServersFrom: null, ...configOverrides },
+    // mock model discovery is off unless a test turns it on (it would spawn a /models run per server)
+    configOverrides: deepMerge({ defaultAgent: 'mock', worktreeRoot: null, mcpServersFrom: null, agents: { mock: { modelsDiscovery: null } } }, configOverrides),
   });
   async function api(method, p, body, headers = {}) {
     const res = await fetch(srv.url + p, {

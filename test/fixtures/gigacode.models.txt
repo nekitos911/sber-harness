@@ -1,0 +1,11 @@
+Available models:
+
+| ID | context |
+|----|---------|
+| Qwen3.8-Flash-Next-262k | 262k |
+| DeepSeek-V4.1-Flash-1017-262k | 262k |
+| GLM-5.3-Flash-262k | 262k |
+| Qwen3.6-35B-262k | 262k |
+| GigaChat-3.5-Ultra-Preview-128k | 128k |
+
+Use /model <id> to switch.

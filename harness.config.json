@@ -58,6 +58,7 @@
         },
         "chatRecording": true
       },
+      "modelsDiscovery": { "prompt": "/models", "maxAgeHours": 24 },
       "taskPromptPresets": ["/full-task {taskUrl}{notes}", "/full-task-ui {taskUrl}{notes}", "{key} {title}\n\n{description}"],
       "inheritUserMcp": false,
       "taskPromptTemplate": "/full-task {taskUrl}{notes}",
@@ -77,7 +78,20 @@
       "launcher": "mock",
       "label": "Mock agent (demo)",
       "approvalMode": "auto",
-      "approvalModes": ["plan", "default", "auto-edit", "auto"]
+      "approvalModes": ["plan", "default", "auto-edit", "auto"],
+      "modelsDiscovery": { "prompt": "/models", "maxAgeHours": 24 },
+      "settings": {
+        "agents": {
+          "modelGrades": {
+            "default": "Qwen3.8-Flash-Next-262k",
+            "fast": "DeepSeek-V4.1-Flash-1017-262k",
+            "review": "GLM-5.3-Flash-262k",
+            "explore": "Qwen3.6-35B-262k"
+          },
+          "allowedGrades": ["default", "fast", "review", "explore"]
+        },
+        "chatRecording": true
+      }
     }
   },
   "agentMcpServers": {},

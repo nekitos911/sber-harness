@@ -169,7 +169,7 @@ test('agent info: launcher resolution (identity as a boolean only) and what the 
   const { at, auth, ...seen } = info.seen;
   assert.ok(at > 0);
   assert.deepEqual(seen, {
-    models: ['mock-model'],
+    models: ['Mock-Model-1-128k'], // the copied mock has no fixture next to it: its built-in catalogue
     slashCommands: ['clear', 'full-task'],
     mcpServers: [{ name: 'harness', status: 'connected' }],
     agents: ['general-purpose'],

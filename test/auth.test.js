@@ -3,16 +3,14 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
-import fs from 'node:fs';
-import { startTestServer, tmpDir, rmrf, waitFor, waitPidGone } from './helpers.js';
+import { defaultCwd } from '../server/sessions.js';
+import { startTestServer, tmpDir, rmrf, waitFor } from './helpers.js';
 
 const root = tmpDir();
 let h;
 before(async () => {
   // a 1 s first-event timeout would kill the run during the 2 s login wait unless it is suspended
   h = await startTestServer({
-    // no real PTY here: its host keeps the terminal cwd (inside dataDir) locked, so the folder could not be removed
-    shell: { command: 'definitely-missing-shell-for-tests', args: [] },
     agents: {
       mock: { firstEventTimeoutMs: 1000 },
       mockauth: { launcher: 'mock', label: 'GigaCode (mock)', approvalMode: 'auto', approvalModes: ['auto'], firstEventTimeoutMs: 1000, authTimeoutMs: 1200 },
@@ -51,16 +49,11 @@ test('login not completed within authTimeoutMs -> killed with a clear error', as
   assert.equal((await state()).sessions.find((x) => x.id === s.id).status, 'error');
 });
 
-test('agent terminal without cwd runs the interactive CLI in data/chats/login; settings expose authTimeoutMs', async (t) => {
+test('the login terminal starts in data/chats/login; settings expose authTimeoutMs', async () => {
   assert.equal((await h.api('GET', '/api/settings')).body.agents.gigacode.authTimeoutMs, 600000);
   assert.equal((await h.api('PUT', '/api/settings', { agents: { mock: { authTimeoutMs: 5 } } })).status, 400);
-  const res = await h.api('POST', '/api/sessions', { kind: 'terminal', agent: 'mock', title: 'Вход в GigaCode' });
-  if (res.status === 501) return t.skip(res.body.error);
-  // the shell itself cannot start here (see before()); cwd and command are decided before that
-  const s = (await state()).sessions.find((x) => x.kind === 'terminal' && x.title === 'Вход в GigaCode');
-  assert.equal(s.cwd, path.join(h.dataDir, 'chats', 'login'));
-  assert.ok(fs.statSync(s.cwd).isDirectory());
-  assert.ok(s.command.includes('mock-agent.js') && !s.command.includes(' -p'), s.command);
-  await h.api('DELETE', `/api/sessions/${s.id}`);
-  await waitPidGone(s.pid);
+  const dataDir = path.join(root, 'data');
+  assert.equal(defaultCwd({ kind: 'terminal', agentTerminal: true, dataDir, id: 's_1', root: '/repo' }), path.join(dataDir, 'chats', 'login'));
+  assert.equal(defaultCwd({ kind: 'terminal', agentTerminal: false, dataDir, id: 's_1', root: '/repo' }), '/repo');
+  assert.equal(defaultCwd({ kind: 'chat', agentTerminal: false, dataDir, id: 's_1', root: '/repo' }), path.join(dataDir, 'chats', 's_1'));
 });

@@ -18,6 +18,15 @@ const tail = (text) => (text ? `\n\nstderr:\n${text.slice(-2000).trim()}` : '');
 const fence = (lines) => `\`\`\`text\n${lines.join('\n')}\n\`\`\``;
 const REGISTRY_POLL_MS = 2000;
 
+/**
+ * Working folder of a session created without cwd/workspace: a chat gets its own folder (survives restarts), an agent
+ * terminal (the interactive CLI, e.g. the one-time GigaCode login) starts in <dataDir>/chats/login, a shell in the root.
+ */
+export function defaultCwd({ kind, agentTerminal, dataDir, id, root }) {
+  if (kind === 'chat') return path.join(dataDir, 'chats', id);
+  return agentTerminal ? path.join(dataDir, 'chats', 'login') : root;
+}
+
 let ptyModule; // undefined = not tried, null = failed
 let ptyError = '';
 async function loadPty() {
@@ -34,7 +43,7 @@ async function loadPty() {
   return ptyModule;
 }
 
-export function createSessions({ config, store, bus, getUrl }) {
+export function createSessions({ config, store, bus, getUrl, catalog = null }) {
   const db = store.db;
   const rt = new Map(); // sid -> runtime state (not persisted)
   const hooks = { preamble: () => '', turnEnded: () => {} };
@@ -95,11 +104,36 @@ export function createSessions({ config, store, bus, getUrl }) {
     }
   }
 
+  /** Grades whose model a fresh discovery no longer lists are left out (the CLI then uses its default model). */
+  function droppedGrades(s) {
+    const gone = catalog?.unavailable(s.agent) ?? new Set();
+    const grades = config.agents[s.agent]?.settings?.agents?.modelGrades || {};
+    return Object.entries(grades).filter(([, id]) => gone.has(id));
+  }
+
+  function runConfig(s, agentCfg) {
+    const dropped = droppedGrades(s);
+    if (!dropped.length) return agentCfg;
+    const names = new Set(dropped.map(([g]) => g));
+    const agents = agentCfg.settings?.agents || {};
+    return {
+      ...agentCfg,
+      settings: {
+        ...agentCfg.settings,
+        agents: {
+          ...agents,
+          modelGrades: Object.fromEntries(Object.entries(agents.modelGrades || {}).filter(([g]) => !names.has(g))),
+          allowedGrades: (agents.allowedGrades || []).filter((g) => !names.has(g)),
+        },
+      },
+    };
+  }
+
   function turnCtx(s, agentCfg, prompt) {
     return {
       prompt,
       session: s,
-      agentCfg,
+      agentCfg: runConfig(s, agentCfg),
       settingsPath: s.settingsPath,
       mcpConfigPath: path.join(runDir(s.id), 'mcp.json'),
       harnessMcp: { command: process.execPath, args: [path.join(CODE_ROOT, 'mcp', 'harness-mcp.js')], env: harnessEnv(s) },
@@ -305,6 +339,14 @@ export function createSessions({ config, store, bus, getUrl }) {
     try {
       const { agentCfg, launcher, exe } = resolveAgent(s.agent, s.launcherId);
       checkMode(agentCfg, s.approvalMode || agentCfg.approvalMode);
+      const model = s.model || agentCfg.model;
+      if (model && catalog?.unavailable(s.agent).has(model)) {
+        // only when a fresh discovery says so; with a stale catalogue the run is attempted
+        throw Object.assign(new Error(`Model "${model}" is not in the backend catalogue (checked ${new Date(catalog.info(s.agent).at).toLocaleString()}). Pick another model and send again.`), { action: 'pick-model' });
+      }
+      const dropped = droppedGrades(s);
+      const note = dropped.length && `⚠ Недоступные модели убраны из грейдов, CLI возьмёт модель по умолчанию: ${dropped.map(([g, id]) => `${g} → ${id}`).join(', ')}`;
+      if (note && !store.messages(s.id).some((m) => m.text === note)) addMessage(s, { kind: 'system', text: note });
       let prompt = items.map((i) => i.text).join('\n\n');
       if (!s.externalSessionId) {
         const pre = hooks.preamble(s);
@@ -335,7 +377,7 @@ export function createSessions({ config, store, bus, getUrl }) {
       emit(s);
       res = await handle.done;
     } catch (e) {
-      res = { error: e.message };
+      res = { error: e.message, action: e.action };
     }
     if (!res.detached) finishTurn(s, res);
   }
@@ -399,7 +441,7 @@ export function createSessions({ config, store, bus, getUrl }) {
       status = 'stopped'; // already set by stop(); a late exit never overwrites it
       addMessage(s, { kind: 'system', text: 'Stopped by user' });
     } else if (res.error) {
-      addMessage(s, { kind: 'error', text: `${res.error}${tail(res.stderrTail)}` });
+      addMessage(s, { kind: 'error', text: `${res.error}${tail(res.stderrTail)}`, ...(res.action ? { action: res.action } : {}) });
       status = 'error';
     } else if (res.authTimedOut) {
       const min = Math.round((config.agents[s.agent]?.authTimeoutMs || 600000) / 60000);
@@ -413,7 +455,10 @@ export function createSessions({ config, store, bus, getUrl }) {
       // a fatal CLI error leaves stdout empty and the whole story in stderr: lead with it
       const why = res.stderrTail.trim();
       const how = res.code == null ? 'The agent process ended without a result' : `The agent failed (exit code ${res.code}${res.signal ? `, ${res.signal}` : ''})`;
-      addMessage(s, { kind: 'error', text: `${how}${why ? `:\n${why.slice(-2000)}` : '.'}` });
+      const md = config.agents[s.agent]?.modelsDiscovery;
+      const modelGone = /not present in the current backend catalogue/i.test(why) || (!!md?.missingPattern && new RegExp(md.missingPattern, 'i').test(why));
+      addMessage(s, { kind: 'error', text: `${how}${why ? `:\n${why.slice(-2000)}` : '.'}`, ...(modelGone ? { action: 'pick-model' } : {}) });
+      if (modelGone && md?.prompt) catalog?.discover(s.agent).catch(() => {}); // the catalogue changed: learn the new ids
       if (!res.eventCount && !res.priorOutput) status = 'error';
     } else if (!res.eventCount && !res.priorOutput) {
       // exit 0 without a single event: e.g. GigaCode's identity check fails silently (message only on stderr)
@@ -550,8 +595,7 @@ export function createSessions({ config, store, bus, getUrl }) {
       }
       const pty = kind === 'terminal' ? await loadPty() : null;
       if (!cwd) {
-        // a chat without a repository gets its own folder (survives restarts); terminals start in the harness root
-        cwd = kind === 'chat' ? path.join(store.dataDir, 'chats', id) : agentCfg ? path.join(store.dataDir, 'chats', 'login') : config.root;
+        cwd = defaultCwd({ kind, agentTerminal: !!agentCfg, dataDir: store.dataDir, id, root: config.root });
         fs.mkdirSync(cwd, { recursive: true });
       }
 

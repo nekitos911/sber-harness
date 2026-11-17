@@ -17,6 +17,7 @@ import * as git from './git.js';
 import * as wfs from './fs.js';
 import { createMcpManager, loadSecrets, secretsFile, serverDefs } from './mcp-client.js';
 import { launchers } from './launchers.js';
+import { createModelCatalog } from './models.js';
 import { importTasks, transitionTask, getExternal, getTransitions, importChildren } from './integrations/tasks.js';
 import { createPullRequest, prStatus, refreshTaskPr } from './integrations/pr.js';
 
@@ -102,7 +103,8 @@ export async function startServer(opts = {}) {
   const bus = createBus();
   let url = '';
   const tasks = createTasks({ store, bus, defaultBase: config.git.defaultBase });
-  const sessions = createSessions({ config, store, bus, getUrl: () => url });
+  const catalog = createModelCatalog({ config, store, getUrl: () => url });
+  const sessions = createSessions({ config, store, bus, getUrl: () => url, catalog });
   const orch = createOrchestration({ config, store, bus, tasks, sessions });
   const mcp = createMcpManager(config);
   const tokenBuf = Buffer.from(store.token);
@@ -335,7 +337,9 @@ export async function startServer(opts = {}) {
   function agentInfo(id) {
     const a = config.agents[id] || fail(404, `agent ${id} not found`);
     const meta = db.agentMeta?.[id] ?? null;
-    return { id, resolved: resolveAgentView(a), auth: meta?.auth ?? 'unknown', seen: meta };
+    catalog.ensureFresh(id);
+    const { catalog: cat, ...seen } = meta || {};
+    return { id, resolved: resolveAgentView(a), auth: meta?.auth ?? 'unknown', seen: meta ? seen : null, catalog: catalog.info(id), models: catalog.merged(id) };
   }
 
   // ---- routes ----
@@ -357,10 +361,13 @@ export async function startServer(opts = {}) {
     workspaces: db.workspaces,
     sessions: db.sessions,
     notifications: db.notifications,
-    agents: Object.entries(config.agents).map(([id, a]) => ({
-      id, label: a.label || id, launcher: a.launcher, approvalModes: a.approvalModes || [], approvalMode: a.approvalMode || null, enabled: a.enabled !== false,
-      models: a.models || [], model: a.model ?? null,
-    })),
+    agents: Object.entries(config.agents).map(([id, a]) => {
+      catalog.ensureFresh(id); // background, never blocks
+      return {
+        id, label: a.label || id, launcher: a.launcher, approvalModes: a.approvalModes || [], approvalMode: a.approvalMode || null, enabled: a.enabled !== false,
+        models: catalog.merged(id), model: a.model ?? null,
+      };
+    }),
     defaultAgent: config.agents[config.defaultAgent] && config.agents[config.defaultAgent].enabled !== false
       ? config.defaultAgent
       : Object.keys(config.agents).find((id) => config.agents[id].enabled !== false) ?? null,
@@ -369,6 +376,12 @@ export async function startServer(opts = {}) {
   }));
   route('GET', '/api/settings', () => settingsView());
   route('GET', '/api/agents/:id/info', ({ params }) => agentInfo(params.id));
+  route('POST', '/api/agents/:id/models/refresh', async ({ params }) => {
+    if (!config.agents[params.id]) fail(404, `agent ${params.id} not found`);
+    if (!config.agents[params.id].modelsDiscovery?.prompt) fail(400, `agents.${params.id}.modelsDiscovery.prompt is not configured`);
+    const c = await catalog.discover(params.id);
+    return { models: catalog.merged(params.id), at: c?.at ?? null, ...(c?.error ? { error: c.error } : {}) };
+  });
   route('PUT', '/api/settings', ({ body }) => saveSettings(body));
 
   // workspaces
@@ -702,6 +715,7 @@ export async function startServer(opts = {}) {
       closed = true;
       clearInterval(syncTimer);
       clearInterval(prTimer);
+      await catalog.close();
       sessions.close();
       mcp.close();
       for (const c of wss.clients) c.terminate();

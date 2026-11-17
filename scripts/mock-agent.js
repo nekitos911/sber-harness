@@ -7,6 +7,7 @@
 //   #slow           stream slowly for ~5 s          #raw   print two non-JSON lines
 //   #nooutput       stderr only, exit 0 (silent failure)   #warn  stderr warning on a normal run
 //   #auth           login link on stderr, ~2 s wait, then a normal run
+// "/models" answers with test/fixtures/gigacode.models.txt; --model outside that list fails like GigaCode (stderr, exit 1).
 // MOCK_AGENT_ARGV_FILE: appends { argv (incl. node flags), env (GIGACODE_*, settings path, MCP_SECRET_*) } per run.
 // Harness API from env: HARNESS_URL, HARNESS_TOKEN, HARNESS_SESSION_ID. Turn counts per session id live in
 // MOCK_AGENT_STATE_DIR (default <tmp>/harness-mock-agent), so --resume answers "resumed <id>, turn N".
@@ -25,7 +26,12 @@ const opt = (...names) => {
 };
 const prompt = (opt('-p', '--prompt') ?? '').trim();
 const resume = opt('--resume');
-const model = opt('--model') || 'mock-model';
+// the backend catalogue, as GigaCode's /models prints it (shared with the parser test)
+const MODELS_FILE = process.env.MOCK_AGENT_MODELS_FILE || new URL('../test/fixtures/gigacode.models.txt', import.meta.url);
+let modelsText = '| ID | context |\n|----|---------|\n| Mock-Model-1-128k | 128k |\n';
+try { modelsText = fs.readFileSync(MODELS_FILE, 'utf8'); } catch {}
+const catalogue = [...modelsText.matchAll(/^\|\s*([A-Za-z0-9][\w.-]*-[\w.-]*)\s*\|/gm)].map((m) => m[1]);
+const model = opt('--model') || catalogue[0] || 'mock-model';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const emit = (o) => process.stdout.write(`${JSON.stringify({ ...o, timestamp: new Date().toISOString() })}\n`);
 
@@ -39,6 +45,11 @@ const delivered = prompt.startsWith('[harness] Message from');
 const lines = delivered ? [] : prompt.split(/\r?\n/);
 const has = (re) => lines.some((l) => re.test(l));
 
+if (opt('--model') && catalogue.length && !catalogue.includes(model)) {
+  // GigaCode's fatal error for a renamed/removed model: nothing on stdout, exit 1
+  process.stderr.write(`An unexpected critical error occurred:\nError: The selected model '${model}' is not present in the current backend catalogue\n`);
+  process.exit(1);
+}
 if (has(/#crash\b/)) {
   process.stderr.write('mock-agent: simulated crash (#crash)\n');
   process.exit(1);
@@ -79,6 +90,11 @@ emit({
   slash_commands: ['clear', 'full-task'], agents: ['general-purpose'], qwen_code_version: 'mock-1.0',
 });
 emit({ type: 'message', role: 'user', content: prompt });
+if (prompt === '/models') {
+  emit({ type: 'message', role: 'assistant', content: modelsText, delta: true });
+  emit({ type: 'result', status: 'success', result: modelsText, stats: { input_tokens: 1, output_tokens: 1 } });
+  process.exit(0);
+}
 
 async function say(text, delayMs = 0) {
   for (const chunk of text.match(/\S+\s*/g) || [text]) {

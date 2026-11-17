@@ -196,7 +196,7 @@ test('restart: an interrupted chat turn becomes idle with a system message', asy
     autoReport: false, queued: 2, preview: '', command: null, pid: 123, createdAt: 1, lastActivityAt: 1,
   };
   fs.writeFileSync(path.join(dataDir, 'db.json'), JSON.stringify({ seq: { task: 0 }, tasks: [], workspaces: [], notifications: [], sessions: [old] }));
-  const srv = await startServer({ dataDir, port: 0 });
+  const srv = await startServer({ dataDir, port: 0, configOverrides: { agents: { mock: { modelsDiscovery: null } } } });
   try {
     const get = (p) => fetch(srv.url + p, { headers: { 'x-harness-token': srv.token } }).then((r) => r.json());
     const s = (await get('/api/state')).sessions[0];
@@ -268,12 +268,13 @@ test('settings: read, validate, save to the local config file', async () => {
     agents: { mock: { approvalMode: 'plan', modelGrades: { default: 'm-big', fast: 'm-small' }, allowedGrades: ['default'], taskPromptTemplate: '/full-task-ui {taskUrl}{notes}' } },
     tasks: { refreshSec: 30 },
   })).body;
-  assert.deepEqual(saved.agents.mock.modelGrades, { default: 'm-big', fast: 'm-small' });
+  assert.deepEqual(saved.agents.mock.modelGrades, { default: 'm-big', fast: 'm-small', review: 'GLM-5.3-Flash-262k', explore: 'Qwen3.6-35B-262k' });
   const local = JSON.parse(fs.readFileSync(h.configFile.replace(/\.json$/, '.local.json'), 'utf8'));
   assert.deepEqual(local.agents.mock, { approvalMode: 'plan', settings: { agents: { modelGrades: { default: 'm-big', fast: 'm-small' }, allowedGrades: ['default'] } }, taskPromptTemplate: '/full-task-ui {taskUrl}{notes}' });
   assert.equal(local.integrations.tasks.refreshSec, 30);
   const chat = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', cwd: repo })).body;
-  assert.deepEqual(JSON.parse(fs.readFileSync(chat.settingsPath, 'utf8')).agents, { modelGrades: { default: 'm-big', fast: 'm-small' }, allowedGrades: ['default'] });
+  // grades merge over the configured defaults; the allowed list is replaced
+  assert.deepEqual(JSON.parse(fs.readFileSync(chat.settingsPath, 'utf8')).agents, { modelGrades: { default: 'm-big', fast: 'm-small', review: 'GLM-5.3-Flash-262k', explore: 'Qwen3.6-35B-262k' }, allowedGrades: ['default'] });
   await h.api('PUT', '/api/settings', { agents: { mock: { approvalMode: 'auto', taskPromptTemplate: null } } });
 });
 
@@ -336,10 +337,10 @@ test('ops: one harness per data dir, a clear message for a busy port; models in 
     rmrf(busy);
   }
   const mock = (await state()).agents.find((a) => a.id === 'mock');
-  assert.deepEqual(mock.models, []);
+  assert.ok(mock.models.every((m) => typeof m.id === 'string' && 'available' in m), 'merged catalogue entries');
   const models = [{ id: 'm-1' }, { id: 'm-2', label: 'Model 2', context: '128k' }];
   assert.deepEqual((await h.api('PUT', '/api/settings', { agents: { mock: { models: [' m-1 ', { id: 'm-2', label: 'Model 2', context: '128k' }] } } })).body.agents.mock.models, models);
-  assert.deepEqual((await state()).agents.find((a) => a.id === 'mock').models, models);
+  assert.deepEqual((await state()).agents.find((a) => a.id === 'mock').models.slice(0, 2), models.map((m) => ({ ...m, available: null })), 'config entries first, availability unknown without discovery');
   assert.equal((await h.api('PUT', '/api/settings', { agents: { mock: { models: [{ label: 'no id' }] } } })).status, 400);
 });
 
