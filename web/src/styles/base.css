@@ -116,11 +116,11 @@ input, textarea { caret-color: var(--signal); }
 .st[data-s="running"] { color: var(--lamp-run); animation: spin 1.1s linear infinite; }
 .st[data-s="starting"] { color: var(--lamp-run); animation: pulse 1.6s ease-in-out infinite; }
 .st[data-s="auth"] { color: var(--lamp-run); }
-.st[data-s="waiting_answer"] { color: var(--lamp-ask); }
+.st[data-s="waiting_answer"], .st[data-s="waiting_permission"] { color: var(--lamp-ask); }
 .st[data-s="stalled"] { color: var(--lamp-stall); }
 .st[data-s="error"] { color: var(--lamp-fail); }
 .st[data-s="done"], .st[data-s="terminal"] { color: var(--lamp-done); }
-[data-s="waiting_answer"] { --state-ink: var(--lamp-ask); }
+[data-s="waiting_answer"], [data-s="waiting_permission"] { --state-ink: var(--lamp-ask); }
 [data-s="stalled"] { --state-ink: var(--lamp-stall); }
 [data-s="error"] { --state-ink: var(--lamp-fail); }
 [data-s="auth"], [data-s="starting"], [data-s="running"] { --state-ink: var(--lamp-run); }

@@ -107,7 +107,7 @@ export interface Session {
   status: SessionStatus
   phase?: 'starting' | 'streaming' | 'auth' | null
   lastEventAt?: number | null // last stdout event of the current turn (newer servers)
-  waitingFor?: 'answer' | 'auth' | null // called `ask` and no reply yet, or needs a login (newer servers)
+  waitingFor?: 'answer' | 'auth' | 'permission' | null // called `ask` and no reply yet, or needs a login (newer servers)
   stalled?: boolean // running, process alive, but silent for session.stallSec (newer servers)
   includeDirs?: string[] // extra directories the CLI may use (--include-directories), feature include-dirs
   archived?: boolean // its worktree was removed: hidden from the sidebar, transcript kept
@@ -127,7 +127,10 @@ export interface Session {
   lastActivityAt: number
 }
 
-export type MessageKind = 'user' | 'assistant' | 'thought' | 'tool' | 'error' | 'system'
+export type MessageKind = 'user' | 'assistant' | 'thought' | 'tool' | 'error' | 'system' | 'question' | 'permission'
+
+/** A choice of a permission request: harness ids (allow_once, allow_session, reject) or the ACP agent's options. */
+export interface PermissionOption { id: string; label?: string; name?: string; kind?: string }
 
 export interface ToolCall {
   id: string
@@ -151,9 +154,11 @@ export interface Message {
   options?: string[] | null // `ask` with choices: each option is a one-click reply
   link?: string | null // e.g. the GigaCode login URL
   action?: 'pick-model' | null // failure the user fixes by choosing another model
+  question?: { id: string; text: string; options: { label: string; description?: string }[]; multiSelect?: boolean; answer?: string | null } | null
+  permission?: { id: string; tool: string; input: unknown; reason?: string | null; transport?: 'headless' | 'acp'; options: PermissionOption[]; choice?: string | null } | null
 }
 
-export type NotificationKind = 'question' | 'done' | 'failed' | 'escalation' | 'info' | 'error'
+export type NotificationKind = 'question' | 'permission' | 'done' | 'failed' | 'escalation' | 'info' | 'error'
 
 export interface Notification {
   id: string
@@ -258,6 +263,7 @@ export interface AgentSettings {
   firstEventTimeoutMs?: number
   inheritUserMcp?: boolean
   enabled?: boolean
+  transport?: 'headless' | 'acp' // acp: one long-lived process with interactive permissions (feature acp)
 }
 
 export interface Settings {

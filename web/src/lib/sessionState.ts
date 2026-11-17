@@ -2,13 +2,14 @@ import type { Session } from '../types'
 
 /** What a session is doing, as the UI shows it: every state has its own icon, colour and words. */
 export type VisualState =
-  | 'waiting_answer' | 'stalled' | 'auth' | 'starting' | 'running' | 'error' | 'stopped' | 'done' | 'exited' | 'terminal' | 'idle'
+  | 'waiting_answer' | 'waiting_permission' | 'stalled' | 'auth' | 'starting' | 'running' | 'error' | 'stopped' | 'done' | 'exited' | 'terminal' | 'idle'
 
 type StateInput = Pick<Session, 'status' | 'kind'> & Partial<Pick<Session, 'phase' | 'waitingFor' | 'stalled'>>
 
 /** The contract's priority order; fields an older server does not send count as absent. */
 export function sessionVisualState(s: StateInput): VisualState {
   if (s.waitingFor === 'answer') return 'waiting_answer'
+  if (s.waitingFor === 'permission') return 'waiting_permission'
   if (s.status === 'running' && s.stalled) return 'stalled'
   if (s.phase === 'auth' || s.waitingFor === 'auth') return 'auth'
   if (s.status === 'running' && s.phase === 'starting') return 'starting'
@@ -21,7 +22,7 @@ export function sessionVisualState(s: StateInput): VisualState {
 }
 
 export const STATE_LABEL: Record<VisualState, string> = {
-  waiting_answer: 'ждёт ответа', stalled: 'нет вывода', auth: 'нужен вход', starting: 'запуск', running: 'работает',
+  waiting_answer: 'ждёт ответа', waiting_permission: 'ждёт разрешения', stalled: 'нет вывода', auth: 'нужен вход', starting: 'запуск', running: 'работает',
   error: 'ошибка', stopped: 'остановлен', done: 'готово', exited: 'завершён', terminal: 'запущен', idle: 'свободен',
 }
 
@@ -36,6 +37,7 @@ export function dur(ms: number) {
 /** States that need a person come first in summaries. */
 const SUMMARY: [VisualState[], (n: number) => string][] = [
   [['waiting_answer'], (n) => (n === 1 ? 'ждёт ответа' : 'ждут ответа')],
+  [['waiting_permission'], (n) => (n === 1 ? 'ждёт разрешения' : 'ждут разрешения')],
   [['auth'], () => 'нужен вход'],
   [['stalled'], () => 'без вывода'],
   [['error'], (n) => (n % 10 === 1 && n % 100 !== 11 ? 'ошибка' : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 12 || n % 100 > 14) ? 'ошибки' : 'ошибок')],

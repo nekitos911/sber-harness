@@ -3,8 +3,8 @@ import { getState, openSession, openTask, useStore } from '../store'
 import type { Notification as Note } from '../types'
 
 const KEY = 'harness.desktopNotify'
-const KINDS = new Set(['question', 'done', 'failed', 'escalation', 'error'])
-const TITLE: Record<string, string> = { question: 'Вопрос агента', done: 'Готово', failed: 'Провал', escalation: 'Эскалация', error: 'Ошибка' }
+const KINDS = new Set(['question', 'permission', 'done', 'failed', 'escalation', 'error'])
+const TITLE: Record<string, string> = { question: 'Вопрос агента', permission: 'Нужно разрешение', done: 'Готово', failed: 'Провал', escalation: 'Эскалация', error: 'Ошибка' }
 
 export function desktopNotifyOn() {
   try { return localStorage.getItem(KEY) === '1' } catch { return false }

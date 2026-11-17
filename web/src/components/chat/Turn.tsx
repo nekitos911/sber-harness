@@ -1,5 +1,5 @@
 import { useMemo, useState, type MouseEvent } from 'react'
-import { GitCompare, LoaderCircle, TriangleAlert, Wrench } from 'lucide-react'
+import { CircleHelp, GitCompare, LoaderCircle, ShieldAlert, TriangleAlert, Wrench } from 'lucide-react'
 import { tryApi } from '../../api'
 import { openTab } from '../../store'
 import { basename, normPath, plural } from '../../lib/format'
@@ -187,6 +187,10 @@ export function activityOf(list: Message[]): string {
 export function ActivityLine({ session, list, starting }: { session: Session; list: Message[]; starting: string }) {
   const lastEvent = session.lastEventAt ?? (list.length ? Math.max(list[list.length - 1].at, session.lastActivityAt) : session.lastActivityAt)
   const quiet = useElapsed(lastEvent, true)
+  if (session.waitingFor === 'answer' || session.waitingFor === 'permission') {
+    const Icon = session.waitingFor === 'answer' ? CircleHelp : ShieldAlert
+    return <div className="chat-working chat-waiting" role="status"><Icon aria-hidden />{session.waitingFor === 'answer' ? 'Ждёт вашего ответа' : 'Ждёт вашего разрешения'}</div>
+  }
   return (
     <div className="chat-working" role="status">
       <LoaderCircle className="spinner" aria-hidden />

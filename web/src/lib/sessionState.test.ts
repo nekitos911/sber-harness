@@ -5,6 +5,7 @@ import { sessionVisualState as v, stateSummary } from './sessionState.ts'
 
 test('priority: waiting answer beats stalled beats starting beats running', () => {
   assert.equal(v({ kind: 'chat', status: 'running', waitingFor: 'answer', stalled: true }), 'waiting_answer')
+  assert.equal(v({ kind: 'chat', status: 'running', waitingFor: 'permission', stalled: true }), 'waiting_permission')
   assert.equal(v({ kind: 'chat', status: 'running', stalled: true, phase: 'starting' }), 'stalled')
   assert.equal(v({ kind: 'chat', status: 'running', phase: 'auth' }), 'auth')
   assert.equal(v({ kind: 'chat', status: 'running', phase: 'starting' }), 'starting')

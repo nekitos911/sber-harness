@@ -1,4 +1,4 @@
-import { Circle, CircleCheck, CircleDashed, CircleDot, CircleHelp, CircleSlash, CircleX, Clock, GitBranch, KeyRound, Lock, LoaderCircle, RotateCw, Square, SquareTerminal, TriangleAlert, type LucideIcon } from 'lucide-react'
+import { Circle, CircleCheck, CircleDashed, CircleDot, CircleHelp, CircleSlash, CircleX, Clock, GitBranch, KeyRound, Lock, LoaderCircle, RotateCw, ShieldAlert, Square, SquareTerminal, TriangleAlert, type LucideIcon } from 'lucide-react'
 import { sessionVisualState, STATE_LABEL, type VisualState } from '../lib/sessionState'
 import type { Session, SubAgentState } from '../types'
 
@@ -8,6 +8,7 @@ export const statusText = (s: StatusLike) => STATE_LABEL[sessionVisualState(s)]
 
 const ICONS: Record<VisualState, LucideIcon> = {
   waiting_answer: CircleHelp,
+  waiting_permission: ShieldAlert,
   stalled: TriangleAlert,
   auth: KeyRound,
   starting: CircleDashed,
@@ -27,7 +28,7 @@ export function StatusIcon({ session }: { session: StatusLike }) {
   return <Icon className="st" data-s={v} role="img" aria-label={STATE_LABEL[v]} />
 }
 
-const LEGEND: VisualState[] = ['running', 'starting', 'waiting_answer', 'stalled', 'auth', 'idle', 'done', 'error', 'stopped']
+const LEGEND: VisualState[] = ['running', 'starting', 'waiting_answer', 'waiting_permission', 'stalled', 'auth', 'idle', 'done', 'error', 'stopped']
 
 /** One line explaining the state icons (agents screen header). */
 export function StateLegend() {

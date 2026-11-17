@@ -1,14 +1,50 @@
 import { useMemo, useState } from 'react'
-import { CheckCheck, CircleAlert, CircleCheck, CircleHelp, Inbox, Info, Megaphone, TriangleAlert } from 'lucide-react'
+import { useEffect } from 'react'
+import { CheckCheck, CircleAlert, CircleCheck, CircleHelp, Inbox, Info, Megaphone, ShieldAlert, TriangleAlert } from 'lucide-react'
 import { tryApi } from '../api'
 import { openSession, openTask, setState, useStore } from '../store'
 import { fullTime, NOTIFY_KIND, relTime } from '../lib/format'
 import { useNow } from '../lib/useNow'
 import type { Notification, NotificationKind } from '../types'
 import { LinkButton, ReplyOptions } from '../components/chat/MessageItem'
+import { MessageQuestion, PermissionCard } from '../components/chat/Attention'
+import { ensureMessages } from '../ws'
+import type { Message, Session } from '../types'
+
+/** Sessions waiting for an answer or a permission: their open question / request, answerable right here. */
+function WaitingForYou() {
+  const sessions = useStore((s) => s.sessions)
+  const waiting = useMemo(() => sessions.filter((x) => x.waitingFor === 'answer' || x.waitingFor === 'permission'), [sessions])
+  if (!waiting.length) return null
+  return (
+    <section className="inbox-waiting" aria-label="Ждут вас">
+      <h2>Ждут вас</h2>
+      {waiting.map((x) => <WaitingItem key={x.id} s={x} />)}
+    </section>
+  )
+}
+
+function WaitingItem({ s }: { s: Session }) {
+  useEffect(() => { ensureMessages(s.id) }, [s.id])
+  const open = useStore((st) => {
+    const list: Message[] = st.messages[s.id] ?? []
+    for (let i = list.length - 1; i >= 0; i--) {
+      const m = list[i]
+      if ((m.kind === 'permission' && m.permission && !m.permission.choice) || (m.kind === 'question' && m.question && !m.question.answer)) return m
+    }
+    return null
+  })
+  return (
+    <div className="inbox-wait">
+      <button type="button" className="chip" onClick={() => openSession(s.id)}>{s.title}</button>
+      {open ? (open.kind === 'permission' ? <PermissionCard m={open} /> : <MessageQuestion m={open} />)
+        : <span className="muted">{s.waitingFor === 'permission' ? 'ждёт разрешения' : 'ждёт ответа'} — откройте чат</span>}
+    </div>
+  )
+}
 
 const ICON: Record<NotificationKind, typeof Info> = {
-  question: CircleHelp, done: CircleCheck, failed: TriangleAlert, escalation: Megaphone, info: Info, error: CircleAlert,
+  question: CircleHelp, permission: ShieldAlert, done: CircleCheck, failed: TriangleAlert, escalation: Megaphone, info: Info, error: CircleAlert,
 }
 
 function markRead(ids: string[]) {
@@ -17,7 +53,9 @@ function markRead(ids: string[]) {
 
 export function InboxView() {
   const notifications = useStore((s) => s.notifications)
-  const list = useMemo(() => [...notifications].sort((a, b) => b.at - a.at), [notifications])
+  // Unread questions and permission requests first: someone is waiting.
+  const urgent = (n: Notification) => !n.read && (n.kind === 'question' || n.kind === 'permission')
+  const list = useMemo(() => [...notifications].sort((a, b) => Number(urgent(b)) - Number(urgent(a)) || b.at - a.at), [notifications])
   const unread = list.filter((n) => !n.read).length
 
   const readAll = async () => {
@@ -35,6 +73,7 @@ export function InboxView() {
           Прочитать все
         </button>
       </header>
+      <WaitingForYou />
       {list.length === 0 ? (
         <div className="empty">
           <Inbox className="empty-icon" aria-hidden />

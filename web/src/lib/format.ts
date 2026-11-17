@@ -14,7 +14,7 @@ export const ROLE: Record<SessionRole, string> = { solo: 'solo', coordinator: '�
 export const PRIORITY = { high: 'Высокий', medium: 'Средний', low: 'Низкий' } as const
 
 export const NOTIFY_KIND: Record<NotificationKind, string> = {
-  question: 'Вопрос', done: 'Готово', failed: 'Провал', escalation: 'Эскалация', info: 'Инфо', error: 'Ошибка',
+  question: 'Вопрос', permission: 'Разрешение', done: 'Готово', failed: 'Провал', escalation: 'Эскалация', info: 'Инфо', error: 'Ошибка',
 }
 
 export function relTime(at: number, now = Date.now()) {

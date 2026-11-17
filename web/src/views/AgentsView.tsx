@@ -12,7 +12,7 @@ import { MenuButton, Select } from '../components/ui'
 
 /** Lanes by visual state; «Ждут вас» shows only when someone does. */
 const GROUPS: { id: string; label: string; match: VisualState[]; optional?: boolean }[] = [
-  { id: 'you', label: 'Ждут вас', match: ['waiting_answer', 'auth'], optional: true },
+  { id: 'you', label: 'Ждут вас', match: ['waiting_answer', 'waiting_permission', 'auth'], optional: true },
   { id: 'run', label: 'Работают', match: ['running', 'starting', 'stalled'] },
   { id: 'idle', label: 'Свободны', match: ['idle', 'stopped'] },
   { id: 'done', label: 'Готово', match: ['done'] },

@@ -11,16 +11,18 @@ import { DiffLines } from '../DiffLines'
 import { Disclosure, IconButton } from '../ui'
 import { isSubagentTool, SubagentCard } from './SubagentCard'
 import { ThoughtBlock } from './ToolSteps'
+import { MessageQuestion, PermissionCard } from './Attention'
 
 /** `until`: for a thought, when it ended (null = still thinking); the thought shows how long it took. */
 export const MessageItem = memo(function MessageItem({ m, fresh = false, until }: { m: Message; fresh?: boolean; until?: number | null }) {
-  const body = m.kind === 'thought' ? <ThoughtBlock m={m} until={until === undefined ? m.at : until} /> : <MessageBody m={m} />
+  // An `ask` with options (from this agent or a worker) is a question card like the CLI's own question tool.
+  const body = m.kind === 'thought' ? <ThoughtBlock m={m} until={until === undefined ? m.at : until} />
+    : m.options?.length && m.kind !== 'permission' ? <MessageQuestion m={m} />
+      : <MessageBody m={m} />
   // Messages that arrive while the chat is open fade in; the loaded history does not replay.
   return (
     <div className="msg-wrap" data-kind={m.kind} data-enter={fresh || undefined}>
       {body}
-      {/* `ask` from a worker arrives here with from = worker id: the click answers that worker. */}
-      {!!m.options?.length && <ReplyOptions options={m.options} to={m.from && m.from !== 'user' ? m.from : m.sessionId} />}
     </div>
   )
 })
@@ -33,6 +35,8 @@ function MessageBody({ m }: { m: Message }) {
     case 'tool': return m.tool ? <ToolCard tool={m.tool} sessionId={m.sessionId} /> : null
     case 'error': return m.action === 'pick-model' ? <PickModelError m={m} /> : <div className="msg msg-error" role="alert">{m.text}{m.link && <LinkButton href={m.link} />}</div>
     case 'system': return <>{<SystemNote text={m.text} />}{m.link && <LinkButton href={m.link} />}</>
+    case 'question': return <MessageQuestion m={m} />
+    case 'permission': return m.permission ? <PermissionCard m={m} /> : <SystemNote text={m.text} />
   }
 }
 

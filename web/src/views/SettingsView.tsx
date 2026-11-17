@@ -150,7 +150,7 @@ function Shell({ children }: { children: ReactNode }) {
 }
 
 /** A settings row: label and one-line explanation on the left, the control on the right, error under it. */
-function Row({ label, hint, error, children, wide }: { label: string; hint?: ReactNode; error?: string; children: ReactNode; wide?: boolean }) {
+function Row({ label, hint, error, children, wide }: { label: ReactNode; hint?: ReactNode; error?: string; children: ReactNode; wide?: boolean }) {
   return (
     <div className="set-row" data-wide={wide || undefined}>
       <div className="set-label">
@@ -177,6 +177,7 @@ function AgentSection({ id, form, update, fieldError, primary }: SectionProps & 
   const modeLabels = a.approvalModeLabels ?? {}
   const catalog = normModels(a.models)
   const [gradesOpen, setGradesOpen] = useState(false)
+  const acpOn = useFeature('acp')
   const unavailable = (m: string | undefined) => !!m && catalog.find((x) => x.id === m)?.available === false
 
   return (
@@ -244,6 +245,15 @@ function AgentSection({ id, form, update, fieldError, primary }: SectionProps & 
 
       <div className="set-rows">
         <CommandRow id={id} a={a} set={set} error={fieldError('command')} />
+        {primary && acpOn && (
+          <Row label={<>Транспорт <span className="badge-verify">проверяется на целевой машине</span></>}
+            hint={(a.transport ?? 'headless') === 'acp'
+              ? 'ACP: один процесс на чат; агент спрашивает разрешения в чате, а вы отвечаете кнопками.'
+              : 'Headless: каждое сообщение — новый запуск CLI; действия вне режима подтверждений агент не выполняет, а просит разрешение.'} wide>
+            <Segmented label="Транспорт" value={a.transport ?? 'headless'} onChange={(v) => set({ transport: v })}
+              options={[{ value: 'headless', label: 'Headless (по умолчанию)' }, { value: 'acp', label: 'ACP (интерактивные разрешения)' }]} />
+          </Row>
+        )}
       </div>
       <Advanced id={`agent-${id}`}>
       <div className="set-rows">
