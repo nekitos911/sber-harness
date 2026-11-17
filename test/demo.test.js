@@ -8,6 +8,7 @@ import { CODE_ROOT } from '../server/config.js';
 import { tmpDir, rmrf, gitIn } from './helpers.js';
 
 const root = tmpDir();
+process.env.MOCK_AGENT_STATE_DIR = path.join(root, 'mock-state'); // the demo's model discovery runs the mock agent
 after(() => rmrf(root));
 
 test('--demo seeds repositories, workspaces and tasks once; tracker and PR status work offline', async () => {
