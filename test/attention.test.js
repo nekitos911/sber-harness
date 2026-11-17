@@ -12,7 +12,10 @@ let h;
 
 before(async () => {
   process.env.MOCK_AGENT_ARGV_FILE = argvFile;
-  h = await startTestServer({ session: { stallSec: 1, stallCheckSec: 0.2 } });
+  h = await startTestServer({
+    session: { stallSec: 1, stallCheckSec: 0.2 },
+    agents: { mocksb: { launcher: 'mock', label: 'Mock (sandbox)', approvalMode: 'auto', approvalModes: ['plan', 'default', 'auto-edit', 'auto'], autoSandbox: 'workspace', approvalModeMap: { auto: 'auto-edit' }, allowedTools: ['run_shell_command(git)'] } },
+  });
 });
 after(async () => {
   delete process.env.MOCK_AGENT_ARGV_FILE;
@@ -122,4 +125,30 @@ test('stalled: a running turn without events past session.stallSec flips stalled
   await h.api('POST', `/api/sessions/${s.id}/stop`);
   await waitFor(async () => (await session(s.id)).pid === null, { what: 'stopped' });
   assert.equal((await session(s.id)).stalled, false);
+});
+
+test('sandbox self-healing: a fatal sandbox error flags the agent, retries the same turn as auto-edit with the allow-list; recheck clears', async () => {
+  const s = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mocksb', cwd: root, approvalMode: 'auto', prompt: '#sandboxfail привет' })).body;
+  await waitFor(async () => (await messages(s.id)).some((m) => m.kind === 'assistant' && m.text.includes('Done.')), { what: 'the retried turn', timeout: 20000 });
+  await idle(s.id);
+  const [failed, retried] = runs(s.id);
+  assert.equal(failed.argv[failed.argv.indexOf('--approval-mode') + 1], 'auto');
+  assert.equal(retried.argv[retried.argv.indexOf('--approval-mode') + 1], 'auto-edit');
+  assert.ok(allowedIn(retried.argv).includes('run_shell_command(git)'));
+  const msgs = await messages(s.id);
+  assert.equal(msgs.filter((m) => m.kind === 'user').length, 1, 'the same turn, not a new message');
+  assert.ok(msgs.some((m) => m.kind === 'system' && /^⚠ Песочница GigaCode недоступна: .*sandbox/.test(m.text)));
+  assert.ok(!msgs.some((m) => m.kind === 'error'));
+  const info = (await h.api('GET', '/api/agents/mocksb/info')).body;
+  assert.match(info.sandboxBroken.error, /sandbox/);
+  assert.ok((await h.api('GET', '/api/state')).body.notifications.some((n) => /Песочница GigaCode недоступна/.test(n.text)));
+  assert.equal((await h.api('GET', '/api/settings')).body.agents.mocksb.sandboxBroken.error, info.sandboxBroken.error);
+
+  assert.deepEqual((await h.api('POST', '/api/agents/mocksb/sandbox/recheck')).body, { sandboxBroken: null });
+  assert.equal((await h.api('GET', '/api/agents/mocksb/info')).body.sandboxBroken, null);
+  await h.api('POST', `/api/sessions/${s.id}/messages`, { text: 'снова' });
+  await waitFor(() => runs(s.id).length === 3, { what: 'turn after recheck' });
+  await idle(s.id);
+  const third = runs(s.id)[2].argv;
+  assert.equal(third[third.indexOf('--approval-mode') + 1], 'auto', 'the sandbox is tried again');
 });

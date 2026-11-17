@@ -54,6 +54,14 @@ if (opt('--model') && catalogue.length && !catalogue.includes(model)) {
   process.stderr.write(`An unexpected critical error occurred:\nError: The selected model '${model}' is not present in the current backend catalogue\n`);
   process.exit(1);
 }
+if (has(/#sandboxfail\b/)) {
+  let sandbox = null;
+  try { sandbox = JSON.parse(fs.readFileSync(process.env.MOCK_AGENT_SETTINGS_PATH || '', 'utf8')).tools?.sandbox ?? null; } catch {}
+  if (sandbox) {
+    process.stderr.write(`Error: Failed to start the action sandbox '${sandbox}': sandbox runtime is not available on this machine\n`);
+    process.exit(1);
+  }
+}
 if (has(/#crash\b/)) {
   process.stderr.write('mock-agent: simulated crash (#crash)\n');
   process.exit(1);

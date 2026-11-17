@@ -275,8 +275,9 @@ export async function startServer(opts = {}) {
         approvalModes: a.approvalModes || [],
         approvalModeLabels: a.approvalModeLabels || {},
         approvalModeMap: a.approvalModeMap ?? launchers[a.launcher]?.defaults.approvalModeMap ?? {},
-        autoSandbox: a.autoSandbox ?? null,
-        allowedTools: a.allowedTools || [],
+        autoSandbox: a.autoSandbox === undefined ? launchers[a.launcher]?.defaults.autoSandbox ?? null : a.autoSandbox,
+        sandboxBroken: db.agentMeta?.[id]?.sandboxBroken ?? null,
+        allowedTools: a.allowedTools ?? launchers[a.launcher]?.defaults.allowedTools ?? [],
         transport: a.transport || 'headless',
         acpIdleMin: a.acpIdleMin ?? a.acpIdleTimeoutMin ?? 30,
         mcpExclude: a.mcpExclude || [],
@@ -656,7 +657,7 @@ export async function startServer(opts = {}) {
     const { catalog: cat, ...seen } = meta || {};
     return {
       id, resolved: resolveAgentView(a), auth: meta?.auth ?? 'unknown', seen: meta ? seen : null, catalog: catalog.info(id), models: catalog.merged(id),
-      commands: shippedStatus(a, 'commands'), skills: shippedStatus(a, 'skills'), identity: identityView(a),
+      commands: shippedStatus(a, 'commands'), skills: shippedStatus(a, 'skills'), identity: identityView(a), sandboxBroken: meta?.sandboxBroken ?? null,
       // what the CLI reported at its last init, for the per-agent MCP toggles
       mcpServers: (meta?.mcpServers || []).map((m) => ({ name: m.name, status: m.status, excluded: (a.mcpExclude || []).includes(m.name) })),
       modelRefs: scanModelRefs(a.modelRefsScan, catalog.merged(id)), // read-only: the harness never edits these files
@@ -826,6 +827,13 @@ export async function startServer(opts = {}) {
   route('GET', '/api/agents/:id/info', ({ params }) => agentInfo(params.id));
   route('POST', '/api/agents/:id/commands/install', ({ params, body }) => installShipped(params.id, 'commands', check(body, { name: 'string', force: 'boolean?' }).name, body.force));
   route('POST', '/api/agents/:id/skills/install', ({ params, body }) => installShipped(params.id, 'skills', body.name || 'harness-orchestration', check(body, { force: 'boolean?' }).force));
+  // «Проверить снова»: the next turn tries the sandbox again
+  route('POST', '/api/agents/:id/sandbox/recheck', ({ params }) => {
+    if (!config.agents[params.id]) fail(404, `агент ${params.id} не найден`);
+    if (db.agentMeta?.[params.id]) delete db.agentMeta[params.id].sandboxBroken;
+    store.save();
+    return { sandboxBroken: null };
+  });
   route('POST', '/api/agents/:id/models/refresh', async ({ params }) => {
     if (!config.agents[params.id]) fail(404, `агент ${params.id} не найден`);
     if (!config.agents[params.id].modelsDiscovery?.prompt) fail(400, `не настроен agents.${params.id}.modelsDiscovery.prompt`);

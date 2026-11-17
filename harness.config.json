@@ -63,7 +63,7 @@
         "plan": "Только план — ничего не меняет",
         "default": "Спрашивать перед действиями",
         "auto-edit": "Правки файлов без подтверждения",
-        "auto": "Авто (в headless = auto-edit; полный auto — с песочницей)"
+        "auto": "Полный доступ (песочница рабочей папки)"
       },
       "settingsEnv": "GIGACODE_SYSTEM_SETTINGS_PATH",
       "settings": {

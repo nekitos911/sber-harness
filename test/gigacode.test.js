@@ -106,7 +106,7 @@ test('exact argv on new and resumed turns; settings.json without permissions; id
   await waitFor(async () => (await h.api('GET', `/api/sessions/${s.id}/messages`)).body.some((m) => m.kind === 'assistant' && m.text.includes(`resumed ${ext}, turn 2`)), { what: 'turn 2' });
 
   const [first, second] = runs().filter((r) => r.env.HARNESS_SESSION_ID === s.id);
-  const tail = ['--approval-mode', 'auto-edit', '--output-format', 'stream-json']; // headless GigaCode refuses plain auto
+  const tail = ['--approval-mode', 'auto', '--output-format', 'stream-json']; // auto runs under the workspace sandbox
   // orchestration.subagents "harness" (default): the sub-agent context block leads the first prompt of a CLI session
   assert.deepEqual(first.argv, ['--max-old-space-size=6144', entry, '-p', `${SUBAGENT_CONTEXT}\n\nhello`, ...tail]);
   assert.deepEqual(second.argv, ['--max-old-space-size=6144', entry, '--resume', ext, '-p', 'again', ...tail]);
@@ -120,6 +120,7 @@ test('exact argv on new and resumed turns; settings.json without permissions; id
 
   const settings = JSON.parse(fs.readFileSync(s.settingsPath, 'utf8'));
   assert.deepEqual(settings, {
+    tools: { sandbox: 'workspace' },
     agents: { modelGrades: {}, allowedGrades: [] },
     chatRecording: true,
     mcpServers: {
@@ -249,13 +250,24 @@ test('approval modes: auto -> auto-edit for headless GigaCode; autoSandbox keeps
     const args = gl.buildArgs({ prompt: 'x', session: { approvalMode, includeDirs: [] }, agentCfg });
     return args[args.indexOf('--approval-mode') + 1];
   };
-  assert.equal(modeOf({}), 'auto-edit');
+  assert.equal(modeOf({}), 'auto', 'gigacode default: auto under the workspace sandbox');
+  assert.equal(modeOf({ autoSandbox: null }), 'auto-edit', 'no sandbox: auto is mapped');
   assert.equal(modeOf({}, 'plan'), 'plan');
-  assert.equal(modeOf({ approvalModeMap: {} }), 'auto', 'an explicit empty map disables the mapping');
-  assert.equal(modeOf({ autoSandbox: 'workspace' }), 'auto');
-  assert.equal(gl.effectiveMode({ session: { approvalMode: 'auto' }, agentCfg: {} }), 'auto-edit');
-  const acp = gl.acpArgs({ session: { approvalMode: 'auto', includeDirs: [] }, agentCfg: {} });
+  assert.equal(modeOf({ autoSandbox: null, approvalModeMap: {} }), 'auto', 'an explicit empty map disables the mapping');
+  assert.equal(gl.effectiveMode({ session: { approvalMode: 'auto' }, agentCfg: { autoSandbox: null } }), 'auto-edit');
+  const acp = gl.acpArgs({ session: { approvalMode: 'auto', includeDirs: [] }, agentCfg: { autoSandbox: null } });
   assert.equal(acp[acp.indexOf('--approval-mode') + 1], 'auto-edit');
+  // the default allow-list: auto-edit/default turns, not plan (and not auto under the sandbox); grants are merged
+  const allowed = (agentCfg, approvalMode, session = {}) => {
+    const args = gl.buildArgs({ prompt: 'x', session: { approvalMode, includeDirs: [], ...session }, agentCfg });
+    return args.flatMap((a, i) => (a === '--allowed-tools' ? [args[i + 1]] : []));
+  };
+  assert.ok(allowed({ autoSandbox: null }, 'auto').includes('run_shell_command(git)'), 'auto mapped to auto-edit gets the list');
+  assert.ok(allowed({}, 'default').includes('run_shell_command(mvn)'));
+  assert.deepEqual(allowed({}, 'plan'), []);
+  assert.deepEqual(allowed({}, 'auto'), []);
+  assert.equal(allowed({}, 'default', { allowedTools: ['run_shell_command(git)', 'run_shell_command(kubectl)'] }).filter((x) => x === 'run_shell_command(git)').length, 1, 'deduplicated');
+  assert.ok(allowed({}, 'plan', { grantsOnce: ['write_file'] }).includes('write_file'), 'a grant also in plan');
   const harnessMcp = { command: 'node', args: [], env: {} };
   assert.deepEqual(sessionSettings({ agentCfg: { autoSandbox: 'workspace-offline', settings: {} }, harnessMcp, agentMcpServers: {} }).tools, { sandbox: 'workspace-offline' });
   assert.equal(sessionSettings({ agentCfg: { settings: {} }, harnessMcp, agentMcpServers: {} }).tools, undefined);
@@ -267,7 +279,9 @@ test('agent info: identity found + its source shim, never the value; effectiveAp
   assert.deepEqual((await h.api('GET', '/api/agents/gigabad/info')).body.identity, { found: false, source: null });
   const created = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'giga', cwd: repo, approvalMode: 'auto', prompt: 'mode?' })).body;
   const s = await waitFor(async () => { const x = (await state()).sessions.find((y) => y.id === created.id); return x.status === 'idle' && x; }, { what: 'giga turn' });
-  assert.deepEqual([s.approvalMode, s.effectiveApprovalMode], ['auto', 'auto-edit'], 'the session keeps the chosen mode');
+  assert.deepEqual([s.approvalMode, s.effectiveApprovalMode], ['auto', 'auto'], 'auto under the workspace sandbox');
+  const user = (await h.api('GET', `/api/sessions/${created.id}/messages`)).body.find((m) => m.kind === 'user');
+  assert.deepEqual([user.runInfo.cliMode, user.runInfo.sandbox, user.runInfo.transport, user.runInfo.allowedTools], ['auto', 'workspace', 'headless', []]);
 });
 
 test('mcpExclude goes into the run settings under the configured key only', () => {

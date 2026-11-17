@@ -1060,6 +1060,15 @@ GigaCode has no yolo; headless denies everything not pre-allowed. Three layers, 
 3. Remaining denials → «Разрешить и повторить» (one-turn / session allow-list grants), or ACP (real waiting) when enabled.
 The effective mode + sandbox + allow-list used by a turn are recorded on the turn's user message (`runInfo`) and shown
 in the chat header tooltip-free popover «Как запущен агент».
+Implementation: the gigacode launcher defaults are `autoSandbox: "workspace"`, `approvalModeMap: { auto: "auto-edit" }`
+(applied only without a sandbox) and `allowedTools` = the list above (qwen: the same list, no sandbox); an agent config
+value overrides them (`autoSandbox: null` = no sandbox). The default list goes into auto-edit/default turns only (auto
+under the sandbox needs none, plan only reads); the chat's `allowedTools` and one-turn grants are added in every mode.
+Self-healing applies to a turn that fails with no event and a stderr line matching `/sandbox/i` while a sandbox is in
+effect: the same turn (same user messages, no new message) is retried once; `sandboxBroken` is shown in
+`GET /api/agents/:id/info` and `/api/settings` (`agents.<id>.sandboxBroken`); `POST /api/agents/:id/sandbox/recheck`
+clears it (the next turn tries the sandbox again). `runInfo` = `{ cliMode, sandbox, allowedTools, model, transport,
+includeDirs }` on the last user message of the turn.
 
 ## Session activity states (what the UI shows)
 

@@ -360,8 +360,20 @@ const INCLUDE_FLAG = '--include-directories'; // the headless form of the intera
  * allowed only under an active action sandbox"), so approvalModeMap (gigacode/qwen default { auto: 'auto-edit' })
  * maps it, unless agents.<id>.autoSandbox is set (then the run settings enable the sandbox and `auto` is kept).
  */
+// routine commands never prompt (auto-edit/default turns; plan only reads) — users edit the list in Settings
+export const DEFAULT_ALLOWED_TOOLS = ['git', 'mvn', 'mvnw', 'gradle', 'gradlew', 'npm', 'npx', 'node', 'java', 'python', 'py', 'pytest', 'dir', 'ls', 'type', 'cat', 'findstr', 'rg', 'where', 'echo']
+  .map((c) => `run_shell_command(${c})`);
+
+/** The turn's allow-list: the agent's list (auto-edit/default turns) + the chat's + one-turn grants, deduplicated. */
+function allowedList(defaults, { session, agentCfg }) {
+  const mode = cliApprovalMode(defaults, agentCfg, session.approvalMode || agentCfg.approvalMode);
+  const base = ['auto-edit', 'default'].includes(mode) ? agentCfg.allowedTools ?? defaults.allowedTools ?? [] : []; // auto+sandbox needs none, plan only reads
+  return [...new Set([...base, ...(session.allowedTools || []), ...(session.grantsOnce || [])])];
+}
+
 export function cliApprovalMode(defaults, agentCfg, mode) {
-  if (!mode || (agentCfg.autoSandbox && mode === 'auto')) return mode;
+  const sandbox = agentCfg.autoSandbox === undefined ? defaults.autoSandbox : agentCfg.autoSandbox;
+  if (!mode || (sandbox && mode === 'auto')) return mode;
   return (agentCfg.approvalModeMap ?? defaults.approvalModeMap ?? {})[mode] ?? mode;
 }
 
@@ -370,6 +382,7 @@ function geminiFamily(id, defaults, resolve) {
     id,
     defaults,
     dirFlag: INCLUDE_FLAG,
+    allowed: (ctx) => allowedList(defaults, ctx),
     /** what the CLI actually runs with this turn (session.effectiveApprovalMode) */
     effectiveMode: ({ session, agentCfg }) => cliApprovalMode(defaults, agentCfg, session.approvalMode || agentCfg.approvalMode) || null,
     resolve: resolve || ((agentCfg) => ({ ...resolveCommand(agentCfg.command || defaults.command), env: {} })),
@@ -384,7 +397,7 @@ function geminiFamily(id, defaults, resolve) {
       if (model) args.push('--model', model);
       for (const dir of session.includeDirs || []) args.push(INCLUDE_FLAG, dir); // every turn: a new process
       // headless cannot ask: what the user allowed goes in as an allow-list (VERIFY flag/pattern syntax)
-      const allowed = [...new Set([...(agentCfg.allowedTools || []), ...(session.allowedTools || []), ...(session.grantsOnce || [])])];
+      const allowed = allowedList(defaults, { session, agentCfg });
       const flag = agentCfg.allowedToolsFlag ?? defaults.allowedToolsFlag;
       if (allowed.length && flag) {
         if ((agentCfg.allowedToolsJoin ?? 'repeat') === 'comma') args.push(flag, allowed.join(','));
@@ -440,8 +453,8 @@ const claude = {
 
 export const launchers = {
   // cold start (hundreds of tools, ~9 MCP servers) can take 30-60 s before system/init
-  gigacode: geminiFamily('gigacode', { command: 'gigacode', settingsEnv: 'GIGACODE_SYSTEM_SETTINGS_PATH', firstEventTimeoutMs: 120000, continueArgs: ['-c'], approvalModeMap: { auto: 'auto-edit' }, allowedToolsFlag: '--allowed-tools' }, (cfg) => resolveGigacode(cfg)),
-  qwen: geminiFamily('qwen', { command: 'qwen', settingsEnv: 'QWEN_CODE_SYSTEM_SETTINGS_PATH', firstEventTimeoutMs: 30000, approvalModeMap: { auto: 'auto-edit' }, allowedToolsFlag: '--allowed-tools' }),
+  gigacode: geminiFamily('gigacode', { command: 'gigacode', settingsEnv: 'GIGACODE_SYSTEM_SETTINGS_PATH', firstEventTimeoutMs: 120000, continueArgs: ['-c'], approvalModeMap: { auto: 'auto-edit' }, allowedToolsFlag: '--allowed-tools', allowedTools: DEFAULT_ALLOWED_TOOLS, autoSandbox: 'workspace' }, (cfg) => resolveGigacode(cfg)),
+  qwen: geminiFamily('qwen', { command: 'qwen', settingsEnv: 'QWEN_CODE_SYSTEM_SETTINGS_PATH', firstEventTimeoutMs: 30000, approvalModeMap: { auto: 'auto-edit' }, allowedToolsFlag: '--allowed-tools', allowedTools: DEFAULT_ALLOWED_TOOLS }),
   gemini: geminiFamily('gemini', { command: 'gemini', settingsEnv: 'GEMINI_CLI_SYSTEM_SETTINGS_PATH', firstEventTimeoutMs: 30000 }),
   claude,
   mock: geminiFamily('mock', {

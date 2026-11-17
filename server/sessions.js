@@ -221,7 +221,19 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     return Object.entries(grades).filter(([, id]) => gone.has(id));
   }
 
-  function runConfig(s, agentCfg) {
+  /**
+   * The agent config a turn runs with: the launcher's autoSandbox default resolved, and — once the sandbox proved
+   * unavailable on this machine (agentMeta.sandboxBroken) — no sandbox and auto -> auto-edit.
+   */
+  function sandboxed(s, agentCfg) {
+    const defaults = launchers[agentCfg.launcher]?.defaults || {};
+    const sandbox = agentCfg.autoSandbox === undefined ? defaults.autoSandbox ?? null : agentCfg.autoSandbox;
+    if (!db.agentMeta[s.agent]?.sandboxBroken) return sandbox === agentCfg.autoSandbox ? agentCfg : { ...agentCfg, autoSandbox: sandbox };
+    return { ...agentCfg, autoSandbox: null, approvalModeMap: { ...(agentCfg.approvalModeMap ?? defaults.approvalModeMap ?? {}), auto: 'auto-edit' } };
+  }
+
+  function runConfig(s, cfg) {
+    const agentCfg = sandboxed(s, cfg);
     const dropped = droppedGrades(s);
     if (!dropped.length) return agentCfg;
     const names = new Set(dropped.map(([g]) => g));
@@ -673,14 +685,18 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
 
   async function startTurn(s) {
     const r = runtime(s.id);
-    if (r.running || !s.queue?.length) return;
-    const items = s.queue.splice(0);
+    if (r.running || (!s.queue?.length && !r.retryItems)) return;
+    // a turn retried without the sandbox runs the same messages again (they are in the transcript already)
+    const retry = r.retryItems;
+    r.retryItems = null;
+    const items = retry || s.queue.splice(0);
+    r.lastItems = items;
     r.running = true;
     r.turn += 1;
     r.flags = {};
     s.turnFlags = {};
     r.cur = { assistant: null, thought: null, raw: null, tools: new Map(), subTools: new Map(), gotText: false };
-    for (const it of items) addMessage(s, { kind: 'user', text: it.text, from: it.from, ...(it.options ? { options: it.options } : {}) });
+    const userMsgs = retry ? [] : items.map((it) => addMessage(s, { kind: 'user', text: it.text, from: it.from, ...(it.options ? { options: it.options } : {}) }));
     Object.assign(s, { status: 'running', queued: 0, lastActivityAt: Date.now(), lastEventAt: null, stalled: false });
     const approvalOnce = s.approvalOnce; // an edit tool allowed once in plan/default mode: this turn only
     delete s.approvalOnce;
@@ -709,6 +725,13 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
       const ctx = turnCtx({ ...s, ...(approvalOnce ? { approvalMode: approvalOnce } : {}), grantsOnce }, agentCfg, prompt);
       // the session keeps its chosen mode; the UI shows what the CLI really got (e.g. auto -> auto-edit)
       s.effectiveApprovalMode = launcher.effectiveMode?.(ctx) ?? (ctx.session.approvalMode || agentCfg.approvalMode || null);
+      // «Как запущен агент»: what this turn really ran with, on its user message
+      const runInfo = {
+        cliMode: s.effectiveApprovalMode, sandbox: ctx.agentCfg.autoSandbox || null, allowedTools: launcher.allowed?.(ctx) ?? [],
+        model: s.model || agentCfg.model || null, transport: agentCfg.transport || 'headless', includeDirs: s.includeDirs || [],
+      };
+      const carrier = userMsgs.at(-1) || store.messages(s.id).findLast((m) => m.kind === 'user');
+      if (carrier) updateMessage(s, Object.assign(carrier, { runInfo }));
       fs.mkdirSync(runDir(s.id), { recursive: true });
       launcher.prepare(ctx);
       r.registryTimer = setInterval(() => pollRegistry(s), REGISTRY_POLL_MS);
@@ -834,6 +857,14 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
       const ms = config.agents[s.agent]?.firstEventTimeoutMs || launchers[s.launcherId]?.defaults.firstEventTimeoutMs;
       addMessage(s, { kind: 'error', text: `Агент ничего не вывел за ${Math.round(ms / 1000)} с — процесс остановлен.${tail(res.stderrTail)}` });
       status = 'error';
+    } else if (!res.sawResult && res.code !== 0 && !res.eventCount && /sandbox/i.test(res.stderrTail) && sandboxed(s, config.agents[s.agent] || {}).autoSandbox && r.lastItems) {
+      const why = res.stderrTail.trim().split('\n').find((l) => /sandbox/i.test(l)) || res.stderrTail.trim().split('\n')[0];
+      db.agentMeta[s.agent] = { ...db.agentMeta[s.agent], sandboxBroken: { at: Date.now(), error: why.slice(0, 500) } };
+      store.save();
+      const text = `Песочница GigaCode недоступна: ${why.slice(0, 300)}. «Полный доступ» работает как «Авто-правки» + разрешённые команды.`;
+      hooks.notify?.({ kind: 'error', sessionId: s.id, taskId: s.taskId, text });
+      addMessage(s, { kind: 'system', text: `⚠ ${text} Повторяю ход без песочницы.` });
+      r.retryItems = r.lastItems; // the same turn once more (sandboxBroken now: never loops)
     } else if (!res.sawResult && res.code !== 0) {
       // a fatal CLI error leaves stdout empty and the whole story in stderr: lead with it
       const why = res.stderrTail.trim();
@@ -857,7 +888,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     runTurnEnded(s, r, stopped);
     store.flush(); // a finished turn is never lost to a crash right after it
     if (s.archiveOnSettle && !s.archived) return api.archive(s.id, true); // a settled helper (subagentRetention)
-    if (s.queue.length) startTurn(s);
+    if (r.retryItems || s.queue.length) startTurn(s);
   }
 
   /** The process of a turn already closed at `result` has exited (by itself or killed after exitGraceMs). */
