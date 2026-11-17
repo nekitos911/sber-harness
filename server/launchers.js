@@ -189,6 +189,8 @@ export function sessionSettings({ agentCfg, harnessMcp, agentMcpServers }) {
   const { permissions, agents, mcpServers, ...rest } = agentCfg.settings || {};
   return {
     ...rest,
+    // opt-in: GigaCode allows a real `auto` only under an action sandbox (restricts tools to the workspace; VERIFY)
+    ...(agentCfg.autoSandbox ? { tools: { ...rest.tools, sandbox: agentCfg.autoSandbox } } : {}),
     agents: { ...agents, modelGrades: agents?.modelGrades || {}, allowedGrades: agents?.allowedGrades || [] },
     chatRecording: true,
     mcpServers: {
@@ -336,17 +338,29 @@ export function resolveGigacode(agentCfg) {
 /** Gemini-CLI argv family: gigacode, qwen, gemini, mock. They differ only by defaults (and gigacode's resolve). */
 const INCLUDE_FLAG = '--include-directories'; // the headless form of the interactive /dir add
 
+/**
+ * The approval mode the CLI is given. GigaCode headless rejects `auto` without an action sandbox ("Auto approval is
+ * allowed only under an active action sandbox"), so approvalModeMap (gigacode/qwen default { auto: 'auto-edit' })
+ * maps it, unless agents.<id>.autoSandbox is set (then the run settings enable the sandbox and `auto` is kept).
+ */
+export function cliApprovalMode(defaults, agentCfg, mode) {
+  if (!mode || (agentCfg.autoSandbox && mode === 'auto')) return mode;
+  return (agentCfg.approvalModeMap ?? defaults.approvalModeMap ?? {})[mode] ?? mode;
+}
+
 function geminiFamily(id, defaults, resolve) {
   return {
     id,
     defaults,
     dirFlag: INCLUDE_FLAG,
+    /** what the CLI actually runs with this turn (session.effectiveApprovalMode) */
+    effectiveMode: ({ session, agentCfg }) => cliApprovalMode(defaults, agentCfg, session.approvalMode || agentCfg.approvalMode) || null,
     resolve: resolve || ((agentCfg) => ({ ...resolveCommand(agentCfg.command || defaults.command), env: {} })),
     buildArgs({ prompt, session, agentCfg }) {
       const args = [];
       if (session.externalSessionId) args.push('--resume', session.externalSessionId);
       args.push('-p', argPrompt(prompt));
-      const mode = session.approvalMode || agentCfg.approvalMode;
+      const mode = cliApprovalMode(defaults, agentCfg, session.approvalMode || agentCfg.approvalMode);
       if (mode) args.push('--approval-mode', mode);
       args.push('--output-format', 'stream-json');
       const model = session.model || agentCfg.model;
@@ -357,7 +371,7 @@ function geminiFamily(id, defaults, resolve) {
     /** transport "acp": one long-lived process per session; the prompt goes over JSON-RPC, not argv. VERIFY GigaCode --acp. */
     acpArgs({ session, agentCfg }) {
       const args = ['--acp'];
-      const mode = session.approvalMode || agentCfg.approvalMode;
+      const mode = cliApprovalMode(defaults, agentCfg, session.approvalMode || agentCfg.approvalMode);
       if (mode) args.push('--approval-mode', mode);
       const model = session.model || agentCfg.model;
       if (model) args.push('--model', model);
@@ -402,8 +416,8 @@ const claude = {
 
 export const launchers = {
   // cold start (hundreds of tools, ~9 MCP servers) can take 30-60 s before system/init
-  gigacode: geminiFamily('gigacode', { command: 'gigacode', settingsEnv: 'GIGACODE_SYSTEM_SETTINGS_PATH', firstEventTimeoutMs: 120000, continueArgs: ['-c'] }, (cfg) => resolveGigacode(cfg)),
-  qwen: geminiFamily('qwen', { command: 'qwen', settingsEnv: 'QWEN_CODE_SYSTEM_SETTINGS_PATH', firstEventTimeoutMs: 30000 }),
+  gigacode: geminiFamily('gigacode', { command: 'gigacode', settingsEnv: 'GIGACODE_SYSTEM_SETTINGS_PATH', firstEventTimeoutMs: 120000, continueArgs: ['-c'], approvalModeMap: { auto: 'auto-edit' } }, (cfg) => resolveGigacode(cfg)),
+  qwen: geminiFamily('qwen', { command: 'qwen', settingsEnv: 'QWEN_CODE_SYSTEM_SETTINGS_PATH', firstEventTimeoutMs: 30000, approvalModeMap: { auto: 'auto-edit' } }),
   gemini: geminiFamily('gemini', { command: 'gemini', settingsEnv: 'GEMINI_CLI_SYSTEM_SETTINGS_PATH', firstEventTimeoutMs: 30000 }),
   claude,
   mock: geminiFamily('mock', {

@@ -189,7 +189,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
 
   /** Grades whose model a fresh discovery no longer lists are left out (the CLI then uses its default model). */
   function droppedGrades(s) {
-    const gone = catalog?.unavailable(s.agent) ?? new Set();
+    const gone = catalog?.unavailable(s.agent) ?? { has: () => false };
     const grades = config.agents[s.agent]?.settings?.agents?.modelGrades || {};
     return Object.entries(grades).filter(([, id]) => gone.has(id));
   }
@@ -628,6 +628,8 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
         if (pre) prompt = prompt.startsWith('/') ? `${prompt}\n\n${pre}` : `${pre}\n\n${prompt}`;
       }
       const ctx = turnCtx(approvalOnce ? { ...s, approvalMode: approvalOnce } : s, agentCfg, prompt);
+      // the session keeps its chosen mode; the UI shows what the CLI really got (e.g. auto -> auto-edit)
+      s.effectiveApprovalMode = launcher.effectiveMode?.(ctx) ?? (ctx.session.approvalMode || agentCfg.approvalMode || null);
       fs.mkdirSync(runDir(s.id), { recursive: true });
       launcher.prepare(ctx);
       r.registryTimer = setInterval(() => pollRegistry(s), REGISTRY_POLL_MS);
@@ -948,7 +950,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
       return addMessage(get(sid), { kind: 'system', text });
     },
     /** Models a fresh discovery says are gone for this agent. */
-    unavailableModels: (agent) => catalog?.unavailable(agent) ?? new Set(),
+    unavailableModels: (agent) => catalog?.unavailable(agent) ?? { has: () => false },
     /** orchestration marks what happened during the current turn: 'reported' | 'communicated' */
     flag(sid, name) {
       runtime(sid).flags[name] = true;

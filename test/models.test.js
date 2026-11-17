@@ -34,7 +34,13 @@ test('discovery through the agent CLI, availability against config entries, grad
     // a renamed model stays in the config catalogue: shown greyed, never dropped; its label is kept
     await h.api('PUT', '/api/settings', { agents: { mock: { models: [{ id: 'Old-Model-1-128k', label: 'Старая' }], modelGrades: { review: 'Old-Model-1-128k' } } } });
     const merged = (await h.api('GET', '/api/state')).body.agents.find((a) => a.id === 'mock').models;
-    assert.deepEqual(merged[0], { id: 'Old-Model-1-128k', label: 'Старая', available: false });
+    assert.deepEqual(merged[0], { id: 'Old-Model-1-128k', label: 'Старая', context: '128k', available: false });
+
+    // /models says DeepSeek-V4.1-Flash-1017-262k, the config (and the CLI) DeepSeek-V4.1-Flash-1017: one entry
+    await h.api('PUT', '/api/settings', { agents: { mock: { models: [{ id: 'DeepSeek-V4.1-Flash-1017', label: 'DeepSeek' }] } } });
+    const deduped = (await h.api('GET', '/api/state')).body.agents.find((a) => a.id === 'mock').models.filter((m) => /^deepseek/i.test(m.id));
+    assert.deepEqual(deduped, [{ id: 'DeepSeek-V4.1-Flash-1017', label: 'DeepSeek', context: '262k', available: true }]);
+    await h.api('PUT', '/api/settings', { agents: { mock: { models: [{ id: 'Old-Model-1-128k', label: 'Старая' }] } } });
     const info = (await h.api('GET', '/api/agents/mock/info')).body;
     assert.ok(info.catalog.at > 0 && info.catalog.error === null);
     assert.equal(info.models.length, merged.length);

@@ -262,6 +262,8 @@ export async function startServer(opts = {}) {
         approvalMode: a.approvalMode ?? null,
         approvalModes: a.approvalModes || [],
         approvalModeLabels: a.approvalModeLabels || {},
+        approvalModeMap: a.approvalModeMap ?? launchers[a.launcher]?.defaults.approvalModeMap ?? {},
+        autoSandbox: a.autoSandbox ?? null,
         model: a.model ?? null,
         models: a.models || [],
         modelGrades: a.settings?.agents?.modelGrades || {},
@@ -337,6 +339,15 @@ export async function startServer(opts = {}) {
       if ((node === null) !== (entry === null)) fail(400, `${where('node')} и ${where('cliEntry')} задаются вместе (или оба null)`);
       p.node = node && node.trim();
       p.cliEntry = entry && entry.trim();
+    }
+    if ('approvalModeMap' in a) {
+      const m = a.approvalModeMap;
+      if (m !== null && (!isObj(m) || Object.values(m).some((v) => typeof v !== 'string' || !v))) fail(400, `${where('approvalModeMap')}: объект «режим → режим CLI» или null`);
+      p.approvalModeMap = m;
+    }
+    if ('autoSandbox' in a) {
+      if (![null, 'workspace', 'workspace-offline'].includes(a.autoSandbox)) fail(400, `${where('autoSandbox')}: null, "workspace" или "workspace-offline"`);
+      p.autoSandbox = a.autoSandbox;
     }
     if ('reworkPromptTemplate' in a) {
       const t = a.reworkPromptTemplate;
@@ -590,7 +601,7 @@ export async function startServer(opts = {}) {
     const { catalog: cat, ...seen } = meta || {};
     return {
       id, resolved: resolveAgentView(a), auth: meta?.auth ?? 'unknown', seen: meta ? seen : null, catalog: catalog.info(id), models: catalog.merged(id),
-      commands: shippedStatus(a, 'commands'), skills: shippedStatus(a, 'skills'),
+      commands: shippedStatus(a, 'commands'), skills: shippedStatus(a, 'skills'), identity: identityView(a),
       modelRefs: scanModelRefs(a.modelRefsScan, catalog.merged(id)), // read-only: the harness never edits these files
     };
   }
@@ -1344,6 +1355,16 @@ async function assertSingleInstance(serverJson, dataDir) {
   throw Object.assign(new Error(`Другой harness (pid ${other.pid}, ${other.url}) уже работает с ${dataDir}. Остановите его или используйте другой dataDir.`), { code: 'ELOCKED' });
 }
 
+/** Whether the launcher found the package identity and where (the shim); never the value itself. */
+function identityView(a) {
+  try {
+    const env = launchers[a.launcher]?.resolve(a)?.env || {};
+    return { found: !!env.GIGACODE_PACKAGE_IDENTITY, source: env.GIGACODE_PACKAGE_LAUNCHER ?? null };
+  } catch {
+    return { found: false, source: null };
+  }
+}
+
 /** { ok, command, node, entry, identity: boolean } of an agent's launcher resolution, or { ok: false, error }. */
 function resolveAgentView(a) {
   try {
@@ -1382,7 +1403,7 @@ export function describeConfig(config) {
         resolved = { error: e.message };
       }
       const command = a.launcher === 'gigacode' ? gigacodeCommand(a) : { command: a.command ?? launchers[a.launcher]?.defaults.command ?? null, reason: a.command ? 'configured' : 'launcher default' };
-      return [id, { launcher: a.launcher, enabled: a.enabled !== false, approvalMode: a.approvalMode ?? null, approvalModes: a.approvalModes || [], command, resolved }];
+      return [id, { launcher: a.launcher, enabled: a.enabled !== false, approvalMode: a.approvalMode ?? null, approvalModes: a.approvalModes || [], command, resolved, identity: identityView(a) }];
     })),
     tasks: { enabled: !!config.integrations.tasks?.enabled, server: config.integrations.tasks?.server ?? null, refreshSec: config.integrations.tasks?.refreshSec ?? 0 },
     mcpServersFrom: from ? ex(path.resolve(config.root, expandHome(from))) : null,

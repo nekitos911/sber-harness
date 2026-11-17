@@ -66,6 +66,17 @@ One JSON object per line. Every event has `session_id` (equal to the init `uuid`
 - Whether `mcpServers` in this file is MERGED with or REPLACES `~/.gigacode/settings.json` is **not confirmed**. Without the file
   all user servers are loaded. Do not rely on merging: config flag `agents.gigacode.inheritUserMcp` copies the user's
   `mcpServers` into the run file next to `harness` (turn it on if the merge test shows replacement).
+- CONFIRMED on the target: headless `--approval-mode auto` fails with "Error: Auto approval is allowed only under an
+  active action sandbox; enable it via settings.tools.sandbox = 'workspace' or 'workspace-offline'." (exit 1,
+  `Config.assertAutoApprovalAvailable`). The harness maps `auto` → `auto-edit` (`agents.<id>.approvalModeMap`) unless
+  `agents.<id>.autoSandbox` is set, which writes `{ "tools": { "sandbox": "<value>" } }` into the run settings and keeps
+  `auto`. VERIFY: the sandbox restricts file/shell tools to the workspace, so `--include-directories` and worktrees
+  outside the cwd may be blocked.
+- CONFIRMED: a grade pointing at an id the backend does not know crashes the CLI ("modelGrades.default is not present in
+  the current backend catalogue") — the committed config has no default grades; they are set in Settings from the
+  discovered catalogue.
+- CONFIRMED: `/models` lists ids WITH the context suffix (`DeepSeek-V4.1-Flash-1017-262k`) while the CLI and configs use
+  them without (`DeepSeek-V4.1-Flash-1017`): the harness compares models by base id (suffix `-<n>k|m` stripped).
 
 ## 4. Custom commands and built-in sub-agents
 

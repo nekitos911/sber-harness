@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { CODE_ROOT } from '../server/config.js';
-import { shimIdentity, resolveGigacode, parseShim, parseShShim, gigacodeCommand } from '../server/launchers.js';
+import { shimIdentity, resolveGigacode, parseShim, parseShShim, gigacodeCommand, launchers, sessionSettings } from '../server/launchers.js';
 import { resolveShell } from '../server/config.js';
 import { SUBAGENT_CONTEXT } from '../server/orchestration.js';
 import { startTestServer, makeRepo, tmpDir, rmrf, gitIn, waitFor, waitPidGone } from './helpers.js';
@@ -106,7 +106,7 @@ test('exact argv on new and resumed turns; settings.json without permissions; id
   await waitFor(async () => (await h.api('GET', `/api/sessions/${s.id}/messages`)).body.some((m) => m.kind === 'assistant' && m.text.includes(`resumed ${ext}, turn 2`)), { what: 'turn 2' });
 
   const [first, second] = runs().filter((r) => r.env.HARNESS_SESSION_ID === s.id);
-  const tail = ['--approval-mode', 'auto', '--output-format', 'stream-json'];
+  const tail = ['--approval-mode', 'auto-edit', '--output-format', 'stream-json']; // headless GigaCode refuses plain auto
   // orchestration.subagents "harness" (default): the sub-agent context block leads the first prompt of a CLI session
   assert.deepEqual(first.argv, ['--max-old-space-size=6144', entry, '-p', `${SUBAGENT_CONTEXT}\n\nhello`, ...tail]);
   assert.deepEqual(second.argv, ['--max-old-space-size=6144', entry, '--resume', ext, '-p', 'again', ...tail]);
@@ -241,4 +241,31 @@ test('settings: agents.<id>.command / node / cliEntry are validated, saved and t
   assert.ok(!JSON.stringify(r.body).includes(IDENTITY));
   const back = await put({ node: process.execPath, cliEntry: entry });
   assert.deepEqual([back.body.agents.giga.resolved.node, back.body.agents.giga.resolved.entry], [process.execPath, entry]);
+});
+
+test('approval modes: auto -> auto-edit for headless GigaCode; autoSandbox keeps auto and enables the sandbox in the run settings', () => {
+  const gl = launchers.gigacode;
+  const modeOf = (agentCfg, approvalMode = 'auto') => {
+    const args = gl.buildArgs({ prompt: 'x', session: { approvalMode, includeDirs: [] }, agentCfg });
+    return args[args.indexOf('--approval-mode') + 1];
+  };
+  assert.equal(modeOf({}), 'auto-edit');
+  assert.equal(modeOf({}, 'plan'), 'plan');
+  assert.equal(modeOf({ approvalModeMap: {} }), 'auto', 'an explicit empty map disables the mapping');
+  assert.equal(modeOf({ autoSandbox: 'workspace' }), 'auto');
+  assert.equal(gl.effectiveMode({ session: { approvalMode: 'auto' }, agentCfg: {} }), 'auto-edit');
+  const acp = gl.acpArgs({ session: { approvalMode: 'auto', includeDirs: [] }, agentCfg: {} });
+  assert.equal(acp[acp.indexOf('--approval-mode') + 1], 'auto-edit');
+  const harnessMcp = { command: 'node', args: [], env: {} };
+  assert.deepEqual(sessionSettings({ agentCfg: { autoSandbox: 'workspace-offline', settings: {} }, harnessMcp, agentMcpServers: {} }).tools, { sandbox: 'workspace-offline' });
+  assert.equal(sessionSettings({ agentCfg: { settings: {} }, harnessMcp, agentMcpServers: {} }).tools, undefined);
+});
+
+test('agent info: identity found + its source shim, never the value; effectiveApprovalMode on the session', async () => {
+  const info = (await h.api('GET', '/api/agents/giga/info')).body;
+  assert.deepEqual(info.identity, { found: true, source: shim });
+  assert.deepEqual((await h.api('GET', '/api/agents/gigabad/info')).body.identity, { found: false, source: null });
+  const created = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'giga', cwd: repo, approvalMode: 'auto', prompt: 'mode?' })).body;
+  const s = await waitFor(async () => { const x = (await state()).sessions.find((y) => y.id === created.id); return x.status === 'idle' && x; }, { what: 'giga turn' });
+  assert.deepEqual([s.approvalMode, s.effectiveApprovalMode], ['auto', 'auto-edit'], 'the session keeps the chosen mode');
 });

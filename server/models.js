@@ -51,7 +51,8 @@ function globFiles(pattern) {
 }
 
 const family = (id) => id.match(/^[A-Za-z]+/)?.[0].toLowerCase();
-const baseId = (id) => id.toLowerCase().replace(/-\d+[km]$/, ''); // "-262k" context suffix is optional in references
+export const baseId = (id) => String(id).toLowerCase().replace(/-\d+[km]$/i, ''); // "-262k" context suffix is optional
+const suffix = (id) => String(id).match(/-(\d+[km])$/i)?.[1] ?? null;
 
 /**
  * Model ids referenced by agent/command files (agents.<id>.modelRefsScan): frontmatter `model:` values that look like ids
@@ -153,26 +154,33 @@ export function createModelCatalog({ config, store, getUrl }) {
   }
 
   /** Config entries (order, labels) + discovered + seen, deduped; available = in a successful discovery (null = unknown). */
+  /**
+   * One entry per base id (the /models answer says DeepSeek-V4.1-Flash-1017-262k, the CLI and the config
+   * DeepSeek-V4.1-Flash-1017): id = the config id if any, else the discovered one; label from the config; context from
+   * the discovered id's suffix; available = the base id is in a successful discovery (null = unknown).
+   */
   function merged(agent) {
     const a = config.agents[agent] || {};
     const m = meta(agent);
     const discovered = m.catalog?.at ? m.catalog.models : null;
-    const known = discovered && new Set(discovered.map((x) => x.id));
-    const byId = new Map();
-    const add = (entry) => {
-      const cur = byId.get(entry.id) || {};
-      byId.set(entry.id, { ...entry, ...cur }); // earlier sources (config) keep their labels
+    const known = discovered && new Set(discovered.map((x) => baseId(x.id)));
+    const byBase = new Map();
+    const add = (entry, fromConfig = false) => {
+      const key = baseId(entry.id);
+      const cur = byBase.get(key);
+      if (!cur) return void byBase.set(key, { ...entry, ...(entry.context || !suffix(entry.id) ? {} : { context: suffix(entry.id) }) });
+      if (!fromConfig && (entry.context || suffix(entry.id))) cur.context = entry.context || suffix(entry.id); // the backend knows best
     };
-    for (const e of a.models || []) add(e);
+    for (const e of a.models || []) add(e, true);
     for (const e of m.catalog?.models || []) add(e);
     for (const id of m.models || []) add({ id });
-    return [...byId.values()].map((e) => ({ ...e, available: known ? known.has(e.id) : null }));
+    return [...byBase.values()].map((e) => ({ ...e, available: known ? known.has(baseId(e.id)) : null }));
   }
 
-  /** Ids known to be unavailable (only when a fresh successful discovery says so). */
+  /** Models known to be unavailable (fresh successful discovery only); `has()` matches with or without the suffix. */
   function unavailable(agent) {
-    if (!isFresh(agent)) return new Set();
-    return new Set(merged(agent).filter((e) => e.available === false).map((e) => e.id));
+    const gone = isFresh(agent) ? new Set(merged(agent).filter((e) => e.available === false).map((e) => baseId(e.id))) : new Set();
+    return { has: (id) => !!id && gone.has(baseId(id)), size: gone.size };
   }
 
   return {

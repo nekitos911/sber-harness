@@ -63,18 +63,13 @@
         "plan": "Только план — ничего не меняет",
         "default": "Спрашивать перед действиями",
         "auto-edit": "Правки файлов без подтверждения",
-        "auto": "Полный доступ (классификатор сервера)"
+        "auto": "Авто (в headless = auto-edit; полный auto — с песочницей)"
       },
       "settingsEnv": "GIGACODE_SYSTEM_SETTINGS_PATH",
       "settings": {
         "agents": {
-          "modelGrades": {
-            "default": "Qwen3.8-Flash-Next-262k",
-            "fast": "DeepSeek-V4.1-Flash-1017-262k",
-            "review": "GLM-5.3-Flash-262k",
-            "explore": "Qwen3.6-35B-262k"
-          },
-          "allowedGrades": ["default", "fast", "review", "explore"]
+          "modelGrades": {},
+          "allowedGrades": []
         },
         "chatRecording": true
       },

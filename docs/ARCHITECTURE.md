@@ -678,6 +678,19 @@ Session role `reviewer`; reviewers are nested under their worker in the UI; thei
 
 ## Model catalogue that survives renames (no code changes when model ids change)
 
+- Base id: models are compared without the context suffix (`-<n>k|m`): `/models` says `DeepSeek-V4.1-Flash-1017-262k`,
+  the CLI and configs `DeepSeek-V4.1-Flash-1017`. `merged()` keeps ONE entry per base id (id = the config id if any,
+  else the discovered one; label from the config; `context` from the discovered id); availability, the pinned-model
+  check and the grade omission all match by base id. The committed config has no default grades (an unknown grade id
+  crashes GigaCode); grades are chosen in Settings from the discovered catalogue.
+- Approval modes: `agents.<id>.approvalModeMap` (gigacode/qwen default `{ "auto": "auto-edit" }`, headless GigaCode
+  refuses plain `auto` without an action sandbox) is applied to the headless and ACP argv; the session keeps its
+  chosen mode and gets `effectiveApprovalMode` (what the CLI ran with). `agents.<id>.autoSandbox`:
+  `null | "workspace" | "workspace-offline"` — when set, `auto` is not mapped and the run settings get
+  `{ tools: { sandbox } }` (VERIFY: the sandbox restricts tools to the workspace, so includeDirs/worktrees outside the
+  cwd may be blocked). Both are in `/api/settings`. `GET /api/agents/:id/info` and `--print-config` add
+  `identity: { found, source }` (the shim the identity came from; never the value).
+
 - Sources, merged and deduped by id: (1) **discovered** — the harness runs the agent CLI headless with
   `agents.<id>.modelsDiscovery.prompt` (gigacode default `"/models"`) in `<dataDir>/chats/discovery`, takes the final
   text (`result` / assistant text) and extracts model ids with a tolerant parser (markdown table / list / plain lines;
