@@ -362,3 +362,49 @@
 .settings-advanced { margin-top: 6px; }
 .settings-advanced .disclosure-toggle h3 { margin: 0; }
 .settings-advanced .collapse > div > * + * { margin-top: 8px; }
+
+/* ---------- settings layout (review) ---------- */
+
+.settings-layout { flex: 1; min-height: 0; display: grid; grid-template-columns: 200px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
+.settings-nav { display: grid; align-content: start; gap: 1px; padding: 24px 8px 24px 16px; border-right: 1px solid var(--rule-soft); overflow-y: auto; }
+.settings-nav a { display: block; height: 28px; padding: 0 10px; border-radius: var(--r-1); color: var(--ink-3); line-height: 28px; text-decoration: none; }
+.settings-nav a:hover { background: var(--deck-2); color: var(--ink); text-decoration: none; }
+.settings-nav a[aria-current="true"] { background: var(--deck-3); color: var(--ink); font-weight: 500; }
+.settings-body > * { max-width: 880px; margin-left: 0; margin-right: 0; }
+.settings-body { padding: 24px 40px 64px 32px; scroll-padding-top: 16px; }
+.set-row { grid-template-columns: 280px minmax(0, 360px); }
+.set-row[data-wide] { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+.set-row[data-wide] .set-label { padding-top: 0; }
+.set-control > .select-trigger, .set-control > .model-trigger, .set-control > .input { width: 100%; }
+.set-row[data-wide] .set-control { justify-items: stretch; }
+.set-row[data-wide] .set-control > .segmented, .set-row[data-wide] .set-control > .chips { justify-self: start; }
+.status-grid { grid-template-columns: 150px minmax(0, 1fr); }
+.cli-fix { display: grid; gap: 8px; }
+.cli-fix-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
+.cli-raw pre { margin: 6px 0 0; padding: 8px; border-radius: var(--r-1); background: var(--well); font-size: 11.5px; white-space: pre-wrap; overflow-wrap: anywhere; }
+button.chip { height: 24px; padding: 0 10px; border-radius: 12px; font-size: 12px; }
+button.chip svg { width: 12px; height: 12px; }
+button.chip[aria-pressed="true"] { background: var(--primary); color: var(--primary-ink); box-shadow: none; }
+button.chip.chip-mono { border-radius: var(--r-1); }
+button.chip.chip-mono[aria-pressed="true"] { background: var(--signal-soft); color: var(--signal); }
+
+/* ---------- right panel at its width: nothing runs past the edge ---------- */
+
+.wpanel { width: 280px; }
+.wpanel-body, .wpanel-section { min-width: 0; }
+.wpanel-where { min-width: 0; }
+.wpanel-where .branch-btn { max-width: 100%; }
+.pr-card { min-width: 0; gap: 4px; padding: 8px 6px 8px 10px; }
+.pr-card-head { flex-wrap: nowrap; min-width: 0; }
+.pr-card-head > .ellipsis { flex: 1; }
+.pr-card-open { flex-shrink: 0; margin-left: auto; }
+.pr-warn-ico { width: 13px; height: 13px; flex-shrink: 0; color: var(--lamp-run); }
+.pr-card-title { display: block; -webkit-line-clamp: unset; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-right: 4px; }
+.commit-row { min-width: 0; }
+.commit-row .by { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.commit-box .actions .btn { min-width: 0; }
+.wpanel .pr-off { min-width: 0; }
+.wpanel .pr-off .mono { overflow-wrap: anywhere; }
+.wpanel-head { min-width: 0; overflow: hidden; }
+/* Three tabs do not fit 280px with labels: inactive ones keep only the icon (label in the tooltip/aria). */
+.wpanel-head:has(.wpanel-tab:nth-of-type(3)) .wpanel-tab:not([aria-selected="true"]) .wtab-text { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }

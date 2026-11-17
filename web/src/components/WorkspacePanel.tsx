@@ -34,17 +34,17 @@ export function WorkspacePanel() {
       <div className="wpanel-head" role="tablist" aria-label="Раздел панели">
         <button type="button" role="tab" className="wpanel-tab" aria-selected={tab === 'files'} onClick={() => setState({ panelTab: 'files' })}>
           <Files aria-hidden />
-          Файлы
+          <span className="wtab-text">Файлы</span>
         </button>
         <button type="button" role="tab" className="wpanel-tab" aria-selected={tab === 'changes'} onClick={() => setState({ panelTab: 'changes' })}>
           <GitCompareArrows aria-hidden />
-          Изменения
+          <span className="wtab-text">Изменения</span>
           {changed > 0 && <span className="count count-run" aria-label={`изменённых файлов: ${changed}`}>{changed}</span>}
         </button>
         {!!plans?.length && (
           <button type="button" role="tab" className="wpanel-tab" aria-selected={tab === 'verdicts'} onClick={() => setState({ panelTab: 'verdicts' })}>
             <ShieldCheck aria-hidden />
-            Вердикты
+            <span className="wtab-text">Вердикты</span>
             {fails > 0 && <span className="count count-fail" aria-label={`провалено шагов: ${fails}`}>{fails}</span>}
           </button>
         )}

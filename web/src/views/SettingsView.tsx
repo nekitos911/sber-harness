@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { ArrowDown, ArrowUp, CircleCheck, CircleX, LogIn, Plus, RefreshCw, TriangleAlert, X } from 'lucide-react'
+import { ArrowDown, ArrowUp, Check, CircleCheck, CircleX, LogIn, Plus, RefreshCw, TriangleAlert, X } from 'lucide-react'
 import { api, ApiError, errorText, qs, tryApi } from '../api'
 import { setState, toast, useStore } from '../store'
 import { adoptSession } from '../lib/actions'
@@ -95,11 +95,17 @@ export function SettingsView() {
   return (
     <Shell>
       <form className="settings" onSubmit={(e) => { e.preventDefault(); if (changes) void save() }}>
-        <div className="settings-body">
+        <div className="settings-layout">
+        <SectionNav sections={[
+          ['set-general', 'Общие'], ['set-gigacode', 'GigaCode'], ['set-orchestration', 'Оркестрация'],
+          ...(form.board ? [['set-board', 'Доска'] as [string, string]] : []), ['set-tracker', 'Трекер'], ['set-git', 'Git'],
+          ...(form.integrations?.pr ? [['set-pr', 'Pull requests'] as [string, string]] : []),
+        ]} />
+        <div className="settings-body" id="settings-scroll">
+          <GeneralSection form={form} update={update} />
           <AgentSection id={main} form={form} update={update} fieldError={fieldError} primary />
-          <NotifySection />
-          <BoardSection form={form} update={update} />
           <OrchestrationSection form={form} update={update} />
+          <BoardSection form={form} update={update} />
           <TrackerSection form={form} update={update} fieldError={fieldError} />
           <GitSection form={form} update={update} fieldError={fieldError} />
           <PrSection form={form} update={update} />
@@ -112,6 +118,7 @@ export function SettingsView() {
               </Disclosure>
             </section>
           )}
+        </div>
         </div>
         {(changes > 0 || saveError) && (
           <div className="save-bar" role="region" aria-label="Несохранённые изменения">
@@ -167,24 +174,17 @@ function AgentSection({ id, form, update, fieldError, primary }: SectionProps & 
   const set = (patch: Partial<AgentSettings>) => update({ ...form, agents: { ...form.agents, [id]: { ...a, ...patch } } })
   const label = labels.find((x) => x.id === id)?.label ?? (id === MAIN ? 'GigaCode' : id)
   const modeLabels = a.approvalModeLabels ?? {}
-  const enabledAgents = Object.keys(form.agents).filter((k) => form.agents[k].enabled !== false)
   const catalog = normModels(a.models)
   const unavailable = (m: string | undefined) => !!m && catalog.find((x) => x.id === m)?.available === false
 
   return (
-    <section className="settings-section" id={`set-${id}`}>
+    <section className="settings-section" id={primary ? 'set-gigacode' : `set-${id}`}>
       <h2>{label}{!primary && <span className="mono muted"> {id}</span>}</h2>
       {primary && <AgentStatus id={id} />}
       <div className="set-rows">
         {a.enabled !== undefined && (
           <Row label="Включён" hint="Выключенный агент не предлагается для новых чатов и задач.">
             <Switch label={`${label} включён`} checked={a.enabled !== false} onChange={(v) => set({ enabled: v })} />
-          </Row>
-        )}
-        {primary && enabledAgents.length > 1 && (
-          <Row label="Агент по умолчанию" hint="Для «Новый чат» и «Взять в работу».">
-            <Select label="Агент по умолчанию" value={form.defaultAgent} onChange={(v) => update({ ...form, defaultAgent: v })}
-              options={Object.keys(form.agents).map((k) => ({ value: k, label: labels.find((x) => x.id === k)?.label ?? k, hint: k }))} />
           </Row>
         )}
         <Row label="Модель по умолчанию" hint="Если пусто, модель выбирает сам CLI.">
@@ -211,9 +211,10 @@ function AgentSection({ id, form, update, fieldError, primary }: SectionProps & 
             ))}
             <Row label="Разрешённые уровни" hint="Какие уровни агенту можно запрашивать.">
               <div className="chips">
-                {GRADES.map((g) => (
-                  <Chip key={g} mono pressed={a.allowedGrades.includes(g)} onClick={() => set({ allowedGrades: a.allowedGrades.includes(g) ? a.allowedGrades.filter((x) => x !== g) : [...a.allowedGrades, g] })}>{g}</Chip>
-                ))}
+                {GRADES.map((g) => {
+                  const on = a.allowedGrades.includes(g)
+                  return <Chip key={g} pressed={on} onClick={() => set({ allowedGrades: on ? a.allowedGrades.filter((x) => x !== g) : [...a.allowedGrades, g] })}>{on && <Check aria-hidden />}{g}</Chip>
+                })}
               </div>
             </Row>
           </div>
@@ -295,9 +296,7 @@ function AgentStatus({ id }: { id: string }) {
         <span className="grow" />
         <Button size="sm" variant="ghost" icon={<RefreshCw className={checking ? 'spinner' : undefined} />} onClick={() => void recheck()} disabled={checking}>Проверить</Button>
       </div>
-      {!r.ok && (
-        <p className="status-error">{r.error ?? 'Команда не разрешилась.'} Проверьте <span className="mono">agents.{id}.command</span> в harness.config.local.json.</p>
-      )}
+      {!r.ok && <CliPathFix id={id} error={r.error ?? ''} onChecked={() => void recheck()} />}
       <dl className="status-grid">
         {r.command && <><dt>Команда</dt><dd className="mono">{r.command}</dd></>}
         {r.node && <><dt>Node</dt><dd className="mono">{r.node}</dd></>}
@@ -654,14 +653,25 @@ function BoardSection({ form, update }: Omit<SectionProps, 'fieldError'>) {
 }
 
 /** Local to this browser: desktop notifications for questions, results and errors while the tab is in the background. */
-function NotifySection() {
+/** Общие: default agent, notifications, theme. */
+function GeneralSection({ form, update }: Omit<SectionProps, 'fieldError'>) {
+  const labels = useStore((s) => s.agents)
+  const scheme = useStore((s) => s.scheme)
   const [on, setOn] = useState(desktopNotifyOn)
   const supported = 'Notification' in window
   const denied = supported && Notification.permission === 'denied'
   return (
-    <section className="settings-section" id="set-notify">
-      <h2>Уведомления</h2>
+    <section className="settings-section" id="set-general">
+      <h2>Общие</h2>
       <div className="set-rows">
+        <Row label="Агент по умолчанию" hint="Для «Новый чат» и «Взять в работу».">
+          <Select label="Агент по умолчанию" value={form.defaultAgent} onChange={(v) => update({ ...form, defaultAgent: v })}
+            options={Object.keys(form.agents).filter((k) => form.agents[k].enabled !== false || k === form.defaultAgent)
+              .map((k) => ({ value: k, label: labels.find((x) => x.id === k)?.label ?? k, hint: k }))} />
+        </Row>
+        <Row label="Тема" hint="Хранится в этом браузере.">
+          <Segmented label="Тема" value={scheme} onChange={(v) => setState({ theme: v })} options={[{ value: 'dark', label: 'Тёмная' }, { value: 'light', label: 'Светлая' }]} />
+        </Row>
         <Row label="Уведомления на рабочем столе" hint={denied ? 'Браузер запретил уведомления для этой страницы: разрешите их в настройках сайта.' : 'Вопросы агентов, готовые задачи и ошибки, пока вкладка в фоне. Хранится в этом браузере.'}>
           <Switch label="Уведомления на рабочем столе" checked={on} disabled={!supported || denied}
             onChange={(v) => void setDesktopNotify(v).then((res) => { setOn(res); if (v && !res) toast('Браузер не разрешил уведомления', 'error') })} />
@@ -706,6 +716,62 @@ function InstallFile({ id, kind, name, target, title, action }: { id: string; ki
           <Button size="sm" variant="ghost" onClick={() => setConfirm(false)}>Отмена</Button>
         </div>
       )}
+    </div>
+  )
+}
+
+/** Sticky section index with scroll-spy (the section under the top of the scroll area is current). */
+function SectionNav({ sections }: { sections: [string, string][] }) {
+  const [current, setCurrent] = useState(sections[0]?.[0])
+  useEffect(() => {
+    const root = document.getElementById('settings-scroll')
+    if (!root) return
+    const io = new IntersectionObserver((entries) => {
+      const top = entries.filter((e) => e.isIntersecting).sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)[0]
+      if (top) setCurrent(top.target.id)
+    }, { root, rootMargin: '0px 0px -70% 0px' })
+    for (const [id] of sections) { const el = document.getElementById(id); if (el) io.observe(el) }
+    return () => io.disconnect()
+  }, [sections.map(([id]) => id).join()])
+  return (
+    <nav className="settings-nav" aria-label="Разделы настроек">
+      {sections.map(([id, label]) => (
+        <a key={id} href={`#${id}`} aria-current={current === id ? 'true' : undefined}
+          onClick={(e) => { e.preventDefault(); document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' }); setCurrent(id) }}>{label}</a>
+      ))}
+    </nav>
+  )
+}
+
+/** «CLI не найден»: the path in plain words, a field to fix it and a check; the raw message under «Подробности». */
+function CliPathFix({ id, error, onChecked }: { id: string; error: string; onChecked: () => void }) {
+  const quoted = /"([^"]+)"/.exec(error)?.[1] ?? ''
+  const exe = quoted ? quoted.split(/[\\/]/).pop() : 'gigacode.cmd'
+  const [path, setPath] = useState(quoted)
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+  const check = async () => {
+    setBusy(true)
+    setErr(null)
+    try {
+      const saved = await api<Settings>('PUT', '/settings', { agents: { [id]: { command: path.trim() } } })
+      if (saved) setState({ settings: saved })
+      onChecked()
+    } catch (e) {
+      setErr(errorText(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <div className="cli-fix">
+      <p className="status-error">{/not found|не найден/i.test(error) ? <>Не найден {exe}{quoted && <>: <span className="mono">{quoted}</span></>}</> : 'CLI не запускается.'}</p>
+      <div className="cli-fix-row">
+        <Input mono aria-label="Путь к gigacode.cmd" value={path} placeholder="C:/Program Files/.gigacode/bin/gigacode.cmd" onChange={(e) => setPath(e.target.value)} />
+        <Button disabled={busy || !path.trim()} onClick={() => void check()}>{busy ? 'Проверяем…' : 'Проверить'}</Button>
+      </div>
+      {err && <p className="field-error">{err}</p>}
+      {error && <Disclosure className="cli-raw" summary={<span className="muted">Подробности</span>}><pre className="mono">{error}</pre></Disclosure>}
     </div>
   )
 }

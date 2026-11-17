@@ -35,16 +35,11 @@ export function PrCard({ pr }: { pr: PrInfo }) {
     <div className="pr-card" data-state={pr.state}>
       <div className="pr-card-head">
         <PrGlyph pr={pr} />
-        <span className="num">#{pr.index}</span>
-        <span>{PR_STATE[pr.state]}</span>
-        {review && <span className="muted">· {review}</span>}
-        {conflict && <span className="pr-warn"><TriangleAlert aria-hidden />конфликт</span>}
+        <span className="ellipsis">#{pr.index} · {PR_STATE[pr.state]}{review ? ` · ${review.replace('на ревью', 'ревью')}` : ''}</span>
+        {conflict && <TriangleAlert className="pr-warn-ico" aria-label="конфликт" data-tip="Есть конфликт с базовой веткой" />}
+        <a className="icon-btn icon-btn-sm pr-card-open" href={pr.url} target="_blank" rel="noreferrer noopener" aria-label="Открыть PR" data-tip="Открыть PR в новой вкладке"><ExternalLink /></a>
       </div>
-      <p className="pr-card-title">{pr.title}</p>
-      <div className="pr-card-foot">
-        <span className="muted">в <span className="mono">{pr.base}</span></span>
-        <a className="btn btn-sm" href={pr.url} target="_blank" rel="noreferrer noopener"><ExternalLink />Открыть</a>
-      </div>
+      <p className="pr-card-title ellipsis" data-tip={`${pr.title}\nв ${pr.base}`}>{pr.title}</p>
     </div>
   )
 }
