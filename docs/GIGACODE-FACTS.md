@@ -183,6 +183,17 @@ others work. Transport per call. GigaCode's own encrypted store (`~/.gigacode/mc
 - Porting: by commits, only the missing ones (`git log --cherry-pick --right-only <target>...<branch>`), done by the author,
   separate PR per release branch. No automatic develop→release merge. No local hooks; conventions are not enforced by CI.
 
+## Confirmed on the target (live)
+
+- Headless denial text (tool_result error): `GigaCode requires permission to use "run_shell_command", but that permission was
+  declined (non-interactive mode cannot prompt for confirmation).` — the call is already denied when it is reported; the
+  agent continues the turn.
+- `--approval-mode auto` in headless fails unless `tools.sandbox` is enabled (`Auto approval is allowed only under an active
+  action sandbox; enable it via settings.tools.sandbox = 'workspace' or 'workspace-offline'.`) → harness maps auto → auto-edit.
+- `auto-edit` does NOT allow `run_shell_command` in headless → shell commands need an explicit allow-list
+  (`--allowed-tools`, VERIFY the exact flag and pattern syntax, e.g. `run_shell_command(git)`), the sandbox, or ACP.
+- `Warning: MCP server(s) failed to start: java-lsp. …` is printed to stderr on EVERY headless run (each run restarts MCP).
+
 ## Open questions (verify on the target; each changes the implementation)
 
 1. `mcpServers` in the run settings file: merged with `~/.gigacode/settings.json` or replacing it? (→ `inheritUserMcp`)
