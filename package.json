@@ -15,7 +15,8 @@
     "build": "vite build",
     "start": "node server/index.js",
     "test": "node --test \"test/*.test.js\"",
-    "typecheck": "tsc -p web --noEmit"
+    "typecheck": "tsc -p web --noEmit",
+    "demo": "node server/index.js --demo"
   },
   "dependencies": {
     "@lydell/node-pty": "^1.2.0-beta.18",

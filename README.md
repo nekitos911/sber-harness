@@ -37,9 +37,17 @@ npm start            # http://127.0.0.1:4777
 
 `npm run dev` starts the same thing with UI hot reload. `npm test` runs the tests (node:test, on mocks).
 
-Demo without GigaCode: **add a workspace** (path to any git repo) → **New chat** → agent
-`Mock agent`, role "coordinator" → the message `#spawn create file hello.txt #done`. A worker chat appears,
-the task goes to Review on the board, and the coordinator receives the report.
+### Демо без GigaCode: `npm run demo`
+
+`npm run demo` (= `node server/index.js --demo`, http://127.0.0.1:4778) starts an offline demo: its own data folder
+`data-demo/` (gitignored) with two seeded git repositories (`demo-service` with `develop` + `release/1.54.0`,
+`ledger-service`) and a few tasks (a hotfix for two target branches, a parent task with subtasks in both repos); the
+`mock` agent stands in for GigaCode (it answers `/models`, runs workers, reviews), and the tracker and PR service are
+served from `test/fixtures` by `scripts/mock-mcp.js`. Seeding happens once; delete `data-demo/` to start over.
+
+Manual demo in a normal run: **add a workspace** (path to any git repo) → **New chat** → agent `Mock agent`, role
+"coordinator" → the message `#spawn create file hello.txt #done`. A worker chat appears and the coordinator receives
+the report.
 
 ## Configuration
 

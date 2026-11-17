@@ -27,7 +27,16 @@ function fixtureCall(name, args = {}) {
   const file = [variant != null && `${serverName}.${name}.${variant}.json`, `${serverName}.${name}.json`]
     .filter(Boolean).map((n) => path.join(fixtures, n)).find((p) => fs.existsSync(p));
   if (!file) throw new Error(`no fixture for ${name}`);
-  const value = JSON.parse(fs.readFileSync(file, 'utf8'));
+  let value = JSON.parse(fs.readFileSync(file, 'utf8'));
+  if (Array.isArray(value?.pulls) && args.head) {
+    // demo: a pull request for whatever branch is asked about, shaped like the fixture
+    const mine = value.pulls.filter((p) => p.head?.name === args.head);
+    const open = !args.state || /^open$/i.test(args.state);
+    const index = 600 + ([...String(args.head)].reduce((h, c) => (h * 31 + c.charCodeAt(0)) % 300, 0));
+    const fake = value.pulls[0] && { ...value.pulls[0], index, title: `${args.head} (демо)`, head: { ...value.pulls[0].head, name: args.head },
+      html_url: String(value.pulls[0].html_url).replace(/\/pulls\/\d+$/, `/pulls/${index}`), state: 'open' };
+    value = { ...value, pulls: mine.length ? mine : open && fake ? [fake] : [] };
+  }
   return value && Array.isArray(value.content) ? { isError: false, ...value } : { content: [{ type: 'text', text: JSON.stringify(value) }], structuredContent: value, isError: false };
 }
 

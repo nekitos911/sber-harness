@@ -31,6 +31,7 @@ test('each feature flag has a working route (not 404/405)', async () => {
       'virtual-sessions': ['GET', `/api/sessions/${chat.id}/messages`],
       'worker-run': ['GET', `/api/agent/worker_wait?sessionId=${chat.id}&timeoutMs=0`],
       'skills-install': ['POST', '/api/agents/mock/skills/install', null, {}],
+      demo: ['GET', '/api/state', (b) => typeof b.demo === 'boolean'],
     };
     for (const flag of FEATURES) {
       const probe = probes[flag];

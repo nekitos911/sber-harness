@@ -18,6 +18,7 @@ import * as wfs from './fs.js';
 import { createMcpManager, loadSecrets, secretsFile, serverDefs } from './mcp-client.js';
 import { launchers } from './launchers.js';
 import { createModelCatalog } from './models.js';
+import { DEMO_PORT, demoOverrides, seedDemoRepos, seedDemoTasks } from './demo.js';
 import { importTasks, transitionTask, getExternal, getTransitions, importChildren, syncColumn } from './integrations/tasks.js';
 import { createPullRequest, prStatus, refreshTaskPr } from './integrations/pr.js';
 
@@ -32,7 +33,7 @@ const NO_BUILD_HTML = '<!doctype html><meta charset="utf-8"><title>Harness</titl
 const GRADES = ['default', 'fast', 'review', 'explore'];
 // optional API groups this server implements (docs/ARCHITECTURE.md "Feature flags"); a flag ships with its route
 export const FEATURES = ['branches', 'fs-search', 'pr-status', 'agent-info', 'models-refresh', 'tracker-links', 'board-columns', 'review-loop',
-  'subagents', 'virtual-sessions', 'worker-run', 'skills-install'];
+  'subagents', 'virtual-sessions', 'worker-run', 'skills-install', 'demo'];
 const GIT_KEYS = ['defaultBase', 'branchTemplate', 'portBranchTemplate', 'commitTitleTemplate', 'prTitleTemplate'];
 const TASK_VARS = ['{taskUrl}', '{key}', '{id}', '{description}'];
 const hasTaskVar = (tpl) => TASK_VARS.some((v) => tpl.includes(v));
@@ -94,7 +95,15 @@ function sendJson(res, status, data) {
 
 export async function startServer(opts = {}) {
   const root = opts.root || CODE_ROOT;
-  const config = loadConfig({ root, overrides: opts.configOverrides, dataDir: opts.dataDir, configFile: opts.configFile });
+  let overrides = opts.configOverrides;
+  let dataDir = opts.dataDir;
+  if (opts.demo) {
+    // offline demo: its own data dir and port, mock agent + fixture MCP servers, seeded repositories and tasks
+    dataDir = path.resolve(root, dataDir || 'data-demo');
+    overrides = deepMerge(demoOverrides(root, dataDir), overrides || {});
+    seedDemoRepos(dataDir);
+  }
+  const config = loadConfig({ root, overrides, dataDir, configFile: opts.configFile });
   const literal = findLiteralSecrets(config);
   if (literal.length) {
     console.warn(`\n!!! WARNING: config values look like literal credentials: ${literal.join(', ')}\n!!! Move them to the secrets file (${secretsFile(config)}) and reference them as $secret:<scope>/<name>.\n`);
@@ -486,6 +495,7 @@ export async function startServer(opts = {}) {
       : Object.keys(config.agents).find((id) => config.agents[id].enabled !== false) ?? null,
     shell: { command: config.shell.command },
     features: FEATURES,
+    demo: !!opts.demo,
     integrations: { tasks: !!config.integrations.tasks?.enabled, pr: !!config.integrations.pr?.enabled, tasksProblem },
   }));
   route('GET', '/api/settings', () => settingsView());
@@ -804,7 +814,8 @@ export async function startServer(opts = {}) {
     });
   }
 
-  const port = opts.port ?? config.port ?? 4777;
+  if (opts.demo) seedDemoTasks({ db, tasks, store });
+  const port = opts.port ?? (opts.demo ? DEMO_PORT : config.port ?? 4777);
   await new Promise((resolve, reject) => {
     server.once('error', (e) => {
       sessions.close();
@@ -922,8 +933,9 @@ if (isMain && process.argv.includes('--print-config')) {
   console.log(JSON.stringify(describeConfig(loadConfig()), null, 2));
 } else if (isMain) {
   const dev = process.argv.includes('--dev');
-  startServer({ dev }).then((srv) => {
-    console.log(`Harness running at ${srv.url}${dev ? ' (dev, Vite middleware)' : ''}`);
+  const demo = process.argv.includes('--demo');
+  startServer({ dev, demo }).then((srv) => {
+    console.log(`Harness running at ${srv.url}${dev ? ' (dev, Vite middleware)' : ''}${demo ? ' (offline demo: mock agent, fixture tracker and PR service)' : ''}`);
     const shutdown = () => srv.close().finally(() => process.exit(0));
     process.on('SIGINT', shutdown);
     process.on('SIGTERM', shutdown);

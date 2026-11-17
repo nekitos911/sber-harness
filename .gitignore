@@ -7,3 +7,4 @@ harness.config.local.json
 .env.*
 graphify-out/
 .playwright-mcp/
+data-demo/
