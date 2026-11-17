@@ -1,0 +1,494 @@
+// Agent-facing orchestration API (tools for coordinator/worker agents), worker start (shared with the UI's
+// assign/start), ports into extra target branches, preambles, escalation, notifications, commit/PR prefill.
+import path from 'node:path';
+import { CODE_ROOT } from './config.js';
+import * as git from './git.js';
+import { newId } from './sessions.js';
+
+const fail = (status, message) => { throw Object.assign(new Error(message), { status }); };
+const HARNESS_CLI = path.join(CODE_ROOT, 'mcp', 'harness-mcp.js');
+const REPORT_RE = /^Worker report \((?:done|failed)\): ([\s\S]*)$/;
+
+/** Replaces {name} with vars[name]; unknown placeholders are left as they are. */
+export const render = (tpl, vars) => String(tpl).replace(/\{(\w+)\}/g, (m, k) => (k in vars ? String(vars[k] ?? '') : m));
+
+const obj = (properties, required = []) => ({ type: 'object', properties, required });
+const str = (description, extra = {}) => ({ type: 'string', description, ...extra });
+const strArr = (description) => ({ type: 'array', items: { type: 'string' }, description });
+
+function checkArgs(schema, args) {
+  if (!args || typeof args !== 'object' || Array.isArray(args)) fail(400, 'arguments must be a JSON object');
+  for (const k of schema.required) if (args[k] == null || args[k] === '') fail(400, `${k} is required`);
+  for (const [k, p] of Object.entries(schema.properties)) {
+    const v = args[k];
+    if (v == null) continue;
+    const ok = p.type === 'array' ? Array.isArray(v) && v.every((x) => typeof x === 'string') : typeof v === p.type;
+    if (!ok) fail(400, `${k} must be ${p.type === 'array' ? 'an array of strings' : `a ${p.type}`}`);
+    if (p.enum && !p.enum.includes(v)) fail(400, `${k} must be one of ${p.enum.join(', ')}`);
+  }
+}
+
+export function createOrchestration({ config, store, bus, tasks, sessions }) {
+  const db = store.db;
+  const gitCfg = { defaultBase: 'main', branchTemplate: 'feature/{key}', portBranchTemplate: '{branch}-{target}', commitTitleTemplate: '{key}: {title}', prTitleTemplate: '{key}: {title}', ...config.git };
+  const label = (s) => `${s.title} (${s.id})`;
+  const fromSession = (s, text) => `[harness] Message from ${label(s)}:\n${text}`;
+  const isActive = (s) => !!s && s.kind === 'chat' && (s.status === 'idle' || s.status === 'running');
+  const samePath = (a, b) => (process.platform === 'win32' ? path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase() : path.resolve(a) === path.resolve(b));
+  const findWs = (id) => db.workspaces.find((w) => w.id === id) || null;
+
+  function workspaceRef(ref) {
+    const lower = String(ref).toLowerCase();
+    return db.workspaces.find((w) => w.id === ref) || db.workspaces.find((w) => w.name.toLowerCase() === lower) || fail(404, `workspace "${ref}" not found (see workspace_list)`);
+  }
+
+  function activeWorker(task) {
+    const s = task.assigneeSessionId && sessions.find(task.assigneeSessionId);
+    return isActive(s) ? s : null;
+  }
+
+  function notify({ kind, sessionId = null, taskId = null, text }) {
+    const n = { id: newId('n'), at: Date.now(), read: false, kind, sessionId, taskId, text };
+    db.notifications.push(n);
+    if (db.notifications.length > 500) db.notifications.splice(0, db.notifications.length - 500);
+    store.save();
+    bus.send({ t: 'notify', n });
+    return n;
+  }
+
+  function checkAgent(agent) {
+    const cfg = config.agents[agent] || fail(400, `unknown agent "${agent}"`);
+    if (cfg.enabled === false) fail(400, `agent "${agent}" is disabled in the config`);
+    return agent;
+  }
+
+  const lastSummary = (task) => {
+    for (let i = task.log.length - 1; i >= 0; i--) {
+      const m = task.log[i].text.match(REPORT_RE);
+      if (m) return m[1];
+    }
+    return null;
+  };
+
+  function savePort(task, rec) {
+    tasks.update(task.id, { ports: [...task.ports.filter((p) => p.target !== rec.target), rec] }, 'harness');
+  }
+
+  function taskPrompt(task, agent, { branch, cwd, ws }) {
+    const tpl = config.agents[agent]?.taskPromptTemplate ?? config.tasks?.promptTemplate ?? '{key}: {title}\n\n{description}';
+    return render(tpl, {
+      key: tasks.key(task),
+      id: task.id,
+      title: task.title,
+      description: task.description,
+      url: task.externalUrl || '',
+      targets: task.targets.join(', '),
+      branch: branch || task.branch || '',
+      repo: ws?.name || path.basename(cwd),
+    });
+  }
+
+  /** Worktree + branch for a task: branchTemplate with the task key, started from targets[0]. */
+  async function taskWorktree(task, cwd, explicitBranch) {
+    if (!(await git.isRepo(cwd))) fail(400, `cannot create a worktree: ${cwd} is not a git repository`);
+    let branch;
+    if (explicitBranch) branch = git.sanitizeBranch(explicitBranch);
+    else if (task.branch && (await git.branchExists(cwd, task.branch))) branch = task.branch;
+    else branch = await git.uniqueBranch(cwd, git.sanitizeBranch(render(gitCfg.branchTemplate, { key: tasks.key(task), id: task.id })), task.branch);
+    const start = await git.startPoint(cwd, task.targets[0]);
+    return git.addWorktree(cwd, { branch, start, worktreeRoot: config.worktreeRoot });
+  }
+
+  /** Creates a worker chat session for `task` and sends it the first prompt. Used by worker_start, assign, start. */
+  async function startWorker(task, o, caller) {
+    const busy = activeWorker(task);
+    if (busy) fail(409, `task ${task.id} already has an active worker (${busy.id})`);
+    const pending = task.deps.filter((d) => tasks.find(d)?.status !== 'done');
+    if (pending.length) fail(409, `task ${task.id} has unfinished dependencies: ${pending.join(', ')}`);
+    const agent = checkAgent(o.agent || (caller?.kind === 'chat' ? caller.agent : null) || config.defaultAgent);
+    if (o.worktree && !['current', 'new'].includes(o.worktree)) fail(400, 'worktree must be "current" or "new"');
+    const ws = o.workspace ? workspaceRef(o.workspace) : o.workspaceId ? findWs(o.workspaceId) || fail(404, `workspace ${o.workspaceId} not found`) : findWs(task.workspaceId);
+    let cwd = o.cwd ? path.resolve(o.cwd) : ws ? ws.path : caller?.cwd || config.root;
+    let branch;
+    if (o.worktree === 'new') {
+      const wt = await taskWorktree(task, cwd, o.branch);
+      cwd = wt.path;
+      branch = wt.branch;
+    } else {
+      branch = await git.currentBranch(cwd);
+    }
+    const key = tasks.key(task);
+    const s = await sessions.create({
+      kind: 'chat', agent, cwd, workspaceId: ws?.id, title: `${key}: ${task.title}`, role: 'worker',
+      parentId: caller?.id ?? null, taskId: task.id, model: o.model, branch,
+    });
+    const by = caller?.id || 'user';
+    const patch = { status: 'in_progress', assigneeSessionId: s.id };
+    if (!task.workspaceId && ws) patch.workspaceId = ws.id;
+    if (o.worktree === 'new' || (!task.branch && branch && !task.targets.includes(branch))) patch.branch = branch;
+    tasks.update(task.id, patch, by);
+    tasks.addLog(task.id, by, `worker ${s.id} started (${agent}) in ${cwd}${branch ? ` on ${branch}` : ''}`);
+    sessions.deliver(s.id, { from: by, text: o.spec ?? taskPrompt(task, agent, { branch, cwd, ws }) });
+    return s;
+  }
+
+  /** Cherry-picks the task's commits into another target branch in a new worktree (see ARCHITECTURE.md). */
+  async function port(task, target, { agent } = {}, caller = null) {
+    if (typeof target !== 'string' || !target.trim()) fail(400, 'target is required');
+    if (!task.branch) fail(409, `task ${task.id} has no work branch yet; start it with a new worktree first`);
+    const primary = task.targets[0];
+    if (target === primary) fail(400, `${target} is the primary target; ports go to the other targets`);
+    const prev = task.ports.find((p) => p.target === target);
+    if (prev?.status === 'clean' || prev?.status === 'done') return prev;
+    if (prev?.status === 'conflict' && isActive(sessions.find(prev.sessionId))) fail(409, `port of ${task.id} to ${target} is in progress (${prev.sessionId})`);
+    const ws = findWs(task.workspaceId);
+    const repo = ws?.path || sessions.find(task.assigneeSessionId)?.cwd || config.root;
+    const start = (await git.startPoint(repo, target)) || fail(400, `target branch ${target} not found locally or on origin`);
+    const commits = (await git.revList(repo, `${primary}..${task.branch}`)) ?? (await git.revList(repo, `origin/${primary}..${task.branch}`));
+    if (!commits) fail(400, `cannot list commits of ${task.branch} relative to ${primary}`);
+    const branch = await git.uniqueBranch(repo, git.sanitizeBranch(render(gitCfg.portBranchTemplate, { branch: task.branch, target, key: tasks.key(task) })));
+    const wt = await git.addWorktree(repo, { branch, start, worktreeRoot: config.worktreeRoot });
+    const status = await git.cherryPick(wt.path, commits);
+    const rec = { target, branch, cwd: wt.path, status, sessionId: null };
+    savePort(task, rec);
+    const by = caller?.id || 'user';
+    tasks.addLog(task.id, by, `port to ${target}: ${status} (${commits.length} commit(s) on ${branch})`);
+    if (status === 'conflict') {
+      const s = await sessions.create({
+        kind: 'chat', agent: checkAgent(agent || (caller?.kind === 'chat' ? caller.agent : null) || config.defaultAgent),
+        cwd: wt.path, workspaceId: ws?.id, title: `${tasks.key(task)}: port to ${target}`, role: 'worker',
+        parentId: caller?.id ?? null, taskId: task.id, branch,
+      });
+      rec.sessionId = s.id;
+      savePort(task, rec);
+      sessions.deliver(s.id, { from: by, text: `Resolve the cherry-pick conflicts of ${tasks.key(task)} "${task.title}" (commits from ${task.branch}) on ${branch}, which targets ${target}.` });
+    }
+    return rec;
+  }
+
+  // ---- preambles ----
+
+  function preamble(s) {
+    const tools = `Harness tools are in the MCP server "harness" (fallback from a shell: node "${HARNESS_CLI}" call <tool> '<json>').`;
+    if (s.role === 'coordinator') {
+      return [
+        `[harness] You are the COORDINATOR session ${s.id} ("${s.title}") in a local multi-agent harness. Working directory: ${s.cwd}.`,
+        tools,
+        'Rules:',
+        '- Split the work into tasks with task_create; put ordering into deps. Every task spec must be self-contained (goal, files, constraints, how to verify).',
+        '- Start workers with worker_start (task_id; worktree "new" gives the worker its own git worktree and branch).',
+        '- Never use built-in sub-agent tools (Task, Agent or similar): every sub-agent must be a harness worker so it gets its own chat.',
+        '- After starting workers END YOUR TURN. The harness wakes you with a message for every worker report, question or escalation. Do not poll.',
+        '- Answer worker questions with send_message(to: <worker session id>, body); ask the user with send_message(to: "user") when needed.',
+        '- Several repositories: one task per repository. Call workspace_list, then create one subtask per repo with task_create({ parent_id, workspace, ... }). Subtasks share the parent key, so every repo gets the same branch.',
+        '- Several target branches (task.targets): the work happens on targets[0]; after its worker reports done call task_port({ task_id, target }) for every other target. One PR per repo per target.',
+      ].join('\n');
+    }
+    if (s.role !== 'worker') return '';
+    const task = s.taskId && tasks.find(s.taskId);
+    const parent = s.parentId && sessions.find(s.parentId);
+    const who = `Session: ${s.id}; parent: ${parent ? label(parent) : 'none (your reports go to the user)'}.`;
+    const common = [
+      '- Need a decision? Call ask(question), then END YOUR TURN; the answer arrives as your next message.',
+      '- Never use built-in sub-agent tools (Task, Agent or similar).',
+      '- Finish with exactly one worker_done(summary, status: "done" | "failed"): what changed, evidence (commands and results), open blockers.',
+      tools,
+    ];
+    if (!task) return [`[harness] You are a WORKER session in a local multi-agent harness. ${who}`, `Working directory: ${s.cwd}.`, ...common].join('\n');
+    const key = tasks.key(task);
+    const portRec = task.ports.find((p) => p.sessionId === s.id);
+    if (portRec) {
+      return [
+        `[harness] You are a WORKER session resolving a cherry-pick conflict. ${who}`,
+        `Task: ${key} - ${task.title} (task id ${task.id}). Commits from ${task.branch} are being cherry-picked onto ${portRec.branch} (target ${portRec.target}).`,
+        `Working directory: ${s.cwd}.`,
+        'Steps: run git status; resolve every conflict keeping the intent of the original change; git add the files;',
+        'run `git -c core.editor=true cherry-pick --continue` (repeat until the cherry-pick finishes; never abort or skip commits without asking);',
+        'run the project checks if any. Stay on this branch, do not push.',
+        ...common,
+      ].join('\n');
+    }
+    return [
+      `[harness] You are a WORKER session in a local multi-agent harness. ${who}`,
+      `Task: ${key} - ${task.title} (task id ${task.id}).`,
+      `Working directory: ${s.cwd}. Branch: ${s.branch || task.branch || '(current)'}. Base branch (primary target): ${task.targets[0]}.`,
+      'Rules:',
+      '- Do only this task and only inside the working directory.',
+      '- Stay on your branch (do not switch or create branches) and do not push.',
+      `- Commit your changes; every commit message must start with "${key}: ".`,
+      ...common,
+    ].join('\n');
+  }
+
+  // ---- post-turn: escalation and error notifications ----
+
+  function turnEnded(s, { reported, communicated, stopped, queueEmpty }) {
+    if (stopped) return;
+    if (s.status === 'error' && s.role !== 'worker') {
+      notify({ kind: 'error', sessionId: s.id, taskId: s.taskId, text: `${s.title}: the agent could not run (see the chat)` });
+    }
+    if (s.role !== 'worker' || !s.autoReport || reported || communicated || !queueEmpty) return;
+    const text = `Worker ${label(s)} ended its turn without calling worker_done (status: ${s.status}).\nLast output: ${s.preview || '(none)'}\nReply with send_message to "${s.id}" to continue it.`;
+    const parent = s.parentId && sessions.find(s.parentId);
+    if (parent) sessions.deliver(parent.id, { from: s.id, text: fromSession(s, text) });
+    else notify({ kind: 'escalation', sessionId: s.id, taskId: s.taskId, text });
+  }
+
+  sessions.hooks.preamble = preamble;
+  sessions.hooks.turnEnded = turnEnded;
+
+  // ---- tools ----
+
+  const sessionInfo = (s) => ({ id: s.id, title: s.title, role: s.role, status: s.status, agent: s.agent, taskId: s.taskId, parentId: s.parentId, cwd: s.cwd, branch: s.branch, queued: s.queued, preview: s.preview });
+
+  const TOOLS = [
+    {
+      name: 'whoami',
+      description: 'Your harness session: id, role (coordinator/worker/solo), parent, task, cwd, branch.',
+      inputSchema: obj({}),
+      run: (_, c) => (c ? { ...sessionInfo(c), taskKey: c.taskId && tasks.find(c.taskId) ? tasks.key(tasks.find(c.taskId)) : null } : { id: null, role: 'user' }),
+    },
+    {
+      name: 'task_list',
+      description: 'List tasks on the board. ready=true returns todo/backlog tasks whose deps are all done.',
+      inputSchema: obj({ status: str('backlog | todo | in_progress | review | done', { enum: ['backlog', 'todo', 'in_progress', 'review', 'done'] }), ready: { type: 'boolean', description: 'only ready tasks' } }),
+      run: (a) => tasks.list({ status: a.status, ready: a.ready }),
+    },
+    {
+      name: 'task_get',
+      description: 'Get one task by id.',
+      inputSchema: obj({ id: str('task id, e.g. T-3') }, ['id']),
+      run: (a) => tasks.get(a.id),
+    },
+    {
+      name: 'workspace_list',
+      description: 'Registered repositories [{id, name, path, isGit}] for multi-repo planning.',
+      inputSchema: obj({}),
+      run: () => db.workspaces,
+    },
+    {
+      name: 'task_create',
+      description: 'Create a task. Use deps for ordering, parent_id + workspace for one subtask per repository. A subtask inherits the parent targets/workspace when omitted.',
+      inputSchema: obj({
+        title: str('short title'),
+        description: str('self-contained spec (markdown)'),
+        deps: strArr('task ids that must be done first'),
+        status: str('initial status (default todo)', { enum: ['backlog', 'todo', 'in_progress', 'review', 'done'] }),
+        priority: str('low | medium | high', { enum: ['low', 'medium', 'high'] }),
+        labels: strArr('labels'),
+        parent_id: str('parent task id (subtask)'),
+        workspace: str('workspace id or name (the repository of this task)'),
+        targets: strArr('target branches; [0] = primary where the work happens, the rest get ports'),
+      }, ['title']),
+      run: (a, c) => tasks.create({
+        title: a.title, description: a.description, deps: a.deps, status: a.status, priority: a.priority, labels: a.labels,
+        parentId: a.parent_id, targets: a.targets,
+        workspaceId: a.workspace ? workspaceRef(a.workspace).id : a.parent_id ? undefined : c?.workspaceId ?? null,
+      }, c?.id || 'user'),
+    },
+    {
+      name: 'task_update',
+      description: 'Update a task (title, description, status, priority) and/or append a comment to its log.',
+      inputSchema: obj({
+        id: str('task id'), title: str('new title'), description: str('new description'),
+        status: str('new status', { enum: ['backlog', 'todo', 'in_progress', 'review', 'done'] }),
+        priority: str('low | medium | high', { enum: ['low', 'medium', 'high'] }), comment: str('text appended to the task log'),
+      }, ['id']),
+      run: (a, c) => {
+        const task = tasks.get(a.id);
+        const w = activeWorker(task);
+        if (c && w && w.id !== c.id && w.parentId !== c.id) fail(409, `task ${task.id} is locked by its active worker ${w.id}`);
+        const patch = {};
+        for (const k of ['title', 'description', 'status', 'priority', 'comment']) if (a[k] != null) patch[k] = a[k];
+        return tasks.update(task.id, patch, c?.id || 'user');
+      },
+    },
+    {
+      name: 'task_port',
+      description: 'Cherry-pick the task branch into another target branch (new worktree). Clean: done. Conflict: a worker is started to resolve it and reports like any worker.',
+      inputSchema: obj({ task_id: str('task id'), target: str('target branch, one of task.targets[1..]'), agent: str('agent for a conflict-resolving worker') }, ['task_id', 'target']),
+      run: (a, c) => port(tasks.get(a.task_id), a.target, { agent: a.agent }, c),
+    },
+    {
+      name: 'worker_start',
+      description: 'Start a worker agent (its own chat) for a task (task_id) or an ad-hoc spec. Then END YOUR TURN: the harness wakes you with its report.',
+      inputSchema: obj({
+        task_id: str('existing task id'), spec: str('ad-hoc task spec (creates a task)'), title: str('title for an ad-hoc spec'),
+        agent: str('agent id from the config'), workspace: str('workspace id or name to run in'),
+        worktree: str('current (default) or new (own git worktree + branch)', { enum: ['current', 'new'] }),
+        branch: str('branch name for worktree "new" (default from the task key)'), model: str('model id'),
+      }),
+      run: async (a, c) => {
+        let task;
+        if (a.task_id) task = tasks.get(a.task_id);
+        else if (a.spec) {
+          const title = (a.title || a.spec.split('\n').find((l) => l.trim()) || 'task').trim().slice(0, 80);
+          task = tasks.create({ title, description: a.spec, workspaceId: a.workspace ? workspaceRef(a.workspace).id : c?.workspaceId ?? null }, c?.id || 'user');
+        } else fail(400, 'task_id or spec is required');
+        return sessionInfo(await startWorker(task, { ...a, spec: a.task_id ? undefined : a.spec }, c));
+      },
+    },
+    {
+      name: 'worker_list',
+      description: 'Your worker sessions with status, task and last output.',
+      inputSchema: obj({}),
+      run: (_, c) => (c ? sessions.children(c.id) : sessions.list().filter((s) => s.role === 'worker')).map(sessionInfo),
+    },
+    {
+      name: 'send_message',
+      description: 'Send a message to a session id, to "parent" or to "user". Wakes the target session.',
+      inputSchema: obj({ to: str('session id | "parent" | "user"'), body: str('message text') }, ['to', 'body']),
+      run: (a, c) => {
+        if (c) sessions.flag(c.id, 'communicated');
+        const parent = a.to === 'parent' && c?.parentId ? sessions.find(c.parentId) : null;
+        if (a.to === 'user' || (a.to === 'parent' && !parent)) {
+          notify({ kind: 'info', sessionId: c?.id ?? null, taskId: c?.taskId ?? null, text: a.body });
+          return { delivered: 'user' };
+        }
+        const target = parent || sessions.find(a.to) || fail(404, `session ${a.to} not found`);
+        const r = sessions.deliver(target.id, { from: c?.id ?? 'user', text: c ? fromSession(c, a.body) : a.body });
+        return { delivered: target.id, queued: r.queued };
+      },
+    },
+    {
+      name: 'ask',
+      description: 'Ask your coordinator (or the user) a question. Then END YOUR TURN: the answer arrives as your next message.',
+      inputSchema: obj({ question: str('the question') }, ['question']),
+      run: (a, c) => {
+        const note = 'End your turn now; the answer will arrive as your next message.';
+        if (c) sessions.flag(c.id, 'communicated');
+        const parent = c?.parentId && sessions.find(c.parentId);
+        if (parent) {
+          sessions.deliver(parent.id, { from: c.id, text: fromSession(c, `Question: ${a.question}\n(Answer with send_message to "${c.id}".)`) });
+          return { delivered: parent.id, note };
+        }
+        notify({ kind: 'question', sessionId: c?.id ?? null, taskId: c?.taskId ?? null, text: a.question });
+        return { delivered: 'user', note };
+      },
+    },
+    {
+      name: 'worker_done',
+      description: 'Finish your task: summary (what changed, evidence, blockers) and status done | failed.',
+      inputSchema: obj({ summary: str('what changed, evidence, open blockers'), status: str('done | failed', { enum: ['done', 'failed'] }) }, ['summary', 'status']),
+      run: (a, c) => {
+        if (!c) fail(400, 'worker_done must be called from a harness session (x-harness-session header)');
+        const status = a.status;
+        sessions.flag(c.id, 'reported');
+        sessions.setStatus(c.id, status);
+        const task = c.taskId ? tasks.find(c.taskId) : null;
+        const portRec = task?.ports.find((p) => p.sessionId === c.id);
+        if (portRec) {
+          savePort(task, { ...portRec, status });
+          tasks.addLog(task.id, c.id, `port to ${portRec.target} ${status}: ${a.summary}`);
+        } else if (task) {
+          tasks.update(task.id, { status: status === 'done' ? 'review' : 'todo' }, c.id);
+          tasks.addLog(task.id, c.id, `Worker report (${status}): ${a.summary}`);
+        }
+        const ready = tasks.list({ ready: true }).filter((t) => !activeWorker(t));
+        const what = portRec ? ` the port of ${tasks.key(task)} to ${portRec.target}` : task ? ` task ${tasks.key(task)} "${task.title}" (${task.id})` : '';
+        const report = [
+          `Worker ${label(c)} finished${what} with status: ${status}.`,
+          `Summary: ${a.summary}`,
+          `Ready tasks: ${ready.length ? ready.map((t) => `${t.id} "${t.title}"`).join(', ') : 'none'}`,
+        ].join('\n');
+        const parent = c.parentId && sessions.find(c.parentId);
+        if (parent) sessions.deliver(parent.id, { from: c.id, text: fromSession(c, report) });
+        notify({ kind: status, sessionId: c.id, taskId: task?.id ?? null, text: `${c.title}: ${a.summary}` });
+        return { ok: true, taskStatus: portRec ? null : task?.status ?? null, readyTasks: ready.map((t) => t.id) };
+      },
+    },
+  ];
+
+  // ---- commit / PR prefill ----
+
+  async function gitSuggest(cwd) {
+    if (typeof cwd !== 'string' || !cwd) fail(400, 'cwd is required');
+    const dir = path.resolve(cwd);
+    const st = await git.status(dir);
+    let task = null;
+    let portRec = null;
+    for (const t of db.tasks) {
+      portRec = t.ports.find((p) => samePath(p.cwd, dir) || (st.branch && p.branch === st.branch));
+      if (portRec) {
+        task = t;
+        break;
+      }
+    }
+    task ||= db.sessions
+      .filter((s) => s.taskId && samePath(s.cwd, dir))
+      .sort((a, b) => b.lastActivityAt - a.lastActivityAt)
+      .map((s) => tasks.find(s.taskId))
+      .find(Boolean) || null;
+    if (!task && st.branch) {
+      const mainPath = (await git.worktrees(dir).catch(() => []))[0]?.path;
+      const inRepo = (t) => !!mainPath && !!findWs(t.workspaceId) && samePath(findWs(t.workspaceId).path, mainPath);
+      const hasKey = (t) => new RegExp(`(^|[^A-Za-z0-9])${tasks.key(t).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}($|[^A-Za-z0-9])`, 'i').test(st.branch);
+      const cands = db.tasks.filter((t) => t.branch === st.branch || hasKey(t));
+      task = cands.find((t) => inRepo(t) && t.branch === st.branch) ?? cands.find(inRepo) ?? cands.find((t) => t.branch === st.branch) ?? cands[0] ?? null;
+    }
+    const base = portRec?.target ?? task?.targets[0] ?? gitCfg.defaultBase;
+    const key = task ? tasks.key(task) : null;
+    const fallback = st.branch && st.branch !== base ? st.branch : st.files[0] ? `Update ${st.files[0].path}` : 'Update';
+    const title = (tpl) => (task ? render(tpl, { key, id: task.id, title: task.title, branch: st.branch || '', target: base }) : fallback);
+    const summary = task ? lastSummary(task) : null;
+    const files = st.files.map((f) => `- ${f.path}`).join('\n');
+    const baseRef = (await git.refExists(dir, base)) ? base : `origin/${base}`;
+    const commits = await git.onelines(dir, `${baseRef}..HEAD`);
+    const desc = task?.description?.trim();
+    return {
+      taskId: task?.id ?? null,
+      key,
+      branch: st.branch,
+      base,
+      commit: { title: title(gitCfg.commitTitleTemplate), body: [summary, files].filter(Boolean).join('\n\n') },
+      pr: {
+        title: title(gitCfg.prTitleTemplate),
+        body: [
+          desc && (desc.length > 600 ? `${desc.slice(0, 600)}...` : desc),
+          task?.externalUrl,
+          `Target: ${base}`,
+          summary && `Summary: ${summary}`,
+          commits.length && `Commits:\n${commits.map((l) => `- ${l}`).join('\n')}`,
+        ].filter(Boolean).join('\n\n'),
+        base,
+      },
+    };
+  }
+
+  return {
+    notify,
+    preamble,
+    gitSuggest,
+    port: (taskId, target, o) => port(tasks.get(taskId), target, o, null),
+    tools: TOOLS.map(({ name, description, inputSchema }) => ({ name, description, inputSchema })),
+
+    async call(name, args, callerId) {
+      const tool = TOOLS.find((t) => t.name === name) || fail(404, `unknown tool "${name}"`);
+      const caller = callerId ? sessions.find(callerId) || fail(400, `unknown caller session ${callerId}`) : null;
+      const a = args ?? {};
+      checkArgs(tool.inputSchema, a);
+      return tool.run(a, caller);
+    },
+
+    /** POST /api/tasks/:id/assign */
+    async assign(taskId, body) {
+      const task = tasks.get(taskId);
+      if (!body.sessionId) return startWorker(task, { agent: body.agent, workspaceId: body.workspaceId, cwd: body.cwd, worktree: body.worktree }, null);
+      const s = sessions.get(body.sessionId);
+      const busy = activeWorker(task);
+      if (busy && busy.id !== s.id) fail(409, `task ${task.id} already has an active worker (${busy.id})`);
+      tasks.update(task.id, { status: 'in_progress', assigneeSessionId: s.id }, 'user');
+      if (s.kind === 'chat' && !s.taskId) sessions.update(s.id, { taskId: task.id });
+      sessions.deliver(s.id, { from: 'user', text: taskPrompt(task, s.agent, { branch: s.branch, cwd: s.cwd, ws: findWs(s.workspaceId) }) });
+      return s;
+    },
+
+    /** POST /api/tasks/:id/start ("take into work"): default agent, new worktree in the task's workspace. */
+    async start(taskId, { agent } = {}) {
+      const task = tasks.get(taskId);
+      const ws = findWs(task.workspaceId) || (db.workspaces.length === 1 ? db.workspaces[0] : null);
+      if (!ws) fail(400, `task ${task.id} has no workspace; set its workspace first`);
+      return startWorker(task, { agent: agent || config.defaultAgent, workspaceId: ws.id, worktree: ws.isGit ? 'new' : 'current' }, null);
+    },
+  };
+}
