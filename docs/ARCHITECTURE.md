@@ -544,6 +544,31 @@ none. `{notes}` = `" " + notes` when the user typed notes at start, else `""`.
 - Startup: sessions left `running` become `idle` with a system message ("harness restarted, the turn was interrupted;
   send a message to continue — context is kept by --resume"); orphan locks are cleared.
 
+## Model catalogue that survives renames (no code changes when model ids change)
+
+- Sources, merged and deduped by id: (1) **discovered** — the harness runs the agent CLI headless with
+  `agents.<id>.modelsDiscovery.prompt` (gigacode default `"/models"`) in `<dataDir>/chats/discovery`, takes the final
+  text (`result` / assistant text) and extracts model ids with a tolerant parser (markdown table / list / plain lines;
+  token = letters/digits/`.`/`-`, contains a digit and a `-`, 4–80 chars; optional context like `262k`/`128k` nearby) or
+  with `modelsDiscovery.pattern` (regex with a capture group) when set; result cached in `db.agentMeta[agent].catalog =
+  { models: [{id, context?}], at, error? }`; (2) **seen** — models from `system/init` events; (3) **config**
+  `agents.<id>.models` — only labels/descriptions/order (overrides), not the source of truth.
+- Each merged entry: `{ id, label?, context?, description?, available: boolean | null }` — `available = false` when a
+  fresh discovery exists and the id is not in it (shown greyed «недоступна», never silently dropped); `null` when no
+  discovery yet.
+- Discovery triggers: lazily when `/api/agents/:id/info` or `/api/state` is requested and the catalogue is older than
+  `modelsDiscovery.maxAgeHours` (default 24) — in the background, never blocking the request; `POST /api/agents/:id/models/refresh`
+  (UI buttons) → `{ models, at, error? }`; automatically after a turn fails with "is not present in the current backend
+  catalogue" (or `modelsDiscovery.missingPattern`). Discovery runs at most one at a time per agent; failures are kept in
+  `catalog.error` and shown, never fatal.
+- Robust runs: when writing the per-session settings.json, grades whose model is known-unavailable (`available === false`)
+  are omitted (the CLI falls back to its default) and a ⚠ system note is added once per session; a session whose `model`
+  is known-unavailable gets the error card instead of a doomed spawn only if discovery is fresh — otherwise the turn is
+  attempted (the catalogue may be stale). A "model not present" failure produces a Message with
+  `action: 'pick-model'` so the UI can offer the picker + «Повторить».
+- `/api/agents/:id/info` returns `catalog` (`{ at, error }`) and the merged `models`; `/api/state` agents[].models is the
+  merged list. Free-text model ids are always accepted (PATCH session.model, settings).
+
 ## GigaCode authorization (first run on a machine)
 
 GigaCode asks to log in through the browser / a link on first use. Behaviour of headless `-p` when not logged in is
