@@ -421,7 +421,8 @@ function TrackerSection({ form, update, fieldError }: SectionProps) {
             options={[...SYNC, ...(SYNC.some((s) => s.v === refresh) ? [] : [{ v: refresh, l: `каждые ${refresh} с` }])].map((s) => ({ value: String(s.v), label: s.l }))} />
         </Row>
       </div>
-      {t?.statusMap && Object.keys(t.statusMap).length > 0 && (
+      {/* With board columns the mapping lives in «Доска» (columns own their tracker statuses). */}
+      {!form.board && t?.statusMap && Object.keys(t.statusMap).length > 0 && (
         <>
           <h3>Статусы трекера → колонки доски</h3>
           <div className="map-table" role="table" aria-label="Соответствие статусов">
