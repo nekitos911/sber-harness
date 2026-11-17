@@ -4,6 +4,7 @@ import { api } from '../../api'
 import { runJob } from '../../lib/jobs'
 import { getState, openDialog, setState, toast, upsert, useStore } from '../../store'
 import { taskKey } from '../../lib/tasks'
+import { plural } from '../../lib/format'
 import { adoptSession } from '../../lib/actions'
 import { loadDraft, saveDraft } from '../../lib/draft'
 import { isMac } from '../../lib/keys'
@@ -135,18 +136,20 @@ export function useWhere(task: Task) {
 /** «Взять в работу»: «Где» first, optional notes; «Настроить…» opens the full dialog (agent). */
 export function StartPopover({ task, anchor, open, onClose }: { task: Task; anchor: RefObject<HTMLElement | null>; open: boolean; onClose: () => void }) {
   const where = useWhere(task)
+  // with subtasks a coordinator starts: it sends each subtask to its repository, so there is no «Где»
+  const kids = useStore((s) => s.tasks.filter((t) => t.parentId === task.id).length)
   return (
     <NotesPopover
       anchor={anchor} open={open} onClose={onClose}
       label="Дополнительно" draftKey={`start:${task.id}`}
       placeholder="например: только бэкенд, фронт не трогать"
-      before={where.field}
+      before={kids ? <p className="field-hint">Координатор раздаст {kids} {plural(kids, 'подзадачу', 'подзадачи', 'подзадач')} — каждую в её репозиторий.</p> : where.field}
       primary={{
-        label: 'Взять в работу', icon: <Play />,
+        label: kids ? 'Запустить координатора' : 'Взять в работу', icon: <Play />,
         run: async (notes) => {
-          if (!where.body) { toast('Выберите, где работать', 'error'); return false }
+          if (!kids && !where.body) { toast('Выберите, где работать', 'error'); return false }
           const st = getState()
-          const s = await runJob('Взять в работу', (jobId) => api<Session & { jumped?: boolean }>('POST', `/tasks/${encodeURIComponent(task.id)}/start`, { agent: st.defaultAgent ?? undefined, notes: notes || undefined, ...where.body }, { jobId }))
+          const s = await runJob('Взять в работу', (jobId) => api<Session & { jumped?: boolean }>('POST', `/tasks/${encodeURIComponent(task.id)}/start`, { agent: st.defaultAgent ?? undefined, notes: notes || undefined, ...(kids ? {} : where.body) }, { jobId }))
           if (!s) return false
           if (s.jumped) toast('Задача уже в работе — открыл текущую сессию')
           adoptSession(s)

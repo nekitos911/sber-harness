@@ -69,8 +69,6 @@ export function TaskDrawer({ task, ctx, onClose }: { task: Task; ctx: BoardCtx; 
   const blocked = pendingDeps(task, ctx.byId)
   const reworkOn = useFeature('rework')
   const reworkable = reworkOn && !!session && (session.status !== 'running' || task.status === 'review')
-  // Subtasks go through the full dialog (it plans the coordinator); the popover covers the rest, «Где» included.
-  const needsDialog = !!ctx.kids.get(task.id)?.length
   const [pop, setPop] = useState<'start' | 'rework' | null>(null)
   const primaryRef = useRef<HTMLButtonElement>(null)
   const patch = (fields: Partial<Task>) => patchTask(task.id, fields)
@@ -128,7 +126,7 @@ export function TaskDrawer({ task, ctx, onClose }: { task: Task; ctx: BoardCtx; 
           {/* One primary action: take into work → open the running session → send back for rework once it finished. */}
           {!session ? (
             <button ref={primaryRef} type="button" className="btn btn-primary" disabled={blocked.length > 0} data-tip={blocked.length ? `Ждёт: ${blocked.join(', ')}` : undefined}
-              onClick={() => (needsDialog ? openDialog({ kind: 'start', taskId: task.id }) : setPop('start'))}>
+              onClick={() => setPop('start')}>
               <Play />
               Взять в работу
             </button>

@@ -11,7 +11,7 @@ import { CSS } from '@dnd-kit/utilities'
 import { CloudOff, Columns3, Eye, EyeOff, ListFilter, Plus, RefreshCw, Search, SquareKanban } from 'lucide-react'
 import { useMedia } from '../lib/useMedia'
 import { api, errorText, tryApi } from '../api'
-import { getState, openDialog, setState, toast, upsert, useFeature, useStore } from '../store'
+import { getState, setState, toast, upsert, useFeature, useStore } from '../store'
 import { COLUMNS, statusLabel } from '../lib/format'
 import { byOrder } from '../lib/tasks'
 import type { Task, TaskStatus } from '../types'
@@ -95,7 +95,6 @@ export function BoardView() {
       workspaces: new Map(workspaces.map((w) => [w.id, w])),
       agents: new Map(agents.map((a) => [a.id, a])),
       onOpen: setOpenId,
-      onStart: (t) => openDialog({ kind: 'start', taskId: t.id }),
       showRepo: !repo && workspaces.length > 1,
       trackerSync,
     }

@@ -1,4 +1,4 @@
-import { memo, type KeyboardEvent, type MouseEvent, type PointerEvent } from 'react'
+import { memo, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent } from 'react'
 import { Check, CircleDot, LoaderCircle, X, ExternalLink, FolderGit2, GitMerge, Link2, ListChecks, Lock, Play } from 'lucide-react'
 import { PRIORITY } from '../../lib/format'
 import { pendingDeps, taskKey, trackerDiffers, unusualTargets } from '../../lib/tasks'
@@ -7,6 +7,7 @@ import { StatusIcon, statusText } from '../bits'
 import { sessionVisualState } from '../../lib/sessionState'
 import { PrGlyph } from '../PrChip'
 import { openSession } from '../../store'
+import { StartPopover } from './Rework'
 
 export interface BoardCtx {
   byId: Map<string, Task>
@@ -15,7 +16,6 @@ export interface BoardCtx {
   workspaces: Map<string, Workspace>
   agents: Map<string, AgentInfo>
   onOpen: (id: string) => void
-  onStart: (task: Task) => void
   showRepo: boolean // only when the board mixes repositories; one repo on every card is noise
   trackerSync: Record<string, { text: string }> // «трекер: перевод…» after a move with tracker sync
 }
@@ -31,6 +31,8 @@ export const TaskCard = memo(function TaskCard({ task, ctx }: { task: Task; ctx:
   const kids = ctx.kids.get(task.id) ?? []
   const kidsDone = kids.filter((k) => k.status === 'done').length
   const canStart = (task.status === 'backlog' || task.status === 'todo') && session?.status !== 'running'
+  const startRef = useRef<HTMLButtonElement>(null)
+  const [starting, setStarting] = useState(false) // the same «Взять в работу» popover as in the task drawer
 
   return (
     <>
@@ -79,11 +81,19 @@ export const TaskCard = memo(function TaskCard({ task, ctx }: { task: Task; ctx:
           disabled={waiting.length > 0}
           onPointerDown={stop}
           onKeyDown={stop}
-          onClick={(e) => { e.stopPropagation(); ctx.onStart(task) }}
+          ref={startRef}
+          aria-expanded={starting}
+          onClick={(e) => { e.stopPropagation(); setStarting(true) }}
         >
           <Play />
           Взять в работу
         </button>
+      )}
+      {/* the popover lives in <body>, but its events still bubble here in React: keep them off the card (open, drag) */}
+      {starting && (
+        <span className="contents" onPointerDown={stop} onKeyDown={stop} onClick={stop}>
+          <StartPopover task={task} anchor={startRef} open onClose={() => setStarting(false)} />
+        </span>
       )}
       {ctx.trackerSync[task.id] && <span className="card-sync" role="status">{ctx.trackerSync[task.id].text}</span>}
       {(session || task.externalUrl) && (
