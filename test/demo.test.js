@@ -22,7 +22,7 @@ test('--demo seeds repositories, workspaces and tasks once; tracker and PR statu
     const st = (await api('GET', '/api/state')).body;
     assert.equal(st.demo, true);
     assert.ok(st.features.includes('demo'));
-    assert.deepEqual(st.workspaces.map((w) => w.name).sort(), ['demo-service', 'ledger-service']);
+    assert.deepEqual(st.workspaces.filter((w) => !w.kind).map((w) => w.name).sort(), ['demo-service', 'ledger-service']);
     assert.equal(st.tasks.length, 5);
     const hotfix = st.tasks.find((t) => t.title.startsWith('Хотфикс'));
     assert.deepEqual(hotfix.targets, ['develop', 'release/1.54.0']);
@@ -44,7 +44,7 @@ test('--demo seeds repositories, workspaces and tasks once; tracker and PR statu
   try {
     const st = (await api('GET', '/api/state')).body;
     assert.equal(st.tasks.filter((t) => !t.source).length, 5, 'local demo tasks are not seeded twice');
-    assert.equal(st.workspaces.length, 2);
+    assert.equal(st.workspaces.filter((w) => !w.kind).length, 2);
     assert.equal(gitIn(path.join(dataDir, 'demo-service'), 'rev-list', '--all', '--count'), commits);
   } finally {
     await srv.close();

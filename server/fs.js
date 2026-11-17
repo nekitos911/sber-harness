@@ -1,5 +1,7 @@
 // Workspace file browser: list/read/write; every path is resolved against cwd and must stay inside it.
 import fs from 'node:fs';
+import os from 'node:os';
+import { execFile } from 'node:child_process';
 import path from 'node:path';
 import { git } from './git.js';
 
@@ -159,4 +161,41 @@ export async function searchFiles(cwd, query = '', limit = 30) {
     if (score !== null) hits.push({ path: p, score });
   }
   return hits.sort((a, b) => b.score - a.score || a.path.length - b.path.length || a.path.localeCompare(b.path)).slice(0, n);
+}
+
+// ---- folder browser (GET /api/fs/dirs): any folder on the machine, directories only ----
+let rootsCache = null; // { at, roots }
+
+/** Windows: drive letters (wmic, else probing A-Z); POSIX: / and the home folder. */
+async function fsRoots() {
+  if (process.platform !== 'win32') return ['/', os.homedir()];
+  if (rootsCache && Date.now() - rootsCache.at < 60000) return rootsCache.roots;
+  const out = await new Promise((resolve) => {
+    execFile('wmic', ['logicaldisk', 'get', 'name'], { windowsHide: true, timeout: 3000, encoding: 'utf8' }, (e, text) => resolve(e ? '' : text));
+  });
+  let roots = [...out.matchAll(/^([A-Z]):/gm)].map((m) => `${m[1]}:${path.sep}`);
+  if (!roots.length) roots = [...'CDEFGHIJKLMNOPQRSTUVWXYZAB'].map((l) => `${l}:${path.sep}`).filter((r) => fs.existsSync(r));
+  rootsCache = { at: Date.now(), roots };
+  return roots;
+}
+
+export async function listDirs(dir, { hidden = false } = {}) {
+  const p = path.resolve(dir || os.homedir());
+  if (!path.isAbsolute(dir || p)) throw Object.assign(new Error('path must be absolute'), { status: 400 });
+  let entries;
+  try {
+    entries = await fs.promises.readdir(p, { withFileTypes: true });
+  } catch (e) {
+    throw Object.assign(new Error(`cannot list ${p}: ${e.code || e.message}`), { status: e.code === 'ENOENT' || e.code === 'ENOTDIR' ? 404 : 400 });
+  }
+  const parent = path.dirname(p);
+  return {
+    path: p,
+    parent: parent === p ? null : parent,
+    entries: entries
+      .filter((d) => d.isDirectory() && (hidden || !/^[.$]/.test(d.name)))
+      .map((d) => ({ name: d.name, path: path.join(p, d.name) }))
+      .sort((a, b) => a.name.localeCompare(b.name)),
+    roots: await fsRoots(),
+  };
 }

@@ -15,7 +15,8 @@ test('workspaces.root without repos registers every git repo under root', async 
   const h = await startTestServer({ workspaces: { root, repos: [] } });
   try {
     const { body } = await h.api('GET', '/api/state');
-    assert.deepEqual(body.workspaces.map((w) => w.name).sort(), ['ledger', 'payments svc']);
+    assert.deepEqual(body.workspaces.filter((w) => !w.kind).map((w) => w.name).sort(), ['ledger', 'payments svc']);
+    assert.deepEqual([body.workspaces[0].kind, body.workspaces[0].path], ['root', root], 'the projects folder is listed first');
   } finally { await h.close(); }
 });
 
@@ -23,6 +24,6 @@ test('workspaces.repos picks only the listed ones and skips missing paths', asyn
   const h = await startTestServer({ workspaces: { root, repos: ['ledger', 'missing'] } });
   try {
     const { body } = await h.api('GET', '/api/state');
-    assert.deepEqual(body.workspaces.map((w) => w.name), ['ledger']);
+    assert.deepEqual(body.workspaces.filter((w) => !w.kind).map((w) => w.name), ['ledger']);
   } finally { await h.close(); }
 });

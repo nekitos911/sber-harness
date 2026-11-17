@@ -860,6 +860,12 @@ Secrets:
   worktrees) of the other subtasks of the same parent task + the parent task's explicit `includeDirs`; a coordinator at
   the projects folder needs none. Terminal sessions with an agent CLI get the same flags at start.
   `POST /api/sessions` accepts `includeDirs`. Feature flags: `folders`, `include-dirs`.
+- Implementation notes: the root workspace's `name` is the folder name (the UI adds «Все проекты»); auto-detection uses
+  repository workspaces only (not `kind: 'folder'` ones) and is redone when workspaces are added/removed; a session's
+  `workspaceId` is the DEEPEST registered folder containing its cwd. Hidden = names starting with `.` or `$`.
+  `recentFolders` is updated by `POST /api/workspaces { kind: 'folder' }` and by `POST /api/sessions` with an explicit
+  cwd. The parent task's own extra folders: `PATCH /api/tasks/:id { includeDirs }`. Invalid `includeDirs` from the API →
+  400; auto-filled ones that no longer exist are dropped silently.
 
 ## Agent questions and permission requests
 

@@ -13,7 +13,7 @@ import { createStore, writeAtomic } from './store.js';
 import { createBus } from './bus.js';
 import { createTasks, STATUSES } from './tasks.js';
 import { createSessions, newId } from './sessions.js';
-import { createOrchestration } from './orchestration.js';
+import { createOrchestration, commonDir } from './orchestration.js';
 import * as git from './git.js';
 import * as wfs from './fs.js';
 import { createMcpManager, loadSecrets, secretsFile, serverDefs } from './mcp-client.js';
@@ -37,7 +37,7 @@ const NO_BUILD_HTML = '<!doctype html><meta charset="utf-8"><title>Harness</titl
 const GRADES = ['default', 'fast', 'review', 'explore'];
 // optional API groups this server implements (docs/ARCHITECTURE.md "Feature flags"); a flag ships with its route
 export const FEATURES = ['branches', 'fs-search', 'pr-status', 'agent-info', 'models-refresh', 'tracker-links', 'board-columns', 'review-loop',
-  'subagents', 'virtual-sessions', 'worker-run', 'skills-install', 'demo', 'worktree-meta', 'open', 'sdd', 'health'];
+  'subagents', 'virtual-sessions', 'worker-run', 'skills-install', 'demo', 'worktree-meta', 'open', 'sdd', 'health', 'folders', 'include-dirs'];
 // titles of operations the UI may follow by sending x-job-id (WS { t: 'job' } frames)
 const JOB_TITLES = {
   'POST /api/tasks/sync': 'Синхронизация с трекером',
@@ -603,6 +603,7 @@ export async function startServer(opts = {}) {
       : Object.keys(config.agents).find((id) => config.agents[id].enabled !== false) ?? null,
     shell: { command: config.shell.command },
     features: FEATURES,
+    recentFolders: db.prefs?.recentFolders || [],
     demo: !!opts.demo,
     integrations: { tasks: !!config.integrations.tasks?.enabled, pr: !!config.integrations.pr?.enabled, tasksProblem },
   }));
@@ -620,19 +621,53 @@ export async function startServer(opts = {}) {
   route('PUT', '/api/settings', ({ body }) => saveSettings(body));
 
   // workspaces
-  async function addWorkspace(rawPath, name) {
+  /** db.prefs.recentFolders: the last 10 folders a chat was started in or registered (newest first). */
+  function rememberFolder(p) {
+    db.prefs ||= {};
+    db.prefs.recentFolders = [p, ...(db.prefs.recentFolders || []).filter((x) => !samePath(x, p))].slice(0, 10);
+    store.save();
+  }
+
+  async function addWorkspace(rawPath, name, kind) {
     const p = path.resolve(rawPath);
     if (!path.isAbsolute(rawPath) || !fs.existsSync(p) || !fs.statSync(p).isDirectory()) fail(400, `not an existing absolute directory: ${rawPath}`);
     const existing = db.workspaces.find((w) => samePath(w.path, p));
     if (existing) return existing;
-    const ws = { id: newId('w', 3), name: name?.trim() || path.basename(p), path: p, isGit: await git.isRepo(p) };
+    const ws = { id: newId('w', 3), name: name?.trim() || path.basename(p), path: p, isGit: await git.isRepo(p), ...(kind ? { kind } : {}) };
     db.workspaces.push(ws);
     emitWorkspaces();
+    if (!kind) syncRootWorkspace();
     return ws;
   }
-  route('POST', '/api/workspaces', ({ body }) => {
-    check(body, { path: 'string', name: 'string?' });
-    return addWorkspace(body.path, body.name);
+
+  /**
+   * The projects folder as a folder workspace (kind 'root', listed first): workspaces.root, else the deepest common
+   * parent of >= 2 registered repositories. A chat there sees every project under it.
+   */
+  function syncRootWorkspace() {
+    const configured = config.workspaces?.root ? path.resolve(expandHome(config.workspaces.root)) : null;
+    const repos = db.workspaces.filter((w) => !w.kind).map((w) => w.path);
+    const rootPath = configured && fs.existsSync(configured) ? configured : repos.length >= 2 ? commonDir(repos) : null;
+    const cur = db.workspaces.find((w) => w.kind === 'root');
+    if (!rootPath) {
+      if (cur) {
+        db.workspaces = db.workspaces.filter((w) => w !== cur);
+        emitWorkspaces();
+      }
+      return;
+    }
+    if (cur && samePath(cur.path, rootPath) && db.workspaces[0] === cur) return;
+    const ws = cur ? Object.assign(cur, { path: rootPath, name: path.basename(rootPath) }) : { id: newId('w', 3), name: path.basename(rootPath), path: rootPath, isGit: false, kind: 'root' };
+    db.workspaces = [ws, ...db.workspaces.filter((w) => w !== ws && !samePath(w.path, rootPath))];
+    emitWorkspaces();
+  }
+
+  route('POST', '/api/workspaces', async ({ body }) => {
+    check(body, { path: 'string', name: 'string?', kind: 'string?' });
+    if (body.kind && body.kind !== 'folder') fail(400, 'kind must be "folder" (or omitted for a repository)');
+    const ws = await addWorkspace(body.path, body.name, body.kind);
+    if (body.kind === 'folder') rememberFolder(ws.path);
+    return ws;
   });
   // config.workspaces: { root, repos } — repos are names under root (or absolute paths); empty repos = every git repo directly under root
   {
@@ -643,10 +678,12 @@ export async function startServer(opts = {}) {
         : [];
     for (const p of list) await addWorkspace(p).catch((e) => console.warn(`workspaces: skip ${p}: ${e.message}`));
   }
+  syncRootWorkspace();
   route('DELETE', '/api/workspaces/:id', ({ params }) => {
     getWs(params.id);
     db.workspaces = db.workspaces.filter((w) => w.id !== params.id);
     emitWorkspaces();
+    syncRootWorkspace();
   });
   route('GET', '/api/workspaces/:id/worktrees', ({ params }) => enrichedWorktrees(getWs(params.id)));
   route('POST', '/api/workspaces/:id/worktrees', async ({ params, body }) => {
@@ -764,7 +801,11 @@ export async function startServer(opts = {}) {
   });
 
   // sessions
-  route('POST', '/api/sessions', ({ body }) => sessions.create(pick(body, ['kind', 'agent', 'cwd', 'workspaceId', 'title', 'prompt', 'role', 'approvalMode', 'model', 'command'])));
+  route('POST', '/api/sessions', async ({ body }) => {
+    const s = await sessions.create(pick(body, ['kind', 'agent', 'cwd', 'workspaceId', 'title', 'prompt', 'role', 'approvalMode', 'model', 'command', 'includeDirs']));
+    if (typeof body.cwd === 'string') rememberFolder(s.cwd);
+    return s;
+  });
   route('PATCH', '/api/sessions/:id', ({ params, body }) => sessions.patch(params.id, body));
   route('DELETE', '/api/sessions/:id', ({ params }) => sessions.remove(params.id));
   route('GET', '/api/sessions/:id/messages', ({ params }) => sessions.messages(params.id));
@@ -826,6 +867,7 @@ export async function startServer(opts = {}) {
 
   // files
   route('GET', '/api/sdd', ({ query }) => readSdd(path.resolve(cwdOf(query))));
+  route('GET', '/api/fs/dirs', ({ query }) => wfs.listDirs(query.path || '', { hidden: query.hidden === '1' }));
   route('GET', '/api/fs/list', ({ query }) => wfs.list(cwdOf(query), query.path || ''));
   route('GET', '/api/fs/search', ({ query }) => wfs.searchFiles(cwdOf(query), query.q || '', query.limit));
   route('GET', '/api/fs/file', ({ query }) => wfs.readFile(cwdOf(query), check(query, { path: 'string' }).path));

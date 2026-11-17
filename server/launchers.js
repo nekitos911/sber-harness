@@ -268,10 +268,13 @@ export function resolveGigacode(agentCfg, defaultCommand = 'gigacode') {
 }
 
 /** Gemini-CLI argv family: gigacode, qwen, gemini, mock. They differ only by defaults (and gigacode's resolve). */
+const INCLUDE_FLAG = '--include-directories'; // the headless form of the interactive /dir add
+
 function geminiFamily(id, defaults, resolve) {
   return {
     id,
     defaults,
+    dirFlag: INCLUDE_FLAG,
     resolve: resolve || ((agentCfg) => ({ ...resolveCommand(agentCfg.command || defaults.command), env: {} })),
     buildArgs({ prompt, session, agentCfg }) {
       const args = [];
@@ -282,6 +285,7 @@ function geminiFamily(id, defaults, resolve) {
       args.push('--output-format', 'stream-json');
       const model = session.model || agentCfg.model;
       if (model) args.push('--model', model);
+      for (const dir of session.includeDirs || []) args.push(INCLUDE_FLAG, dir); // every turn: a new process
       return args;
     },
     env({ agentCfg, settingsPath }) {
@@ -297,6 +301,7 @@ function geminiFamily(id, defaults, resolve) {
 
 const claude = {
   id: 'claude',
+  dirFlag: '--add-dir',
   defaults: { command: 'claude', firstEventTimeoutMs: 60000 },
   resolve: (agentCfg) => ({ ...resolveCommand(agentCfg.command || 'claude'), env: {} }),
   buildArgs({ prompt, session, agentCfg, mcpConfigPath }) {
@@ -306,6 +311,7 @@ const claude = {
     const model = session.model || agentCfg.model;
     if (model) args.push('--model', model);
     if (session.externalSessionId) args.push('--resume', session.externalSessionId);
+    for (const dir of session.includeDirs || []) args.push('--add-dir', dir);
     // Variadic flags go last so they cannot swallow other arguments. Harness tools are pre-allowed:
     // in -p mode a tool that needs permission is simply denied.
     args.push('--mcp-config', mcpConfigPath, '--allowedTools', 'mcp__harness', '--disallowedTools', 'Task', 'Agent');

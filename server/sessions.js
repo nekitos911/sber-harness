@@ -14,6 +14,28 @@ const fail = (status, message) => { throw Object.assign(new Error(message), { st
 export const newId = (prefix, bytes = 4) => `${prefix}_${randomBytes(bytes).toString('hex')}`;
 const isDir = (p) => { try { return fs.statSync(p).isDirectory(); } catch { return false; } };
 const insideDir = (dir, p) => { const r = path.relative(dir, p); return !r.startsWith('..') && !path.isAbsolute(r); };
+const sameDir = (a, b) => (process.platform === 'win32' ? path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase() : path.resolve(a) === path.resolve(b));
+
+/**
+ * session.includeDirs: absolute existing folders, de-duplicated, without cwd and its ancestors (the CLI sees those
+ * anyway). `strict` (API input) rejects a bad entry; auto-filled lists just drop it.
+ */
+export function normalizeIncludeDirs(dirs, cwd, strict = true) {
+  if (dirs == null) return [];
+  if (!Array.isArray(dirs) || dirs.some((d) => typeof d !== 'string')) fail(400, 'includeDirs must be an array of folder paths');
+  const out = [];
+  for (const d of dirs) {
+    const ok = path.isAbsolute(d) && isDir(d);
+    if (!ok) {
+      if (strict) fail(400, `includeDirs: not an existing absolute folder: ${d}`);
+      continue;
+    }
+    const p = path.resolve(d);
+    if (cwd && insideDir(p, cwd)) continue;
+    if (!out.some((x) => sameDir(x, p))) out.push(p);
+  }
+  return out;
+}
 const tail = (text) => (text ? `\n\nstderr:\n${text.slice(-2000).trim()}` : '');
 const fence = (lines) => `\`\`\`text\n${lines.join('\n')}\n\`\`\``;
 const REGISTRY_POLL_MS = 2000;
@@ -662,7 +684,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null }) {
   }
 
   /** Interactive CLI of an agent (no -p): the launcher's resolved executable + identity env. */
-  function interactive(agentCfg) {
+  function interactive(agentCfg, includeDirs = []) {
     let exe;
     try {
       exe = launchers[agentCfg.launcher]?.resolve(agentCfg);
@@ -670,7 +692,8 @@ export function createSessions({ config, store, bus, getUrl, catalog = null }) {
       fail(400, e.message);
     }
     if (!exe) return { command: null, env: {} };
-    return { command: shellLine([exe.file, ...exe.args]), env: exe.env || {} };
+    const flag = launchers[agentCfg.launcher]?.dirFlag;
+    return { command: shellLine([exe.file, ...exe.args, ...(flag ? includeDirs.flatMap((d) => [flag, d]) : [])]), env: exe.env || {} };
   }
 
   // ---- public API ----
@@ -741,7 +764,8 @@ export function createSessions({ config, store, bus, getUrl, catalog = null }) {
       }
 
       const now = Date.now();
-      const command = kind === 'terminal' ? o.command ?? (agentCfg ? interactive(agentCfg).command : null) : null;
+      const includeDirs = normalizeIncludeDirs(o.includeDirs, cwd, o.autoIncludeDirs !== true);
+      const command = kind === 'terminal' ? o.command ?? (agentCfg ? interactive(agentCfg, includeDirs).command : null) : null;
       const s = {
         id,
         kind,
@@ -749,7 +773,8 @@ export function createSessions({ config, store, bus, getUrl, catalog = null }) {
         agent: kind === 'chat' ? agent : agent || 'shell',
         launcherId: kind === 'chat' ? agentCfg.launcher : null,
         cwd,
-        workspaceId: ws?.id ?? db.workspaces.find((w) => insideDir(w.path, cwd))?.id ?? null,
+        // the deepest registered folder wins (a repo inside the projects folder belongs to the repo)
+        workspaceId: ws?.id ?? db.workspaces.filter((w) => insideDir(w.path, cwd)).sort((a, b) => b.path.length - a.path.length)[0]?.id ?? null,
         branch: o.branch ?? null,
         role,
         parentId: o.parentId ?? null,
@@ -763,6 +788,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null }) {
         queued: 0,
         preview: '',
         command,
+        includeDirs,
         pid: null,
         tokensIn: 0,
         tokensOut: 0,
@@ -892,6 +918,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null }) {
       if ('approvalMode' in p) s.approvalMode = p.approvalMode || null;
       if ('model' in p) s.model = p.model || null;
       if ('autoReport' in p) s.autoReport = p.autoReport;
+      if ('includeDirs' in p) s.includeDirs = normalizeIncludeDirs(p.includeDirs, s.cwd); // applies from the next turn
       return emit(s);
     },
 

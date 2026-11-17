@@ -35,6 +35,8 @@ test('each feature flag has a working route (not 404/405)', async () => {
       'worktree-meta': ['PATCH', '/api/worktrees/meta', null, { path: repo, label: 'x' }],
       open: ['POST', '/api/open', null, { cwd: repo, target: 'nope' }],
       health: ['GET', '/api/health', (b) => b.ok === true && b.pid === process.pid],
+      folders: ['GET', `/api/fs/dirs?path=${q}`, (b) => Array.isArray(b.entries) && Array.isArray(b.roots)],
+      'include-dirs': ['PATCH', `/api/sessions/${chat.id}`, (b) => Array.isArray(b.includeDirs), { includeDirs: [] }],
       sdd: ['GET', `/api/sdd?cwd=${q}`, (b) => Array.isArray(b.plans)],
     };
     for (const flag of FEATURES) {

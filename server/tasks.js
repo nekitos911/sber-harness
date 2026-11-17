@@ -5,7 +5,7 @@ export const STATUSES = ['backlog', 'todo', 'in_progress', 'review', 'done'];
 export const PRIORITIES = ['low', 'medium', 'high'];
 const EDITABLE = ['title', 'description', 'status', 'order', 'priority', 'deps', 'labels', 'workspaceId', 'parentId',
   'targets', 'branch', 'ports', 'assigneeSessionId', 'externalId', 'externalUrl', 'source',
-  'externalStatus', 'statusManual', 'hidden', 'takenAt', 'snapshot', 'pr', 'agentState', 'review'];
+  'externalStatus', 'statusManual', 'hidden', 'takenAt', 'snapshot', 'pr', 'agentState', 'review', 'includeDirs'];
 const DEFAULTS = { parentId: null, targets: null, branch: null, ports: [], externalStatus: null, statusManual: false, hidden: false, takenAt: null, snapshot: null, pr: null, agentState: null, review: null };
 
 const fail = (status, message) => { throw Object.assign(new Error(message), { status }); };
@@ -62,6 +62,7 @@ export function createTasks({ store, bus, defaultBase = 'main' }) {
     if ('priority' in f && f.priority !== null && f.priority !== undefined && !PRIORITIES.includes(f.priority)) fail(400, `priority must be one of ${PRIORITIES.join(', ')} or null`);
     if ('order' in f && !Number.isFinite(f.order)) fail(400, 'order must be a number');
     if ('labels' in f && !isStrArr(f.labels)) fail(400, 'labels must be an array of strings');
+    if ('includeDirs' in f && f.includeDirs !== undefined && !isStrArr(f.includeDirs)) fail(400, 'includeDirs must be an array of folder paths');
     if ('targets' in f && f.targets !== undefined && (!isStrArr(f.targets) || f.targets.some((t) => !t.trim()))) fail(400, 'targets must be an array of branch names');
     if ('ports' in f && !Array.isArray(f.ports)) fail(400, 'ports must be an array');
     for (const k of ['statusManual', 'hidden']) if (k in f && typeof f[k] !== 'boolean') fail(400, `${k} must be a boolean`);

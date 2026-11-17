@@ -76,6 +76,20 @@ function checkArgs(schema, args) {
   }
 }
 
+/** Deepest common parent folder of paths (never a drive/filesystem root), or null. */
+export function commonDir(paths) {
+  if (!paths.length) return null;
+  const split = (p) => path.resolve(p).split(path.sep);
+  let common = split(paths[0]);
+  for (const p of paths.slice(1)) {
+    const parts = split(p);
+    let i = 0;
+    while (i < common.length && i < parts.length && (process.platform === 'win32' ? common[i].toLowerCase() === parts[i].toLowerCase() : common[i] === parts[i])) i++;
+    common = common.slice(0, i);
+  }
+  return common.length > 1 && common.join('') ? common.join(path.sep) : null; // never a drive/filesystem root
+}
+
 export function createOrchestration({ config, store, bus, tasks, sessions }) {
   const db = store.db;
   const gitCfg = () => ({ branchTemplate: 'feature/{key}', portBranchTemplate: '{branch}-{targetSlug}', commitTitleTemplate: '{key} {title}', prTitleTemplate: '{key} {title}', ...config.git });
@@ -162,6 +176,20 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
     return { wt, created: !existed, repo: cwd };
   }
 
+  /** includeDirs of a subtask worker: the other subtasks' repos (their task worktree when it exists) + the parent's own. */
+  async function siblingDirs(task) {
+    const parent = task.parentId && tasks.find(task.parentId);
+    if (!parent) return [];
+    const dirs = [];
+    for (const t of db.tasks.filter((x) => x.parentId === parent.id && x.id !== task.id)) {
+      const ws = findWs(t.workspaceId);
+      if (!ws) continue;
+      const wt = t.branch && (await git.worktrees(ws.path).catch(() => [])).find((w) => w.branch === t.branch && !w.main);
+      dirs.push(wt?.path || ws.path);
+    }
+    return [...dirs, ...(parent.includeDirs || [])];
+  }
+
   /** Creates a worker chat session for `task` and sends it the first prompt. Used by worker_start, assign, start. */
   async function startWorker(task, o, caller) {
     const busy = activeWorker(task);
@@ -190,13 +218,14 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
         branch = await git.currentBranch(cwd);
       }
       const inWorktree = !!made || (await git.worktrees(cwd).catch(() => [])).some((w) => !w.main && samePath(w.path, cwd));
+      const includeDirs = await siblingDirs(task);
       const key = tasks.key(task);
       let s;
       jobStep('Запуск сессии');
       try {
         s = await sessions.create({
           kind: 'chat', agent, cwd, workspaceId: ws?.id, title: `${key}: ${task.title}`, role: 'worker',
-          parentId: caller?.id ?? null, taskId: task.id, model: o.model, branch, inWorktree,
+          parentId: caller?.id ?? null, taskId: task.id, model: o.model, branch, inWorktree, includeDirs, autoIncludeDirs: true,
         });
       } catch (e) {
         if (made?.created) await git.removeWorktree(made.repo, made.wt.path).catch(() => {});
@@ -283,18 +312,6 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
   }
 
   /** Common parent folder of the given absolute paths (null when there is none, e.g. different drives). */
-  function commonDir(paths) {
-    if (!paths.length) return null;
-    const split = (p) => path.resolve(p).split(path.sep);
-    let common = split(paths[0]);
-    for (const p of paths.slice(1)) {
-      const parts = split(p);
-      let i = 0;
-      while (i < common.length && i < parts.length && (process.platform === 'win32' ? common[i].toLowerCase() === parts[i].toLowerCase() : common[i] === parts[i])) i++;
-      common = common.slice(0, i);
-    }
-    return common.length > 1 && common.join('') ? common.join(path.sep) : null; // never a drive/filesystem root
-  }
 
   /** "Take into work" for a parent task: a coordinator that starts one worker per subtask/repository. */
   async function startCoordinator(task, { agent, notes }) {
