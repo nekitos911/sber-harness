@@ -1,0 +1,74 @@
+{
+  "host": "127.0.0.1",
+  "port": 4777,
+  "dataDir": "./data",
+  "shell": { "command": "powershell.exe", "args": ["-NoLogo"] },
+  "defaultAgent": "gigacode",
+  "worktreeRoot": null,
+  "agents": {
+    "gigacode": {
+      "launcher": "gigacode",
+      "label": "GigaCode",
+      "command": "gigacode",
+      "approvalMode": "yolo",
+      "approvalModes": ["plan", "default", "auto-edit", "yolo"],
+      "model": null,
+      "settingsEnv": "GIGACODE_CLI_SYSTEM_SETTINGS_PATH",
+      "settings": { "chatRecording": true },
+      "inheritUserMcpFrom": "~/.gigacode/settings.json",
+      "firstEventTimeoutMs": 30000,
+      "env": {}
+    },
+    "claude": {
+      "launcher": "claude",
+      "label": "Claude Code",
+      "command": "claude",
+      "approvalMode": "acceptEdits",
+      "approvalModes": ["default", "acceptEdits", "plan", "bypassPermissions"],
+      "enabled": false
+    },
+    "mock": {
+      "launcher": "mock",
+      "label": "Mock agent (demo)",
+      "approvalMode": "yolo",
+      "approvalModes": ["plan", "default", "auto-edit", "yolo"]
+    }
+  },
+  "agentMcpServers": {},
+  "mcpServers": {
+    "tracker": {
+      "enabled": false,
+      "transport": "stdio",
+      "command": "node",
+      "args": ["scripts/mock-mcp.js"],
+      "timeoutMs": 15000
+    }
+  },
+  "mcpSecretsFile": null,
+  "integrations": {
+    "tasks": {
+      "enabled": false,
+      "server": "tracker",
+      "tool": "list_issues",
+      "args": {},
+      "itemsPath": "issues",
+      "map": {
+        "externalId": "key",
+        "title": "summary",
+        "description": "description",
+        "externalUrl": "url",
+        "status": "status",
+        "priority": "priority"
+      },
+      "statusMap": { "Open": "todo", "In Progress": "in_progress", "Review": "review", "Done": "done" }
+    },
+    "pr": {
+      "enabled": false,
+      "server": "tracker",
+      "tool": "create_pull_request",
+      "args": { "repo": "{repo}", "source": "{branch}", "target": "{base}", "title": "{title}", "description": "{body}" },
+      "urlPath": "url",
+      "defaultBase": "main"
+    }
+  }
+}

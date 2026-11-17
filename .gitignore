@@ -1,0 +1,8 @@
+node_modules/
+web/dist/
+data/
+harness.config.local.json
+*.log
+.env
+.env.*
+graphify-out/
