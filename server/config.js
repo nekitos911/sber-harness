@@ -68,13 +68,21 @@ export function loadConfig({ root = CODE_ROOT, overrides = {}, dataDir, configFi
     ...cfg.board,
   };
   for (const a of Object.values(cfg.agents)) if (a && a.models !== undefined) a.models = normalizeModels(a.models);
-  const shell = cfg.shell || {};
-  if (process.platform !== 'win32' && (!shell.command || /powershell(\.exe)?$/i.test(shell.command))) {
-    cfg.shell = { command: process.env.SHELL || '/bin/bash', args: [] };
-  } else {
-    cfg.shell = { command: shell.command || 'powershell.exe', args: shell.args || [] };
-  }
+  cfg.shell = resolveShell(cfg.shell);
   return cfg;
+}
+
+/** shell null = auto: Windows PowerShell with a UTF-8 console, else $SHELL (bash, sh) as a login shell. */
+export function resolveShell(shell, platform = process.platform, env = process.env) {
+  // a PowerShell setting copied to Linux/macOS means "auto" there
+  if (shell?.command && !(platform !== 'win32' && /powershell(\.exe)?$/i.test(shell.command))) {
+    return { command: shell.command, args: shell.args || [], reason: 'configured' };
+  }
+  if (platform === 'win32') {
+    return { command: 'powershell.exe', args: ['-NoLogo', '-NoExit', '-Command', '[Console]::InputEncoding=[Console]::OutputEncoding=[System.Text.Encoding]::UTF8'], reason: 'auto: Windows PowerShell, UTF-8 console' };
+  }
+  const command = env.SHELL || ['/bin/bash', '/bin/sh'].find((p) => fs.existsSync(p)) || '/bin/sh';
+  return { command, args: ['-l'], reason: `auto: ${env.SHELL ? '$SHELL' : command} as a login shell` };
 }
 
 /** Model catalogue entries are objects { id, label?, context?, description? }; a plain string means { id }. */

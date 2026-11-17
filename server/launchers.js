@@ -200,8 +200,64 @@ export function sessionSettings({ agentCfg, harnessMcp, agentMcpServers }) {
 }
 
 export function shimIdentity(text) {
-  return text.match(/set\s+"?GIGACODE_PACKAGE_IDENTITY=([0-9a-f]{64})"?/i)?.[1] || null;
+  // gigacode.cmd: set "GIGACODE_PACKAGE_IDENTITY=..."; an sh shim: export GIGACODE_PACKAGE_IDENTITY=...
+  return text.match(/(?:set\s+"?|export\s+|^\s*)GIGACODE_PACKAGE_IDENTITY=["']?([0-9a-f]{64})/im)?.[1] || null;
 }
+
+/**
+ * sh shim fallback (POSIX, when the shim cannot be executed itself): ROOT=... (literal, or relative to "$0"),
+ * then a line with "$ROOT/runtime/node/bin/node" "$ROOT/lib/cli-entry.js". VERIFY the real Linux layout.
+ */
+export function parseShShim(shimPath, text) {
+  const vars = {};
+  const expand = (s) => s.replace(/\$\{?([A-Za-z_]\w*)\}?/g, (m, name) => vars[name] ?? m);
+  let node = null;
+  let entry = null;
+  for (const line of text.split(/\r?\n/)) {
+    const set = line.match(/^\s*(?:export\s+)?([A-Za-z_]\w*)=(.*)$/);
+    if (set) {
+      const raw = set[2].trim().replace(/^["']|["']$/g, '');
+      if (/\$0|\$\{0\}|BASH_SOURCE/.test(raw)) {
+        // ROOT="$(cd "$(dirname "$0")/.." && pwd)" and friends: the shim's folder plus the ../ steps after it
+        const ups = (raw.match(/\/\.\./g) || []).length;
+        vars[set[1]] = path.resolve(path.dirname(shimPath), ...Array(ups).fill('..'));
+      } else vars[set[1]] = expand(raw);
+      continue;
+    }
+    const quoted = [...line.matchAll(/"([^"]+)"|'([^']+)'/g)].map((m) => expand(m[1] ?? m[2]));
+    const n = quoted.find((q) => /\/node$/.test(q));
+    const e = quoted.find((q) => /\.[cm]?js$/i.test(q));
+    if (n && e) {
+      node = path.resolve(n);
+      entry = path.resolve(e);
+    }
+  }
+  return { node, entry };
+}
+
+/** agents.gigacode.command null = auto: the Windows install, else gigacode on PATH, else ~/.gigacode/bin/gigacode. */
+export function gigacodeCommand(agentCfg, platform = process.platform, env = process.env) {
+  if (agentCfg.command) return { command: agentCfg.command, reason: 'configured' };
+  if (platform === 'win32') {
+    const pf = 'C:/Program Files/.gigacode/bin/gigacode.cmd';
+    if (fs.existsSync(pf)) return { command: pf, reason: 'auto: the default Windows install' };
+    const found = locate('gigacode', env);
+    return found ? { command: found, reason: 'auto: gigacode on PATH' } : { command: pf, reason: 'auto: the default Windows install (not found)' };
+  }
+  const found = locate('gigacode', env);
+  if (found) return { command: found, reason: 'auto: gigacode on PATH' };
+  const home = path.join(os.homedir(), '.gigacode', 'bin', 'gigacode');
+  return { command: home, reason: `auto: ~/.gigacode/bin/gigacode${fs.existsSync(home) ? '' : ' (not found)'}` };
+}
+
+const executable = (file) => {
+  try {
+    fs.accessSync(file, fs.constants.X_OK);
+    return fs.statSync(file).isFile();
+  } catch {
+    return false;
+  }
+};
 
 /**
  * Bundled node + cli-entry referenced by a gigacode.cmd shim: `set "ROOT=%~dp0.."` + the quoted call line.
@@ -235,10 +291,20 @@ export function parseShim(shimPath, text) {
 }
 
 /** gigacode.cmd shim -> bundled node + cli-entry.js + identity env (see header). Throws a 400 with a clear message. */
-export function resolveGigacode(agentCfg, defaultCommand = 'gigacode') {
-  const command = agentCfg.command || defaultCommand;
+export function resolveGigacode(agentCfg) {
+  const { command } = gigacodeCommand(agentCfg);
   const shim = typeof command === 'string' ? locate(command) : null;
-  if (!shim) fail(`GigaCode launcher not found: ${JSON.stringify(command)}. Set agents.gigacode.command to the path of gigacode.cmd.`);
+  if (!shim) fail(`GigaCode launcher not found: ${JSON.stringify(command)}. Set agents.gigacode.command to the path of gigacode.cmd (Windows) or the gigacode executable.`);
+  const explicit = !!(agentCfg.node || agentCfg.cliEntry);
+  if (process.platform !== 'win32' && !explicit && !/\.(cmd|bat)$/i.test(shim)) {
+    // POSIX: the launcher sets its own identity env and exit codes are honest: run it as is, same argv
+    if (executable(shim)) return { file: shim, args: [], env: {} };
+    const text = fs.readFileSync(shim, 'utf8');
+    const pair = parseShShim(shim, text);
+    if (!exists(pair.node) || !exists(pair.entry)) fail(`${shim} is not executable and its node + cli-entry.js could not be found; chmod +x it or set agents.gigacode.node and cliEntry.`);
+    const identity = shimIdentity(text);
+    return { file: pair.node, args: [...(agentCfg.nodeArgs || []), pair.entry], env: identity ? { GIGACODE_PACKAGE_IDENTITY: identity, GIGACODE_PACKAGE_LAUNCHER: shim } : {} };
+  }
   const text = fs.readFileSync(shim, 'utf8');
   const identity = shimIdentity(text);
   if (!identity) fail(`GIGACODE_PACKAGE_IDENTITY not found in ${shim}; the CLI refuses to start without it. Point agents.gigacode.command at the gigacode.cmd shim.`);

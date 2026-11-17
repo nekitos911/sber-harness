@@ -20,7 +20,7 @@ A local, lightweight IDE for working with coding agents and tasks. Inspired by
   and one branch name in all of them.
 - **Agents board**: who is doing what, statuses, queues, the coordinator → worker hierarchy, assigning a task to an
   existing agent, quick messages, stopping.
-- **Terminals**: PowerShell by default, or an interactive agent CLI (`gigacode`) inside the UI, with persistent history.
+- **Terminals**: PowerShell on Windows, `$SHELL` elsewhere, or an interactive agent CLI (`gigacode`) inside the UI, with persistent history.
 - **IDE pieces**: workspaces and git worktrees, a file tree and editor (CodeMirror), diffs, commit, push,
   PR (through the MCP code-hosting service).
 - **Local only**: the server listens on `127.0.0.1`, no CDN or telemetry; it is protected by a token and a Host check.
@@ -36,6 +36,15 @@ npm start            # http://127.0.0.1:4777
 ```
 
 `npm run dev` starts the same thing with UI hot reload. `npm test` runs the tests (node:test, on mocks).
+
+### Linux / macOS
+
+The same commands work in bash/zsh. Nothing platform-specific is configured by default: `shell: null` picks
+`$SHELL -l` (UTF-8 locale when none is set) and `agents.gigacode.command: null` picks `gigacode` on `PATH`, else
+`~/.gigacode/bin/gigacode`; an executable launcher is run directly with the same arguments (it sets its own identity),
+explicit `agents.gigacode.node` + `cliEntry` still win. `node server/index.js --print-config` shows what was chosen and
+why. Stop sends SIGTERM to the agent's process group and SIGKILL after 3 s; «open folder» uses `xdg-open` / `open`.
+The native terminal module (`@lydell/node-pty`) needs the usual build tools only if no prebuilt binary matches.
 
 ### Демо без GigaCode: `npm run demo`
 
@@ -56,8 +65,8 @@ the report.
 
 | Key | Purpose |
 |---|---|
-| `agents.<id>` | agents: `launcher`, `command` (string or argv array), `approvalMode`, `model`, `settingsEnv`, `settings` |
-| `shell` | terminal shell (`powershell.exe -NoLogo` by default) |
+| `agents.<id>` | agents: `launcher`, `command` (string, argv array or `null` = auto), `approvalMode`, `model`, `settingsEnv`, `settings` |
+| `shell` | terminal shell; `null` = auto (PowerShell with a UTF-8 console on Windows, `$SHELL -l` elsewhere) |
 | `agentMcpServers` | MCP servers passed to every agent (alongside `harness`) |
 | `mcpServers` | MCP servers the harness calls itself (tracker, PRs) |
 | `mcpSecretsFile` | file with MCP secrets (outside the repo), or env `HARNESS_MCP_SECRETS` |

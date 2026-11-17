@@ -1055,6 +1055,15 @@ A server adds a flag in the same commit that adds the route; a test asserts ever
 - Paths always via `path`; `~` expanded; worktree/stale cleanup identical; tests run on Windows and Linux (Node ≥ 22).
 - UI: shortcuts use Ctrl on Windows/Linux and ⌘ on macOS (labels adapt); font stacks include Linux fallbacks
   (`"Inter","Ubuntu","Cantarell","Noto Sans"` / `"JetBrains Mono","DejaVu Sans Mono","Noto Sans Mono"`).
+- Implementation notes: `config.shell` = `{ command, args, reason }` (a PowerShell setting on Linux/macOS also means
+  auto); the terminal gets `LANG`/`LC_ALL=C.UTF-8` only when NEITHER is set. On POSIX a `.cmd` shim is still resolved the
+  Windows way (bundled node + cli-entry + identity), anything else executable runs directly. `--print-config` shows
+  `shell.reason` and `agents.<id>.command: { command, reason }`. git network operations run in their own process group
+  on POSIX so the timeout kills their remote helpers too.
+- Settings: `PUT /api/settings { agents: { <id>: { command, node, cliEntry } } }` — `command`: path, argv array or
+  `null` (auto); `node` + `cliEntry`: both paths or both null; saved to `harness.config.local.json`. `GET /api/settings`
+  returns them with `resolved` (the same `{ ok, command, node, entry, identity: boolean }` as
+  `GET /api/agents/:id/info`), so «Проверить» works right after saving.
 
 ## Security
 

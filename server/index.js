@@ -17,7 +17,7 @@ import { createOrchestration, commonDir } from './orchestration.js';
 import * as git from './git.js';
 import * as wfs from './fs.js';
 import { createMcpManager, loadSecrets, secretsFile, serverDefs } from './mcp-client.js';
-import { launchers } from './launchers.js';
+import { launchers, gigacodeCommand } from './launchers.js';
 import { isAlive } from './runner.js';
 import { createModelCatalog, scanModelRefs } from './models.js';
 import { readSdd } from './sdd.js';
@@ -253,6 +253,11 @@ export async function startServer(opts = {}) {
         authTimeoutMs: a.authTimeoutMs ?? 600000,
         inheritUserMcp: !!a.inheritUserMcp,
         enabled: a.enabled !== false,
+        // paths, not secrets: null = auto per platform; `resolved` is what «Проверить» shows
+        command: a.command ?? null,
+        node: a.node ?? null,
+        cliEntry: a.cliEntry ?? null,
+        resolved: resolveAgentView(a),
       }])),
       defaultAgent: config.defaultAgent,
       git: pick(config.git, GIT_KEYS),
@@ -292,6 +297,20 @@ export async function startServer(opts = {}) {
     if ('approvalModeLabels' in a) {
       if (!isStrMap(a.approvalModeLabels)) fail(400, `${where('approvalModeLabels')} must map modes to strings`);
       p.approvalModeLabels = a.approvalModeLabels;
+    }
+    if ('command' in a) {
+      const c = a.command;
+      const ok = c === null || (typeof c === 'string' && c.trim()) || (Array.isArray(c) && c.length && c.every((x) => typeof x === 'string' && x));
+      if (!ok) fail(400, `${where('command')} must be a path, an argv array or null (auto)`);
+      p.command = typeof c === 'string' ? c.trim() : c;
+    }
+    if ('node' in a || 'cliEntry' in a) {
+      const node = 'node' in a ? a.node : config.agents[id]?.node ?? null;
+      const entry = 'cliEntry' in a ? a.cliEntry : config.agents[id]?.cliEntry ?? null;
+      for (const [k, v] of [['node', node], ['cliEntry', entry]]) if (v !== null && (typeof v !== 'string' || !v.trim())) fail(400, `${where(k)} must be a path or null`);
+      if ((node === null) !== (entry === null)) fail(400, `${where('node')} and ${where('cliEntry')} must be set together (or both null)`);
+      p.node = node && node.trim();
+      p.cliEntry = entry && entry.trim();
     }
     if ('reworkPromptTemplate' in a) {
       const t = a.reworkPromptTemplate;
@@ -1249,6 +1268,7 @@ export function describeConfig(config) {
     localConfigFile: ex(config.localConfigFile),
     dataDir: ex(config.dataDir),
     worktreeRoot: config.worktreeRoot ?? null,
+    shell: config.shell,
     defaultAgent: config.defaultAgent,
     agents: Object.fromEntries(Object.entries(config.agents).map(([id, a]) => {
       let resolved;
@@ -1258,7 +1278,8 @@ export function describeConfig(config) {
       } catch (e) {
         resolved = { error: e.message };
       }
-      return [id, { launcher: a.launcher, enabled: a.enabled !== false, approvalMode: a.approvalMode ?? null, approvalModes: a.approvalModes || [], resolved }];
+      const command = a.launcher === 'gigacode' ? gigacodeCommand(a) : { command: a.command ?? launchers[a.launcher]?.defaults.command ?? null, reason: a.command ? 'configured' : 'launcher default' };
+      return [id, { launcher: a.launcher, enabled: a.enabled !== false, approvalMode: a.approvalMode ?? null, approvalModes: a.approvalModes || [], command, resolved }];
     })),
     tasks: { enabled: !!config.integrations.tasks?.enabled, server: config.integrations.tasks?.server ?? null, refreshSec: config.integrations.tasks?.refreshSec ?? 0 },
     mcpServersFrom: from ? ex(path.resolve(config.root, expandHome(from))) : null,

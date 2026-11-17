@@ -2,10 +2,7 @@
   "host": "127.0.0.1",
   "port": 4777,
   "dataDir": "./data",
-  "shell": {
-    "command": "powershell.exe",
-    "args": ["-NoLogo", "-NoExit", "-Command", "[Console]::InputEncoding=[Console]::OutputEncoding=[System.Text.Encoding]::UTF8"]
-  },
+  "shell": null,
   "defaultAgent": "gigacode",
   "workspaces": { "root": null, "repos": [] },
   "worktreeRoot": null,
@@ -48,7 +45,7 @@
     "gigacode": {
       "launcher": "gigacode",
       "label": "GigaCode",
-      "command": "C:/Program Files/.gigacode/bin/gigacode.cmd",
+      "command": null,
       "node": null,
       "cliEntry": null,
       "nodeArgs": ["--max-old-space-size=6144"],

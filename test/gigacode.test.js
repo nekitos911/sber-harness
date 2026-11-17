@@ -7,7 +7,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { CODE_ROOT } from '../server/config.js';
-import { shimIdentity, resolveGigacode, parseShim } from '../server/launchers.js';
+import { shimIdentity, resolveGigacode, parseShim, parseShShim, gigacodeCommand } from '../server/launchers.js';
+import { resolveShell } from '../server/config.js';
 import { SUBAGENT_CONTEXT } from '../server/orchestration.js';
 import { startTestServer, makeRepo, tmpDir, rmrf, gitIn, waitFor, waitPidGone } from './helpers.js';
 
@@ -185,4 +186,59 @@ test('agent info: launcher resolution (identity as a boolean only) and what the 
   assert.deepEqual([bad.resolved.ok, bad.resolved.identity, bad.seen], [false, false, null]);
   assert.match(bad.resolved.error, /GIGACODE_PACKAGE_IDENTITY/);
   assert.equal((await h.api('GET', '/api/agents/nope/info')).status, 404);
+});
+
+test('cross-platform: auto shell and gigacode command, sh shim parsing, direct POSIX launcher', () => {
+  assert.equal(resolveShell(null, 'win32').command, 'powershell.exe');
+  assert.match(resolveShell(null, 'win32').args.at(-1), /UTF8/);
+  assert.deepEqual(resolveShell(null, 'linux', { SHELL: '/bin/zsh' }), { command: '/bin/zsh', args: ['-l'], reason: 'auto: $SHELL as a login shell' });
+  assert.equal(resolveShell({ command: 'powershell.exe', args: [] }, 'linux', { SHELL: '/bin/bash' }).command, '/bin/bash', 'a Windows shell setting means auto elsewhere');
+  assert.deepEqual(resolveShell({ command: 'fish', args: ['-i'] }, 'linux', {}), { command: 'fish', args: ['-i'], reason: 'configured' });
+
+  const pathDir = path.join(root, 'путь bin');
+  fs.mkdirSync(pathDir, { recursive: true });
+  for (const n of ['gigacode', 'gigacode.cmd']) fs.writeFileSync(path.join(pathDir, n), '#!/bin/sh\n');
+  const auto = gigacodeCommand({ command: null }, 'linux', { PATH: pathDir });
+  assert.deepEqual([auto.command.startsWith(pathDir), auto.reason], [true, 'auto: gigacode on PATH']);
+  assert.deepEqual(gigacodeCommand({ command: shim }), { command: shim, reason: 'configured' });
+
+  const shRoot = path.join(root, 'linux install');
+  const shShim = path.join(shRoot, 'bin', 'gigacode');
+  const sh = ['#!/bin/sh', 'ROOT="$(cd "$(dirname "$0")/.." && pwd)"', `export GIGACODE_PACKAGE_IDENTITY=${IDENTITY}`, 'exec "$ROOT/runtime/node/bin/node" --max-old-space-size=6144 "$ROOT/lib/cli-entry.js" "$@"', ''].join('\n');
+  assert.equal(shimIdentity(sh), IDENTITY);
+  assert.deepEqual(parseShShim(shShim, sh), { node: path.join(shRoot, 'runtime', 'node', 'bin', 'node'), entry: path.join(shRoot, 'lib', 'cli-entry.js') });
+});
+
+test('POSIX: an executable launcher runs as is; a non-executable sh shim falls back to its node + cli-entry', { skip: process.platform === 'win32' && 'POSIX-only launcher resolution' }, () => {
+  const shRoot = path.join(root, 'posix install');
+  const exe = path.join(shRoot, 'bin', 'gigacode');
+  fs.mkdirSync(path.dirname(exe), { recursive: true });
+  for (const p of [path.join(shRoot, 'runtime', 'node', 'bin', 'node'), path.join(shRoot, 'lib', 'cli-entry.js')]) {
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, 'placeholder');
+  }
+  fs.writeFileSync(exe, ['#!/bin/sh', 'ROOT="$(cd "$(dirname "$0")/.." && pwd)"', `export GIGACODE_PACKAGE_IDENTITY=${IDENTITY}`, 'exec "$ROOT/runtime/node/bin/node" "$ROOT/lib/cli-entry.js" "$@"', ''].join('\n'));
+  fs.chmodSync(exe, 0o755);
+  assert.deepEqual(resolveGigacode(giga(exe)), { file: exe, args: [], env: {} });
+  fs.chmodSync(exe, 0o644);
+  assert.deepEqual(resolveGigacode(giga(exe)), {
+    file: path.join(shRoot, 'runtime', 'node', 'bin', 'node'),
+    args: ['--max-old-space-size=6144', path.join(shRoot, 'lib', 'cli-entry.js')],
+    env: { GIGACODE_PACKAGE_IDENTITY: IDENTITY, GIGACODE_PACKAGE_LAUNCHER: exe },
+  });
+});
+
+test('settings: agents.<id>.command / node / cliEntry are validated, saved and the new resolution is returned', async () => {
+  const put = (agent) => h.api('PUT', '/api/settings', { agents: { giga: agent } });
+  assert.equal((await put({ command: 42 })).status, 400);
+  assert.equal((await put({ node: process.execPath, cliEntry: null })).status, 400, 'both or neither');
+  const r = await put({ command: shim, node: null, cliEntry: null });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  const view = r.body.agents.giga;
+  assert.deepEqual([view.command, view.node, view.cliEntry], [shim, null, null]);
+  if (process.platform === 'win32') assert.deepEqual([view.resolved.node, view.resolved.entry], [bundledNode, bundledEntry], 'the shim\'s bundled pair');
+  assert.deepEqual((await h.api('GET', '/api/agents/giga/info')).body.resolved, view.resolved);
+  assert.ok(!JSON.stringify(r.body).includes(IDENTITY));
+  const back = await put({ node: process.execPath, cliEntry: entry });
+  assert.deepEqual([back.body.agents.giga.resolved.node, back.body.agents.giga.resolved.entry], [process.execPath, entry]);
 });

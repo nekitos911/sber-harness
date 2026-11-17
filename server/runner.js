@@ -73,11 +73,16 @@ export function killTree(pid) {
     execFile('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true }, () => {});
     return;
   }
-  try {
-    process.kill(-pid, 'SIGKILL'); // the child leads its own process group (detached: true)
-  } catch {
-    try { process.kill(pid, 'SIGKILL'); } catch {}
-  }
+  // the child leads its own process group (detached: true): a polite SIGTERM first, SIGKILL after 3 s
+  const signal = (sig) => {
+    try {
+      process.kill(-pid, sig);
+    } catch {
+      try { process.kill(pid, sig); } catch {}
+    }
+  };
+  signal('SIGTERM');
+  setTimeout(() => { if (isAlive(pid)) signal('SIGKILL'); }, 3000).unref();
 }
 
 const shortArg = (a) => JSON.stringify(a.length > 200 ? `${a.slice(0, 200)}...` : a);

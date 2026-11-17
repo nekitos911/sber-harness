@@ -90,6 +90,9 @@ export function interruptReason({ startedAt, bootTime, crashed }) {
   return crashed ? 'crash' : 'harness_restart';
 }
 
+/** POSIX terminals: a UTF-8 locale when the harness itself runs without one (Cyrillic output). */
+const utf8Locale = () => (process.platform !== 'win32' && !process.env.LANG && !process.env.LC_ALL ? { LANG: 'C.UTF-8', LC_ALL: 'C.UTF-8' } : {});
+
 const brief = (input) => {
   if (input == null) return '';
   const text = String(typeof input === 'string' ? input : input.command ?? input.file_path ?? input.path ?? JSON.stringify(input));
@@ -705,7 +708,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
       cols: r.cols || 120,
       rows: r.rows || 30,
       cwd: s.cwd,
-      env: { ...process.env, ...secretEnv(config), ...agentEnv(s), ...harnessEnv(s) },
+      env: { ...process.env, ...utf8Locale(), ...secretEnv(config), ...agentEnv(s), ...harnessEnv(s) },
     });
     r.pty = p;
     p.onData((data) => {

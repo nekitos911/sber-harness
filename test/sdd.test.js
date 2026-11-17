@@ -27,7 +27,15 @@ after(async () => {
   rmrf(root);
 });
 
-const copyFixtures = (cwd) => fs.cpSync(FIXTURES, path.join(cwd, '.superpowers', 'sdd'), { recursive: true });
+// not fs.cpSync: Node 22's native cpSync silently copies nothing into non-ASCII Windows paths
+function copyTree(from, to) {
+  fs.mkdirSync(to, { recursive: true });
+  for (const e of fs.readdirSync(from, { withFileTypes: true })) {
+    if (e.isDirectory()) copyTree(path.join(from, e.name), path.join(to, e.name));
+    else fs.copyFileSync(path.join(from, e.name), path.join(to, e.name));
+  }
+}
+const copyFixtures = (cwd) => copyTree(FIXTURES, path.join(cwd, '.superpowers', 'sdd'));
 
 test('parser: ledger items, PASS verdict with models, FAIL verdict in bold/arrow form, unknown status kept raw', async () => {
   const dir = path.join(root, 'plain');

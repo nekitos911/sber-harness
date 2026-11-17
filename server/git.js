@@ -22,7 +22,9 @@ export function git(cwd, args, { ok = [0], timeoutSec = 0 } = {}) {
   if (typeof cwd !== 'string' || !path.isAbsolute(cwd) || !fs.existsSync(cwd)) fail(400, `cwd must be an existing absolute directory: ${cwd}`);
   return new Promise((resolve, reject) => {
     let timedOut = false;
-    const child = execFile('git', args, { cwd, maxBuffer: 64 * 1024 * 1024, windowsHide: true, env: gitEnv() }, (err, stdout, stderr) => {
+    // POSIX: a network op leads its own process group so the timeout kills git's remote helpers too
+    const detached = timeoutSec > 0 && process.platform !== 'win32';
+    const child = execFile('git', args, { cwd, maxBuffer: 64 * 1024 * 1024, windowsHide: true, env: gitEnv(), detached }, (err, stdout, stderr) => {
       clearTimeout(timer);
       if (timedOut) return reject(Object.assign(new Error(`Нет ответа от удалённого репозитория за ${timeoutSec} с`), { status: 504 }));
       const code = err ? err.code : 0;
