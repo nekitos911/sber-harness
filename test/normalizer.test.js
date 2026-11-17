@@ -9,7 +9,10 @@ const run = (objs) => {
   return objs.flatMap((o) => normalize(o, state)).filter((e) => e.type !== 'meta');
 };
 const MCP = [{ name: 'onework', status: 'connected' }, { name: 'sourcecontrol', status: 'connected' }, { name: 'java-lsp', status: 'disconnected' }];
-const init = { type: 'init', model: 'DeepSeek-V4.1-Flash-1017', mcpServers: MCP };
+const init = {
+  type: 'init', model: 'DeepSeek-V4.1-Flash-1017', slashCommands: ['clear', 'compress', 'full-task'], mcpServers: MCP,
+  agents: ['general-purpose', 'java-reviewer'], version: '26.10.109',
+};
 
 // GigaCode (Qwen-Code / Claude style), reconstructed from the target machine: test/fixtures/README.md
 test('gigacode: init note, text, usage from result only (not the per-step assistant usage)', () => {
@@ -94,7 +97,7 @@ test('gemini-style stream normalizes', () => {
 test('claude stream (real capture) normalizes', () => {
   assert.deepEqual(run(fixture('claude.stream.ndjson')), [
     { type: 'session', id: 'c5cfa35b-dc12-4713-8b92-a065641e82bb' },
-    { type: 'init', model: 'claude-opus-5-5', mcpServers: [{ name: 'harness', status: 'connected' }] },
+    { type: 'init', model: 'claude-opus-5-5', slashCommands: [], mcpServers: [{ name: 'harness', status: 'connected' }], agents: [], version: null },
     { type: 'tool_call', id: 'toolu_0167ojCd8j7wcE1cqdaBcn2C', name: 'Read', input: { file_path: '/work/demo/package.json' } },
     { type: 'tool_result', id: 'toolu_0167ojCd8j7wcE1cqdaBcn2C', output: '1\t{"name":"demo-pkg"}\n2\t', isError: false },
     { type: 'text', text: 'demo-pkg', delta: false },

@@ -174,6 +174,17 @@ export function createSessions({ config, store, bus, getUrl }) {
         const note = [ev.model && `Model: ${ev.model}`, mcp && `MCP: ${mcp}`].filter(Boolean).join(' · ');
         // once per session (again only when it changes, e.g. an MCP server went down)
         if (note && !store.messages(s.id).some((m) => m.kind === 'system' && m.text === note)) addMessage(s, { kind: 'system', text: note });
+        // what the CLI reported about itself, for GET /api/agents/:id/info (models seen accumulate, newest first)
+        const prev = db.agentMeta[s.agent];
+        db.agentMeta[s.agent] = {
+          models: [...new Set([ev.model, ...(prev?.models || [])].filter(Boolean))].slice(0, 50),
+          slashCommands: ev.slashCommands || [],
+          mcpServers: ev.mcpServers,
+          agents: ev.agents || [],
+          version: ev.version ?? null,
+          at: Date.now(),
+        };
+        store.save();
         break;
       }
       case 'session':

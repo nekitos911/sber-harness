@@ -84,10 +84,14 @@ export function normalize(o, state = {}) {
     // --- Claude / Qwen style ---
     case 'system':
       if (o.subtype === 'init') {
+        const strings = (v) => (Array.isArray(v) ? v.map((x) => (typeof x === 'string' ? x : x?.name)).filter((x) => typeof x === 'string') : []);
         body.push({
           type: 'init',
           model: o.model ?? null,
+          slashCommands: strings(o.slash_commands),
           mcpServers: Array.isArray(o.mcp_servers) ? o.mcp_servers.map((s) => ({ name: String(s.name), status: String(s.status) })) : [],
+          agents: strings(o.agents),
+          version: o.qwen_code_version ?? o.claude_code_version ?? o.version ?? null,
         });
       }
       break;

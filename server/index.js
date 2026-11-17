@@ -7,10 +7,10 @@ import path from 'node:path';
 import { timingSafeEqual } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
-import { loadConfig, CODE_ROOT, deepMerge, readJsonFile, findLiteralSecrets, expandHome } from './config.js';
+import { loadConfig, CODE_ROOT, deepMerge, readJsonFile, findLiteralSecrets, expandHome, normalizeModels } from './config.js';
 import { createStore, writeAtomic } from './store.js';
 import { createBus } from './bus.js';
-import { createTasks } from './tasks.js';
+import { createTasks, STATUSES } from './tasks.js';
 import { createSessions, newId } from './sessions.js';
 import { createOrchestration } from './orchestration.js';
 import * as git from './git.js';
@@ -30,6 +30,8 @@ const MIME = {
 const NO_BUILD_HTML = '<!doctype html><meta charset="utf-8"><title>Harness</title><body style="font-family:sans-serif;padding:2rem"><h1>UI is not built</h1><p>Run <code>npm run build</code> (or start with <code>npm run dev</code>) and reload.</p></body>';
 const GRADES = ['default', 'fast', 'review', 'explore'];
 const GIT_KEYS = ['defaultBase', 'branchTemplate', 'portBranchTemplate', 'commitTitleTemplate', 'prTitleTemplate'];
+const TASK_VARS = ['{taskUrl}', '{key}', '{id}', '{description}'];
+const hasTaskVar = (tpl) => TASK_VARS.some((v) => tpl.includes(v));
 
 const fail = (status, message) => { throw Object.assign(new Error(message), { status }); };
 const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -133,57 +135,128 @@ export async function startServer(opts = {}) {
     syncTimer.unref?.();
   }
 
-  // ---- settings: GET/PUT /api/settings, saved into harness.config.local.json ----
+  // ---- settings: GET/PUT /api/settings, saved into harness.config.local.json (never secrets) ----
   function settingsView() {
+    const t = config.integrations.tasks || {};
+    const pr = config.integrations.pr || {};
     return {
       agents: Object.fromEntries(Object.entries(config.agents).map(([id, a]) => [id, {
         approvalMode: a.approvalMode ?? null,
         approvalModes: a.approvalModes || [],
+        approvalModeLabels: a.approvalModeLabels || {},
         model: a.model ?? null,
         models: a.models || [],
         modelGrades: a.settings?.agents?.modelGrades || {},
         allowedGrades: a.settings?.agents?.allowedGrades || [],
         taskPromptTemplate: a.taskPromptTemplate ?? null,
+        taskPromptPresets: a.taskPromptPresets || [],
+        firstEventTimeoutMs: a.firstEventTimeoutMs ?? launchers[a.launcher]?.defaults.firstEventTimeoutMs ?? null,
+        inheritUserMcp: !!a.inheritUserMcp,
+        enabled: a.enabled !== false,
       }])),
       defaultAgent: config.defaultAgent,
       git: pick(config.git, GIT_KEYS),
-      tasks: { refreshSec: config.integrations.tasks?.refreshSec ?? 0 },
+      tasks: { refreshSec: t.refreshSec ?? 0 },
+      integrations: {
+        tasks: { enabled: !!t.enabled, space: t.space ?? null, urlTemplate: t.urlTemplate ?? '', statusMap: t.statusMap || {}, closedStatuses: t.closedStatuses || [] },
+        pr: { enabled: !!pr.enabled, limits: pr.limits || null },
+      },
     };
   }
+
+  const isStrMap = (v) => isObj(v) && Object.values(v).every((x) => typeof x === 'string');
+  const isStrList = (v) => Array.isArray(v) && v.every((x) => typeof x === 'string');
 
   function agentPatch(id, a) {
     const cur = config.agents[id] || fail(400, `unknown agent "${id}"`);
     if (!isObj(a)) fail(400, `agents.${id} must be an object`);
     const p = {};
+    const where = (k) => `agents.${id}.${k}`;
     if ('approvalMode' in a) {
       if (typeof a.approvalMode !== 'string' || (cur.approvalModes?.length && !cur.approvalModes.includes(a.approvalMode))) {
-        fail(400, `agents.${id}.approvalMode must be one of ${(cur.approvalModes || []).join(', ')}`);
+        fail(400, `${where('approvalMode')} must be one of ${(cur.approvalModes || []).join(', ')}`);
       }
       p.approvalMode = a.approvalMode;
     }
+    // model ids are only checked to be strings: the catalogue may lag behind the backend
     if ('model' in a) {
-      if (a.model !== null && typeof a.model !== 'string') fail(400, `agents.${id}.model must be a string or null`);
-      p.model = a.model || null;
+      if (a.model !== null && typeof a.model !== 'string') fail(400, `${where('model')} must be a string or null`);
+      p.model = a.model?.trim() || null;
     }
-    if ('models' in a) {
-      check(a, { models: 'array' });
-      p.models = a.models.map((m) => m.trim()).filter(Boolean);
+    if ('models' in a) p.models = normalizeModels(a.models);
+    if ('approvalModeLabels' in a) {
+      if (!isStrMap(a.approvalModeLabels)) fail(400, `${where('approvalModeLabels')} must map modes to strings`);
+      p.approvalModeLabels = a.approvalModeLabels;
     }
     if ('taskPromptTemplate' in a) {
-      if (a.taskPromptTemplate !== null && typeof a.taskPromptTemplate !== 'string') fail(400, `agents.${id}.taskPromptTemplate must be a string or null`);
+      if (a.taskPromptTemplate !== null && typeof a.taskPromptTemplate !== 'string') fail(400, `${where('taskPromptTemplate')} must be a string or null`);
+      if (a.taskPromptTemplate && !hasTaskVar(a.taskPromptTemplate)) fail(400, `${where('taskPromptTemplate')} must contain one of ${TASK_VARS.join(' ')}`);
       p.taskPromptTemplate = a.taskPromptTemplate || null;
+    }
+    if ('taskPromptPresets' in a) {
+      if (!isStrList(a.taskPromptPresets) || a.taskPromptPresets.some((t) => !hasTaskVar(t))) fail(400, `${where('taskPromptPresets')} must be templates containing one of ${TASK_VARS.join(' ')}`);
+      p.taskPromptPresets = a.taskPromptPresets;
+    }
+    if ('firstEventTimeoutMs' in a) {
+      if (!Number.isInteger(a.firstEventTimeoutMs) || a.firstEventTimeoutMs < 1000 || a.firstEventTimeoutMs > 30 * 60000) fail(400, `${where('firstEventTimeoutMs')} must be an integer between 1000 and 1800000`);
+      p.firstEventTimeoutMs = a.firstEventTimeoutMs;
+    }
+    for (const k of ['inheritUserMcp', 'enabled']) {
+      if (!(k in a)) continue;
+      if (typeof a[k] !== 'boolean') fail(400, `${where(k)} must be a boolean`);
+      p[k] = a[k];
     }
     if ('modelGrades' in a) {
       if (!isObj(a.modelGrades) || Object.entries(a.modelGrades).some(([g, v]) => !GRADES.includes(g) || (v !== null && typeof v !== 'string'))) {
-        fail(400, `agents.${id}.modelGrades: keys ${GRADES.join('/')}, string values`);
+        fail(400, `${where('modelGrades')}: keys ${GRADES.join('/')}, string values`);
       }
       (p.settings ||= { agents: {} }).agents.modelGrades = a.modelGrades;
     }
     if ('allowedGrades' in a) {
-      check(a, { allowedGrades: 'array' });
+      if (!isStrList(a.allowedGrades)) fail(400, `${where('allowedGrades')} must be an array of strings`);
       (p.settings ||= { agents: {} }).agents.allowedGrades = a.allowedGrades;
     }
     return p;
+  }
+
+  function integrationsPatch(body) {
+    const out = {};
+    if (body.tasks !== undefined) {
+      const sec = body.tasks?.refreshSec;
+      if (!Number.isInteger(sec) || sec < 0) fail(400, 'tasks.refreshSec must be an integer >= 0 (0 = off, minimum 10)');
+      out.tasks = { refreshSec: sec };
+    }
+    const i = body.integrations;
+    if (i === undefined) return out;
+    if (!isObj(i)) fail(400, 'integrations must be an object');
+    if (i.tasks !== undefined) {
+      const t = i.tasks;
+      if (!isObj(t)) fail(400, 'integrations.tasks must be an object');
+      const p = {};
+      if ('enabled' in t) {
+        if (typeof t.enabled !== 'boolean') fail(400, 'integrations.tasks.enabled must be a boolean');
+        p.enabled = t.enabled;
+      }
+      for (const k of ['space', 'urlTemplate']) {
+        if (!(k in t)) continue;
+        if (typeof t[k] !== 'string') fail(400, `integrations.tasks.${k} must be a string`);
+        p[k] = t[k].trim();
+      }
+      if ('statusMap' in t) {
+        if (!isObj(t.statusMap) || Object.values(t.statusMap).some((v) => !STATUSES.includes(v))) fail(400, `integrations.tasks.statusMap values must be one of ${STATUSES.join(', ')}`);
+        p.statusMap = t.statusMap;
+      }
+      if ('closedStatuses' in t) {
+        if (!isStrList(t.closedStatuses)) fail(400, 'integrations.tasks.closedStatuses must be an array of strings');
+        p.closedStatuses = t.closedStatuses;
+      }
+      out.tasks = { ...out.tasks, ...p };
+    }
+    if (i.pr !== undefined) {
+      if (!isObj(i.pr) || ('enabled' in i.pr && typeof i.pr.enabled !== 'boolean')) fail(400, 'integrations.pr.enabled must be a boolean');
+      if ('enabled' in i.pr) out.pr = { enabled: i.pr.enabled };
+    }
+    return out;
   }
 
   function saveSettings(body) {
@@ -202,22 +275,19 @@ export async function startServer(opts = {}) {
       }
       patch.git = body.git;
     }
-    if (body.tasks !== undefined) {
-      const sec = body.tasks?.refreshSec;
-      if (!Number.isInteger(sec) || sec < 0) fail(400, 'tasks.refreshSec must be an integer >= 0 (0 = off, minimum 10)');
-      patch.integrations = { tasks: { refreshSec: sec } };
-    }
+    const integrations = integrationsPatch(body);
+    if (Object.keys(integrations).length) patch.integrations = integrations;
     const next = Object.fromEntries(Object.entries(patch).map(([k, v]) => [k, deepMerge(config[k], v)]));
-    for (const [id, a] of Object.entries(next.agents || {})) {
-      const tpl = a.taskPromptTemplate;
-      if (tpl && !['{taskUrl}', '{key}', '{id}', '{description}'].some((v) => tpl.includes(v))) {
-        fail(400, `agents.${id}.taskPromptTemplate must contain one of {taskUrl} {key} {id} {description}`);
-      }
-    }
     writeAtomic(config.localConfigFile, `${JSON.stringify(deepMerge(readJsonFile(config.localConfigFile), patch), null, 2)}\n`);
     Object.assign(config, next);
     scheduleSync();
     return settingsView();
+  }
+
+  /** Launcher resolution of an agent, as --print-config shows it (no spawn; the identity value is never returned). */
+  function agentInfo(id) {
+    const a = config.agents[id] || fail(404, `agent ${id} not found`);
+    return { id, resolved: resolveAgentView(a), seen: db.agentMeta?.[id] ?? null };
   }
 
   // ---- routes ----
@@ -250,6 +320,7 @@ export async function startServer(opts = {}) {
     integrations: { tasks: !!config.integrations.tasks?.enabled, pr: !!config.integrations.pr?.enabled, tasksProblem },
   }));
   route('GET', '/api/settings', () => settingsView());
+  route('GET', '/api/agents/:id/info', ({ params }) => agentInfo(params.id));
   route('PUT', '/api/settings', ({ body }) => saveSettings(body));
 
   // workspaces
@@ -340,6 +411,15 @@ export async function startServer(opts = {}) {
   route('GET', '/api/git/diff', ({ query }) => git.diff(cwdOf(query), query.path || undefined));
   route('GET', '/api/git/log', ({ query }) => git.log(cwdOf(query), Math.min(Math.max(Number(query.n) || 50, 1), 1000)));
   route('GET', '/api/git/suggest', ({ query }) => orch.gitSuggest(cwdOf(query)));
+  route('GET', '/api/git/branches', ({ query }) => git.branches(cwdOf(query)));
+  route('POST', '/api/git/checkout', async ({ body }) => {
+    check(body, { cwd: 'string', branch: 'string', create: 'boolean?', from: 'string?' });
+    const busy = db.sessions.find((s) => s.kind === 'chat' && s.status === 'running' && samePath(s.cwd, body.cwd));
+    if (busy) fail(409, `An agent is working in this folder right now (${busy.title}); stop it or wait before switching branches.`);
+    const r = await git.checkout(body.cwd, body);
+    refreshBranch(body.cwd, r.branch);
+    return r;
+  });
   route('POST', '/api/git/commit', ({ body }) => {
     check(body, { cwd: 'string', message: 'string', paths: 'array?' });
     return git.commit(body.cwd, body.message, body.paths);
@@ -583,6 +663,24 @@ function assertSingleInstance(serverJson, dataDir) {
     if (e.code === 'ESRCH') return; // stale file from a crashed run
   }
   throw Object.assign(new Error(`Another harness (pid ${other.pid}, ${other.url}) is already running on ${dataDir}. Stop it first or use another dataDir.`), { code: 'ELOCKED' });
+}
+
+/** { ok, command, node, entry, identity: boolean } of an agent's launcher resolution, or { ok: false, error }. */
+function resolveAgentView(a) {
+  try {
+    const r = launchers[a.launcher]?.resolve(a);
+    if (!r) return { ok: false, identity: false, error: `unknown launcher "${a.launcher}"` };
+    const entry = r.args.filter((x) => /\.[cm]?js$/i.test(x)).pop() ?? null;
+    return {
+      ok: true,
+      command: r.env?.GIGACODE_PACKAGE_LAUNCHER || (entry ? null : r.file),
+      node: entry ? r.file : null,
+      entry,
+      identity: !!r.env?.GIGACODE_PACKAGE_IDENTITY,
+    };
+  } catch (e) {
+    return { ok: false, identity: false, error: e.message };
+  }
 }
 
 /** Resolved config for humans: paths and whether they exist, modes, refresh, secret NAMES (never values). */

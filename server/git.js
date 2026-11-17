@@ -160,6 +160,52 @@ export async function worktrees(cwd) {
   });
 }
 
+const samePath = (a, b) => (process.platform === 'win32' ? path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase() : path.resolve(a) === path.resolve(b));
+
+/**
+ * Local branches + origin/* branches without a local twin (name without "origin/", remote: true), newest first.
+ * `worktree` = path of the worktree that has the branch checked out (this one included), else null.
+ */
+export async function branches(cwd) {
+  const current = await currentBranch(cwd);
+  const checkedOut = new Map((await worktrees(cwd)).filter((w) => w.branch).map((w) => [w.branch, w.path]));
+  const { stdout } = await git(cwd, ['for-each-ref', '--format=%(refname)%09%(upstream:short)%09%(committerdate:unix)', 'refs/heads', 'refs/remotes/origin']);
+  const local = [];
+  const remote = [];
+  for (const line of stdout.split('\n').filter(Boolean)) {
+    const [ref, upstream, at] = line.split('\t');
+    const lastCommitAt = Number(at) * 1000 || 0;
+    if (ref.startsWith('refs/heads/')) {
+      const name = ref.slice('refs/heads/'.length);
+      local.push({ name, remote: false, current: name === current, upstream: upstream || null, lastCommitAt, worktree: checkedOut.get(name) ?? null });
+    } else {
+      const name = ref.slice('refs/remotes/origin/'.length);
+      if (name !== 'HEAD') remote.push({ name, remote: true, current: false, upstream: `origin/${name}`, lastCommitAt, worktree: null });
+    }
+  }
+  const names = new Set(local.map((b) => b.name));
+  const byDate = (a, b) => b.lastCommitAt - a.lastCommitAt || a.name.localeCompare(b.name);
+  return { current, branches: [...local.sort(byDate), ...remote.filter((b) => !names.has(b.name)).sort(byDate)] };
+}
+
+/**
+ * Switches cwd to `branch`: create -> `git switch -c <branch> <from|HEAD>`; existing local -> `git switch`;
+ * only on origin -> `git switch --track origin/<branch>`. 409 if another worktree has it checked out.
+ */
+export async function checkout(cwd, { branch, create = false, from = null }) {
+  const name = String(branch || '').replace(/^origin\//, '');
+  if (!name) fail(400, 'branch is required');
+  if ((await git(cwd, ['check-ref-format', '--branch', name], { ok: [0, 1, 128] })).code) fail(400, `invalid branch name: ${name}`);
+  const here = (await out(cwd, ['rev-parse', '--show-toplevel'])).replace(/\//g, path.sep);
+  const elsewhere = (await worktrees(cwd)).find((w) => w.branch === name && !samePath(w.path, here));
+  if (elsewhere) fail(409, `${name} is checked out in another worktree: ${elsewhere.path}`);
+  if (create) await git(cwd, ['switch', '-c', name, from || 'HEAD']);
+  else if (await branchExists(cwd, name)) await git(cwd, ['switch', name]);
+  else if (await refExists(cwd, `origin/${name}`)) await git(cwd, ['switch', '--track', `origin/${name}`]);
+  else fail(404, `branch ${name} not found (locally or on origin)`);
+  return { branch: name };
+}
+
 /** Default worktree root: <repoParent>/<repoName>-worktrees (short paths: Windows MAX_PATH is 260). */
 export const worktreeRootFor = (mainRepo, worktreeRoot) => (worktreeRoot
   ? path.resolve(mainRepo, expandHome(worktreeRoot))

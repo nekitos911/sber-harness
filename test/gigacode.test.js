@@ -160,3 +160,22 @@ test('interactive terminal of an agent types its resolved CLI; state has default
   await h.api('DELETE', `/api/sessions/${res.body.id}`);
   await waitPidGone(res.body.pid);
 });
+
+test('agent info: launcher resolution (identity as a boolean only) and what the CLI reported at init', async () => {
+  const info = (await h.api('GET', '/api/agents/giga/info')).body;
+  assert.deepEqual(info.resolved, { ok: true, command: shim, node: process.execPath, entry, identity: true });
+  assert.ok(!JSON.stringify(info).includes(IDENTITY), 'the identity value is never returned');
+  const { at, ...seen } = info.seen;
+  assert.ok(at > 0);
+  assert.deepEqual(seen, {
+    models: ['mock-model'],
+    slashCommands: ['clear', 'full-task'],
+    mcpServers: [{ name: 'harness', status: 'connected' }],
+    agents: ['general-purpose'],
+    version: 'mock-1.0',
+  });
+  const bad = (await h.api('GET', '/api/agents/gigabad/info')).body;
+  assert.deepEqual([bad.resolved.ok, bad.resolved.identity, bad.seen], [false, false, null]);
+  assert.match(bad.resolved.error, /GIGACODE_PACKAGE_IDENTITY/);
+  assert.equal((await h.api('GET', '/api/agents/nope/info')).status, 404);
+});

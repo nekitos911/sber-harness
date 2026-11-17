@@ -62,9 +62,16 @@ try { turn = JSON.parse(fs.readFileSync(stateFile, 'utf8')).turns + 1; } catch {
 fs.writeFileSync(stateFile, JSON.stringify({ turns: turn }));
 
 let mcpServers = [];
-try { mcpServers = Object.keys(JSON.parse(fs.readFileSync(process.env.MOCK_AGENT_SETTINGS_PATH, 'utf8')).mcpServers || {}); } catch {}
+const settingsFile = process.env.MOCK_AGENT_SETTINGS_PATH || process.env.GIGACODE_SYSTEM_SETTINGS_PATH;
+try { mcpServers = Object.keys(JSON.parse(fs.readFileSync(settingsFile, 'utf8')).mcpServers || {}); } catch {}
 
-emit({ type: 'init', session_id: sessionId, model, mcp_servers: mcpServers });
+emit({ type: 'init', session_id: sessionId, model });
+// GigaCode's real init (Qwen-Code style): what the harness records as the agent's "seen" info
+emit({
+  type: 'system', subtype: 'init', session_id: sessionId, model,
+  mcp_servers: mcpServers.map((name) => ({ name, status: 'connected' })),
+  slash_commands: ['clear', 'full-task'], agents: ['general-purpose'], qwen_code_version: 'mock-1.0',
+});
 emit({ type: 'message', role: 'user', content: prompt });
 
 async function say(text, delayMs = 0) {

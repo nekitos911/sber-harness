@@ -337,6 +337,42 @@ test('ops: one harness per data dir, a clear message for a busy port; models in 
   }
   const mock = (await state()).agents.find((a) => a.id === 'mock');
   assert.deepEqual(mock.models, []);
-  assert.deepEqual((await h.api('PUT', '/api/settings', { agents: { mock: { models: ['m-1', ' m-2 '] } } })).body.agents.mock.models, ['m-1', 'm-2']);
-  assert.deepEqual((await state()).agents.find((a) => a.id === 'mock').models, ['m-1', 'm-2']);
+  const models = [{ id: 'm-1' }, { id: 'm-2', label: 'Model 2', context: '128k' }];
+  assert.deepEqual((await h.api('PUT', '/api/settings', { agents: { mock: { models: [' m-1 ', { id: 'm-2', label: 'Model 2', context: '128k' }] } } })).body.agents.mock.models, models);
+  assert.deepEqual((await state()).agents.find((a) => a.id === 'mock').models, models);
+  assert.equal((await h.api('PUT', '/api/settings', { agents: { mock: { models: [{ label: 'no id' }] } } })).status, 400);
+});
+
+test('settings: model catalogue objects, labels, presets, timeouts, flags and tracker/PR integration fields', async () => {
+  const s = (await h.api('GET', '/api/settings')).body;
+  const giga = s.agents.gigacode;
+  assert.ok(giga.models.every((m) => typeof m.id === 'string'), 'catalogue entries are objects');
+  assert.equal(typeof giga.approvalModeLabels.auto, 'string');
+  assert.ok(giga.taskPromptPresets.length > 0);
+  assert.deepEqual([giga.firstEventTimeoutMs, giga.inheritUserMcp, giga.enabled], [120000, false, true]);
+  assert.deepEqual(Object.keys(s.integrations.tasks).sort(), ['closedStatuses', 'enabled', 'space', 'statusMap', 'urlTemplate']);
+  assert.deepEqual(s.integrations.pr, { enabled: false, limits: { titleBytes: 100, bodyBytes: 512 } });
+  assert.ok(!JSON.stringify(s).match(/secret|token/i));
+
+  const bad = (body) => h.api('PUT', '/api/settings', body).then((r) => r.status);
+  assert.equal(await bad({ agents: { mock: { model: 42 } } }), 400);
+  assert.equal(await bad({ agents: { mock: { modelGrades: { fast: 7 } } } }), 400);
+  assert.equal(await bad({ agents: { mock: { firstEventTimeoutMs: 10 } } }), 400);
+  assert.equal(await bad({ agents: { mock: { enabled: 'yes' } } }), 400);
+  assert.equal(await bad({ agents: { mock: { taskPromptPresets: ['no task vars'] } } }), 400);
+  assert.equal(await bad({ integrations: { tasks: { statusMap: { qa: 'testing' } } } }), 400);
+  assert.equal(await bad({ integrations: { pr: { enabled: 1 } } }), 400);
+
+  const saved = (await h.api('PUT', '/api/settings', {
+    agents: { mock: { model: 'not-in-the-catalogue', modelGrades: { fast: 'm-x' }, approvalModeLabels: { auto: 'Всё сам' }, taskPromptPresets: ['/full-task {taskUrl}{notes}'], firstEventTimeoutMs: 60000, inheritUserMcp: true } },
+    integrations: { tasks: { space: 'ABC', urlTemplate: 'https://t.example/{key}', statusMap: { qa: 'review' }, closedStatuses: ['done', 'won_t_do'] }, pr: { enabled: true } },
+  })).body;
+  assert.deepEqual([saved.agents.mock.model, saved.agents.mock.modelGrades.fast, saved.agents.mock.approvalModeLabels.auto], ['not-in-the-catalogue', 'm-x', 'Всё сам']);
+  assert.deepEqual([saved.agents.mock.firstEventTimeoutMs, saved.agents.mock.inheritUserMcp], [60000, true]);
+  assert.deepEqual([saved.integrations.tasks.space, saved.integrations.tasks.statusMap.qa, saved.integrations.pr.enabled], ['ABC', 'review', true]);
+  assert.equal((await state()).integrations.pr, true);
+  const local = JSON.parse(fs.readFileSync(h.configFile.replace(/\.json$/, '.local.json'), 'utf8'));
+  assert.deepEqual(local.integrations.tasks.closedStatuses, ['done', 'won_t_do']);
+  assert.equal(local.agents.mock.firstEventTimeoutMs, 60000);
+  await h.api('PUT', '/api/settings', { agents: { mock: { inheritUserMcp: false, model: null } }, integrations: { pr: { enabled: false } } });
 });

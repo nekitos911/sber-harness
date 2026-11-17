@@ -31,7 +31,7 @@ function readJson(file, fallback) {
 export function createStore(dataDir) {
   for (const d of ['transcripts', 'terms', 'runs']) fs.mkdirSync(path.join(dataDir, d), { recursive: true });
   const dbFile = path.join(dataDir, 'db.json');
-  const db = { seq: { task: 0 }, tasks: [], workspaces: [], sessions: [], notifications: [], ...readJson(dbFile, {}) };
+  const db = { seq: { task: 0 }, tasks: [], workspaces: [], sessions: [], notifications: [], agentMeta: {}, ...readJson(dbFile, {}) };
 
   const tokenFile = path.join(dataDir, 'token');
   let token = fs.existsSync(tokenFile) ? fs.readFileSync(tokenFile, 'utf8').trim() : '';
