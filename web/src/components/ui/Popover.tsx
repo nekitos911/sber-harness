@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, type CSSProperties, type ReactNode, type RefObject } from 'react'
+import { ErrorBoundary } from '../ErrorBoundary'
 
 export type Placement = 'bottom-start' | 'bottom-end' | 'top-start' | 'top-end' | 'right-start'
 
@@ -103,7 +104,7 @@ export function Popover({ anchor, open, onClose, placement = 'bottom-start', mat
   return (
     // React events still bubble through the component tree from the top layer: keep clicks from reaching row handlers.
     <div ref={ref} popover="manual" role={role} aria-label={label} className={`popover ${className ?? ''}`} style={style} data-placement={placement} onClick={(e) => e.stopPropagation()}>
-      {children}
+      <ErrorBoundary area="это меню">{children}</ErrorBoundary>
     </div>
   )
 }

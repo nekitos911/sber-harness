@@ -214,6 +214,7 @@ export interface AppState {
   defaultAgent?: string
   shell: { command: string }
   integrations: Integrations
+  features?: string[] // optional API groups this server implements (absent on old servers: none)
 }
 
 export type SubAgentState =

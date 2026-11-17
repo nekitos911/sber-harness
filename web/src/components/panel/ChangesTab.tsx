@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { ArrowDown, ArrowUp, ChevronRight, GitPullRequest, RotateCcw, Upload } from 'lucide-react'
 import { api, qs, tryApi } from '../../api'
-import { openDialog, openTab, openTask, toast, useStore } from '../../store'
+import { openDialog, openTab, openTask, toast, useFeature, useStore } from '../../store'
 import { relTime, shortHash } from '../../lib/format'
 import { diffOf, gsLetter, refreshGit, splitPath, useGit } from '../../lib/git'
 import { useNow } from '../../lib/useNow'
@@ -208,12 +208,15 @@ function ChangeRow({ cwd, f, diff, loaded, open, onToggle }: { cwd: string; f: G
 
 /** Always visible: the branch's PR (open it), «Создать PR», or why PRs are unavailable and where to set them up. */
 function PrSection({ cwd, enabled, branch, base }: { cwd: string; enabled: boolean; branch: string | null; base: string | null }) {
-  const pr = usePr(enabled ? cwd : null)
+  const supported = useFeature('pr-status')
+  const pr = usePr(enabled && supported ? cwd : null)
   const off = !enabled || pr === 'off'
   return (
     <section className="wpanel-section">
       <h3><GitPullRequest aria-hidden />Пулл-реквест</h3>
-      {off ? (
+      {!supported ? (
+        <p className="muted">Статус PR недоступен в этой версии сервера.</p>
+      ) : off ? (
         <div className="pr-off">
           <span className="muted">PR-интеграция не настроена.</span>
           <button type="button" className="btn btn-sm" onClick={openPrSettings}>Настроить</button>

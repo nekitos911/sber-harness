@@ -11,6 +11,7 @@ import { Toasts } from './components/Toasts'
 import { Loading } from './components/bits'
 import { CommandPalette } from './components/CommandPalette'
 import { TooltipLayer } from './components/ui'
+import { ErrorBoundary } from './components/ErrorBoundary'
 import { BoardView } from './views/BoardView'
 import { AgentsView } from './views/AgentsView'
 import { InboxView } from './views/InboxView'
@@ -53,14 +54,14 @@ export function App() {
 
   return (
     <div className="app" data-sidebar={sidebar} style={{ '--sb-w': sidebar ? `${width}px` : '0px' } as CSSProperties}>
-      <TopBar onCommand={() => setPalette(true)} />
-      <Sidebar />
+      <ErrorBoundary area="верхнюю панель"><TopBar onCommand={() => setPalette(true)} /></ErrorBoundary>
+      <ErrorBoundary area="боковую панель"><Sidebar /></ErrorBoundary>
       <main className="main">
         <ConnectionBanner />
         <div className="panels">
           {view.kind === 'screen' && (
             <section className="tabpanel" key={view.screen}>
-              <ScreenContent screen={view.screen} />
+              <ErrorBoundary area={SCREEN_AREA[view.screen]}><ScreenContent screen={view.screen} /></ErrorBoundary>
             </section>
           )}
           {/* Every worktree's tabs stay mounted (terminals, scroll, drafts); only the active one of the shown worktree is visible. */}
@@ -69,27 +70,29 @@ export function App() {
             const shown = k === here && e.active === key
             return (
               <section key={`${k}|${key}`} className="tabpanel" hidden={!shown}>
-                <TabContent tab={t} active={shown} />
+                <ErrorBoundary area={t.kind === 'session' ? 'эту сессию' : t.kind === 'file' ? 'файл' : 'изменения'}><TabContent tab={t} active={shown} /></ErrorBoundary>
               </section>
             )
           }))}
           {view.kind === 'wt' && !showsTab && (
             <section className="tabpanel" key={`home:${here}`}>
-              <WorktreeHome cwd={view.cwd} />
+              <ErrorBoundary area="рабочее дерево"><WorktreeHome cwd={view.cwd} /></ErrorBoundary>
             </section>
           )}
         </div>
       </main>
-      {view.kind === 'wt' && panel && <WorkspacePanel />}
+      {view.kind === 'wt' && panel && <ErrorBoundary area="панель файлов и изменений"><WorkspacePanel /></ErrorBoundary>}
       <StatusBar />
-      <Dialogs />
-      {palette && <CommandPalette onClose={() => setPalette(false)} />}
-      <Toasts />
+      <ErrorBoundary area="диалог"><Dialogs /></ErrorBoundary>
+      {palette && <ErrorBoundary area="палитру команд"><CommandPalette onClose={() => setPalette(false)} /></ErrorBoundary>}
+      <ErrorBoundary area="уведомления"><Toasts /></ErrorBoundary>
       <AuthExpired />
       <TooltipLayer />
     </div>
   )
 }
+
+const SCREEN_AREA: Record<Screen, string> = { board: 'доску задач', agents: 'агентов', prs: 'пулл-реквесты', inbox: 'входящие', settings: 'настройки' }
 
 function ScreenContent({ screen }: { screen: Screen }) {
   switch (screen) {

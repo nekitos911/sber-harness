@@ -70,6 +70,7 @@ export interface State extends Prefs {
   settings: Settings | null // loaded on demand (pickers need grades; the settings screen edits it)
   prs: Record<string, PrState | undefined> // key = normPath(cwd): PR of the branch checked out there
   sdd: Record<string, SddPlan[] | null> // key = normPath(cwd): /full-task plans and verdicts (null: server lacks it)
+  features: string[] // optional API groups of this server; an optional endpoint is called only when listed
   dirty: Record<string, boolean>
   toasts: Toast[]
   focusTaskId: string | null
@@ -122,7 +123,7 @@ let state: State = {
   conn: 'connecting', loaded: false, authExpired: false, scheme: resolveScheme(prefs.theme),
   tasks: [], sessions: [], workspaces: [], notifications: [], agents: [], defaultAgent: null, shell: '',
   integrations: { tasks: false, pr: false },
-  messages: {}, subagents: {}, worktrees: {}, git: {}, agentMeta: {}, settings: null, prs: {}, sdd: {}, dirty: {}, toasts: [], focusTaskId: null, dialog: null, back: [], forward: [],
+  messages: {}, subagents: {}, worktrees: {}, git: {}, agentMeta: {}, settings: null, prs: {}, sdd: {}, features: [], dirty: {}, toasts: [], focusTaskId: null, dialog: null, back: [], forward: [],
 }
 
 const listeners = new Set<() => void>()
@@ -157,6 +158,15 @@ export function useStore<T>(selector: (s: State) => T): T {
 }
 
 document.documentElement.dataset.theme = state.scheme
+
+// ---------- server features (client/server version skew) ----------
+
+export type Feature = 'sdd' | 'subagents' | 'virtual-sessions' | 'worker-run' | 'pr-status' | 'branches' | 'fs-search'
+  | 'agent-info' | 'models-refresh' | 'tracker-links' | 'worktree-meta' | 'open' | 'board-columns' | 'review-loop' | 'skills-install' | 'demo'
+
+/** Whether this server implements an optional API group (no flag list = an older server = none). */
+export const hasFeature = (f: Feature) => state.features.includes(f)
+export const useFeature = (f: Feature) => useStore((s) => s.features.includes(f))
 
 // ---------- collections ----------
 

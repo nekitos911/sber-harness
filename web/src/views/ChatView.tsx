@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { ArrowDown, Check, Copy, Ellipsis, ExternalLink, KeyRound, GitCompareArrows, LoaderCircle, MessageSquare, RotateCcw, ScrollText, Square, Trash2 } from 'lucide-react'
 import { api, errorText, tryApi } from '../api'
-import { openSession, openTab, openTask, setState, showPanel, upsert, useStore, without } from '../store'
+import { openSession, openTab, openTask, setState, showPanel, upsert, useFeature, useStore, without } from '../store'
 import { loadMessages, loadSubagents } from '../ws'
 import { basename, normPath, ROLE } from '../lib/format'
 import { fileEdit } from '../lib/toolcall'
@@ -37,7 +37,8 @@ export function ChatView({ id, active }: { id: string; active: boolean }) {
   const stick = useRef(true)
   const [atBottom, setAtBottom] = useState(true)
 
-  useEffect(() => { void loadSubagents(id) }, [id])
+  const subagentsOn = useFeature('subagents')
+  useEffect(() => { if (subagentsOn) void loadSubagents(id) }, [id, subagentsOn])
 
   useEffect(() => {
     if (messages) return

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { ArrowDown, ArrowUp, Check, CircleCheck, CircleX, LogIn, Plus, RefreshCw, TriangleAlert, X } from 'lucide-react'
 import { api, ApiError, errorText, qs, tryApi } from '../api'
-import { setState, toast, useStore } from '../store'
+import { setState, toast, useFeature, useStore } from '../store'
 import { adoptSession } from '../lib/actions'
 import { desktopNotifyOn, setDesktopNotify } from '../lib/notify'
 import { COLUMNS, relTime } from '../lib/format'
@@ -262,6 +262,7 @@ function AgentStatus({ id }: { id: string }) {
   const now = useNow()
   const [checking, setChecking] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
+  const refreshOn = useFeature('models-refresh')
   const login = async () => {
     const s = await tryApi<Session>('POST', '/sessions', { kind: 'terminal', agent: id, title: 'Вход в GigaCode' })
     if (s) adoptSession(s)
@@ -283,7 +284,7 @@ function AgentStatus({ id }: { id: string }) {
     setChecking(false)
   }
   if (meta === undefined) return <div className="status-card"><Skeleton rows={3} label="Проверяем CLI…" /></div>
-  if (meta === null) return <p className="set-note">Сервер не сообщает состояние CLI (нужна новая версия harness).</p>
+  if (meta === null) return <p className="set-note">Состояние CLI недоступно в этой версии сервера.</p>
   const r = meta.resolved
   const seen = meta.seen
   const Ok = ({ ok }: { ok: boolean }) => (ok ? <CircleCheck className="ok" aria-label="да" /> : <CircleX className="bad" aria-label="нет" />)
@@ -312,7 +313,7 @@ function AgentStatus({ id }: { id: string }) {
         <dd className="status-auth">
           {meta.catalog?.error ? <span className="field-error">{meta.catalog.error}</span>
             : meta.catalog?.at ? <span>обновлён {relTime(meta.catalog.at, now)} назад</span> : <span className="muted">ещё не запрашивался</span>}
-          <Button size="sm" variant="ghost" icon={<RefreshCw className={refreshing ? 'spinner' : undefined} />} disabled={refreshing || !r.ok} onClick={() => void refreshModels()}>Обновить список</Button>
+          {refreshOn && <Button size="sm" variant="ghost" icon={<RefreshCw className={refreshing ? 'spinner' : undefined} />} disabled={refreshing || !r.ok} onClick={() => void refreshModels()}>Обновить список</Button>}
         </dd>
         {seen && (
           <>
@@ -449,10 +450,11 @@ function GitSection({ form, update, fieldError }: SectionProps) {
   const workspaces = useStore((s) => s.workspaces)
   const [branches, setBranches] = useState<string[]>([])
   const ws = workspaces.find((w) => w.isGit)
+  const branchesOn = useFeature('branches')
   useEffect(() => {
-    if (!ws) return
-    api<GitBranches>('GET', `/git/branches${qs({ cwd: ws.path })}`).then((r) => setBranches(r.branches.filter((b) => !b.remote).map((b) => b.name)), () => setBranches([]))
-  }, [ws])
+    if (!ws || !branchesOn) return
+    api<GitBranches>('GET', `/git/branches${qs({ cwd: ws.path })}`).then((r) => setBranches((Array.isArray(r?.branches) ? r.branches : []).filter((b) => !b.remote).map((b) => b.name)), () => setBranches([]))
+  }, [ws, branchesOn])
   const g = form.git
   const set = (patch: Partial<Settings['git']>) => update({ ...form, git: { ...g, ...patch } })
   const bases = [...new Set(['develop', 'main', 'master', ...branches, ...(g.defaultBase ? [g.defaultBase] : [])])]
@@ -693,7 +695,9 @@ function InstallFile({ id, kind, name, target, title, action }: { id: string; ki
   const meta = useAgentMeta(id)
   const [confirm, setConfirm] = useState(false)
   const [busy, setBusy] = useState(false)
+  const installOn = useFeature('skills-install')
   const state = meta?.[kind]?.[name]
+  if (!installOn) return <span className="set-hint">Установка из интерфейса недоступна в этой версии сервера.</span>
   if (!meta || !state) return null
   const install = async () => {
     setBusy(true)

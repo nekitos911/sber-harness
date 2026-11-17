@@ -4,6 +4,7 @@ import { api, qs } from '../../api'
 import { useAgentMeta, useSettings } from '../../lib/agents'
 import { splitPath } from '../../lib/git'
 import { Popover } from '../ui'
+import { useFeature } from '../../store'
 import { tokenAt } from '../../lib/mention'
 import { useListNav } from '../ui/listNav'
 
@@ -28,16 +29,17 @@ export function useComposerSuggest({ input, text, caret, cwd, agentId, onInsert 
   const meta = useAgentMeta(tok?.kind === '/' ? agentId : null)
   const settings = useSettings()
   const seq = useRef(0)
+  const searchOn = useFeature('fs-search')
 
   useEffect(() => {
-    if (tok?.kind !== '@') return
+    if (tok?.kind !== '@' || !searchOn) return
     const n = ++seq.current
     const t = window.setTimeout(() => {
       api<{ path: string }[]>('GET', `/fs/search${qs({ cwd, q: tok.query, limit: 30 })}`)
         .then((r) => { if (n === seq.current) setFiles(Array.isArray(r) ? r : []) }, () => { if (n === seq.current) setFiles([]) })
     }, 80)
     return () => window.clearTimeout(t)
-  }, [tok?.kind, tok?.query, cwd])
+  }, [tok?.kind, tok?.query, cwd, searchOn])
 
   const items = useMemo<Item[]>(() => {
     if (!tok) return []

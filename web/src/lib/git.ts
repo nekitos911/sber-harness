@@ -10,11 +10,12 @@ const again = new Set<string>()
 
 async function load(cwd: string): Promise<GitInfo> {
   try {
-    const status = await api<GitStatus>('GET', `/git/status${qs({ cwd })}`)
+    const raw = await api<GitStatus>('GET', `/git/status${qs({ cwd })}`)
+    const status: GitStatus = { branch: raw?.branch ?? null, upstream: raw?.upstream ?? null, ahead: raw?.ahead ?? 0, behind: raw?.behind ?? 0, files: Array.isArray(raw?.files) ? raw.files : [] }
     let files: DiffFile[] | null = []
     if (status.files.length) {
       // One whole-tree diff gives every file's +N −M and the inline diffs (untracked files come as added).
-      try { files = parseDiff((await api<{ diff: string }>('GET', `/git/diff${qs({ cwd })}`)).diff) } catch { files = null }
+      try { files = parseDiff(String((await api<{ diff: string }>('GET', `/git/diff${qs({ cwd })}`))?.diff ?? '')) } catch { files = null }
     }
     return { status, error: null, files }
   } catch (e) {

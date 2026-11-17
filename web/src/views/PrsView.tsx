@@ -21,7 +21,7 @@ export function PrsView() {
   const workspaces = useStore((s) => s.workspaces)
   const worktrees = useStore((s) => s.worktrees)
   const prs = useStore((s) => s.prs)
-  const enabled = useStore((s) => s.integrations.pr)
+  const enabled = useStore((s) => s.integrations.pr && s.features.includes('pr-status'))
   const now = useNow()
 
   useEffect(() => { for (const w of workspaces) if (w.isGit && !worktrees[w.id]) void loadWorktrees(w.id) }, [workspaces, worktrees])

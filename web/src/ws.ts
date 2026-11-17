@@ -1,9 +1,12 @@
 import { api, ApiError, errorText, wsUrl } from './api'
-import { closeSessionTab, getState, setState, tabKey, toast, upsert, without, wtKey, type WtTabs } from './store'
+import { closeSessionTab, getState, hasFeature, setState, tabKey, toast, upsert, without, wtKey, type WtTabs } from './store'
 import { desktopNotify } from './lib/notify'
 import type { AppState, ClientEvent, Message, ServerEvent, SubAgent, Worktree } from './types'
 
 type TermListener = (data: string, replay: boolean) => void
+
+/** Server lists may be missing or of the wrong shape on version skew: treat anything else as empty. */
+const arr = <T,>(v: T[] | null | undefined): T[] => (Array.isArray(v) ? v : [])
 
 let socket: WebSocket | null = null
 let retry = 0
@@ -64,7 +67,7 @@ async function refreshState() {
     const st = await api<AppState>('GET', '/state')
     setState((s) => {
       // Session tabs of sessions deleted while we were away disappear from their worktrees.
-      const ids = new Set(st.sessions.map((x) => x.id))
+      const ids = new Set(arr(st.sessions).map((x) => x.id))
       const wt: Record<string, WtTabs> = {}
       for (const [k, e] of Object.entries(s.wt)) {
         const tabs = e.tabs.filter((t) => t.kind !== 'session' || ids.has(t.id))
@@ -73,9 +76,10 @@ async function refreshState() {
       }
       return {
         loaded: true,
-        tasks: st.tasks, sessions: st.sessions, workspaces: st.workspaces, notifications: st.notifications,
-        agents: st.agents, defaultAgent: st.defaultAgent ?? null,
+        tasks: arr(st.tasks), sessions: arr(st.sessions), workspaces: arr(st.workspaces), notifications: arr(st.notifications),
+        agents: arr(st.agents), defaultAgent: st.defaultAgent ?? null,
         shell: st.shell?.command ?? '', integrations: st.integrations ?? { tasks: false, pr: false },
+        features: Array.isArray(st.features) ? st.features : [],
         wt,
       }
     })
@@ -83,7 +87,7 @@ async function refreshState() {
     for (const id of Object.keys(getState().messages)) {
       loadMessages(id).catch(() => undefined)
     }
-    for (const s of st.sessions) if (s.kind === 'chat' && s.status === 'running') void loadSubagents(s.id)
+    for (const s of arr(st.sessions)) if (s.kind === 'chat' && s.status === 'running') void loadSubagents(s.id)
   } catch (e) {
     toast(`Не удалось загрузить состояние: ${errorText(e)}`, 'error')
   }
@@ -95,7 +99,7 @@ export async function loadMessages(sessionId: string) {
   if (loading.has(sessionId)) return
   loading.set(sessionId, [])
   try {
-    let list = await api<Message[]>('GET', `/sessions/${encodeURIComponent(sessionId)}/messages`)
+    let list = arr(await api<Message[]>('GET', `/sessions/${encodeURIComponent(sessionId)}/messages`))
     for (const m of loading.get(sessionId) ?? []) list = upsert(list, m)
     setState((s) => ({ messages: { ...s.messages, [sessionId]: list } }))
   } finally {
@@ -111,16 +115,17 @@ export function ensureMessages(sessionId: string) {
 
 /** Agent-internal sub-agents of a session (read-only registry); live updates come over WS. */
 export async function loadSubagents(sessionId: string) {
+  if (!hasFeature('subagents')) return
   try {
     const r = await api<{ items: SubAgent[]; problems: string[] }>('GET', `/sessions/${encodeURIComponent(sessionId)}/subagents`)
-    setState((s) => ({ subagents: { ...s.subagents, [sessionId]: { items: r.items ?? [], problems: r.problems ?? [] } } }))
+    setState((s) => ({ subagents: { ...s.subagents, [sessionId]: { items: arr(r?.items), problems: arr(r?.problems) } } }))
   } catch { /* older server or no registry: nothing to show */ }
 }
 
 export async function loadWorktrees(workspaceId: string) {
   let list: Worktree[] = []
   try {
-    list = await api<Worktree[]>('GET', `/workspaces/${encodeURIComponent(workspaceId)}/worktrees`)
+    list = arr(await api<Worktree[]>('GET', `/workspaces/${encodeURIComponent(workspaceId)}/worktrees`))
   } catch { /* not a git repo or gone: show none */ }
   setState((s) => ({ worktrees: { ...s.worktrees, [workspaceId]: list } }))
 }

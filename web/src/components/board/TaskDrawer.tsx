@@ -1,7 +1,7 @@
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
 import { ArrowUpToLine, ExternalLink, EyeOff, GitMerge, Lock, Play, Plus, Send, SquareArrowOutUpRight, Trash2, UserPlus, X } from 'lucide-react'
 import { api, ApiError, errorText, tryApi } from '../../api'
-import { openDialog, openSession, setState, toast, upsert, useStore, without } from '../../store'
+import { openDialog, openSession, setState, toast, upsert, useFeature, useStore, without } from '../../store'
 import { COLUMNS, fullTime, PRIORITY, relTime } from '../../lib/format'
 import { isImported, pendingDeps, taskKey } from '../../lib/tasks'
 import { useNow } from '../../lib/useNow'
@@ -453,6 +453,7 @@ function ExternalCard({ task, full }: { task: Task; full: boolean }) {
 /** «Связи» from the tracker: decomposition children first (with titles when they are on the board), then the rest. */
 function TrackerLinks({ task, links }: { task: Task; links: NonNullable<External['links']> }) {
   const tasks = useStore((s) => s.tasks)
+  const linksOn = useFeature('tracker-links')
   const [busy, setBusy] = useState(false)
   const me = task.externalId
   const kids = links.filter((l) => /decompos/i.test(l.type) && l.from === me).map((l) => l.to)
@@ -485,7 +486,7 @@ function TrackerLinks({ task, links }: { task: Task; links: NonNullable<External
           <span className="muted">{l.type}</span>
         </div>
       ))}
-      {missing.length > 0 && (
+      {missing.length > 0 && linksOn && (
         <button type="button" className="btn btn-sm" disabled={busy} onClick={() => void importKids()}>{busy ? 'Добавляем…' : `Добавить подзадачи на доску (${missing.length})`}</button>
       )}
     </div>

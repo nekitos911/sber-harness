@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import { FolderOpen, FolderTree, GitBranch, GitCompareArrows, House, MessageSquarePlus, SquareTerminal } from 'lucide-react'
-import { openSession, openTask, showPanel, useStore } from '../store'
+import { openSession, openTask, showPanel, useFeature, useStore } from '../store'
 import { basename, normPath, relTime, statusLabel } from '../lib/format'
 import { newChat, newTerminal, workspaceFor } from '../lib/actions'
 import { useGit } from '../lib/git'
@@ -16,6 +16,7 @@ export function WorktreeHome({ cwd }: { cwd: string }) {
   const worktrees = useStore((s) => s.worktrees)
   const git = useGit(cwd)
   const now = useNow()
+  const openOn = useFeature('open')
 
   const p = normPath(cwd)
   const wsId = workspaceFor(cwd)
@@ -63,10 +64,12 @@ export function WorktreeHome({ cwd }: { cwd: string }) {
           <FolderTree />
           Файлы
         </button>
-        <button type="button" className="btn" onClick={() => openFolder(cwd)}>
-          <FolderOpen />
-          Открыть папку
-        </button>
+        {openOn && (
+          <button type="button" className="btn" onClick={() => openFolder(cwd)}>
+            <FolderOpen />
+            Открыть папку
+          </button>
+        )}
       </div>
 
       {here.length > 0 && (

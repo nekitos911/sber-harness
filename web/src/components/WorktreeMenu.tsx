@@ -1,7 +1,7 @@
 import { useMemo, useState, type KeyboardEvent } from 'react'
 import { ClipboardCopy, FolderOpen, Info, ListChecks, Moon, Pin, PinOff, SquareTerminal, Sun, Trash2, Mail, Code } from 'lucide-react'
 import { api, ApiError, errorText, tryApi } from '../api'
-import { closeDialog, getState, openDialog, setState, toast, upsert, useStore } from '../store'
+import { closeDialog, getState, hasFeature, openDialog, setState, toast, upsert, useStore } from '../store'
 import { basename, COLUMNS, normPath, relTime } from '../lib/format'
 import { newTerminal } from '../lib/actions'
 import { modKey, shortcut } from '../lib/keys'
@@ -49,20 +49,25 @@ const copy = (text: string, what: string) => {
 export function worktreeMenu(ws: Workspace, wt: Worktree, task: Task | undefined, ide: boolean): MenuItem[] {
   const meta = wt.meta ?? {}
   const name = wt.branch ?? basename(wt.path)
-  const items: MenuItem[] = [
-    { label: 'Открыть папку', icon: <FolderOpen />, onSelect: () => openFolder(wt.path) },
-    meta.sleeping
+  const canOpen = hasFeature('open')
+  const canMeta = hasFeature('worktree-meta')
+  const items: MenuItem[] = []
+  if (canOpen) items.push({ label: 'Открыть папку', icon: <FolderOpen />, onSelect: () => openFolder(wt.path) })
+  if (canMeta) {
+    items.push(meta.sleeping
       ? { label: 'Разбудить', icon: <Sun />, onSelect: () => void patchMeta(ws.id, wt.path, { sleeping: false }) }
-      : { label: 'Перевести в сон', icon: <Moon />, onSelect: () => void patchMeta(ws.id, wt.path, { sleeping: true }) },
-    { label: 'Отметить непрочитанным', icon: <Mail />, onSelect: () => setUnread(wt.path, true) },
-  ]
+      : { label: 'Перевести в сон', icon: <Moon />, onSelect: () => void patchMeta(ws.id, wt.path, { sleeping: true }) })
+  }
+  items.push({ label: 'Отметить непрочитанным', icon: <Mail />, onSelect: () => setUnread(wt.path, true) })
   if (!wt.main) items.push({ label: 'Удалить', icon: <Trash2 />, danger: true, hint: shortcut('⌫', true), onSelect: () => openDialog({ kind: 'wt-delete', workspaceId: ws.id, path: wt.path }) })
-  items.push(
-    { label: 'Изменить сведения…', icon: <Info />, divider: true, onSelect: () => openDialog({ kind: 'wt-info', workspaceId: ws.id, path: wt.path }) },
-    meta.pinned
-      ? { label: 'Открепить', icon: <PinOff />, onSelect: () => void patchMeta(ws.id, wt.path, { pinned: false }) }
-      : { label: 'Закрепить', icon: <Pin />, onSelect: () => void patchMeta(ws.id, wt.path, { pinned: true }) },
-  )
+  if (canMeta) {
+    items.push(
+      { label: 'Изменить сведения…', icon: <Info />, divider: true, onSelect: () => openDialog({ kind: 'wt-info', workspaceId: ws.id, path: wt.path }) },
+      meta.pinned
+        ? { label: 'Открепить', icon: <PinOff />, onSelect: () => void patchMeta(ws.id, wt.path, { pinned: false }) }
+        : { label: 'Закрепить', icon: <Pin />, onSelect: () => void patchMeta(ws.id, wt.path, { pinned: true }) },
+    )
+  }
   if (task) {
     items.push({
       label: 'Статус задачи', icon: <ListChecks />,
@@ -73,9 +78,9 @@ export function worktreeMenu(ws: Workspace, wt: Worktree, task: Task | undefined
     {
       label: 'Открыть в', icon: <FolderOpen />, divider: true,
       children: [
-        { label: 'Файловом менеджере', onSelect: () => openFolder(wt.path) },
+        ...(canOpen ? [{ label: 'Файловом менеджере', onSelect: () => openFolder(wt.path) }] : []),
         { label: 'Новом терминале', icon: <SquareTerminal />, onSelect: () => void newTerminal({ cwd: wt.path, workspaceId: ws.id }) },
-        ...(ide ? [{ label: 'IDE', icon: <Code />, onSelect: () => void tryApi('POST', '/open', { cwd: wt.path, target: 'ide' }) }] : []),
+        ...(ide && canOpen ? [{ label: 'IDE', icon: <Code />, onSelect: () => void tryApi('POST', '/open', { cwd: wt.path, target: 'ide' }) }] : []),
       ],
     },
     {
@@ -98,7 +103,7 @@ async function moveTask(task: Task, status: TaskStatus) {
 /** Items of the project row menu. */
 export function projectMenu(ws: Workspace): MenuItem[] {
   return [
-    { label: 'Открыть папку', icon: <FolderOpen />, onSelect: () => openFolder(ws.path) },
+    ...(hasFeature('open') ? [{ label: 'Открыть папку', icon: <FolderOpen />, onSelect: () => openFolder(ws.path) }] : []),
     { label: 'Новое рабочее дерево…', icon: <ListChecks />, onSelect: () => openDialog({ kind: 'worktree', workspaceId: ws.id }) },
     { label: 'Очистить рабочие деревья…', icon: <Trash2 />, onSelect: () => openDialog({ kind: 'wt-cleanup', workspaceId: ws.id }) },
   ]

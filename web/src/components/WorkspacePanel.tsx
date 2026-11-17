@@ -2,8 +2,9 @@ import { useEffect } from 'react'
 import { Files, FolderOpen, GitCompareArrows, RefreshCw, ShieldCheck, X } from 'lucide-react'
 import { failCount, useSdd } from '../lib/sdd'
 import { VerdictsTab } from './panel/VerdictsTab'
+import { ErrorBoundary } from './ErrorBoundary'
 import { openFolder } from './WorktreeMenu'
-import { setState, useActiveCwd, useStore } from '../store'
+import { setState, useActiveCwd, useFeature, useStore } from '../store'
 import { basename, normPath } from '../lib/format'
 import { refreshGit, useGit } from '../lib/git'
 import { Branch } from './bits'
@@ -18,6 +19,7 @@ export function WorkspacePanel() {
   const git = useGit(cwd)
   const changed = git?.status?.files.filter((f) => !f.service).length ?? 0
   const plans = useSdd(cwd)
+  const openOn = useFeature('open')
   const fails = failCount(plans)
   const hasChanges = changed > 0
 
@@ -49,9 +51,11 @@ export function WorkspacePanel() {
           </button>
         )}
         <span className="grow" />
-        <button type="button" className="icon-btn" data-tip="Открыть папку" aria-label="Открыть папку в файловом менеджере" onClick={() => openFolder(cwd)}>
-          <FolderOpen />
-        </button>
+        {openOn && (
+          <button type="button" className="icon-btn" data-tip="Открыть папку" aria-label="Открыть папку в файловом менеджере" onClick={() => openFolder(cwd)}>
+            <FolderOpen />
+          </button>
+        )}
         <button type="button" className="icon-btn" data-tip="Обновить" aria-label="Обновить git-статус" onClick={() => refreshGit(cwd)}>
           <RefreshCw />
         </button>
@@ -64,9 +68,11 @@ export function WorkspacePanel() {
         {git?.status?.branch && <BranchPicker cwd={cwd} branch={git.status.branch} placement="bottom-start"><Branch name={git.status.branch} /></BranchPicker>}
       </div>
       <div className="wpanel-body" key={`${cwd}|${tab}`}>
-        {tab === 'files' ? <FilesTab key={cwd} cwd={cwd} status={git?.status ?? null} />
-          : tab === 'verdicts' && plans?.length ? <VerdictsTab cwd={cwd} plans={plans} />
-            : <ChangesTab key={cwd} cwd={cwd} />}
+        <ErrorBoundary key={tab} area={tab === 'files' ? 'файлы' : tab === 'verdicts' ? 'вердикты' : 'изменения'}>
+          {tab === 'files' ? <FilesTab key={cwd} cwd={cwd} status={git?.status ?? null} />
+            : tab === 'verdicts' && plans?.length ? <VerdictsTab cwd={cwd} plans={plans} />
+              : <ChangesTab key={cwd} cwd={cwd} />}
+        </ErrorBoundary>
       </div>
     </aside>
   )

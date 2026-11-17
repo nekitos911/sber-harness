@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react'
 import { Check, Copy, GitBranch, GitBranchPlus } from 'lucide-react'
 import { api, ApiError, errorText, qs } from '../../api'
-import { toast } from '../../store'
+import { toast, useFeature } from '../../store'
 import { refreshGit } from '../../lib/git'
 import { relTime } from '../../lib/format'
 import { workspaceFor } from '../../lib/actions'
@@ -41,6 +41,7 @@ export function BranchPicker({ cwd, branch, placement = 'top-start', children, c
   const [err, setErr] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const btn = useRef<HTMLButtonElement>(null)
+  const supported = useFeature('branches')
 
   useEffect(() => {
     if (!open) return
@@ -48,7 +49,7 @@ export function BranchPicker({ cwd, branch, placement = 'top-start', children, c
     setErr(null)
     setData('loading')
     api<GitBranches>('GET', `/git/branches${qs({ cwd })}`).then(
-      (r) => { if (live) setData(r) },
+      (r) => { if (live) setData({ current: r?.current ?? null, branches: Array.isArray(r?.branches) ? r.branches : [] }) },
       (e) => { if (live) setData({ error: explain(e) }) },
     )
     return () => { live = false }
@@ -130,6 +131,7 @@ export function BranchPicker({ cwd, branch, placement = 'top-start', children, c
     }]
   }
 
+  if (!supported) return className.includes('icon-btn') ? null : <span className="branch-static">{children}</span>
   return (
     <>
       <button ref={btn} type="button" className={className} aria-haspopup="listbox" aria-expanded={open} aria-label={`${label}: ${branch ?? 'нет ветки'}`} data-tip={open ? undefined : label} onClick={() => setOpen(!open)}>

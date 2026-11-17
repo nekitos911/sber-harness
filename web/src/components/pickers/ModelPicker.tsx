@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Check, ChevronDown, RefreshCw } from 'lucide-react'
-import { useStore } from '../../store'
+import { useFeature, useStore } from '../../store'
 import { api, errorText } from '../../api'
 import { relTime } from '../../lib/format'
 import { FULL_ACCESS, GRADES, loadAgentMeta, loadSettings, modeShort, modelLabel, normModels, useAgentMeta, useSettings } from '../../lib/agents'
@@ -150,7 +150,8 @@ function CatalogRefresh({ agentId }: { agentId: string }) {
   const meta = useAgentMeta(agentId)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
-  if (!meta || meta.catalog === undefined) return null // this server does not discover models
+  const on = useFeature('models-refresh')
+  if (!on || !meta || meta.catalog === undefined) return null // this server does not discover models
   const refresh = async () => {
     setBusy(true)
     setErr(null)

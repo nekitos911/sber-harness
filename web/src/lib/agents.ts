@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import { api, ApiError } from '../api'
-import { getState, setState, useStore } from '../store'
+import { getState, hasFeature, setState, useFeature, useStore } from '../store'
 import type { AgentMeta, Grade, ModelEntry, Settings } from '../types'
 
 export const GRADES: Grade[] = ['default', 'fast', 'review', 'explore']
@@ -24,6 +24,7 @@ const inflight = new Set<string>()
 
 /** CLI resolution + what the last session reported; null when the server does not have the endpoint. */
 export function loadAgentMeta(id: string, force = false) {
+  if (!hasFeature('agent-info')) { if (!(id in getState().agentMeta)) setState((s) => ({ agentMeta: { ...s.agentMeta, [id]: null } })); return }
   if (inflight.has(id) || (!force && id in getState().agentMeta)) return
   inflight.add(id)
   api<AgentMeta>('GET', `/agents/${encodeURIComponent(id)}/info`)
@@ -33,7 +34,8 @@ export function loadAgentMeta(id: string, force = false) {
 }
 
 export function useAgentMeta(id: string | null | undefined) {
-  useEffect(() => { if (id) loadAgentMeta(id) }, [id])
+  const on = useFeature('agent-info')
+  useEffect(() => { if (id) loadAgentMeta(id, on) }, [id, on])
   return useStore((s) => (id ? s.agentMeta[id] : undefined))
 }
 

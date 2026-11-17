@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import { api, ApiError, errorText, qs } from '../api'
-import { getState, openScreen, setState, useStore, wtKey } from '../store'
+import { getState, hasFeature, openScreen, setState, useFeature, useStore, wtKey } from '../store'
 import type { PrInfo } from '../types'
 
 /** null = no PR for this branch; 'off' = PR integration disabled; error = could not ask. */
@@ -9,6 +9,7 @@ export type PrState = PrInfo | null | 'off' | { error: string }
 const inflight = new Set<string>()
 
 export function loadPr(cwd: string, force = false) {
+  if (!hasFeature('pr-status')) return
   const k = wtKey(cwd)
   if (inflight.has(k) || (!force && k in getState().prs)) return
   inflight.add(k)
@@ -22,7 +23,8 @@ export function loadPr(cwd: string, force = false) {
 /** PR of the branch checked out in `cwd`; re-asked when the git state there changes (commit, push, checkout). */
 export function usePr(cwd: string | null) {
   const git = useStore((s) => (cwd ? s.git[wtKey(cwd)] : undefined))
-  useEffect(() => { if (cwd) loadPr(cwd, true) }, [cwd, git?.status?.branch, git?.status?.ahead])
+  const on = useFeature('pr-status')
+  useEffect(() => { if (cwd && on) loadPr(cwd, true) }, [cwd, git?.status?.branch, git?.status?.ahead, on])
   return useStore((s) => (cwd ? s.prs[wtKey(cwd)] : undefined))
 }
 

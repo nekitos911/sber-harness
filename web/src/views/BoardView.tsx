@@ -14,6 +14,7 @@ import type { Task, TaskStatus } from '../types'
 import { TaskCard, type BoardCtx } from '../components/board/TaskCard'
 import { TaskDrawer } from '../components/board/TaskDrawer'
 import { Select } from '../components/ui'
+import { ErrorBoundary } from '../components/ErrorBoundary'
 import { useSettings } from '../lib/agents'
 
 type Cols = Record<TaskStatus, string[]>
@@ -250,7 +251,7 @@ export function BoardView() {
         </DragOverlay>
       </DndContext>
 
-      {openTaskObj && <TaskDrawer key={openTaskObj.id} task={openTaskObj} ctx={ctx} onClose={() => setOpenId(null)} />}
+      {openTaskObj && <ErrorBoundary area="карточку задачи"><TaskDrawer key={openTaskObj.id} task={openTaskObj} ctx={ctx} onClose={() => setOpenId(null)} /></ErrorBoundary>}
     </div>
   )
 }

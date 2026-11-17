@@ -160,3 +160,16 @@ button.chip[aria-pressed="true"] { background: var(--signal-soft); color: var(--
 .pr-state[data-state="open"] { color: var(--signal); }
 .start-plan { padding: 8px 10px; border-radius: var(--r-1); background: var(--well); border: 1px solid var(--rule); color: var(--ink-2); font-size: 12.5px; line-height: 1.5; }
 .start-plan[data-blocked] { border-color: color-mix(in srgb, var(--lamp-run) 45%, var(--rule)); color: var(--lamp-run); }
+
+/* ---------- error boundaries: a broken region shows a card, never a blank screen ---------- */
+
+.crash-region { display: grid; gap: 8px; align-content: start; margin: 12px; padding: 12px 14px; border: 1px solid color-mix(in srgb, var(--lamp-fail) 40%, var(--rule)); border-radius: var(--r-2); background: var(--fail-soft); color: var(--ink-2); font-size: 12.5px; }
+.crash-head { display: flex; align-items: center; gap: 8px; color: var(--ink); }
+.crash-head svg { width: 15px; height: 15px; color: var(--lamp-fail); flex-shrink: 0; }
+.crash-region .mono { overflow-wrap: anywhere; color: var(--lamp-fail); }
+.crash-full { position: fixed; inset: 0; display: grid; place-items: center; background: var(--canvas); }
+.crash-card { display: grid; gap: 12px; justify-items: start; width: min(520px, calc(100vw - 32px)); padding: 24px; border: 1px solid var(--rule); border-radius: var(--r-3); background: var(--deck); }
+.crash-card > svg { width: 22px; height: 22px; color: var(--lamp-fail); }
+.crash-card h2 { font-size: 16px; font-weight: 600; }
+.crash-card .mono { color: var(--lamp-fail); overflow-wrap: anywhere; }
+.crash-region .row { flex-wrap: wrap; }
