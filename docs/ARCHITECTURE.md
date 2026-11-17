@@ -583,6 +583,26 @@ NOT confirmed (it may print a URL / device code and wait for the browser callbac
 - Login from the UI: Settings → «Войти в GigaCode» = `POST /api/sessions { kind: 'terminal', agent: 'gigacode', title:
   'Вход в GigaCode', cwd: <dataDir>/chats/login }` — the interactive CLI in a PTY (links clickable via xterm web-links).
 
+## Worktree management and cleanup (Orca-like context menu)
+
+- `GET /api/workspaces/:id/worktrees` items are enriched: `{ path, branch, head, main, dirty: number (changed files),
+  ahead: number (commits not in git.defaultBase / the task's targets[0]), taskId: string|null, taskStatus, pr: {state,url}|null,
+  sessions: number, running: number, lastActivityAt: number|null, meta: { label?, note?, pinned?: boolean,
+  sleeping?: boolean } }` (git data computed in parallel with a short cache; meta from `db.worktreeMeta[path]`).
+- `PATCH /api/worktrees/meta { path, label?, note?, pinned?, sleeping? }` → meta. `sleeping: true` stops terminal PTYs
+  in that cwd (chat sessions are idle between turns anyway; a running turn is NOT killed — 409 unless `force`).
+- `DELETE /api/workspaces/:id/worktrees { path, force?, deleteBranch?: 'no'|'safe'|'force' }`: refuses the main worktree
+  (400); refuses with 409 `{ dirty, ahead, running }` when there are uncommitted changes, unpushed/unmerged commits or a
+  running turn and `force` is not set; otherwise stops all sessions in that cwd (terminals closed, running turns killed),
+  marks them `archived: true` (hidden from the sidebar, transcripts kept; `GET /api/state` still returns them),
+  removes the worktree safely (`git worktree remove --force` → `prune --expire now` → rename to `.stale-<ts>` → rm),
+  then optionally `git branch -d` (`safe`) / `-D` (`force`); the task keeps its log, `task.branch` is kept for history.
+  → `{ removed: true, branchDeleted: boolean, archivedSessions: n }`.
+- `POST /api/open { cwd, target: 'explorer' | 'ide' }`: launches the OS file manager (`explorer.exe` / `open` / `xdg-open`)
+  or `config.ide = { command, args: ["{path}"] }` (default null → the IDE item is hidden) detached, no shell, path validated
+  to be a registered workspace or one of its worktrees.
+- Session field `archived: boolean`.
+
 ## Runs survive a harness restart
 
 An agent turn is spawned detached (`detached: true`, `windowsHide: true`) with stdout/stderr redirected to files
