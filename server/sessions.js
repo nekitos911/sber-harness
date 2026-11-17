@@ -9,6 +9,7 @@ import { launchers } from './launchers.js';
 import { runTurn, isAlive, sameProcess } from './runner.js';
 import { secretEnv } from './mcp-client.js';
 import { readRegistry } from './registry.js';
+import { createAcp } from './acp.js';
 import * as git from './git.js';
 
 const fail = (status, message) => { throw Object.assign(new Error(message), { status }); };
@@ -102,6 +103,7 @@ const brief = (input) => {
 export function createSessions({ config, store, bus, getUrl, catalog = null, crashed = false }) {
   const db = store.db;
   const rt = new Map(); // sid -> runtime state (not persisted)
+  const acp = createAcp(); // agents.<id>.transport "acp": long-lived agent processes
   const hooks = { preamble: () => '', turnEnded: () => {} };
 
   const find = (sid) => db.sessions.find((s) => s.id === sid);
@@ -421,6 +423,28 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
         store.save();
         break;
       }
+      case 'note': // ACP: e.g. the agent's previous session could not be loaded
+        addMessage(s, { kind: 'system', text: ev.text });
+        break;
+      case 'plan': // ACP plan updates: one message per turn, kept current
+        if (c.plan) {
+          c.plan.text = ev.text;
+          updateMessage(s, c.plan);
+        } else c.plan = addMessage(s, { kind: 'system', text: ev.text });
+        break;
+      case 'permission': // ACP session/request_permission: the agent waits for this answer
+        addMessage(s, { kind: 'permission', text: '', permission: { id: ev.id, toolId: ev.toolId, tool: ev.tool, input: ev.input, reason: '', transport: 'acp', options: ev.options, resolved: null } });
+        setWaiting(s, 'permission');
+        break;
+      case 'permission_cancelled': // Stop: held requests were answered "cancelled"
+        for (const m of store.messages(s.id)) {
+          if (m.kind === 'permission' && m.permission.transport === 'acp' && !m.permission.resolved) {
+            m.permission = { ...m.permission, resolved: 'cancelled', resolvedAt: Date.now() };
+            updateMessage(s, m);
+          }
+        }
+        if (s.waitingFor === 'permission') setWaiting(s, null);
+        break;
       case 'session':
         if (s.externalSessionId !== ev.id) {
           s.externalSessionId = ev.id;
@@ -547,18 +571,29 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
       fs.mkdirSync(runDir(s.id), { recursive: true });
       launcher.prepare(ctx);
       r.registryTimer = setInterval(() => pollRegistry(s), REGISTRY_POLL_MS);
-      const handle = runTurn({
-        launcher,
-        ctx,
-        command: exe,
-        cwd: s.cwd,
-        env: { ...process.env, ...agentCfg.env, ...secretEnv(config), ...exe.env, ...launcher.env(ctx), ...ctx.harnessMcp.env },
-        firstEventTimeoutMs: agentCfg.firstEventTimeoutMs || launcher.defaults.firstEventTimeoutMs || 30000,
-        authTimeoutMs: agentCfg.authTimeoutMs || 600000,
-        ...turnFiles(s, r.turn),
-        onEvent: (ev) => applyEvent(s, ev),
-        onOffset: (off) => saveOffset(s, off),
-      });
+      const env = { ...process.env, ...agentCfg.env, ...secretEnv(config), ...exe.env, ...launcher.env(ctx), ...ctx.harnessMcp.env };
+      const firstEventTimeoutMs = agentCfg.firstEventTimeoutMs || launcher.defaults.firstEventTimeoutMs || 30000;
+      let handle;
+      if (agentCfg.transport === 'acp') {
+        if (!launcher.acpArgs) throw new Error(`launcher "${launcher.id}" has no ACP mode; set agents.${s.agent}.transport to "headless"`);
+        handle = acp.turn({
+          sid: s.id, launcher, ctx, command: exe, cwd: s.cwd, env, logFile: turnFiles(s, r.turn).logFile, roots: [s.cwd, ...(s.includeDirs || [])],
+          externalSessionId: s.externalSessionId, prompt, initTimeoutMs: firstEventTimeoutMs, onEvent: (ev) => applyEvent(s, ev),
+        });
+      } else {
+        handle = runTurn({
+          launcher,
+          ctx,
+          command: exe,
+          cwd: s.cwd,
+          env,
+          firstEventTimeoutMs,
+          authTimeoutMs: agentCfg.authTimeoutMs || 600000,
+          ...turnFiles(s, r.turn),
+          onEvent: (ev) => applyEvent(s, ev),
+          onOffset: (off) => saveOffset(s, off),
+        });
+      }
       r.handle = handle;
       if (r.stopRequested) handle.stop();
       s.pid = handle.pid;
@@ -951,6 +986,14 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
       const p = msg.permission;
       if (p.resolved) fail(409, `already answered: ${p.resolved}`);
       if (!p.options.some((o) => o.id === optionId)) fail(400, `optionId must be one of ${p.options.map((o) => o.id).join(', ')}`);
+      if (p.transport === 'acp') {
+        // the agent holds its session/request_permission until this answer
+        if (!acp.answer(sid, permissionId, optionId)) fail(409, 'the agent no longer waits for this answer');
+        msg.permission = { ...p, resolved: optionId, resolvedAt: Date.now() };
+        updateMessage(s, msg);
+        setWaiting(s, null);
+        return s;
+      }
       msg.permission = { ...p, resolved: optionId, resolvedAt: Date.now() };
       updateMessage(s, msg);
       const what = `${p.tool}${p.input != null ? ` ${inputSummary(p.input)}` : ''}`;
@@ -1033,6 +1076,7 @@ ${note.trim()}` : text });
       const p = r.pty;
       r.pty = null;
       p?.kill();
+      acp.drop(sid);
       db.sessions = db.sessions.filter((x) => x.id !== sid);
       rt.delete(sid);
       store.removeSessionFiles(sid);
@@ -1134,6 +1178,7 @@ ${note.trim()}` : text });
     /** Harness shutdown: agent turns keep running (re-attached on the next start); terminals are closed. */
     close() {
       clearInterval(stallTimer);
+      acp.close();
       for (const r of rt.values()) {
         clearInterval(r.registryTimer);
         r.handle?.detach();

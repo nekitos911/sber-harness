@@ -916,8 +916,15 @@ served inside cwd/includeDirs; Stop → `session/cancel`; the process is restart
 a system note). Same identity/launcher resolution as headless. A mock ACP agent (`scripts/mock-acp-agent.js`) covers tests.
 Feature flags: `questions`, `permissions`, `acp`.
 
-Implementation status: questions (a–c) and headless permissions are implemented (flags `questions`, `permissions`);
-the ACP transport is NOT implemented yet (no `acp` flag). Notes: the question card's answer is an ordinary message
+Implementation status: questions (a–c), headless permissions and the ACP transport are implemented (flags `questions`,
+`permissions`, `acp`; `server/acp.js`, `scripts/mock-acp-agent.js`). ACP notes: the process is spawned with stdio pipes
+(it cannot outlive the harness), stderr goes to `runs/<sid>/acp.err.txt`, `initialize` must answer within
+`firstEventTimeoutMs`; `session/update` replays during `session/load` are dropped (the transcript already has them); a
+failed load or an agent without `loadSession` → `session/new` + a system note; diff content becomes `--- path / +++ path`
+with the whole old/new text (no minimal hunks); a Stop marks open ACP cards `resolved: 'cancelled'`; an ACP answer is not a
+new message (the agent continues the same prompt) and a late answer → 409. `session.pid` stays null for ACP turns, so
+`stalled` does not apply to them. A running ACP turn at a harness restart is `interrupted` (recovery); the next message
+starts the process again with `session/load`. Notes: the question card's answer is an ordinary message
 (`POST /api/sessions/:id/messages` with «Ответ на вопрос «…»: …»); any delivery to the session clears `waitingFor`
 'answer'/'permission'. A permission answer also sets `permission.resolved` (+ `resolvedAt`) on the card; a second answer →
 409; `note` is appended to the delivered message. allow_once sets `session.approvalOnce` (consumed by the next turn).

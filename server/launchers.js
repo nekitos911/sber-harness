@@ -354,6 +354,16 @@ function geminiFamily(id, defaults, resolve) {
       for (const dir of session.includeDirs || []) args.push(INCLUDE_FLAG, dir); // every turn: a new process
       return args;
     },
+    /** transport "acp": one long-lived process per session; the prompt goes over JSON-RPC, not argv. VERIFY GigaCode --acp. */
+    acpArgs({ session, agentCfg }) {
+      const args = ['--acp'];
+      const mode = session.approvalMode || agentCfg.approvalMode;
+      if (mode) args.push('--approval-mode', mode);
+      const model = session.model || agentCfg.model;
+      if (model) args.push('--model', model);
+      for (const dir of session.includeDirs || []) args.push(INCLUDE_FLAG, dir);
+      return args;
+    },
     env({ agentCfg, settingsPath }) {
       const name = agentCfg.settingsEnv || defaults.settingsEnv;
       return name ? { [name]: settingsPath } : {};
