@@ -659,6 +659,28 @@ is added to `taskPromptPresets`.
   `persistent: true`: never auto-archived, its depth resets to 0 (it may start its own same-worktree helpers), it reports
   via worker_done as usual. Task workers, coordinators and reviewers are not affected.
 
+### Orca-style workers: placements, inspection, retries, groups
+
+- `worker_start(..., worktree: current | new-child | new-top-level, name?, workspace?)` (`new` = `new-child`): new-child = a new
+  worktree of the caller's repository (`<repo>-worktrees/<name>`, branch from the task key), `meta.parentWorktree` = the
+  caller's worktree (the UI nests it); new-top-level = a new worktree in the repository `workspace` (400 without it). Both
+  give a `persistent` worker and add its worktree to the caller's `includeDirs` (removed when that worktree is deleted);
+  `meta.label` = name. `worker_run` / `agent` accept `name` for `worktree: "new"` (folder and branch = name).
+- `worker_inspect { session_id }` (own descendants only, else 403): `{ status, state, title, cwd, branch, dirty, ahead,
+  diffStat (git diff --stat vs base + untracked count), lastAssistant (2000 chars), report, waitingFor, updatedAt }`.
+  `worker_list` items add `worktreePath`, `persistent`. `worker_stop { session_id }` → `{ stopped: true }` or
+  `{ stopped: false, status: "stop_unknown" }`. `worker_retry { session_id, worktree? }` re-starts the same task (spec) in
+  the same placement (`retryOf` chain); 3 failed starts in a chain → 409 «Задача <key>: 3 неудачных запуска — сообщи
+  пользователю» + a notification. `send_message` groups: `@all` (non-archived descendants), `@idle` (those not running),
+  `@worktree:<path>` (every chat in that worktree, coordinators too) → `{ delivered: [ids] }`.
+- Escalations to the coordinator carry the stop reason (last error) and the tools to use (send_message / worker_inspect /
+  worker_stop + worker_retry / tell the user).
+- Worktree list items: `createdBy: user | agent | external` (db.worktreeMeta[path].createdBy: UI create / take into work →
+  user; worker_start/worker_run/agent/port by an agent session → agent + `createdBySession`; linked root-start worktrees →
+  agent; anything else → external) and `detached`. Failed worktree operations store `meta.lastError { text, at }`
+  (create → on the repository's main worktree; cleared on the next success); meta changes are broadcast as
+  `{ t: "worktree.meta", path, meta }`.
+
 ## Review loop run by the harness (`orchestration.reviewMode: "harness"`)
 
 Does not depend on what the task command (`/full-task`) says. Config:

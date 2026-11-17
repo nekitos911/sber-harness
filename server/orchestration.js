@@ -177,7 +177,23 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
   }
 
   /** Worktree + branch for a task: branchTemplate with the task key, started from targets[0]; reused if present. */
-  async function taskWorktree(task, cwd, explicitBranch) {
+  const wtKey = (p) => (process.platform === 'win32' ? path.resolve(p).toLowerCase() : path.resolve(p));
+  /** db.worktreeMeta[path] (label, createdBy, parentWorktree, lastError, …), broadcast as { t: 'worktree.meta' }. */
+  function markWorktree(p, patch) {
+    db.worktreeMeta ||= {};
+    const key = wtKey(p);
+    const meta = { ...db.worktreeMeta[key], ...patch };
+    for (const [k, v] of Object.entries(meta)) if (v === undefined) delete meta[k];
+    db.worktreeMeta[key] = meta;
+    store.save();
+    bus.send({ t: 'worktree.meta', path: path.resolve(p), meta });
+    return meta;
+  }
+  const madeBy = (caller) => (caller ? { createdBy: 'agent', createdBySession: caller.id } : { createdBy: 'user' });
+  /** worktree placement: current | new-child (a new worktree of the caller's repo) | new-top-level (another repo) */
+  const PLACEMENTS = { current: 'current', new: 'new-child', 'new-child': 'new-child', 'new-top-level': 'new-top-level' };
+
+  async function taskWorktree(task, cwd, explicitBranch, name = null) {
     if (!(await git.isRepo(cwd))) fail(400, `нельзя создать рабочее дерево: ${cwd} — не git-репозиторий`);
     let branch;
     if (explicitBranch) branch = git.sanitizeBranch(explicitBranch);
@@ -185,7 +201,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
     else branch = await git.uniqueBranch(cwd, git.sanitizeBranch(render(gitCfg().branchTemplate, { key: tasks.key(task), id: task.id })), task.branch);
     const existed = (await git.worktrees(cwd)).some((w) => w.branch === branch);
     const start = await git.startPoint(cwd, task.targets[0]);
-    const wt = await git.addWorktree(cwd, { branch, start, worktreeRoot: config.worktreeRoot, dirName: tasks.key(task) });
+    const wt = await git.addWorktree(cwd, { branch, start, worktreeRoot: config.worktreeRoot, dirName: name || tasks.key(task) });
     return { wt, created: !existed, repo: cwd };
   }
 
@@ -210,7 +226,10 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
     if (starting.has(task.id)) fail(409, `задача ${task.id} запускается прямо сейчас`);
     const pending = task.deps.filter((d) => tasks.find(d)?.status !== 'done');
     if (pending.length) fail(409, `у задачи ${task.id} есть незавершённые зависимости: ${pending.join(', ')}`);
-    if (o.worktree && !['current', 'new'].includes(o.worktree)) fail(400, 'worktree: "current" или "new"');
+    if (o.worktree && !PLACEMENTS[o.worktree]) fail(400, 'worktree: "current", "new-child" (или "new") или "new-top-level"');
+    const placement = PLACEMENTS[o.worktree || 'current'];
+    if (placement === 'new-top-level' && !o.workspace) fail(400, 'для new-top-level нужен workspace — репозиторий из workspace_list');
+    const name = o.name ? git.sanitizeBranch(o.name).replace(/\//g, '-') : null;
     const agent = o.agent || (caller?.kind === 'chat' ? caller.agent : null) || config.defaultAgent;
     // fail fast, before any worktree or session exists
     jobStep('Проверка агента');
@@ -220,13 +239,18 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
 
     const run = (async () => {
       let cwd = o.cwd ? path.resolve(o.cwd) : ws ? ws.path : caller?.cwd || config.root;
+      // a new child worktree comes from the caller's own repository (nested under its worktree in the UI)
+      if (placement === 'new-child' && caller && !o.workspace) cwd = caller.worktreePath || caller.cwd;
       let branch;
       let made = null;
-      if (o.worktree === 'new') {
+      if (placement !== 'current') {
         jobStep('Создание worktree');
-        made = await taskWorktree(task, cwd, o.branch);
+        made = await taskWorktree(task, cwd, o.branch, name);
         cwd = made.wt.path;
         branch = made.wt.branch;
+        if (made.created) {
+          markWorktree(cwd, { ...madeBy(caller), ...(name ? { label: name } : {}), ...(placement === 'new-child' && caller ? { parentWorktree: caller.worktreePath || caller.cwd } : {}), lastError: undefined });
+        }
       } else {
         branch = await git.currentBranch(cwd);
       }
@@ -239,7 +263,9 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
         s = await sessions.create({
           kind: 'chat', agent, cwd, workspaceId: ws?.id, title: `${key}: ${task.title}`, role: 'worker',
           parentId: caller?.id ?? null, taskId: task.id, model: o.model, branch, inWorktree, includeDirs, autoIncludeDirs: true, atRoot: o.atRoot === true,
+          persistent: !!caller && placement !== 'current',
         });
+        sessions.update(s.id, { placement, ...(name ? { worktreeName: name } : {}), ...(o.workspace ? { placementWorkspace: o.workspace } : {}), ...(o.retryOf ? { retryOf: o.retryOf } : {}) });
       } catch (e) {
         if (made?.created) await git.removeWorktree(made.repo, made.wt.path).catch(() => {});
         throw e;
@@ -247,7 +273,9 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
       const by = caller?.id || 'user';
       const patch = { status: 'in_progress', assigneeSessionId: s.id };
       if (!task.workspaceId && ws) patch.workspaceId = ws.id;
-      if (o.worktree === 'new' || (!task.branch && branch && !task.targets.includes(branch))) patch.branch = branch;
+      if (placement !== 'current' || (!task.branch && branch && !task.targets.includes(branch))) patch.branch = branch;
+      // the parent CLI can read the child's files from its next turn
+      if (caller && made) sessions.patch(caller.id, { includeDirs: [...(caller.includeDirs || []), cwd] });
       if (!task.takenAt) {
         patch.takenAt = Date.now();
         patch.snapshot = { title: task.title, description: task.description, externalStatus: task.externalStatus ?? null, at: patch.takenAt };
@@ -294,6 +322,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
     const branch = await git.uniqueBranch(repo, git.sanitizeBranch(render(gitCfg().portBranchTemplate, { branch: task.branch, target, targetSlug: git.targetSlug(target), key: tasks.key(task) })));
     jobStep('Создание worktree');
     const wt = await git.addWorktree(repo, { branch, start, worktreeRoot: config.worktreeRoot });
+    markWorktree(wt.path, madeBy(caller));
     jobStep('cherry-pick', { done: 0, total: commits.length });
     const status = await git.cherryPick(wt.path, commits); // one sequence: --continue after a conflict picks the rest
     if (status === 'clean') jobStep('cherry-pick', { done: commits.length, total: commits.length });
@@ -425,9 +454,13 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
     let cwd = base;
     let branch = a.workspace ? await git.currentBranch(base) : caller.branch;
     if (a.worktree === 'new') {
-      const wt = await git.addWorktree(base, { branch: git.sanitizeBranch(`sub/${a.profile || 'agent'}-${newId('x').slice(2)}`), worktreeRoot: config.worktreeRoot });
+      const name = a.name ? git.sanitizeBranch(a.name).replace(/\//g, '-') : null;
+      const wantBranch = name || git.sanitizeBranch(`sub/${a.profile || 'agent'}-${newId('x').slice(2)}`);
+      const wt = await git.addWorktree(base, { branch: await git.uniqueBranch(base, wantBranch), worktreeRoot: config.worktreeRoot, dirName: name });
       cwd = wt.path;
       branch = wt.branch;
+      markWorktree(cwd, { ...madeBy(caller), ...(name ? { label: name } : {}), parentWorktree: caller.worktreePath || caller.cwd });
+      sessions.patch(caller.id, { includeDirs: [...(caller.includeDirs || []), cwd] });
     }
     const s = await sessions.create({
       kind: 'chat', agent, cwd, role: 'worker', parentId: caller.id, model, approvalMode: mode, branch, ephemeral: true, autoReport: false, persistent,
@@ -671,7 +704,8 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
       notify({ kind: 'error', sessionId: s.id, taskId: s.taskId, text: `${s.title}: агент не смог выполнить ход (подробности в чате)` });
     }
     if (s.role !== 'worker' || !s.autoReport || reported || communicated || !queueEmpty) return;
-    const text = `Агент ${label(s)} закончил ход, не вызвав worker_done (статус: ${s.status}).\nПоследний вывод: ${s.preview || '(нет)'}\nОтветьте через send_message на «${s.id}», чтобы он продолжил.`;
+    const lastError = sessions.messages(s.id).filter((m) => m.kind === 'error').at(-1)?.text.split('\n')[0];
+    const text = `Агент ${label(s)} закончил ход, не вызвав worker_done (статус: ${s.status}${lastError ? `; причина: ${lastError}` : ''}).\nПоследний вывод: ${s.preview || '(нет)'}\nЧто можно: send_message(to: "${s.id}") — уточнить и продолжить; worker_inspect — посмотреть состояние; worker_stop + worker_retry — перезапустить; или сообщить пользователю (send_message to "user").`;
     const parent = s.parentId && sessions.find(s.parentId);
     if (parent) sessions.deliver(parent.id, { from: s.id, text: fromSession(s, text) });
     else notify({ kind: 'escalation', sessionId: s.id, taskId: s.taskId, text });
@@ -684,7 +718,74 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
 
   // ---- tools ----
 
-  const sessionInfo = (s) => ({ id: s.id, title: s.title, role: s.role, status: s.status, agent: s.agent, taskId: s.taskId, parentId: s.parentId, cwd: s.cwd, branch: s.branch, queued: s.queued, preview: s.preview });
+  const sessionInfo = (s) => ({ id: s.id, title: s.title, role: s.role, status: s.status, agent: s.agent, taskId: s.taskId, parentId: s.parentId, cwd: s.cwd, branch: s.branch, worktreePath: s.worktreePath ?? null, persistent: !!s.persistent, queued: s.queued, preview: s.preview });
+
+  const descendants = (c) => {
+    const out = [];
+    const walk = (id) => {
+      for (const s of db.sessions.filter((x) => x.parentId === id && !x.virtual)) {
+        out.push(s);
+        walk(s.id);
+      }
+    };
+    if (c) walk(c.id);
+    return out;
+  };
+  /** a session the caller started (directly or through its workers); 403 otherwise */
+  function ownDescendant(c, id) {
+    const s = sessions.get(id);
+    if (c && !descendants(c).some((d) => d.id === s.id)) fail(403, `${id} — не ваш агент`);
+    return s;
+  }
+  /** @all = live (not archived) descendants, @idle = those not running, @worktree:<path> = every session there (coordinators too) */
+  function groupTargets(to, c) {
+    const live = (s) => !s.archived && s.kind === 'chat';
+    if (to === '@all') return descendants(c).filter(live);
+    if (to === '@idle') return descendants(c).filter((s) => live(s) && s.status !== 'running'); // waiting for instructions
+    const wt = to.match(/^@worktree:(.+)$/)?.[1];
+    if (wt) return db.sessions.filter((s) => s.id !== c?.id && !s.archived && !s.virtual && s.kind === 'chat' && samePath(s.worktreePath || s.cwd, wt));
+    fail(400, `неизвестная группа ${to}: @all, @idle или @worktree:<путь>`);
+  }
+
+  async function inspectWorker(w) {
+    const task = w.taskId && tasks.find(w.taskId);
+    const base = task?.targets?.[0] || config.git.defaultBase;
+    const out = { id: w.id, status: w.status, state: w.stalled ? 'stalled' : w.waitingFor ? `waiting_${w.waitingFor}` : w.lastEventKind || w.phase || w.status, title: w.title, cwd: w.cwd, branch: w.branch, waitingFor: w.waitingFor ?? null, report: w.report ?? null, updatedAt: w.lastActivityAt };
+    const last = sessions.messages(w.id).filter((m) => m.kind === 'assistant').at(-1);
+    out.lastAssistant = last ? last.text.slice(-2000) : null;
+    if (await git.isRepo(w.cwd)) {
+      const st = await git.status(w.cwd).catch(() => null);
+      const baseRef = await git.startPoint(w.cwd, base).catch(() => null);
+      out.dirty = st ? st.files.length : null;
+      out.ahead = baseRef ? ((await git.revList(w.cwd, `${baseRef}..HEAD`).catch(() => null)) || []).length : null;
+      const stat = baseRef ? (await git.git(w.cwd, ['diff', '--stat', baseRef], { ok: [0, 1] }).catch(() => null))?.stdout.trim() : null;
+      const untracked = st ? st.files.filter((f) => f.status === '?').length : 0;
+      out.diffStat = [stat, untracked ? `untracked: ${untracked}` : null].filter(Boolean).join('\n') || null;
+    }
+    return out;
+  }
+
+  /** worker_retry: the same task in the same placement; a chain with 3 failed starts is circuit-broken. */
+  async function retryWorker(w, worktree, c) {
+    if (!w.taskId) fail(400, 'повторить можно только агента задачи (worker_start)');
+    if (sessions.isRunning(w.id)) fail(409, `${w.id} ещё работает — сначала worker_stop`);
+    const task = tasks.get(w.taskId);
+    const chain = [];
+    for (let s = w; s && !chain.includes(s); s = s.retryOf && sessions.find(s.retryOf)) chain.push(s);
+    const failed = chain.filter((s) => ['error', 'failed', 'stopped'].includes(s.status) || s.report?.status === 'failed' || s.interrupted).length;
+    if (failed >= 3) {
+      const text = `Задача ${tasks.key(task)}: 3 неудачных запуска — сообщи пользователю`;
+      notify({ kind: 'error', sessionId: w.id, taskId: task.id, text });
+      fail(409, text);
+    }
+    if (task.assigneeSessionId === w.id) tasks.update(task.id, { assigneeSessionId: null }, c?.id || 'user');
+    const first = sessions.messages(w.id).find((m) => m.kind === 'user');
+    const s = await startWorker(task, {
+      agent: w.agent, worktree: worktree || w.placement || 'current', workspace: w.placementWorkspace, name: w.worktreeName, retryOf: w.id,
+      ...(first && !task.externalId ? { spec: first.text } : {}),
+    }, c || (w.parentId && sessions.find(w.parentId)) || null);
+    return sessionInfo(s);
+  }
 
   const TOOLS = [
     {
@@ -756,12 +857,13 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
     },
     {
       name: 'worker_start',
-      description: 'Start a worker agent (its own chat) for a task (task_id) or an ad-hoc spec. Then END YOUR TURN: the harness wakes you with its report.',
+      description: 'Start a worker (its own chat) for a task (task_id) or an ad-hoc spec, in this worktree or a new one (worktree + name, workspace for another repository). Returns at once; then END YOUR TURN: the harness wakes you with its report, question or escalation.',
       inputSchema: obj({
         task_id: str('existing task id'), spec: str('ad-hoc task spec (creates a task)'), title: str('title for an ad-hoc spec'),
         agent: str('agent id from the config'), workspace: str('workspace id or name to run in'),
-        worktree: str('current (default) or new (own git worktree + branch)', { enum: ['current', 'new'] }),
-        branch: str('branch name for worktree "new" (default from the task key)'), model: str('model id'),
+        worktree: str('placement: current (this worktree, default) | new-child (a new worktree of your repository, nested under yours) | new-top-level (a new worktree in another repository: needs workspace); new = new-child', { enum: ['current', 'new', 'new-child', 'new-top-level'] }),
+        name: str('short worktree name for a new worktree (e.g. ft-core); its folder is <repo>-worktrees/<name>'),
+        branch: str('branch for a new worktree (default from the task key)'), model: str('model id'),
       }),
       run: async (a, c) => {
         let task;
@@ -780,7 +882,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
         profile: str('agent profile name'), spec: str('the assignment'), model: str('model id or grade name'),
         approvalMode: str('approval mode'), title: str('chat title'),
         worktree: str('current (default) or new', { enum: ['current', 'new'] }), workspace: str('another repository (workspace name): a persistent child there'),
-        timeoutMin: { type: 'number', description: 'minutes to wait (default 60)' },
+        name: str('short worktree name for worktree new'), timeoutMin: { type: 'number', description: 'minutes to wait (default 60)' },
       }, ['spec']),
       run: (a, c) => workerRun(a, c),
     },
@@ -797,16 +899,21 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
     },
     {
       name: 'worker_list',
-      description: 'Your worker sessions with status, task and last output.',
+      description: 'Your workers (direct children, also in other worktrees): status, task, worktree, persistent flag and last output. Do not poll it in a loop: the harness wakes you.',
       inputSchema: obj({}),
       run: (_, c) => (c ? sessions.children(c.id) : sessions.list().filter((s) => s.role === 'worker')).map(sessionInfo),
     },
     {
       name: 'send_message',
-      description: 'Send a message to a session id, to "parent" or to "user". Wakes the target session.',
-      inputSchema: obj({ to: str('session id | "parent" | "user"'), body: str('message text') }, ['to', 'body']),
+      description: 'Send a message to a session id, "parent", "user" or a group of your workers: "@all" (live), "@idle", "@worktree:<path>" (every session in that worktree). Wakes the target; a working one gets it at the end of its turn.',
+      inputSchema: obj({ to: str('session id | "parent" | "user" | "@all" | "@idle" | "@worktree:<path>"'), body: str('message text') }, ['to', 'body']),
       run: (a, c) => {
         if (c) sessions.flag(c.id, 'communicated');
+        if (String(a.to).startsWith('@')) {
+          const targets = groupTargets(a.to, c);
+          for (const t of targets) sessions.deliver(t.id, { from: c?.id ?? 'user', text: c ? fromSession(c, a.body) : a.body });
+          return { delivered: targets.map((t) => t.id) };
+        }
         const parent = a.to === 'parent' && c?.parentId ? sessions.find(c.parentId) : null;
         if (a.to === 'user' || (a.to === 'parent' && !parent)) {
           notify({ kind: 'info', sessionId: c?.id ?? null, taskId: c?.taskId ?? null, text: a.body });
@@ -816,6 +923,29 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
         const r = sessions.deliver(target.id, { from: c?.id ?? 'user', text: c ? fromSession(c, a.body) : a.body });
         return { delivered: target.id, queued: r.queued };
       },
+    },
+    {
+      name: 'worker_inspect',
+      description: 'State of one of your workers without waiting: status, activity, branch, dirty files, commits ahead, diff stat vs its base, last answer, worker_done report. Use it instead of polling worker_list.',
+      inputSchema: obj({ session_id: str('worker session id') }, ['session_id']),
+      run: (a, c) => inspectWorker(ownDescendant(c, a.session_id)),
+    },
+    {
+      name: 'worker_stop',
+      description: 'Stop one of your workers (its running turn; a persistent worker keeps its chat).',
+      inputSchema: obj({ session_id: str('worker session id') }, ['session_id']),
+      run: (a, c) => {
+        const w = ownDescendant(c, a.session_id);
+        if (!sessions.isRunning(w.id)) return { stopped: false, status: 'stop_unknown', sessionStatus: w.status };
+        sessions.stop(w.id);
+        return { stopped: true };
+      },
+    },
+    {
+      name: 'worker_retry',
+      description: 'Start one of your stopped / failed workers again: the same task and spec in the same placement (or worktree given). After 3 failed starts of one task the harness refuses: tell the user.',
+      inputSchema: obj({ session_id: str('worker session id'), worktree: str('placement for the retry', { enum: ['current', 'new', 'new-child', 'new-top-level'] }) }, ['session_id']),
+      run: (a, c) => retryWorker(ownDescendant(c, a.session_id), a.worktree, c),
     },
     {
       name: 'ask',
@@ -945,6 +1075,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
 
   return {
     notify,
+    markWorktree,
     preamble,
     resumeReviews,
     gitSuggest,
@@ -1064,6 +1195,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
               ...(cur.workspaceId ? {} : { workspaceId: ws.id }),
             }, 'harness');
             tasks.addLog(t.id, 'harness', `Агент создал рабочее дерево: ${ws.name} · ${wt.branch}`, 'worktree', { workspaceId: ws.id, path: wt.path, branch: wt.branch });
+            if (!db.worktreeMeta?.[wtKey(wt.path)]?.createdBy) markWorktree(wt.path, { createdBy: 'agent', ...(cur.assigneeSessionId ? { createdBySession: cur.assigneeSessionId } : {}) });
             linked++;
           }
         }

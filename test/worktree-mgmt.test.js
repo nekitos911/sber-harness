@@ -40,7 +40,7 @@ test('enriched worktree list: dirty, ahead, task, sessions, meta', async () => {
   const chat = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', cwd: wt.path })).body;
   await h.api('PATCH', '/api/worktrees/meta', { path: wt.path, label: 'Лимиты', pinned: true });
   const item = await waitFor(async () => (await list()).find((w) => w.path === wt.path && w.dirty === 1));
-  assert.deepEqual([item.ahead, item.taskId, item.taskStatus, item.sessions, item.running, item.meta], [1, t.id, 'todo', 1, 0, { label: 'Лимиты', pinned: true }]);
+  assert.deepEqual([item.ahead, item.taskId, item.taskStatus, item.sessions, item.running, item.meta, item.createdBy], [1, t.id, 'todo', 1, 0, { createdBy: 'user', label: 'Лимиты', pinned: true }, 'user']);
   assert.ok(item.lastActivityAt >= chat.lastActivityAt, 'newest of session activity and the git dir mtime');
   const main = (await list()).find((w) => w.main);
   assert.deepEqual([main.dirty, main.ahead], [0, 0]);
@@ -53,7 +53,7 @@ test('sleeping refuses running turns unless forced', async () => {
   await waitFor(async () => (await h.api('GET', '/api/state')).body.sessions.find((x) => x.id === s.id).status === 'running');
   const r = await h.api('PATCH', '/api/worktrees/meta', { path: wt.path, sleeping: true });
   assert.deepEqual([r.status, r.body.running], [409, 1]);
-  assert.deepEqual((await h.api('PATCH', '/api/worktrees/meta', { path: wt.path, sleeping: true, force: true })).body, { sleeping: true });
+  assert.deepEqual((await h.api('PATCH', '/api/worktrees/meta', { path: wt.path, sleeping: true, force: true })).body, { createdBy: 'user', sleeping: true });
   await waitFor(async () => (await h.api('GET', '/api/state')).body.sessions.find((x) => x.id === s.id).pid === null, { what: 'turn stopped' });
 });
 

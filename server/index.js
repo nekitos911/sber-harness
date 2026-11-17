@@ -749,6 +749,9 @@ export async function startServer(opts = {}) {
       running: here.filter((s) => s.status === 'running').length,
       lastActivityAt: last || null,
       meta: db.worktreeMeta?.[metaKey(wt.path)] || {},
+      // who made it: the UI, an agent session, or not the harness (an existing CLI / full-task worktree)
+      createdBy: db.worktreeMeta?.[metaKey(wt.path)]?.createdBy || (wt.main ? 'user' : 'external'),
+      detached: !!wt.detached,
     };
   }
 
@@ -912,7 +915,15 @@ export async function startServer(opts = {}) {
     const ws = getWs(params.id);
     check(body, { name: 'string', base: 'string?' });
     const start = body.base ? (await git.startPoint(ws.path, body.base)) || body.base : null;
-    return git.addWorktree(ws.path, { branch: git.sanitizeBranch(body.name), start, worktreeRoot: config.worktreeRoot });
+    try {
+      const wt = await git.addWorktree(ws.path, { branch: git.sanitizeBranch(body.name), start, worktreeRoot: config.worktreeRoot });
+      orch.markWorktree(wt.path, { createdBy: 'user' });
+      orch.markWorktree(ws.path, { lastError: undefined });
+      return wt;
+    } catch (e) {
+      orch.markWorktree(ws.path, { lastError: { text: `Не удалось создать рабочее дерево: ${e.message}`, at: Date.now() } });
+      throw e;
+    }
   });
   route('DELETE', '/api/workspaces/:id/worktrees', async ({ params, body }) => {
     const ws = getWs(params.id);
@@ -936,7 +947,17 @@ export async function startServer(opts = {}) {
     }
     await Promise.all(here.filter((s) => s.pid).map((s) => waitGone(s.pid)));
     jobStep('git worktree remove');
-    await git.removeWorktree(ws.path, wt.path);
+    try {
+      await git.removeWorktree(ws.path, wt.path);
+    } catch (e) {
+      orch.markWorktree(wt.path, { lastError: { text: `Не удалось удалить: ${e.message}`, at: Date.now() } }); // «Не удалось удалить» under it
+      throw e;
+    }
+    orch.markWorktree(wt.path, { lastError: undefined });
+    // parents that could read this worktree (a child's includeDirs) stop referring to it
+    for (const s of db.sessions.filter((x) => (x.includeDirs || []).some((d) => samePath(d, wt.path)))) {
+      sessions.patch(s.id, { includeDirs: s.includeDirs.filter((d) => !samePath(d, wt.path)) });
+    }
     let branchDeleted = false;
     if (wt.branch && body.deleteBranch && body.deleteBranch !== 'no') {
       const r = await git.git(ws.path, ['branch', body.deleteBranch === 'force' ? '-D' : '-d', wt.branch], { ok: [0, 1] });

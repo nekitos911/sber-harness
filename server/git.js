@@ -221,7 +221,9 @@ export async function worktrees(cwd) {
       if (line.startsWith('worktree ')) wt.path = path.resolve(line.slice(9));
       else if (line.startsWith('HEAD ')) wt.head = line.slice(5);
       else if (line.startsWith('branch ')) wt.branch = line.slice(7).replace(/^refs\/heads\//, '');
+      else if (line === 'detached') wt.detached = true;
     }
+    wt.detached = !!wt.detached || !wt.branch;
     return wt;
   });
 }
