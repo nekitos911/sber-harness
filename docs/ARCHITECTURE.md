@@ -725,8 +725,11 @@ NOT confirmed (it may print a URL / device code and wait for the browser callbac
   task/PR from the db; `dirty`/`ahead` are `null` and `enriched: false` unless `?enrich=1` (or a fresh cache entry
   exists). `GET /api/worktrees/info?path=` enriches one registered worktree. Enrichment: per-path cache 30 s, at most 4
   computations (git processes) at a time; nothing is enriched at startup; the PR refresh walks tasks one at a time.
-  `lastActivityAt` = newest of the worktree's sessions' activity and the mtime of its git `HEAD`/`index` (one stat
-  each). Feature flag `worktree-lazy`.
+  `lastActivityAt` = newest of the worktree's sessions' activity, the mtime of its `logs/HEAD` reflog (else `HEAD`) and
+  — when enriched or cached — its newest commit time (`git log -1 --format=%ct`); never the index mtime. Every git child
+  runs with `GIT_OPTIONAL_LOCKS=0`, so reads (status, diff, log, …) never refresh/rewrite the index. A session's
+  `workspaceId` = the git repository whose worktree list contains its cwd (worktrees usually live outside the repo
+  folder), else the deepest registered folder. Feature flag `worktree-lazy`.
 - `PATCH /api/worktrees/meta { path, label?, note?, pinned?, sleeping? }` → meta. `sleeping: true` stops terminal PTYs
   in that cwd (chat sessions are idle between turns anyway; a running turn is NOT killed — 409 unless `force`).
 - `DELETE /api/workspaces/:id/worktrees { path, force?, deleteBranch?: 'no'|'safe'|'force' }`: refuses the main worktree

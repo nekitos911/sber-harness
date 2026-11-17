@@ -847,6 +847,30 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     return String(text).length > 300 ? `${String(text).slice(0, 300)}…` : String(text);
   };
 
+  const wtLists = new Map(); // repo path -> { at, list } (git worktree list, 30 s)
+  async function worktreesOf(repo, fresh = false) {
+    const hit = wtLists.get(repo);
+    if (!fresh && hit && Date.now() - hit.at < 30000) return hit.list;
+    const list = await git.worktrees(repo).catch(() => []);
+    wtLists.set(repo, { at: Date.now(), list });
+    return list;
+  }
+
+  /**
+   * The workspace a cwd belongs to: the git repository one of whose worktrees contains it (worktrees usually live
+   * outside the repo folder), else the deepest registered folder containing it (a projects folder is the last resort).
+   */
+  async function workspaceFor(cwd, fresh = false) {
+    let best = null;
+    for (const w of db.workspaces.filter((x) => x.isGit)) {
+      for (const t of await worktreesOf(w.path, fresh)) {
+        if (insideDir(t.path, cwd) && (!best || t.path.length > best.len)) best = { id: w.id, len: t.path.length };
+      }
+    }
+    if (!best && !fresh) return workspaceFor(cwd, true); // a worktree created in the last 30 s
+    return best?.id ?? db.workspaces.filter((w) => insideDir(w.path, cwd)).sort((a, b) => b.path.length - a.path.length)[0]?.id ?? null;
+  }
+
   // ---- public API ----
 
   const api = {
@@ -924,8 +948,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
         agent: kind === 'chat' ? agent : agent || 'shell',
         launcherId: kind === 'chat' ? agentCfg.launcher : null,
         cwd,
-        // the deepest registered folder wins (a repo inside the projects folder belongs to the repo)
-        workspaceId: ws?.id ?? db.workspaces.filter((w) => insideDir(w.path, cwd)).sort((a, b) => b.path.length - a.path.length)[0]?.id ?? null,
+        workspaceId: ws?.id ?? (await workspaceFor(cwd)),
         branch: o.branch ?? null,
         role,
         parentId: o.parentId ?? null,

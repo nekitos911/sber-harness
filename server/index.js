@@ -621,16 +621,23 @@ export async function startServer(opts = {}) {
     const data = gitSlots(async () => {
       const task = taskOf(ws, wt);
       const base = task?.targets?.[0] || config.git.defaultBase;
-      const [st, baseRef] = await Promise.all([git.status(wt.path).catch(() => null), git.startPoint(ws.path, base).catch(() => null)]);
+      const [st, baseRef, ct] = await Promise.all([
+        git.status(wt.path).catch(() => null),
+        git.startPoint(ws.path, base).catch(() => null),
+        wt.head ? git.git(wt.path, ['log', '-1', '--format=%ct', 'HEAD']).then((r) => Number(r.stdout.trim()) * 1000 || 0, () => 0) : 0,
+      ]);
       const ahead = baseRef && wt.head ? ((await git.revList(wt.path, `${baseRef}..HEAD`).catch(() => null)) || []).length : 0;
-      return { dirty: st ? st.files.length : 0, ahead, base };
+      return { dirty: st ? st.files.length : 0, ahead, base, committedAt: ct || null };
     });
     wtCache.set(wt.path, { at: Date.now(), data });
     data.catch(() => wtCache.delete(wt.path));
     return data;
   }
 
-  /** Newest mtime of the worktree's git HEAD / index (checkout, commit, staging touch them): one cheap stat each. */
+  /**
+   * mtime of the worktree's HEAD reflog (logs/HEAD: commit, checkout, reset), else of HEAD: one cheap stat. Never the
+   * index - a read like `git status` could rewrite it without any activity.
+   */
   function gitTouchedAt(wtPath) {
     let gitDir = path.join(wtPath, '.git');
     try {
@@ -639,9 +646,10 @@ export async function startServer(opts = {}) {
     } catch {
       return 0;
     }
-    return Math.max(0, ...['HEAD', 'index'].map((f) => {
-      try { return Math.floor(fs.statSync(path.join(gitDir, f)).mtimeMs); } catch { return 0; }
-    }));
+    for (const f of [path.join('logs', 'HEAD'), 'HEAD']) {
+      try { return Math.floor(fs.statSync(path.join(gitDir, f)).mtimeMs); } catch {}
+    }
+    return 0;
   }
 
   /**
@@ -659,7 +667,7 @@ export async function startServer(opts = {}) {
     const info = enrich ? await worktreeGit(ws, wt) : cached ? await cached.catch(() => null) : null;
     const task = taskOf(ws, wt);
     const here = sessionsIn(wt.path).filter((s) => !s.archived);
-    const last = Math.max(0, gitTouchedAt(wt.path), ...here.map((s) => s.lastActivityAt || 0));
+    const last = Math.max(0, gitTouchedAt(wt.path), info?.committedAt || 0, ...here.map((s) => s.lastActivityAt || 0));
     return {
       ...wt,
       enriched: !!info,

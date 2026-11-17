@@ -11,6 +11,7 @@ const fail = (status, message) => { throw Object.assign(new Error(message), { st
 const gitEnv = () => ({
   ...process.env,
   GIT_TERMINAL_PROMPT: '0',
+  GIT_OPTIONAL_LOCKS: '0', // reads (status, diff, ...) never refresh/rewrite the index: its mtime is not activity
   GCM_INTERACTIVE: 'never',
   GIT_ASKPASS: '',
   GIT_SSH_COMMAND: process.env.GIT_SSH_COMMAND || 'ssh -o BatchMode=yes -o ConnectTimeout=15',

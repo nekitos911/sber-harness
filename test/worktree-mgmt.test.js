@@ -4,6 +4,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { startTestServer, makeRepo, tmpDir, rmrf, gitIn, waitFor } from './helpers.js';
 
 const root = tmpDir();
@@ -109,4 +110,27 @@ test('listing scales: 20 worktrees list without git per worktree; enrich and per
   const rich = await list(true);
   assert.ok(rich.every((w) => w.enriched && Number.isInteger(w.dirty)));
   assert.equal((await h.api('GET', `/api/worktrees/info?path=${encodeURIComponent(path.join(root, 'нет'))}`)).status, 400);
+});
+
+test('reads never touch the index; an old worktree stays old after enrichment; a chat in a worktree belongs to its repo', async () => {
+  const wt = await addWt('feature/old');
+  const gitDir = gitIn(wt.path, 'rev-parse', '--absolute-git-dir');
+  // a commit and a reflog from a month ago, an index from a month ago
+  const month = new Date(Date.now() - 30 * 86400000);
+  fs.writeFileSync(path.join(wt.path, 'old.txt'), 'old\n');
+  gitIn(wt.path, 'add', 'old.txt');
+  execFileSync('git', ['commit', '-q', '-m', 'old work'], { cwd: wt.path, env: { ...process.env, GIT_COMMITTER_DATE: month.toISOString(), GIT_AUTHOR_DATE: month.toISOString() } });
+  for (const f of ['index', path.join('logs', 'HEAD'), 'HEAD']) fs.utimesSync(path.join(gitDir, f), month, month);
+  fs.writeFileSync(path.join(wt.path, 'untracked.txt'), 'x'); // makes git status want to refresh the index
+  const indexBefore = fs.statSync(path.join(gitDir, 'index')).mtimeMs;
+
+  const item = (await list(true)).find((w) => w.path === wt.path);
+  assert.equal(item.dirty, 1);
+  assert.equal(fs.statSync(path.join(gitDir, 'index')).mtimeMs, indexBefore, 'GIT_OPTIONAL_LOCKS=0: status did not rewrite the index');
+  assert.ok(item.lastActivityAt < Date.now() - 20 * 86400000, `not recent: ${new Date(item.lastActivityAt).toISOString()}`);
+
+  // a projects folder that contains the worktree must not win over the repository that owns it
+  const folder = (await h.api('POST', '/api/workspaces', { path: root, kind: 'folder' })).body;
+  const chat = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', cwd: wt.path })).body;
+  assert.deepEqual([chat.workspaceId === ws.id, chat.workspaceId === folder.id], [true, false]);
 });
