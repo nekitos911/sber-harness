@@ -23,6 +23,10 @@ export interface Task {
   deps: string[]
   labels: string[]
   workspaceId: string | null
+  /** The server's guess where the task lives; only a high-confidence one is offered by default. */
+  suggestedWorkspace?: { id: string; confidence: 'high' | 'low' | number; reason?: string | null } | null
+  /** Worktrees created for this task (also by the agent itself), linked by the task key. */
+  worktrees?: { workspaceId: string | null; path: string; branch: string | null; dirty?: number | null }[]
   parentId: string | null
   targets: string[] // [0] = primary base (work happens here), rest = cherry-pick ports
   branch: string | null

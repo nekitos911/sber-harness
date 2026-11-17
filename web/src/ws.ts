@@ -166,9 +166,18 @@ function apply(ev: ServerEvent) {
     case 'job':
       applyJobEvent(ev)
       break
-    case 'task':
+    case 'task': {
+      const before = getState().tasks.find((t) => t.id === ev.task.id)?.worktrees ?? null
+      if (before) {
+        for (const w of ev.task.worktrees ?? []) {
+          if (before.some((b) => b.path === w.path)) continue
+          const repo = getState().workspaces.find((x) => x.id === w.workspaceId)?.name ?? w.path
+          toast(`Агент создал рабочее дерево: ${repo}${w.branch ? ` · ${w.branch}` : ''}`, 'ok')
+        }
+      }
       setState((s) => ({ tasks: upsert(s.tasks, ev.task) }))
       break
+    }
     case 'task.del':
       for (const f of ['title', 'branch', 'description']) saveDraft(`task:${ev.id}:${f}`, null)
       setState((s) => ({ tasks: without(s.tasks, ev.id), focusTaskId: s.focusTaskId === ev.id ? null : s.focusTaskId }))

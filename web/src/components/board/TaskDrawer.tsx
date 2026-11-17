@@ -1,7 +1,7 @@
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
-import { ArrowUpToLine, Ellipsis, ExternalLink, EyeOff, GitMerge, Lock, Pencil, Play, Plus, Send, SquareArrowOutUpRight, Trash2, UserPlus, Wrench, X } from 'lucide-react'
+import { ArrowUpToLine, Ellipsis, GitBranch, ExternalLink, EyeOff, GitMerge, Lock, Pencil, Play, Plus, Send, SquareArrowOutUpRight, Trash2, UserPlus, Wrench, X } from 'lucide-react'
 import { api, ApiError, errorText, tryApi } from '../../api'
-import { getState, openDialog, openSession, setState, toast, upsert, useFeature, useStore, without, upsertSession } from '../../store'
+import { getState, openDialog, openSession, openWorktree, setState, toast, upsert, useFeature, useStore, without, upsertSession } from '../../store'
 import { COLUMNS, fullTime, PRIORITY, relTime } from '../../lib/format'
 import { isImported, pendingDeps, taskKey } from '../../lib/tasks'
 import { useNow } from '../../lib/useNow'
@@ -69,9 +69,8 @@ export function TaskDrawer({ task, ctx, onClose }: { task: Task; ctx: BoardCtx; 
   const blocked = pendingDeps(task, ctx.byId)
   const reworkOn = useFeature('rework')
   const reworkable = reworkOn && !!session && (session.status !== 'running' || task.status === 'review')
-  const repoCount = useStore((s) => s.workspaces.filter((w) => w.isGit).length)
-  // The popover covers the usual case; choosing a repository (several, none set) needs the full dialog.
-  const needsDialog = !task.workspaceId && !(ctx.kids.get(task.id)?.length) && repoCount >= 2
+  // Subtasks go through the full dialog (it plans the coordinator); the popover covers the rest, «Где» included.
+  const needsDialog = !!ctx.kids.get(task.id)?.length
   const [pop, setPop] = useState<'start' | 'rework' | null>(null)
   const primaryRef = useRef<HTMLButtonElement>(null)
   const patch = (fields: Partial<Task>) => patchTask(task.id, fields)
@@ -173,6 +172,7 @@ export function TaskDrawer({ task, ctx, onClose }: { task: Task; ctx: BoardCtx; 
         )}
 
         <WorkSummary task={task} />
+        <TaskWorktrees task={task} />
 
         {imported && <ExternalCard task={task} full={!task.description.trim()} />}
         {imported ? (task.description.trim() && <div className="md-preview drawer-desc"><Markdown text={task.description} /></div>) : <DescriptionField task={task} />}
@@ -271,10 +271,8 @@ function WorkSummary({ task }: { task: Task }) {
   const settings = useSettings()
   const tasks = useStore((s) => s.tasks)
   const [open, setOpen] = useState(false)
-  const suggested = (task as Task & { suggestedWorkspaceId?: string | null }).suggestedWorkspaceId
-  const repoId = task.workspaceId ?? suggested ?? (workspaces.length === 1 ? workspaces[0].id : null)
-  const repo = workspaces.find((w) => w.id === repoId)
-  const auto = !task.workspaceId && !!repo
+  // Only the task's own repository is shown as its repository: a guess is not a choice.
+  const repo = workspaces.find((w) => w.id === task.workspaceId)
   const key = taskKey(task, new Map(tasks.map((t) => [t.id, t])))
   const branch = task.branch ?? (settings?.git.branchTemplate || 'feature/{key}').replaceAll('{key}', key)
   const agent = agents.find((a) => a.id === defaultAgent)?.label ?? defaultAgent ?? ''
@@ -282,7 +280,7 @@ function WorkSummary({ task }: { task: Task }) {
   return (
     <div className="work-summary">
       <div className="work-line">
-        <span>{repo ? repo.name : <span className="muted">репозиторий не выбран</span>}{auto && <span className="auto-tag">авто</span>}</span>
+        <span>{repo ? repo.name : <span className="muted">{task.worktrees?.length ? 'по рабочим деревьям ниже' : 'не выбран (агент решит)'}</span>}</span>
         <span className="muted">·</span>
         <span className="mono">{task.targets[0] ?? 'develop'}{task.targets.length > 1 && <span className="muted"> +{task.targets.length - 1}</span>}</span>
         <span className="muted">→</span>
@@ -296,7 +294,7 @@ function WorkSummary({ task }: { task: Task }) {
             <div className="props work-fields">
               <Prop label="Репозиторий">
                 <Select label="Репозиторий" value={task.workspaceId ?? ''} onChange={(v) => void patch({ workspaceId: v || null })}
-                  options={[{ value: '', label: repo && auto ? `Авто: ${repo.name}` : 'Не выбран' }, ...workspaces.map((w) => ({ value: w.id, label: w.name }))]} />
+                  options={[{ value: '', label: 'Не выбран (агент решит)' }, ...workspaces.filter((w) => w.kind !== 'root' && w.kind !== 'folder').map((w) => ({ value: w.id, label: w.name, hint: task.suggestedWorkspace?.id === w.id ? (task.suggestedWorkspace.reason ?? 'возможно') : undefined }))]} />
               </Prop>
               <Prop label="Целевые ветки"><TargetsField task={task} onChange={(targets) => void patch({ targets })} /></Prop>
               <Prop label="Ветка"><BranchField task={task} /></Prop>
@@ -305,6 +303,30 @@ function WorkSummary({ task }: { task: Task }) {
         </div>
       </div>
     </div>
+  )
+}
+
+/** «Рабочие деревья задачи»: where the work is (also those the agent created itself): repo · branch · changes. */
+function TaskWorktrees({ task }: { task: Task }) {
+  const workspaces = useStore((s) => s.workspaces)
+  const list = task.worktrees ?? []
+  if (!list.length) return null
+  return (
+    <section className="drawer-section">
+      <h3>Рабочие деревья задачи</h3>
+      <ul className="task-wts">
+        {list.map((w) => (
+          <li key={w.path}>
+            <button type="button" className="task-wt" onClick={() => openWorktree(w.path)} data-tip={w.path}>
+              <GitBranch aria-hidden />
+              <span>{workspaces.find((x) => x.id === w.workspaceId)?.name ?? w.path.split(/[\\/]/).slice(-2, -1)[0]}</span>
+              <span className="mono muted ellipsis">{w.branch ?? ''}</span>
+              {(w.dirty ?? 0) > 0 && <span className="wt-stat num">±{w.dirty}</span>}
+            </button>
+          </li>
+        ))}
+      </ul>
+    </section>
   )
 }
 
