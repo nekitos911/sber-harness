@@ -109,6 +109,7 @@ export interface Session {
   lastEventAt?: number | null // last stdout event of the current turn (newer servers)
   lastEventKind?: string | null // e.g. 'assistant_delta', 'assistant_final', 'tool', 'thought' (newer servers)
   turnClosing?: boolean // the answer is complete (result seen); the CLI is only shutting down
+  warm?: boolean // ACP sessions only: the process is loaded (false = unloaded after idling)
   waitingFor?: 'answer' | 'auth' | 'permission' | null // called `ask` and no reply yet, or needs a login (newer servers)
   stalled?: boolean // running, process alive, but silent for session.stallSec (newer servers)
   includeDirs?: string[] // extra directories the CLI may use (--include-directories), feature include-dirs
@@ -270,6 +271,8 @@ export interface AgentSettings {
   inheritUserMcp?: boolean
   enabled?: boolean
   transport?: 'headless' | 'acp' // acp: one long-lived process with interactive permissions (feature acp)
+  acpIdleMin?: number | null // ACP: unload an idle chat's process after N minutes (null = never)
+  mcpExclude?: string[] // MCP servers (from the CLI's own config) not started for harness sessions
 }
 
 export interface Settings {

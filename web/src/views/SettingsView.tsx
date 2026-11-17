@@ -251,13 +251,22 @@ function AgentSection({ id, form, update, fieldError, primary }: SectionProps & 
         {primary && reworkOn && <ReworkRow a={a} set={set} />}
         {primary && acpOn && (
           <Row label={<>Транспорт <span className="badge-verify">проверяется на целевой машине</span></>}
-            hint={(a.transport ?? 'headless') === 'acp'
-              ? 'ACP: один процесс на чат; агент спрашивает разрешения в чате, а вы отвечаете кнопками.'
-              : 'Headless: каждое сообщение — новый запуск CLI; действия вне режима подтверждений агент не выполняет, а просит разрешение.'} wide>
+            hint={<>
+              <span className="set-line">Headless: новый процесс и запуск всех MCP на каждое сообщение (медленно, 10–60 с).</span>
+              <span className="set-line">ACP: один процесс на чат, MCP запускаются один раз, разрешения с ожиданием.</span>
+            </>} wide>
             <Segmented label="Транспорт" value={a.transport ?? 'headless'} onChange={(v) => set({ transport: v })}
               options={[{ value: 'headless', label: 'Headless (по умолчанию)' }, { value: 'acp', label: 'ACP (интерактивные разрешения)' }]} />
           </Row>
         )}
+        {primary && acpOn && a.transport === 'acp' && (
+          <Row label="Простой выгружает процесс через" hint="Неактивный чат освобождает память; следующее сообщение снова запустит процесс.">
+            <Select label="Простой выгружает процесс через" value={a.acpIdleMin == null ? 'never' : String(a.acpIdleMin)}
+              onChange={(v) => set({ acpIdleMin: v === 'never' ? null : Number(v) })}
+              options={[{ value: '15', label: '15 мин' }, { value: '30', label: '30 мин' }, { value: '60', label: '60 мин' }, { value: 'never', label: 'никогда' }]} />
+          </Row>
+        )}
+        {primary && <McpServersRow id={id} a={a} set={set} />}
       </div>
       <Advanced id={`agent-${id}`}>
       <div className="set-rows">
@@ -412,6 +421,38 @@ function CommandRow({ id, a, set, error }: { id: string; a: AgentSettings; set: 
       )}
       {unknown && <span className="field-warn"><TriangleAlert aria-hidden />Команда /{cmd} не встречалась в сессиях GigaCode. Проверьте, что она установлена.</span>}
       {known.length > 0 && <span className="set-hint">Известные команды: <span className="mono">{known.slice(0, 12).join(' ')}{known.length > 12 ? ' …' : ''}</span></span>}
+    </Row>
+  )
+}
+
+/**
+ * The MCP servers the CLI starts for every session (from its last init), each with a switch: excluded ones are not
+ * started for harness sessions (agents.<id>.mcpExclude), which speeds up every start.
+ */
+function McpServersRow({ id, a, set }: { id: string; a: AgentSettings; set: (p: Partial<AgentSettings>) => void }) {
+  const meta = useAgentMeta(id)
+  const servers = meta?.seen?.mcpServers ?? []
+  if (!servers.length) return null
+  const editable = a.mcpExclude !== undefined // a server that does not return the field would drop it on save
+  const off = new Set(a.mcpExclude ?? [])
+  return (
+    <Row label="MCP-серверы для агентов" hint="Отключите ненужные или сломанные (например java-lsp), чтобы ускорить запуск." wide>
+      <ul className="mcp-list">
+        {servers.map((m) => {
+          const ok = /connect|ok|ready|running/i.test(m.status)
+          const excluded = off.has(m.name)
+          return (
+            <li key={m.name} data-off={excluded || undefined}>
+              <span className="mcp-dot" data-ok={ok || undefined} aria-label={ok ? 'запускается' : `ошибка: ${m.status}`} />
+              <span className="mono ellipsis">{m.name}</span>
+              <span className="muted ellipsis">{excluded ? 'не запускается' : m.status}</span>
+              {editable && <Switch label={`MCP ${m.name}`} checked={!excluded}
+                onChange={(v) => set({ mcpExclude: v ? [...off].filter((x) => x !== m.name) : [...off, m.name] })} />}
+            </li>
+          )
+        })}
+      </ul>
+      {!editable && <span className="set-hint">Отключать серверы из интерфейса можно в более новой версии сервера.</span>}
     </Row>
   )
 }

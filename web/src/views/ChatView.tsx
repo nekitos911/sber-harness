@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { ArrowDown, Check, Copy, Ellipsis, ExternalLink, FolderPlus, KeyRound, Wrench, GitCompareArrows, MessageSquare, RotateCcw, ScrollText, Square, Trash2 } from 'lucide-react'
+import { ArrowDown, Check, Copy, Ellipsis, ExternalLink, FolderPlus, KeyRound, Wrench, X, GitCompareArrows, MessageSquare, RotateCcw, ScrollText, Square, Trash2 } from 'lucide-react'
 import { api, errorText, tryApi } from '../api'
-import { openSession, openTask, setState, showPanel, useFeature, useStore, without, upsertSession } from '../store'
+import { openScreen, openSession, openTask, setState, showPanel, useFeature, useStore, without, upsertSession } from '../store'
 import { loadMessages, loadSubagents } from '../ws'
 import { basename, normPath, ROLE } from '../lib/format'
 import { useGit } from '../lib/git'
@@ -12,7 +12,7 @@ import { VerdictChip } from '../components/panel/VerdictsTab'
 import type { Message, Session } from '../types'
 import { Branch, Loading, Skeleton, StatusIcon, statusText } from '../components/bits'
 import { MenuButton } from '../components/ui/Menu'
-import { Button, Chip, Popover } from '../components/ui'
+import { Button, Chip, IconButton, Popover } from '../components/ui'
 import { FolderPicker } from '../components/FolderPicker'
 import { ReworkPopover } from '../components/board/Rework'
 import { BranchPicker } from '../components/pickers/BranchPicker'
@@ -206,6 +206,7 @@ export function ChatView({ id, active }: { id: string; active: boolean }) {
         <div className="chat-col">
           <WorkersPanel sessionId={id} workers={workers} />
           {sessionVisualState(session) === 'stalled' && <StallBanner session={session} />}
+          <SlowStartHint session={session} />
           {session.status === 'error' && (
             <div className="chat-alert" role="alert">
               Агент не запустился. Проверьте команду агента в конфигурации и лог.
@@ -328,6 +329,27 @@ function IncludeDirs({ session }: { session: Session }) {
           onPick={(p) => { setPicking(false); if (!dirs.includes(p)) void save([...dirs, p]) }} />
       )}
     </>
+  )
+}
+
+/**
+ * Headless transport restarts the CLI and every MCP server for each message: after three slow starts (> 10 s) in this
+ * chat, suggest ACP once (only when the server offers it).
+ */
+function SlowStartHint({ session }: { session: Session }) {
+  const acpOn = useFeature('acp')
+  const starts = useStore((s) => s.slowStarts[session.id])
+  const transport = useStore((s) => s.settings?.agents[session.agent]?.transport ?? 'headless')
+  const [hidden, setHidden] = useState(() => !!loadDraft<boolean>('hint:acp'))
+  if (!acpOn || hidden || transport === 'acp' || !starts || starts.length < 3 || starts.some((ms) => ms <= 10_000)) return null
+  const close = () => { saveDraft('hint:acp', true); setHidden(true) }
+  return (
+    <div className="chat-hint" role="note">
+      <span>Каждое сообщение заново запускает GigaCode и MCP-серверы. Включите режим ACP в настройках — процесс будет оставаться запущенным.</span>
+      <span className="grow" />
+      <button type="button" className="btn btn-sm" onClick={() => { close(); openScreen('settings') }}>Открыть настройки</button>
+      <IconButton size="sm" label="Больше не показывать" icon={<X />} onClick={close} />
+    </div>
   )
 }
 

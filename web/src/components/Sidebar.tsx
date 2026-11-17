@@ -408,6 +408,7 @@ function SessionRow({ s, nested, level = 0, caret }: { s: Session; nested: boole
         {doing && <span className="sess-doing"> · {doing}</span>}
       </span>
       {s.interrupted && <span className="badge-interrupted" data-tip={s.interrupted.lastActivity ? `Прервана на: ${s.interrupted.lastActivity}` : 'Перезапуск прервал ход'}>прервана</span>}
+      {s.warm !== undefined && <span className="sess-warm" data-warm={s.warm || undefined} aria-label={s.warm ? 'процесс запущен' : 'процесс выгружен'}>{s.warm ? '●' : '○'}</span>}
       <span className="sess-state" data-s={v}>
         {line || <><span className="agent">{s.kind === 'terminal' ? 'shell' : s.model ?? s.agent}</span> · {relTime(s.lastActivityAt, now)}</>}
       </span>

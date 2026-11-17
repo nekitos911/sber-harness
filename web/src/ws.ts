@@ -4,7 +4,7 @@ import { desktopNotify } from './lib/notify'
 import { saveDraft } from './lib/draft'
 import { applyJobEvent } from './lib/jobs'
 import { loadRecovery } from './lib/recovery'
-import type { AppState, ClientEvent, Message, ServerEvent, SubAgent, Worktree } from './types'
+import type { AppState, ClientEvent, Message, ServerEvent, Session, SubAgent, Worktree } from './types'
 
 type TermListener = (data: string, replay: boolean) => void
 
@@ -149,6 +149,18 @@ export async function loadWorktrees(workspaceId: string, enrich = false) {
   setState((s) => ({ worktrees: { ...s.worktrees, [workspaceId]: list } }))
 }
 
+const startingSince = new Map<string, number>()
+
+/** How long each turn sat in phase «starting» (CLI + MCP cold start); the last three per session are kept. */
+function noteStart(s: Session) {
+  const was = startingSince.get(s.id)
+  if (s.status === 'running' && s.phase === 'starting') { if (!was) startingSince.set(s.id, Date.now()); return }
+  if (!was) return
+  startingSince.delete(s.id)
+  const ms = Date.now() - was
+  setState((st) => ({ slowStarts: { ...st.slowStarts, [s.id]: [...(st.slowStarts[s.id] ?? []), ms].slice(-3) } }))
+}
+
 function apply(ev: ServerEvent) {
   switch (ev.t) {
     case 'job':
@@ -162,6 +174,7 @@ function apply(ev: ServerEvent) {
       setState((s) => ({ tasks: without(s.tasks, ev.id), focusTaskId: s.focusTaskId === ev.id ? null : s.focusTaskId }))
       break
     case 'session':
+      noteStart(ev.session)
       setState((s) => ({ sessions: upsert(s.sessions, ev.session) }))
       break
     case 'session.del':

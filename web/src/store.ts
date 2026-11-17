@@ -77,6 +77,7 @@ export interface State extends Prefs {
   prs: Record<string, PrState | undefined> // key = normPath(cwd): PR of the branch checked out there
   sdd: Record<string, SddPlan[] | null> // key = normPath(cwd): /full-task plans and verdicts (null: server lacks it)
   recentFolders: string[]
+  slowStarts: Record<string, number[]> // sessionId -> how long the last turns sat in phase «starting» (ms)
   history: Record<string, HistoryItem[]> // key = normPath(cwd): CLI-recorded chats of that folder
   recovery: RecoveryState | null // interrupted sessions waiting for «продолжить» or «не продолжать»
   features: string[] // optional API groups of this server; an optional endpoint is called only when listed
@@ -134,7 +135,7 @@ let state: State = {
   conn: 'connecting', loaded: false, authExpired: false, scheme: resolveScheme(prefs.theme),
   tasks: [], sessions: [], workspaces: [], notifications: [], agents: [], defaultAgent: null, shell: '',
   integrations: { tasks: false, pr: false },
-  messages: {}, subagents: {}, worktrees: {}, git: {}, agentMeta: {}, settings: null, prs: {}, sdd: {}, recentFolders: [], history: {}, recovery: null, features: [], dirty: {}, toasts: [], jobs: [], focusTaskId: null, dialog: null, back: [], forward: [],
+  messages: {}, subagents: {}, worktrees: {}, git: {}, agentMeta: {}, settings: null, prs: {}, sdd: {}, recentFolders: [], slowStarts: {}, history: {}, recovery: null, features: [], dirty: {}, toasts: [], jobs: [], focusTaskId: null, dialog: null, back: [], forward: [],
 }
 
 const listeners = new Set<() => void>()

@@ -198,3 +198,5 @@
 
 .tree-sess[data-depth="3"] { padding-left: 76px; }
 .role-tag { display: inline-block; margin-right: 5px; padding: 0 4px; border-radius: 3px; background: var(--signal-soft); color: var(--signal); font-size: 10.5px; line-height: 15px; vertical-align: 1px; }
+.sess-warm { flex-shrink: 0; font-size: 9px; color: var(--ink-4); }
+.sess-warm[data-warm] { color: var(--lamp-done); }
