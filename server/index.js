@@ -21,6 +21,7 @@ import { launchers, gigacodeCommand } from './launchers.js';
 import { isAlive } from './runner.js';
 import { createModelCatalog, scanModelRefs } from './models.js';
 import { readSdd } from './sdd.js';
+import { createHistory, historyMessages } from './history.js';
 import { runJob, jobStep, JOB_ID_RE } from './jobs.js';
 import { DEMO_PORT, demoOverrides, seedDemoRepos, seedDemoTasks } from './demo.js';
 import { importTasks, importIssue, transitionTask, getExternal, getTransitions, importChildren, syncColumn } from './integrations/tasks.js';
@@ -37,7 +38,7 @@ const NO_BUILD_HTML = '<!doctype html><meta charset="utf-8"><title>Harness</titl
 const GRADES = ['default', 'fast', 'review', 'explore'];
 // optional API groups this server implements (docs/ARCHITECTURE.md "Feature flags"); a flag ships with its route
 export const FEATURES = ['branches', 'fs-search', 'pr-status', 'agent-info', 'models-refresh', 'tracker-links', 'board-columns', 'review-loop',
-  'subagents', 'virtual-sessions', 'worker-run', 'skills-install', 'demo', 'worktree-meta', 'open', 'sdd', 'health', 'folders', 'include-dirs', 'questions', 'permissions', 'activity', 'rework', 'fs-raw', 'tracker-import', 'pr-decline', 'task-suggest', 'recovery', 'acp', 'worktree-lazy'];
+  'subagents', 'virtual-sessions', 'worker-run', 'skills-install', 'demo', 'worktree-meta', 'open', 'sdd', 'health', 'folders', 'include-dirs', 'questions', 'permissions', 'activity', 'rework', 'fs-raw', 'tracker-import', 'pr-decline', 'task-suggest', 'recovery', 'acp', 'worktree-lazy', 'cli-history'];
 // titles of operations the UI may follow by sending x-job-id (WS { t: 'job' } frames)
 const JOB_TITLES = {
   'POST /api/tasks/sync': 'Синхронизация с трекером',
@@ -1042,6 +1043,25 @@ export async function startServer(opts = {}) {
     const task = branch && db.tasks.find((t) => t.branch === branch);
     if (task) await refreshTaskPr({ config, mcp, tasks, task, cwd: body.cwd }).catch(() => {});
     return r;
+  });
+
+  // ---- the agent CLI's own recorded chats (sessions started outside the harness) ----
+  const history = createHistory(config);
+  const linkedFor = (agent, id) => db.sessions.find((s) => s.kind === 'chat' && !s.virtual && s.agent === agent && s.externalSessionId === id)?.id ?? null;
+  const historyPaths = async (cwd) => [path.resolve(cwd), (await git.worktrees(cwd).catch(() => []))[0]?.path ?? null];
+  route('GET', '/api/history', async ({ query }) => history.list(await historyPaths(cwdOf(query)), linkedFor));
+  route('GET', '/api/history/:agent/:id/messages', ({ params }) => historyMessages(history.get(params.agent, params.id), params.agent));
+  route('POST', '/api/history/:agent/:id/continue', async ({ params, body }) => {
+    const { cwd } = check(body, { cwd: 'string' });
+    const rec = history.get(params.agent, params.id);
+    const linked = linkedFor(params.agent, rec.id);
+    if (linked) return sessions.get(linked);
+    const msgs = historyMessages(rec, params.agent);
+    const title = msgs.find((m) => m.kind === 'user')?.text.replace(/\s+/g, ' ').trim().slice(0, 80) || `История ${rec.id}`;
+    const s = await sessions.create({ kind: 'chat', agent: params.agent, cwd, title });
+    sessions.importMessages(s.id, msgs);
+    // the next message continues that CLI session (--resume <id>), so no harness preamble is added
+    return sessions.update(s.id, { externalSessionId: rec.id, historyId: rec.id });
   });
 
   // files

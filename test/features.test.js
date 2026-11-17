@@ -48,6 +48,7 @@ test('each feature flag has a working route (not 404/405)', async () => {
       recovery: ['GET', '/api/recovery', (b) => Array.isArray(b.sessions)],
       acp: ['GET', '/api/settings', (b) => typeof b.agents === 'object'],
       'worktree-lazy': ['GET', `/api/worktrees/info?path=${q}`],
+      'cli-history': ['GET', `/api/history?cwd=${q}`, (b) => Array.isArray(b)],
       sdd: ['GET', `/api/sdd?cwd=${q}`, (b) => Array.isArray(b.plans)],
     };
     for (const flag of FEATURES) {

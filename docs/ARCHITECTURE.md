@@ -959,6 +959,13 @@ of the project root path), or via `gigacode sessions …` (VERIFY subcommands, e
 - `POST /api/history/:agent/:id/continue { cwd }` → creates (or returns the existing linked) harness chat session with
   `externalSessionId = id`, that cwd and agent, transcript pre-filled from the history (marked imported), so the next
   message runs `--resume <id>`; `linkedSessionId` is set. Feature flag `cli-history`.
+- Implementation (`server/history.js`): `dirs` globs allow `*` in any folder segment; `*.json`/`*.jsonl` files are read;
+  a record's own `cwd`/`projectRoot` wins over the hash; the hash is checked for the cwd and its main worktree (on
+  Windows with both drive-letter cases); a JSON record without `projectHash` uses its `<hash>/chats` folder name. CLI
+  `info`/`error` entries are skipped; thoughts `{ subject, description }` become one thought message each; tool calls use
+  `displayName`/`args`/`resultDisplay`. Imported messages carry `imported: true` and turn 0; the chat gets `historyId`.
+  `history.command` (a CLI listing) is accepted in the config but not run yet — waiting for the real `gigacode sessions`
+  output (VERIFY, GIGACODE-FACTS open question 12).
 
 ## Session activity states (what the UI shows)
 

@@ -1159,6 +1159,12 @@ ${note.trim()}` : text });
       await Promise.all(toRespawn.splice(0).filter((s) => find(s.id)).map(respawnTerminal));
     },
 
+    /** A CLI history transcript as the past of a harness chat (marked imported; turn 0). */
+    importMessages(sid, msgs) {
+      get(sid);
+      for (const m of msgs) store.putMessage(sid, { from: null, tool: null, ...m, sessionId: sid, turn: 0, imported: true });
+    },
+
     // ---- recovery after a restart ----
     recoveryList() {
       return {

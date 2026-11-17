@@ -80,6 +80,7 @@
       },
       "modelsDiscovery": { "prompt": "/models", "maxAgeHours": 24 },
       "modelRefsScan": ["~/.gigacode/agents/*.md", "~/.gigacode/commands/*.md"],
+      "history": { "dirs": ["~/.gigacode/tmp/*/chats"], "command": null },
       "taskPromptPresets": ["/full-task {taskUrl}{notes}", "/full-task-ui {taskUrl}{notes}", "{key} {title}\n\n{description}"],
       "inheritUserMcp": false,
       "agentToolHook": null,
