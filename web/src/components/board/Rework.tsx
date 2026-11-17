@@ -1,6 +1,6 @@
-import { useState, type ReactNode, type RefObject } from 'react'
+import { useEffect, useState, type ReactNode, type RefObject } from 'react'
 import { Play, Wrench } from 'lucide-react'
-import { api } from '../../api'
+import { api, qs } from '../../api'
 import { runJob } from '../../lib/jobs'
 import { getState, openDialog, setState, toast, upsert, useStore } from '../../store'
 import { taskKey } from '../../lib/tasks'
@@ -17,7 +17,24 @@ export const DEFAULT_REWORK = '{key} {title}: нужны правки: {notes}' 
 /** First line of what the agent will receive: «/full-task <url> Задача готова, но нужны правки: …». */
 function reworkPreview(template: string, task: Task, notes: string) {
   const url = task.externalUrl ?? task.externalId ?? task.id
-  return template.replaceAll('{taskUrl}', url).replaceAll('{key}', task.externalId ?? task.id).replaceAll('{notes}', notes.trim().split('\n')[0] || '…').split('\n')[0]
+  return template.replaceAll('{taskUrl}', url).replaceAll('{key}', task.externalId ?? task.id).replaceAll('{title}', task.title)
+    .replaceAll('{notes}', notes.trim().split('\n')[0] || '…').split('\n')[0]
+}
+
+let previewOff = false // the server has no /rework-preview: the template is filled here
+/** The server's own rendering of the rework message (GET /tasks/:id/rework-preview), the local one meanwhile. */
+function ReworkPreview({ task, notes, template }: { task: Task; notes: string; template: string }) {
+  const [text, setText] = useState<string | null>(null)
+  useEffect(() => {
+    if (previewOff) return
+    const t = window.setTimeout(() => {
+      api<string | { text?: string; prompt?: string; preview?: string }>('GET', `/tasks/${encodeURIComponent(task.id)}/rework-preview${qs({ notes: notes.trim() })}`)
+        .then((r) => setText(typeof r === 'string' ? r : r?.text ?? r?.prompt ?? r?.preview ?? null))
+        .catch(() => { previewOff = true; setText(null) })
+    }, 250)
+    return () => window.clearTimeout(t)
+  }, [task.id, notes])
+  return <>{text?.split('\n')[0] || reworkPreview(template, task, notes)}</>
 }
 
 const sendKey = isMac ? '⌘↵' : 'Ctrl+Enter'
@@ -70,13 +87,13 @@ export function ReworkPopover({ task, anchor, open, onClose, onSent, onMoveOnly 
 }) {
   const settings = useSettings()
   const agent = getState().sessions.find((s) => s.taskId === task.id && s.role !== 'reviewer')?.agent ?? getState().defaultAgent ?? ''
-  const template = settings?.agents[agent]?.reworkPromptTemplate || DEFAULT_REWORK
+  const template = settings?.agents[agent]?.reworkPromptTemplate || settings?.agents[agent]?.reworkPromptPresets?.[0] || settings?.reworkPromptPresets?.[0] || DEFAULT_REWORK
   return (
     <NotesPopover
       anchor={anchor} open={open} onClose={onClose}
       label="Что поправить?" draftKey={`rework:${task.id}`} required
       placeholder="Например: кнопка «Сохранить» не блокируется во время запроса; тест на пустой список падает"
-      preview={(n) => reworkPreview(template, task, n)}
+      preview={(n) => <ReworkPreview task={task} notes={n} template={template} />}
       primary={{
         label: 'Отправить агенту', icon: <Wrench />,
         run: async (notes) => {

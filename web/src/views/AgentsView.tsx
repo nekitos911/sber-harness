@@ -12,12 +12,12 @@ import { archiveSession, renameSession, sessionMenu } from '../lib/sessionAction
 import { MenuButton, Select } from '../components/ui'
 
 /** Lanes by visual state; «Ждут вас» shows only when someone does. */
-const GROUPS: { id: string; label: string; match: VisualState[]; optional?: boolean }[] = [
-  { id: 'you', label: 'Ждут вас', match: ['waiting_answer', 'waiting_permission', 'auth'], optional: true },
-  { id: 'run', label: 'Работают', match: ['running', 'starting', 'stalled'] },
-  { id: 'idle', label: 'Свободны', match: ['idle', 'stopped'] },
-  { id: 'done', label: 'Готово', match: ['done'] },
-  { id: 'fail', label: 'Ошибки', match: ['error', 'exited'] },
+const GROUPS: { id: string; label: string; hint: string; match: VisualState[]; optional?: boolean }[] = [
+  { id: 'you', label: 'Ждут вас', hint: 'вопрос, разрешение или вход', match: ['waiting_answer', 'waiting_permission', 'auth'], optional: true },
+  { id: 'run', label: 'Работают', hint: 'идёт ход', match: ['running', 'starting', 'stalled'] },
+  { id: 'idle', label: 'Свободны', hint: 'ход закончен, ждут сообщения', match: ['idle', 'stopped'] },
+  { id: 'done', label: 'Готово', hint: 'отчитались о задаче', match: ['done'] },
+  { id: 'fail', label: 'Ошибки', hint: 'упали или завершились', match: ['error', 'exited'], optional: true },
 ]
 
 /** Coordinator first, then its workers from the same group right under it. */
@@ -73,6 +73,7 @@ export function AgentsView() {
                   <span className="lane-mark" data-g={g.id} aria-hidden />
                   <h2 id={`lane-${g.id}`}>{g.label}</h2>
                   <span className="col-count num">{list.length}</span>
+                  <span className="lane-hint">{g.hint}</span>
                 </header>
                 <div className="col-body">
                   {ordered(list).map(({ s, nested }) => (
@@ -127,9 +128,9 @@ function AgentCard({ s, nested, parent }: { s: Session; nested: boolean; parent?
         <span>{agents.find((a) => a.id === s.agent)?.label ?? s.agent}</span>
         {s.model && <span className="mono muted">{s.model}</span>}
         <span className="agent-state" data-s={sessionVisualState(s)}>{line || statusText(s)}</span>
-        {s.queued > 0 && <span className="chip chip-run">в очереди: {s.queued}</span>}
+        {s.queued > 0 && <span className="chip chip-run">в очереди {s.queued}</span>}
         {s.tokensIn + s.tokensOut > 0 && (
-          <span className="mono muted num" data-tip={`вход ${s.tokensIn}, выход ${s.tokensOut}`}>{tokens(s.tokensIn + s.tokensOut)}</span>
+          <span className="muted num" data-tip={`вход ${s.tokensIn}, выход ${s.tokensOut}`}>токены {tokens(s.tokensIn + s.tokensOut)}</span>
         )}
       </div>
       {task && (
@@ -144,7 +145,7 @@ function AgentCard({ s, nested, parent }: { s: Session; nested: boolean; parent?
       {s.branch && <div className="agent-where"><Branch name={s.branch} /></div>}
       {s.preview && <p className="agent-preview">{s.preview}</p>}
       <div className="agent-foot" data-open={mode !== null || undefined}>
-        <span className="muted num">{relTime(s.lastActivityAt, now)}</span>
+        <span className="muted num">{relTime(s.lastActivityAt, now) === 'сейчас' ? 'активен сейчас' : `активность ${relTime(s.lastActivityAt, now)} назад`}</span>
         <span className="grow" />
         <button type="button" className="icon-btn icon-btn-sm" aria-label="Написать агенту" data-tip="Написать" aria-pressed={mode === 'message'} onClick={() => setMode(mode === 'message' ? null : 'message')}><Send /></button>
         {s.archived && <button type="button" className="btn btn-sm" onClick={() => void archiveSession(s, false)}><ArchiveRestore />Вернуть</button>}

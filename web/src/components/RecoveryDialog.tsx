@@ -6,7 +6,8 @@ import { loadDraft, saveDraft } from '../lib/draft'
 import type { RecoveryItem } from '../types'
 import { StatusIcon } from './bits'
 import { Modal } from './ui/Dialog'
-import { Button, Checkbox } from './ui'
+import { Checkbox, MenuButton } from './ui'
+import { Ellipsis } from 'lucide-react'
 
 const REASON: Record<RecoveryItem['reason'], string> = { reboot: 'Перезагрузка ПК', harness_restart: 'Перезапуск harness', crash: 'Сбой' }
 
@@ -45,6 +46,7 @@ export function RecoveryDialog() {
         const rest = s.recovery?.sessions.filter((x) => !chosen.some((c) => c.id === x.id)) ?? []
         return { recovery: rest.length ? { ...s.recovery!, sessions: rest } : null }
       })
+      closeDialog() // the rest (if any) stays under «Прерванные» in the inbox
     } catch (e) {
       toast(`Не удалось продолжить: ${errorText(e)}`, 'error')
     } finally {
@@ -56,14 +58,15 @@ export function RecoveryDialog() {
     <Modal
       title="Восстановление сессий"
       submitLabel={left.length ? `Продолжить выбранные (${chosen.length})` : 'Готово'}
-      cancelLabel={left.length ? 'Не сейчас' : 'Закрыть'}
+      cancelLabel="Закрыть"
+      focusSubmit
       busy={busy}
       disabled={left.length > 0 && !chosen.length}
       wide
       onClose={closeDialog}
       onSubmit={() => (left.length ? void resume() : closeDialog())}
     >
-      <p className="muted" style={{ marginTop: -6 }}>{reasons ? `${reasons}: ` : ''}эти сессии прервались посреди хода. Выбранным уйдёт сообщение ниже, и они продолжат с того же места.</p>
+      <p className="muted" style={{ marginTop: -6 }}>{reasons ? `${reasons}: ` : ''}эти сессии прервались посреди хода. Отмеченным уйдёт сообщение ниже, и они продолжат с того же места; «…» в строке — убрать сессию из списка.</p>
       <ul className="recovery-list">
         {items.map((it) => {
           const s = sessions.find((x) => x.id === it.id)
@@ -84,7 +87,7 @@ export function RecoveryDialog() {
                 <span className="num">{relTime(it.at) === 'сейчас' ? 'только что' : `${relTime(it.at)} назад`}</span>
               </span>
               {done ? <span className="recovery-state">продолжена</span>
-                : <Button size="sm" variant="ghost" onClick={() => void dismiss(it.id)}>Не продолжать</Button>}
+                : <MenuButton label={`Действия: ${it.title}`} icon={<Ellipsis />} align="right" items={[{ label: 'Не продолжать — убрать из списка', onSelect: () => void dismiss(it.id) }]} />}
             </li>
           )
         })}

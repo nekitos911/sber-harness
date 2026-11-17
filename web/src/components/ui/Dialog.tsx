@@ -15,19 +15,22 @@ interface Props {
   wide?: boolean
   /** Destructive submit (red). */
   danger?: boolean
+  /** Focus the primary button on open (instead of the first field). */
+  focusSubmit?: boolean
   children: ReactNode
 }
 
 /** Native <dialog> modal: focus trap, Esc and top layer come from the platform. */
-export function Modal({ title, submitLabel, cancelLabel = 'Отмена', onSubmit, onClose, busy, progress, disabled, wide, danger, children }: Props) {
+export function Modal({ title, submitLabel, cancelLabel = 'Отмена', onSubmit, onClose, busy, progress, disabled, wide, danger, focusSubmit, children }: Props) {
   const ref = useRef<HTMLDialogElement>(null)
   const titleId = useId()
 
   useEffect(() => {
     const d = ref.current
     d?.showModal()
+    if (focusSubmit) d?.querySelector<HTMLButtonElement>('button[type="submit"]')?.focus()
     return () => d?.close()
-  }, [])
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <dialog

@@ -62,7 +62,7 @@
 
 .card-top { display: flex; align-items: center; gap: 6px; min-height: 18px; font-size: 11px; }
 .card-id { color: var(--ink-2); font-size: 11px; letter-spacing: 0.01em; }
-.card-parent { color: var(--ink-4); font-size: 11px; white-space: nowrap; }
+.card-parent { color: var(--ink-3); font-size: 11px; white-space: nowrap; } /* ink-3: 4.5:1 or more on cards in both themes */
 /* «Взять в работу» appears on hover at the top-right (over key/priority); it never triggers the card click or a drag. */
 .card-start {
   position: absolute; right: 6px; top: 6px; height: 22px; padding: 0 8px; gap: 4px; font-size: 11.5px;
@@ -330,3 +330,4 @@
 /* the drawer opens over the columns, under the toolbar */
 .board-area { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .filters-body { display: grid; gap: 4px; justify-items: start; padding: 6px; }
+.lane-hint { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-3); font-size: 11px; }

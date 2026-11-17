@@ -333,7 +333,8 @@ function AgentStatus({ id }: { id: string }) {
         <strong>{r.ok ? 'CLI найден' : 'CLI не найден'}</strong>
         {seen?.version && <span className="mono muted">v{seen.version}</span>}
         <span className="grow" />
-        <Button size="sm" variant="ghost" icon={<RefreshCw className={checking ? 'spinner' : undefined} />} onClick={() => void recheck()} disabled={checking}>Проверить</Button>
+        {/* not found: the path field below has the one «Проверить» */}
+        {r.ok && <Button size="sm" variant="ghost" icon={<RefreshCw className={checking ? 'spinner' : undefined} />} onClick={() => void recheck()} disabled={checking}>Проверить</Button>}
       </div>
       {!r.ok && <CliPathFix id={id} error={r.error ?? ''} onChecked={() => void recheck()} />}
       <dl className="status-grid">
@@ -433,8 +434,8 @@ function AllowedToolsRow({ a, set }: { a: AgentSettings; set: (p: Partial<AgentS
   const list = a.allowedTools ?? []
   const missing = QUICK_TOOLS.filter((t) => !list.includes(t))
   return (
-    <Row label="Разрешённые команды" hint="Что CLI выполняет без вопроса в любом чате. Остальное агент попросит разрешить." wide>
-      <ChipsInput label="шаблон, например run_shell_command(git)" values={list} onChange={(v) => set({ allowedTools: v })} />
+    <Row label="Разрешённые команды" hint="Что CLI выполняет без вопроса в любом чате (шаблон вида run_shell_command(git)). Остальное агент попросит разрешить." wide>
+      <ChipsInput label="шаблон" values={list} onChange={(v) => set({ allowedTools: v })} />
       {missing.length > 0 && (
         <div className="chips quick-tools" aria-label="Быстро добавить">
           {missing.map((t) => <Chip key={t} mono onClick={() => set({ allowedTools: [...list, t] })} tip="Добавить">+ {t}</Chip>)}
@@ -656,7 +657,7 @@ function OrchestrationSection({ form, update }: Omit<SectionProps, 'fieldError'>
           </Row>
         )}
         <Row label="Ревью" wide hint={mode === 'builtin'
-          ? 'Для /full-task оставьте «Внутри агента»: команда сама делает кросс-модельное ревью (§8), харнесс показывает его в карточках субагентов и во вкладке «Вердикты».'
+          ? 'Для /full-task оставьте «Внутри агента»: команда сама делает кросс-модельное ревью, харнесс показывает его в карточках субагентов и во вкладке «Вердикты».'
           : '«Через харнесс»: для задач без такой команды. Ревью идёт отдельным чатом-ревьюером другой моделью.'}>
           <Segmented label="Режим ревью" value={mode} onChange={(v) => update({ ...form, orchestration: { ...o, reviewMode: v } })}
             options={[{ value: 'builtin', label: 'Внутри агента (как в CLI)' }, { value: 'harness', label: 'Через харнесс (отдельные чаты)' }]} />
