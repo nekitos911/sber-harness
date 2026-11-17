@@ -26,6 +26,7 @@ export default function TerminalView({ id, active }: { id: string; active: boole
     const t = new Terminal({
       fontFamily: getComputedStyle(document.documentElement).getPropertyValue('--font-mono').trim(),
       fontSize: 13,
+      fontWeight: 350, // Cascadia is variable; regular reads heavy on dark
       lineHeight: 1.15,
       cursorBlink: true,
       scrollback: 10_000,
