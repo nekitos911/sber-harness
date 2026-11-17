@@ -10,7 +10,14 @@ A local, lightweight IDE for working with coding agents and tasks. Inspired by
   `worker_done` or ask with `ask`, and the harness itself wakes the coordinator. Sub-agents are created only through
   orchestration, never through the CLI's built-in tools.
 - **Task board** (Jira-like): Backlog / To do / In progress / Review / Done columns, drag-and-drop,
-  dependencies between tasks, assigning to an agent with one button, sync from the tracker over MCP.
+  dependencies between tasks, "Take into work" in one button (the prompt is configurable, e.g. `/full-task {key}`),
+  sync from the tracker over MCP.
+- **Branches and releases**: base `develop`, branches `feature/<KEY>` from the tracker task key; a task can have
+  several target branches (fix in `release-1.54.0` and in `develop`): the work happens once, and the rest are
+  ported by cherry-pick, with an agent to resolve conflicts. Commits and PRs are pre-filled from the task (key, title,
+  agent report, list of commits) and editable before sending.
+- **Microservices**: a task spanning several repositories is split into subtasks, one per repository, with one key
+  and one branch name in all of them.
 - **Agents board**: who is doing what, statuses, queues, the coordinator → worker hierarchy, assigning a task to an
   existing agent, quick messages, stopping.
 - **Terminals**: PowerShell by default, or an interactive agent CLI (`gigacode`) inside the UI, with persistent history.

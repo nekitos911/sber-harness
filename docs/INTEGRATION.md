@@ -61,6 +61,15 @@ Steps:
    chats nested under the coordinator; after `worker_done` the tasks are in Review and the coordinator wakes with
    the reports.
 
+9. **The `full-task` command.** When a task is taken into work ("Take into work" on the board or `worker_start`),
+   the worker's first prompt is built from the template `agents.gigacode.taskPromptTemplate` (falling back to
+   `tasks.promptTemplate`). To run your command, which takes the task and its SDD, set
+   `"taskPromptTemplate": "/full-task {key}"` (variables: `{key} {id} {title} {description} {url} {targets} {branch} {repo}`).
+   **Check** that GigaCode runs custom slash commands in headless mode (`gigacode -p "/full-task KEY-1"`). If it does
+   not, put the expanded text of the command in the template (or have the command text read from its file:
+   find where custom commands are stored and add that substitution to the `gigacode` launcher's `buildArgs` in
+   `server/launchers.js`).
+
 Interactive mode (a TUI in a terminal) needs nothing: "New terminal" → command `gigacode`. For a terminal agent to
 see the `harness` tools, add the server to `~/.gigacode/settings.json` once:
 `"harness": { "command": "node", "args": ["<repo>/mcp/harness-mcp.js"] }`. It reads the URL and token from
@@ -95,6 +104,21 @@ see the `harness` tools, add the server to `~/.gigacode/settings.json` once:
    how it is computed in `server/integrations/pr.js`), `urlPath` (path to the PR link in the response),
    `defaultBase`, `enabled: true`.
 3. UI: Changes panel → "Push" → "Create PR". Expected: a toast with the PR link.
+
+## 4. Branches, releases, multiple repositories (already implemented, only check config and conventions)
+
+- `git.defaultBase` = `develop`; auto-created branches are `feature/{key}`, where `{key}` is the tracker task key
+  (`externalId`, e.g. `JIRA-1234`). If the team uses other prefixes (`bugfix/`, `hotfix/`), change
+  `git.branchTemplate` / `git.portBranchTemplate`.
+- Fix in a release and develop: the task's `targets` = `["release-1.54.0", "develop"]`. The work happens on
+  the first one, and the others get a cherry-pick port ("Port to …" button / the `task_port` tool). If the team
+  ports the other way (develop to release), just change the order of `targets`.
+- Microservices: one task per repository, subtasks through `parentId`, all with one key and one branch name.
+  When importing from the tracker, if the issue already lists repositories/components, you can create subtasks
+  right away in `importTasks()` (the `map` field plus a small piece of code that creates subtasks with the right
+  `workspaceId`).
+- Commit/PR templates: `git.commitTitleTemplate`, `git.prTitleTemplate` (default `{key}: {title}`). Check them
+  against the commit message format the hooks/CI of your repositories expect.
 
 ## Done when
 

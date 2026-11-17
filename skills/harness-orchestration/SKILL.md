@@ -40,6 +40,16 @@ shell: `node <harness-repo>/mcp/harness-mcp.js call <tool> '<json-args>'`.
    ready. Send fixes to the worker that did the work instead of doing them yourself.
 5. When every task is settled, report to the user per task: outcome, evidence, open blockers.
 
+**Several repositories (microservices).** One task = one repository. If a spec touches several repos, create a
+subtask per repo: `workspace_list` → `task_create({ parent_id, workspace, title, description })`. Subtasks share
+the parent's key, so every repo gets the same branch `feature/<KEY>`. Use `deps` between subtasks when one service
+must change first (for example API before its consumer).
+
+**Several target branches (hotfix into a release and develop).** `task.targets[0]` is where the work happens
+(for example `release-1.54.0`); the rest receive ports. After the worker's `worker_done`, call
+`task_port({ task_id, target })` for each other target. A clean cherry-pick needs nothing more; a conflict starts a
+worker that resolves it and reports like any other worker. One PR per repo per target.
+
 Never: use a built-in sub-agent/Task tool, type into a worker's terminal, or mark a reported failure as done.
 
 ## If you are a worker

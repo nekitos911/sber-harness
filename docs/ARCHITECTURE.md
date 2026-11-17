@@ -87,7 +87,7 @@ data/                          runtime state (gitignored)
                "statusMap": { "Open": "todo", "In Progress": "in_progress", "Review": "review", "Done": "done" } },
     "pr":    { "enabled": false, "server": "tracker", "tool": "create_pull_request",
                "args": { "repo": "{repo}", "source": "{branch}", "target": "{base}", "title": "{title}", "description": "{body}" },
-               "urlPath": "url", "defaultBase": "main" }
+               "urlPath": "url" }                       // base branch: git.defaultBase
   }
 }
 ```
@@ -106,7 +106,13 @@ interface Task {
   priority: 'low' | 'medium' | 'high' | null
   deps: string[]             // task ids that must be 'done' before this one is ready
   labels: string[]
-  workspaceId: string | null
+  workspaceId: string | null         // the repository this task is done in (one repo per task; multi-repo = subtasks)
+  parentId: string | null            // subtask of another task (e.g. one subtask per microservice repo)
+  targets: string[]                  // base branches to deliver into; [0] = primary (work happens here), rest = ports
+                                     // default [git.defaultBase]; hotfix example: ["release-1.54.0", "develop"]
+  branch: string | null              // work branch of this task (set when a worktree/branch is created or on assign)
+  ports: { target: string, branch: string, cwd: string, status: 'clean' | 'conflict' | 'done' | 'failed',
+           sessionId: string | null }[]   // deliveries into targets[1..] (cherry-pick)
   assigneeSessionId: string | null   // the worker session currently/last working on it
   externalId: string | null  // id in external tracker (import dedupe key with `source`)
   externalUrl: string | null
@@ -251,9 +257,11 @@ HTTP: `POST /api/agent/<tool>` with headers `x-harness-token`, `x-harness-sessio
 | `whoami` | – | caller session: id, role, parentId, taskId, cwd, branch |
 | `task_list` | `status?`, `ready?: boolean` | tasks (ready = todo/backlog with all deps done) |
 | `task_get` | `id` | task |
-| `task_create` | `title`, `description?`, `deps?`, `status?`, `priority?`, `labels?` | new task |
+| `workspace_list` | – | registered repos `[{ id, name, path, isGit }]` (for multi-repo planning) |
+| `task_create` | `title`, `description?`, `deps?`, `status?`, `priority?`, `labels?`, `parent_id?`, `workspace?` (id or name), `targets?` | new task (subtask inherits parent's targets/workspace when omitted) |
+| `task_port` | `task_id`, `target`, `agent?` | cherry-pick the task branch into another target branch (see "Multiple target branches") |
 | `task_update` | `id`, `title?`, `description?`, `status?`, `priority?`, `comment?` | updated task (`comment` appends to log) |
-| `worker_start` | `task_id?` or `spec` (+`title?`), `agent?`, `worktree?: 'current' \| 'new'`, `branch?`, `model?` | creates worker chat session (child of caller), task → `in_progress`, starts first turn with worker preamble + spec. 409 if the task already has an active worker or deps not done |
+| `worker_start` | `task_id?` or `spec` (+`title?`), `agent?`, `workspace?`, `worktree?: 'current' \| 'new'`, `branch?`, `model?` | creates worker chat session (child of caller), task → `in_progress`, starts first turn with worker preamble + spec. 409 if the task already has an active worker or deps not done |
 | `worker_list` | – | caller's child sessions with status/task/preview |
 | `send_message` | `to: <sessionId> \| 'parent' \| 'user'`, `body` | delivers (wakes target) |
 | `ask` | `question` | like send_message to parent (or user notification `question`); answer arrives as the next message |
@@ -291,12 +299,14 @@ GET    /api/workspaces/:id/worktrees                     -> Worktree[]
 POST   /api/workspaces/:id/worktrees {name, base?}       -> Worktree   (branch = name)
 DELETE /api/workspaces/:id/worktrees  {path, force?}
 
-POST   /api/tasks               {title, description?, status?, priority?, deps?, labels?, workspaceId?} -> Task
+POST   /api/tasks               {title, description?, status?, priority?, deps?, labels?, workspaceId?, parentId?, targets?} -> Task
 PATCH  /api/tasks/:id           partial Task fields (+ comment?)                                   -> Task
 DELETE /api/tasks/:id
 POST   /api/tasks/:id/move      {status, beforeId?: string|null}   -> Task  (DnD: put before beforeId, or at end)
 POST   /api/tasks/:id/assign    {agent?, workspaceId?, cwd?, worktree?: 'current'|'new', sessionId?} -> Session
                                  (sessionId given => deliver the task to that existing session instead of creating one)
+POST   /api/tasks/:id/start     {agent?}   -> Session   ("Взять в работу": assign with defaults = default agent, worktree 'new' in task's workspace, task prompt template)
+POST   /api/tasks/:id/port      {target, agent?} -> { target, branch, cwd, status, sessionId }
 POST   /api/tasks/sync                                   -> { imported, updated }   (integrations.tasks)
 
 POST   /api/sessions            {kind, agent?, cwd?, workspaceId?, title?, prompt?, role?, approvalMode?, model?, command?} -> Session
@@ -311,7 +321,10 @@ GET    /api/sessions/:id/log                              -> { text }   (stderr/
 GET    /api/git/status?cwd=     -> { branch, upstream, ahead, behind, files: [{ path, x, y, status: 'M'|'A'|'D'|'R'|'?'|'U' }] }
 GET    /api/git/diff?cwd=&path= -> { diff }   (unified; path optional = whole tree; untracked files shown as added)
 GET    /api/git/log?cwd=&n=     -> [{ hash, subject, author, at }]
-POST   /api/git/commit          {cwd, message, paths?}   -> { hash }   (paths absent => all changes)
+GET    /api/git/suggest?cwd=    -> { taskId, key, branch, base,
+                                     commit: { title, body },        (prefill for the commit box, user edits before commit)
+                                     pr: { title, body, base } }     (prefill for the PR dialog, user edits before create)
+POST   /api/git/commit          {cwd, message, paths?}   -> { hash }   (paths absent => all changes; message = title + "\n\n" + body)
 POST   /api/git/push            {cwd}                    -> { output }
 POST   /api/git/pr              {cwd, title, body, base?} -> { url }   (integrations.pr; 501 if disabled)
 
@@ -341,6 +354,59 @@ Server → client (JSON per frame):
 ```
 Client → server: `{ t: 'term.attach', id }`, `{ t: 'term.detach', id }`, `{ t: 'term.in', id, data }`,
 `{ t: 'term.resize', id, cols, rows }`.
+
+## Branches, commits, PRs: naming and prefill
+
+Config (`git` section):
+```jsonc
+"git": {
+  "defaultBase": "develop",
+  "branchTemplate": "feature/{key}",            // auto-created branches (worker_start/assign with worktree "new")
+  "portBranchTemplate": "{branch}-{target}",    // e.g. feature/JIRA-1234-release-1.54.0
+  "commitTitleTemplate": "{key}: {title}",
+  "prTitleTemplate": "{key}: {title}"
+},
+"tasks": {
+  "promptTemplate": "{key}: {title}\n\n{description}\n\nTargets: {targets}\nLink: {url}"
+  // per agent override: agents.<id>.taskPromptTemplate, e.g. "/full-task {key}" (a custom CLI command
+  // that takes the task + its SDD). Vars: {key} {id} {title} {description} {url} {targets} {branch} {repo}
+}
+```
+- Task key `{key}` = `externalId` of the ROOT task (follow parentId up) when it came from the tracker (e.g.
+  `JIRA-1234`, the space prefix comes from the tracker), else the root's local id (`T-12`). Subtasks share the
+  root's key, so the same branch name `feature/JIRA-1234` is used in every microservice repo.
+  Branch names are sanitized (`[^A-Za-z0-9._/-]` → `-`); if the branch already exists in that repo (and isn't
+  this task's own branch), suffix `-2`, `-3`…. Auto-created worktree directory is named after the branch.
+- New worktree for a task: `git worktree add -b <branch> <dir> <start>` where `<start>` = `targets[0]` if it
+  exists locally, else `origin/<targets[0]>`, else HEAD. `task.branch` is stored.
+- Worker's first prompt = worker preamble + task prompt rendered from `agents.<id>.taskPromptTemplate` ??
+  `tasks.promptTemplate`.
+
+### Multiple target branches (hotfix into release + develop)
+
+Work happens once, on `task.branch` started from `targets[0]`. Each other target gets a port:
+`POST /api/tasks/:id/port {target, agent?}` (UI button per target) or agent tool `task_port`:
+1. new worktree from `<target>` with branch `portBranchTemplate`;
+2. `git cherry-pick -x` of `git rev-list --reverse <targets[0]>..<task.branch>` (fallback to `origin/<targets[0]>`);
+3. clean → port `status: 'clean'`, log entry; conflict → leave the cherry-pick in progress, port `status: 'conflict'`,
+   start a worker session in that worktree (parent = caller/coordinator) with a preamble: resolve conflicts,
+   `git cherry-pick --continue`, run checks, `worker_done`. Its `worker_done` sets the port to done/failed.
+Result: `{ target, branch, cwd, status, sessionId }`. One PR per target (PR dialog base = that target; cwd = port worktree).
+
+### Multiple repositories (microservices)
+
+One task = one repo (`workspaceId`). A spec touching several repos becomes a parent task with one subtask per repo
+(`parentId`, own `workspaceId`, inherits `targets` and key). Coordinators see repos via the `workspace_list` tool and
+create subtasks with `task_create({ parent_id, workspace, ... })`; `worker_start` runs the worker in that
+subtask's repo (`worktree: 'new'` → branch `feature/<key>` in that repo). A parent task's status is managed by the
+coordinator/user; the board shows subtask progress (done/total).
+- Which task a cwd belongs to: the task of the session(s) whose cwd equals it, else a task whose key appears in the
+  current branch name, else none (`taskId: null`, `key: null`; templates then fall back to the branch name / first
+  changed file).
+- `commit.title` = `commitTitleTemplate`; `commit.body` = last `worker_done` summary for that task (if any) +
+  bullet list of changed files. `pr.title` = `prTitleTemplate`; `pr.body` = task description excerpt + external URL +
+  last worker summary + `git log <base>..HEAD --oneline` as bullets.
+- Worker preamble tells agents: commit messages must start with `{key}: ` and the worker stays on its branch.
 
 ## Security
 
