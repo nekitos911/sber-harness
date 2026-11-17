@@ -102,6 +102,7 @@ export function Composer({ session, active }: { session: Session; active: boolea
         <span className="grow" />
         <ModelPicker
           agentId={session.agent}
+          openKey={session.id}
           label="Модель"
           value={session.model}
           onChange={(model) => void patch({ model })}

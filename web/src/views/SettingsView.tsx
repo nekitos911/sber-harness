@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { CircleCheck, CircleX, RefreshCw, TriangleAlert } from 'lucide-react'
-import { api, ApiError, errorText, qs } from '../api'
+import { CircleCheck, CircleX, LogIn, RefreshCw, TriangleAlert } from 'lucide-react'
+import { api, ApiError, errorText, qs, tryApi } from '../api'
 import { setState, toast, useStore } from '../store'
+import { adoptSession } from '../lib/actions'
 import { COLUMNS, relTime } from '../lib/format'
-import { FULL_ACCESS, GRADES, modeShort, useAgentMeta } from '../lib/agents'
+import { FULL_ACCESS, GRADES, loadAgentMeta, loadSettings, modeShort, normModels, useAgentMeta } from '../lib/agents'
 import { useNow } from '../lib/useNow'
-import type { AgentSettings, GitBranches, Settings } from '../types'
+import type { AgentSettings, GitBranches, Session, Settings } from '../types'
 import { Skeleton } from '../components/bits'
 import { ModelPicker } from '../components/pickers/ModelPicker'
 import { Button, Chip, Disclosure, Input, Segmented, Select, Switch, Textarea } from '../components/ui'
@@ -95,6 +96,7 @@ export function SettingsView() {
       <form className="settings" onSubmit={(e) => { e.preventDefault(); if (changes) void save() }}>
         <div className="settings-body">
           <AgentSection id={main} form={form} update={update} fieldError={fieldError} primary />
+          <OrchestrationSection form={form} update={update} />
           <TrackerSection form={form} update={update} fieldError={fieldError} />
           <GitSection form={form} update={update} fieldError={fieldError} />
           <PrSection form={form} update={update} />
@@ -163,6 +165,8 @@ function AgentSection({ id, form, update, fieldError, primary }: SectionProps & 
   const label = labels.find((x) => x.id === id)?.label ?? (id === MAIN ? 'GigaCode' : id)
   const modeLabels = a.approvalModeLabels ?? {}
   const enabledAgents = Object.keys(form.agents).filter((k) => form.agents[k].enabled !== false)
+  const catalog = normModels(a.models)
+  const unavailable = (m: string | undefined) => !!m && catalog.find((x) => x.id === m)?.available === false
 
   return (
     <section className="settings-section" id={`set-${id}`}>
@@ -197,7 +201,7 @@ function AgentSection({ id, form, update, fieldError, primary }: SectionProps & 
           <p className="set-note">Внутренние агенты GigaCode просят модель по уровню; здесь задано, какая модель стоит за каждым.</p>
           <div className="set-rows">
             {GRADES.map((g) => (
-              <Row key={g} label={g}>
+              <Row key={g} label={g} error={unavailable(a.modelGrades[g]) ? 'Модель недоступна: выберите другую' : undefined}>
                 <ModelPicker variant="field" agentId={id} label={`Модель уровня ${g}`} value={a.modelGrades[g] ?? null} placement="bottom-start" emptyText="не задана"
                   onChange={(m) => { const grades = { ...a.modelGrades }; if (m) grades[g] = m; else delete grades[g]; set({ modelGrades: grades }) }} />
               </Row>
@@ -210,6 +214,22 @@ function AgentSection({ id, form, update, fieldError, primary }: SectionProps & 
               </div>
             </Row>
           </div>
+          {catalog.length > 0 && (
+            <Disclosure className="settings-catalog" summary={<h3>Каталог моделей <span className="muted num">{catalog.length}</span></h3>}>
+              <p className="set-note">Список приходит от CLI; здесь только подписи, которые видны в выборе модели.</p>
+              <div className="catalog-list">
+                {catalog.map((m, i) => (
+                  <div key={m.id} className="catalog-row" data-off={m.available === false || undefined}>
+                    <span className="mono ellipsis" data-tip={m.id}>{m.id}</span>
+                    {m.context && <span className="muted">{m.context}</span>}
+                    {m.available === false && <span className="field-warn">недоступна</span>}
+                    <Input aria-label={`Подпись ${m.id}`} value={m.label ?? ''} placeholder={m.id}
+                      onChange={(e) => set({ models: catalog.map((x, j) => (j === i ? { ...x, label: e.target.value || undefined } : x)) })} />
+                  </div>
+                ))}
+              </div>
+            </Disclosure>
+          )}
         </>
       )}
 
@@ -237,6 +257,19 @@ function AgentStatus({ id }: { id: string }) {
   const meta = useAgentMeta(id)
   const now = useNow()
   const [checking, setChecking] = useState(false)
+  const [refreshing, setRefreshing] = useState(false)
+  const login = async () => {
+    const s = await tryApi<Session>('POST', '/sessions', { kind: 'terminal', agent: id, title: 'Вход в GigaCode' })
+    if (s) adoptSession(s)
+  }
+  const refreshModels = async () => {
+    setRefreshing(true)
+    const res = await tryApi<{ error?: string }>('POST', `/agents/${encodeURIComponent(id)}/models/refresh`)
+    setRefreshing(false)
+    if (res?.error) toast(`Список моделей не обновлён: ${res.error}`, 'error')
+    loadAgentMeta(id, true)
+    void loadSettings(true)
+  }
   const recheck = async () => {
     setChecking(true)
     try {
@@ -266,7 +299,19 @@ function AgentStatus({ id }: { id: string }) {
         {r.command && <><dt>Команда</dt><dd className="mono">{r.command}</dd></>}
         {r.node && <><dt>Node</dt><dd className="mono">{r.node}</dd></>}
         {r.entry && <><dt>Точка входа</dt><dd className="mono">{r.entry}</dd></>}
-        <dt>Учётная запись</dt><dd><Ok ok={r.identity} /> {r.identity ? 'найдена' : 'не найдена: войдите в CLI в терминале'}</dd>
+        <dt>Вход</dt>
+        <dd className="status-auth">
+          {meta.auth === 'ok' || (meta.auth === undefined && r.identity) ? <><Ok ok />выполнен</>
+            : meta.auth === 'required' || (meta.auth === undefined && !r.identity) ? <><TriangleAlert className="warn" aria-hidden />требуется вход</>
+              : <span className="muted">неизвестно (станет ясно при первом запуске)</span>}
+          {meta.auth !== 'ok' && r.ok && <Button size="sm" icon={<LogIn />} onClick={() => void login()}>Войти в GigaCode</Button>}
+        </dd>
+        <dt>Каталог моделей</dt>
+        <dd className="status-auth">
+          {meta.catalog?.error ? <span className="field-error">{meta.catalog.error}</span>
+            : meta.catalog?.at ? <span>обновлён {relTime(meta.catalog.at, now)} назад</span> : <span className="muted">ещё не запрашивался</span>}
+          <Button size="sm" variant="ghost" icon={<RefreshCw className={refreshing ? 'spinner' : undefined} />} disabled={refreshing || !r.ok} onClick={() => void refreshModels()}>Обновить список</Button>
+        </dd>
         {seen && (
           <>
             <dt>MCP-серверы</dt>
@@ -352,6 +397,7 @@ function TrackerSection({ form, update, fieldError }: SectionProps) {
             <Input mono value={t.urlTemplate ?? ''} placeholder="https://tracker/swtr/units/all/unit/{key}" onChange={(e) => set({ urlTemplate: e.target.value })} />
           </Row>
         )}
+        {t && <StartTransitionRow value={t.onStartTransition ?? ''} statuses={Object.keys(t.statusMap ?? {})} onChange={(v) => set({ onStartTransition: v || null })} />}
         <Row label="Синхронизация" hint="Как часто перечитывать задачи из трекера." error={fieldError('sync')}>
           <Select label="Интервал синхронизации" value={String(refresh)} onChange={(v) => update({ ...form, tasks: { ...form.tasks, refreshSec: Number(v) } })}
             options={[...SYNC, ...(SYNC.some((s) => s.v === refresh) ? [] : [{ v: refresh, l: `каждые ${refresh} с` }])].map((s) => ({ value: String(s.v), label: s.l }))} />
@@ -435,5 +481,39 @@ function PrSection({ form, update }: Omit<SectionProps, 'fieldError'>) {
         </Row>
       </div>
     </section>
+  )
+}
+
+// ---------- orchestration ----------
+
+function OrchestrationSection({ form, update }: Omit<SectionProps, 'fieldError'>) {
+  const o = form.orchestration ?? {}
+  const mode = o.reviewMode ?? 'internal'
+  return (
+    <section className="settings-section" id="set-orchestration">
+      <h2>Оркестрация</h2>
+      <div className="set-rows">
+        <Row label="Ревью" wide hint={mode === 'internal'
+          ? 'Как в CLI: /full-task сам запускает субагента-ревьюера; его шаги и вывод видны в карточке субагента в чате.'
+          : 'Через харнесс: ревью идёт отдельными чатами-исполнителями, их видно в боковой панели и в панели агентов.'}>
+          <Segmented label="Режим ревью" value={mode} onChange={(v) => update({ ...form, orchestration: { ...o, reviewMode: v } })}
+            options={[{ value: 'internal', label: 'Внутри агента (как в CLI)' }, { value: 'harness', label: 'Через харнесс (отдельные чаты)' }]} />
+        </Row>
+      </div>
+    </section>
+  )
+}
+
+/** Tracker transition on «Взять в работу»: none, a known status, or a custom one. */
+function StartTransitionRow({ value, statuses, onChange }: { value: string; statuses: string[]; onChange: (v: string) => void }) {
+  const known = [...new Set(statuses)]
+  const [custom, setCustom] = useState(!!value && !known.includes(value))
+  return (
+    <Row label="Переводить при взятии в работу" hint="Статус задачи в трекере, когда агент её берёт. По умолчанию не переводить.">
+      <Select label="Переход при взятии в работу" mono value={custom ? CUSTOM : value}
+        onChange={(v) => { if (v === CUSTOM) setCustom(true); else { setCustom(false); onChange(v) } }}
+        options={[{ value: '', label: 'Не переводить', text: 'Не переводить' }, ...known.map((k) => ({ value: k, label: k })), { value: CUSTOM, label: 'Свой…', text: 'Свой' }]} />
+      {custom && <Input mono aria-label="Свой статус" value={value} placeholder="development" onChange={(e) => onChange(e.target.value.trim())} />}
+    </Row>
   )
 }

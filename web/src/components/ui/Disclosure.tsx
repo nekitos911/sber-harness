@@ -4,19 +4,24 @@ import { ChevronRight } from 'lucide-react'
 /**
  * Expandable block (replaces <details>): a toggle button for the summary, optional actions beside it
  * (never nested inside the toggle), and a height-animated body that mounts on first open.
+ * Uncontrolled by default; pass `open` + `onToggle` to drive it from outside.
  */
-export function Disclosure({ summary, actions, children, defaultOpen = false, className, chevron = 'start', label }: {
+export function Disclosure({ summary, actions, children, defaultOpen = false, open: controlled, onToggle, className, chevron = 'start', label }: {
   summary: ReactNode
   actions?: ReactNode
   children: ReactNode
   defaultOpen?: boolean
+  open?: boolean
+  onToggle?: (open: boolean) => void
   className?: string
   chevron?: 'start' | 'end'
   label?: string
 }) {
-  const [open, setOpen] = useState(defaultOpen)
-  const [seen, setSeen] = useState(defaultOpen)
-  const toggle = () => { setOpen(!open); setSeen(true) }
+  const [own, setOwn] = useState(defaultOpen)
+  const open = controlled ?? own
+  const [seen, setSeen] = useState(open)
+  if (open && !seen) setSeen(true)
+  const toggle = () => { setOwn(!open); onToggle?.(!open) }
   const chev = <ChevronRight className="chev" aria-hidden />
   return (
     <div className={`disclosure ${className ?? ''}`} data-open={open}>

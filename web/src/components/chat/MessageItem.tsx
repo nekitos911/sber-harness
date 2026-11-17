@@ -1,5 +1,5 @@
 import { memo, useState, type MouseEvent } from 'react'
-import { Check, Copy, GitCompare, LoaderCircle, TriangleAlert, X } from 'lucide-react'
+import { Check, Copy, ExternalLink, GitCompare, LoaderCircle, TriangleAlert, X } from 'lucide-react'
 import { tryApi } from '../../api'
 import { openSession, openTab, useStore } from '../../store'
 import { basename, fullTime, normPath } from '../../lib/format'
@@ -9,6 +9,7 @@ import type { Message, ToolCall } from '../../types'
 import { Markdown } from '../Markdown'
 import { DiffLines } from '../DiffLines'
 import { Disclosure, IconButton } from '../ui'
+import { isSubagentTool, SubagentCard } from './SubagentCard'
 
 export const MessageItem = memo(function MessageItem({ m, fresh = false }: { m: Message; fresh?: boolean }) {
   const body = <MessageBody m={m} />
@@ -28,8 +29,8 @@ function MessageBody({ m }: { m: Message }) {
     case 'assistant': return <div className="msg msg-assistant"><Markdown text={m.text} /></div>
     case 'thought': return <Thought text={m.text} />
     case 'tool': return m.tool ? <ToolCard tool={m.tool} sessionId={m.sessionId} /> : null
-    case 'error': return <div className="msg msg-error" role="alert">{m.text}</div>
-    case 'system': return <SystemNote text={m.text} />
+    case 'error': return m.action === 'pick-model' ? <PickModelError m={m} /> : <div className="msg msg-error" role="alert">{m.text}{m.link && <LinkButton href={m.link} />}</div>
+    case 'system': return <>{<SystemNote text={m.text} />}{m.link && <LinkButton href={m.link} />}</>
   }
 }
 
@@ -127,6 +128,7 @@ const editLines = (e: FileEdit): DiffLine[] =>
   e.lines.map((l) => ({ kind: l.kind === '+' ? 'add' : l.kind === '-' ? 'del' : 'ctx', text: l.text, old: null, new: null }))
 
 function ToolCard({ tool, sessionId }: { tool: ToolCall; sessionId: string }) {
+  if (isSubagentTool(tool)) return <SubagentCard tool={tool} />
   const edit = fileEdit(tool.input)
   if (edit) return <EditBlock tool={tool} sessionId={sessionId} file={edit.file} created={edit.created} added={edit.added} removed={edit.removed} lines={editLines(edit)} />
   const out = outputDiff(tool)
@@ -219,5 +221,30 @@ function EditBlock({ tool, sessionId, file, created, added, removed, lines }: Ed
       <DiffLines lines={lines} numbers={lines.some((l) => l.new !== null)} limit={400} label={`Изменения ${basename(file)}`} />
       {tool.status === 'error' && tool.output && <pre className="tool-err">{tool.output.slice(0, OUTPUT_LIMIT)}</pre>}
     </Disclosure>
+  )
+}
+
+export function LinkButton({ href, label = 'Открыть ссылку' }: { href: string; label?: string }) {
+  return <a className="btn btn-sm link-btn-out" href={href} target="_blank" rel="noreferrer noopener" data-tip={href}><ExternalLink />{label}</a>
+}
+
+/** The chosen model is not in the backend catalogue: pick another (opens the composer picker) or retry. */
+function PickModelError({ m }: { m: Message }) {
+  const lastUser = useStore((s) => [...(s.messages[m.sessionId] ?? [])].reverse().find((x) => x.kind === 'user' && (!x.from || x.from === 'user'))?.text)
+  const [busy, setBusy] = useState(false)
+  const retry = async () => {
+    if (!lastUser) return
+    setBusy(true)
+    await tryApi('POST', `/sessions/${encodeURIComponent(m.sessionId)}/messages`, { text: lastUser })
+    setBusy(false)
+  }
+  return (
+    <div className="msg msg-error error-card" role="alert">
+      <span>{m.text}</span>
+      <div className="row">
+        <button type="button" className="btn btn-sm" onClick={() => window.dispatchEvent(new CustomEvent('harness:pick-model', { detail: m.sessionId }))}>Выбрать другую модель</button>
+        <button type="button" className="btn btn-sm" disabled={!lastUser || busy} onClick={() => void retry()}>{busy ? 'Отправляем…' : 'Повторить'}</button>
+      </div>
+    </div>
   )
 }

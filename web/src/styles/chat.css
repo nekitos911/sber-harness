@@ -208,3 +208,38 @@
 .mode-select.mode-access { background: var(--full-access-soft); color: var(--full-access); }
 .mode-select.mode-access .select-chev { color: var(--full-access); }
 .chat-meta .branch-btn { color: var(--ink-3); flex-shrink: 1; min-width: 0; }
+
+/* Built-in sub-agent (agent/fork tool): a bordered block with its live feed and the verdict. */
+.tool-agent { border: 1px solid var(--rule); border-radius: var(--r-2); background: var(--deck); }
+.tool-agent > .disclosure-head { height: 34px; margin: 0; padding: 0 8px 0 10px; border-radius: var(--r-2); color: var(--ink-2); }
+.tool-agent > .disclosure-head:hover { background: var(--deck-2); }
+.tool-agent[data-open="true"] > .disclosure-head { border-bottom: 1px solid var(--rule-soft); border-radius: var(--r-2) var(--r-2) 0 0; }
+.tool-agent > .disclosure-head .chev { opacity: 1; margin-left: auto; }
+.tool-agent .agent-ico { width: 14px; height: 14px; color: var(--ink-3); flex-shrink: 0; }
+.agent-kind { flex-shrink: 0; color: var(--ink-2); }
+.agent-kind strong { color: var(--ink); font-weight: 600; }
+.tool-agent .tool-sum { font-family: var(--font-ui); }
+.agent-body { display: grid; gap: 8px; padding: 8px 10px 10px; }
+.agent-feed {
+  margin: 0; max-height: 220px; overflow: auto; padding: 6px 8px; border-radius: var(--r-1); background: var(--well);
+  font-size: 11.5px; line-height: 1.55; color: var(--ink-3); white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.agent-wait { font-size: 12px; }
+.agent-result { display: grid; gap: 4px; font-size: 13.5px; }
+.agent-result[data-error] { color: var(--lamp-fail); }
+
+/* GigaCode login: the one moment the run needs the user; amber like other "waiting on you" states. */
+.auth-wait {
+  display: grid; gap: 8px; padding: 12px 14px; border: 1px solid color-mix(in srgb, var(--lamp-run) 45%, var(--rule));
+  border-radius: var(--r-2); background: var(--run-soft); animation: rise-in 200ms var(--ease-out);
+}
+.auth-wait-head { display: flex; align-items: center; gap: 8px; }
+.auth-wait-head svg { width: 16px; height: 16px; color: var(--lamp-run); }
+.auth-wait-head .num { margin-left: auto; }
+.auth-wait-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.auth-wait-actions .btn { text-decoration: none; }
+.auth-link { min-width: 0; flex: 1; font-size: 11.5px; }
+.st.st-auth { color: var(--lamp-run); }
+.error-card { display: grid; gap: 8px; font-family: var(--font-ui); font-size: 13px; }
+.link-btn-out { justify-self: start; margin-top: 4px; text-decoration: none; }
+.msg-wrap > .link-btn-out { align-self: center; }

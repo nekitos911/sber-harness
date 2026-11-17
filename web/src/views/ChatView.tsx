@@ -1,12 +1,12 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { ArrowDown, Ellipsis, GitCompareArrows, LoaderCircle, MessageSquare, RotateCcw, ScrollText, Square, Trash2 } from 'lucide-react'
+import { ArrowDown, Check, Copy, Ellipsis, ExternalLink, KeyRound, GitCompareArrows, LoaderCircle, MessageSquare, RotateCcw, ScrollText, Square, Trash2 } from 'lucide-react'
 import { api, errorText, tryApi } from '../api'
 import { openTab, openTask, setState, showPanel, upsert, useStore, without } from '../store'
 import { loadMessages, loadSubagents } from '../ws'
 import { basename, normPath, ROLE } from '../lib/format'
 import { fileEdit } from '../lib/toolcall'
 import { useGit } from '../lib/git'
-import { useStartingLabel } from '../lib/live'
+import { useElapsed, useStartingLabel } from '../lib/live'
 import type { Message, Session } from '../types'
 import { Branch, Loading, Skeleton, StatusIcon, statusText } from '../components/bits'
 import { MenuButton } from '../components/ui/Menu'
@@ -118,7 +118,8 @@ export function ChatView({ id, active }: { id: string; active: boolean }) {
             </button>
           )}
           {visible.map((m) => <MessageItem key={m.id} m={m} fresh={m.at > shownAt.current} />)}
-          {running && <div className="chat-working" role="status"><LoaderCircle className="spinner" aria-hidden />{starting || 'Работает…'}</div>}
+          {running && session.phase === 'auth' ? <AuthCard session={session} messages={list} />
+            : running && <div className="chat-working" role="status"><LoaderCircle className="spinner" aria-hidden />{starting || 'Работает…'}</div>}
           {!running && <TurnFiles messages={list} cwd={session.cwd} />}
         </div>
       </div>
@@ -252,5 +253,33 @@ function TurnFiles({ messages, cwd }: { messages: Message[]; cwd: string }) {
         </button>
       ))}
     </Disclosure>
+  )
+}
+
+/** GigaCode opened a browser login: the link, a copy button and a timer; the run continues by itself after login. */
+function AuthCard({ session, messages }: { session: Session; messages: Message[] }) {
+  const link = [...messages].reverse().find((m) => m.link)?.link ?? null
+  const sec = useElapsed(session.lastActivityAt, true)
+  const [copied, setCopied] = useState(false)
+  const copy = async () => {
+    if (!link) return
+    try { await navigator.clipboard.writeText(link); setCopied(true); window.setTimeout(() => setCopied(false), 1500) } catch { /* blocked */ }
+  }
+  return (
+    <div className="auth-wait" role="status">
+      <div className="auth-wait-head">
+        <KeyRound aria-hidden />
+        <strong>GigaCode ждёт авторизацию</strong>
+        <span className="muted num">{Math.floor(sec / 60)}:{String(sec % 60).padStart(2, '0')}</span>
+      </div>
+      <p className="muted">Войдите по ссылке в браузере: после входа запуск продолжится сам.</p>
+      {link ? (
+        <div className="auth-wait-actions">
+          <a className="btn btn-primary" href={link} target="_blank" rel="noreferrer noopener"><ExternalLink />Открыть ссылку</a>
+          <button type="button" className="btn" onClick={() => void copy()}>{copied ? <Check /> : <Copy />}{copied ? 'Скопировано' : 'Скопировать'}</button>
+          <span className="mono muted ellipsis auth-link" data-tip={link}>{link}</span>
+        </div>
+      ) : <p className="muted">Ссылка появится, как только CLI её выведет.</p>}
+    </div>
   )
 }

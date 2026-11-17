@@ -76,7 +76,7 @@ export interface Session {
   parentId: string | null
   taskId: string | null
   status: SessionStatus
-  phase?: 'starting' | 'streaming' | null // newer servers: 'starting' = process up, no event yet (cold start)
+  phase?: 'starting' | 'streaming' | 'auth' | null // newer servers: 'starting' = process up, no event yet (cold start)
   externalSessionId: string | null
   settingsPath: string | null
   model: string | null
@@ -100,6 +100,7 @@ export interface ToolCall {
   input: unknown
   output: string | null
   status: 'running' | 'ok' | 'error'
+  progress?: string[] // built-in sub-agent activity under this call (agent tool), last lines
 }
 
 export interface Message {
@@ -112,6 +113,8 @@ export interface Message {
   tool: ToolCall | null
   turn: number
   options?: string[] | null // `ask` with choices: each option is a one-click reply
+  link?: string | null // e.g. the GigaCode login URL
+  action?: 'pick-model' | null // failure the user fixes by choosing another model
 }
 
 export type NotificationKind = 'question' | 'done' | 'failed' | 'escalation' | 'info' | 'error'
@@ -125,10 +128,11 @@ export interface Notification {
   taskId: string | null
   text: string
   options?: string[] | null
+  link?: string | null
 }
 
 /** A model in an agent's catalog (config may give a plain string; servers normalize it to {id}). */
-export interface ModelEntry { id: string; label?: string; context?: string; description?: string }
+export interface ModelEntry { id: string; label?: string; context?: string; description?: string; available?: boolean | null }
 
 export interface AgentInfo {
   id: string
@@ -145,6 +149,9 @@ export interface AgentInfo {
 export interface AgentMeta {
   id: string
   resolved: { ok: boolean; command?: string; node?: string; entry?: string; identity: boolean; error?: string }
+  auth?: 'ok' | 'required' | 'unknown'
+  catalog?: { at: number | null; error?: string | null } | null
+  models?: ModelEntry[]
   seen: {
     models: string[]
     slashCommands: string[]
@@ -223,8 +230,9 @@ export interface Settings {
     prTitleTemplate?: string
   }
   tasks: { refreshSec: number }
+  orchestration?: { reviewMode?: 'internal' | 'harness'; workerMayCommit?: boolean }
   integrations?: {
-    tasks?: { enabled?: boolean; space?: string; urlTemplate?: string; statusMap?: Record<string, string>; closedStatuses?: string[] }
+    tasks?: { enabled?: boolean; space?: string; urlTemplate?: string; statusMap?: Record<string, string>; closedStatuses?: string[]; onStartTransition?: string | null }
     pr?: { enabled?: boolean; limits?: { titleBytes?: number; bodyBytes?: number } }
   }
 }

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react'
-import { Bot, ChevronDown, GitPullRequest, ChevronRight, FolderGit2, FolderPlus, GitBranch, GitBranchPlus, House, Inbox, MessageSquarePlus, Moon, Search, Settings, SquareKanban, SquareTerminal, Sun } from 'lucide-react'
+import { Bot, ChevronDown, GitPullRequest, KeyRound, ChevronRight, FolderGit2, FolderPlus, GitBranch, GitBranchPlus, House, Inbox, MessageSquarePlus, Moon, Search, Settings, SquareKanban, SquareTerminal, Sun } from 'lucide-react'
 import { openDialog, openScreen, openSession, openWorktree, setState, useActiveCwd, useStore, type Screen } from '../store'
 import { loadWorktrees } from '../ws'
 import { useCurrentTool, useStartingLabel } from '../lib/live'
@@ -281,7 +281,7 @@ function SessionRow({ s, nested, caret }: { s: Session; nested: boolean; caret?:
       onKeyDown={activate(open)}
       style={depth(0)}
     >
-      {s.kind === 'terminal' && s.status !== 'exited' ? <SquareTerminal className="st" aria-label="терминал" /> : <StatusIcon session={s} />}
+      {s.phase === 'auth' ? <KeyRound className="st st-auth" aria-label="ждёт авторизацию" /> : s.kind === 'terminal' && s.status !== 'exited' ? <SquareTerminal className="st" aria-label="терминал" /> : <StatusIcon session={s} />}
       <span className="label">
         {s.title || s.id}
         {doing && <span className="sess-doing">{nested ? ' · ' : ' - '}{doing}</span>}

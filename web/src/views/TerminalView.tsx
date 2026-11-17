@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { Terminal, type ITheme } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
+import { WebLinksAddon } from '@xterm/addon-web-links'
 import '@xterm/xterm/css/xterm.css'
 import { RotateCcw } from 'lucide-react'
 import { tryApi } from '../api'
@@ -34,6 +35,8 @@ export default function TerminalView({ id, active }: { id: string; active: boole
     })
     const f = new FitAddon()
     t.loadAddon(f)
+    // URLs (e.g. the GigaCode login link) open in a new tab.
+    t.loadAddon(new WebLinksAddon((_e, uri) => window.open(uri, '_blank', 'noopener,noreferrer')))
     t.open(el)
     term.current = t
     fit.current = f
