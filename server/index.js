@@ -245,17 +245,29 @@ export async function startServer(opts = {}) {
   route('PUT', '/api/settings', ({ body }) => saveSettings(body));
 
   // workspaces
-  route('POST', '/api/workspaces', async ({ body }) => {
-    check(body, { path: 'string', name: 'string?' });
-    const p = path.resolve(body.path);
-    if (!path.isAbsolute(body.path) || !fs.existsSync(p) || !fs.statSync(p).isDirectory()) fail(400, `not an existing absolute directory: ${body.path}`);
+  async function addWorkspace(rawPath, name) {
+    const p = path.resolve(rawPath);
+    if (!path.isAbsolute(rawPath) || !fs.existsSync(p) || !fs.statSync(p).isDirectory()) fail(400, `not an existing absolute directory: ${rawPath}`);
     const existing = db.workspaces.find((w) => samePath(w.path, p));
     if (existing) return existing;
-    const ws = { id: newId('w', 3), name: body.name?.trim() || path.basename(p), path: p, isGit: await git.isRepo(p) };
+    const ws = { id: newId('w', 3), name: name?.trim() || path.basename(p), path: p, isGit: await git.isRepo(p) };
     db.workspaces.push(ws);
     emitWorkspaces();
     return ws;
+  }
+  route('POST', '/api/workspaces', ({ body }) => {
+    check(body, { path: 'string', name: 'string?' });
+    return addWorkspace(body.path, body.name);
   });
+  // config.workspaces: { root, repos } — repos are names under root (or absolute paths); empty repos = every git repo directly under root
+  {
+    const { root = null, repos = [] } = config.workspaces || {};
+    const list = repos.length ? repos.map((r) => (path.isAbsolute(r) ? r : path.join(root || '', r)))
+      : root && fs.existsSync(root) ? fs.readdirSync(root, { withFileTypes: true })
+        .filter((d) => d.isDirectory() && fs.existsSync(path.join(root, d.name, '.git'))).map((d) => path.join(root, d.name))
+        : [];
+    for (const p of list) await addWorkspace(p).catch((e) => console.warn(`workspaces: skip ${p}: ${e.message}`));
+  }
   route('DELETE', '/api/workspaces/:id', ({ params }) => {
     getWs(params.id);
     db.workspaces = db.workspaces.filter((w) => w.id !== params.id);
