@@ -6,6 +6,7 @@ import { loadWorktrees } from '../ws'
 import { basename, isAbsolutePath } from '../lib/format'
 import type { GitSuggest, Session, Workspace, Worktree } from '../types'
 import { Modal } from './ui/Dialog'
+import { CleanupDialog, DeleteWorktreeDialog, WorktreeInfoDialog } from './WorktreeMenu'
 import { Segmented, Select, SuggestInput } from './ui'
 import { modeShort } from '../lib/agents'
 import { loadPr } from '../lib/pr'
@@ -25,6 +26,9 @@ function DialogSwitch({ d }: { d: DialogRequest }) {
     case 'worktree': return <WorktreeDialog workspaceId={d.workspaceId} />
     case 'pr': return <PrDialog cwd={d.cwd} base={d.base} />
     case 'start': return <StartDialog taskId={d.taskId} />
+    case 'wt-delete': return <DeleteWorktreeDialog workspaceId={d.workspaceId} path={d.path} />
+    case 'wt-info': return <WorktreeInfoDialog workspaceId={d.workspaceId} path={d.path} />
+    case 'wt-cleanup': return <CleanupDialog workspaceId={d.workspaceId} />
   }
 }
 

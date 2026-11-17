@@ -1,11 +1,12 @@
 import { useMemo } from 'react'
-import { FolderTree, GitBranch, GitCompareArrows, House, MessageSquarePlus, SquareTerminal } from 'lucide-react'
+import { FolderOpen, FolderTree, GitBranch, GitCompareArrows, House, MessageSquarePlus, SquareTerminal } from 'lucide-react'
 import { openSession, openTask, showPanel, useStore } from '../store'
 import { basename, normPath, relTime, statusLabel } from '../lib/format'
 import { newChat, newTerminal, workspaceFor } from '../lib/actions'
 import { useGit } from '../lib/git'
 import { useNow } from '../lib/useNow'
 import { StatusIcon } from '../components/bits'
+import { openFolder } from '../components/WorktreeMenu'
 
 /** A worktree with no open tabs: what lives here and the quick ways to start. */
 export function WorktreeHome({ cwd }: { cwd: string }) {
@@ -61,6 +62,10 @@ export function WorktreeHome({ cwd }: { cwd: string }) {
         <button type="button" className="btn" onClick={() => showPanel('files')}>
           <FolderTree />
           Файлы
+        </button>
+        <button type="button" className="btn" onClick={() => openFolder(cwd)}>
+          <FolderOpen />
+          Открыть папку
         </button>
       </div>
 

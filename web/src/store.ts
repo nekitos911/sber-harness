@@ -27,6 +27,9 @@ export type DialogRequest =
   | { kind: 'worktree'; workspaceId?: string }
   | { kind: 'pr'; cwd: string; base?: string }
   | { kind: 'start'; taskId: string }
+  | { kind: 'wt-delete'; workspaceId: string; path: string }
+  | { kind: 'wt-info'; workspaceId: string; path: string }
+  | { kind: 'wt-cleanup'; workspaceId: string }
 
 export interface Toast { id: number; text: string; tone: 'info' | 'ok' | 'error'; href?: string; leaving?: boolean }
 

@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
-import { Files, GitCompareArrows, RefreshCw, X } from 'lucide-react'
+import { Files, FolderOpen, GitCompareArrows, RefreshCw, X } from 'lucide-react'
+import { openFolder } from './WorktreeMenu'
 import { setState, useActiveCwd, useStore } from '../store'
 import { basename, normPath } from '../lib/format'
 import { refreshGit, useGit } from '../lib/git'
@@ -37,6 +38,9 @@ export function WorkspacePanel() {
           {changed > 0 && <span className="count count-run" aria-label={`изменённых файлов: ${changed}`}>{changed}</span>}
         </button>
         <span className="grow" />
+        <button type="button" className="icon-btn" data-tip="Открыть папку" aria-label="Открыть папку в проводнике" onClick={() => openFolder(cwd)}>
+          <FolderOpen />
+        </button>
         <button type="button" className="icon-btn" data-tip="Обновить" aria-label="Обновить git-статус" onClick={() => refreshGit(cwd)}>
           <RefreshCw />
         </button>

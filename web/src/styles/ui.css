@@ -146,3 +146,15 @@
 /* Toggle chips (allowed grades, filters): pressed = on. */
 button.chip[aria-pressed="false"] { background: transparent; box-shadow: inset 0 0 0 1px var(--rule-strong); color: var(--ink-3); }
 button.chip[aria-pressed="true"] { background: var(--signal-soft); color: var(--signal); }
+.menu-divider { height: 1px; margin: 4px -4px; background: var(--rule-soft); }
+.submenu-chev { width: 12px !important; height: 12px !important; margin-left: auto; color: var(--ink-4) !important; }
+.stakes { margin: 0; padding-left: 18px; color: var(--lamp-run); display: grid; gap: 2px; }
+.wt-path { font-size: 11.5px; overflow-wrap: anywhere; margin-top: -6px; }
+.cleanup { display: grid; gap: 2px; max-height: 340px; overflow-y: auto; }
+.cleanup-row { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) auto auto 52px; align-items: center; gap: 10px; padding: 6px 4px; border-top: 1px solid var(--rule-soft); font-size: 12.5px; }
+.cleanup-row[data-done] { opacity: 0.55; }
+.cleanup-row > .cleanup-ok, .cleanup-row > .field-error { grid-column: 1 / -1; padding-left: 22px; }
+.cleanup-ok { color: var(--lamp-done); }
+.cleanup-badges { display: inline-flex; gap: 4px; }
+.pr-state[data-state="merged"] { color: var(--pr-merged); }
+.pr-state[data-state="open"] { color: var(--signal); }

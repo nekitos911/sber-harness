@@ -173,3 +173,6 @@
 .search .input { padding-left: 28px; }
 .view-head .select { width: auto; max-width: 200px; }
 .tree-row:has([aria-expanded="true"]) .actions { display: flex; }
+.wt[data-sleeping] > .tree-row, .wt[data-sleeping] > .tree-sess { opacity: 0.55; }
+.wt-pin { width: 11px !important; height: 11px !important; color: var(--ink-4) !important; }
+.wt-unread { width: 7px; height: 7px; border-radius: 50%; background: var(--signal); flex-shrink: 0; }

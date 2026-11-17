@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, type CSSProperties, type ReactNode, type RefObject } from 'react'
 
-export type Placement = 'bottom-start' | 'bottom-end' | 'top-start' | 'top-end'
+export type Placement = 'bottom-start' | 'bottom-end' | 'top-start' | 'top-end' | 'right-start'
 
 interface Props {
   anchor: RefObject<HTMLElement | null>
@@ -43,6 +43,12 @@ export function Popover({ anchor, open, onClose, placement = 'bottom-start', mat
       const h = el.offsetHeight
       const vw = window.innerWidth
       const vh = window.innerHeight
+      if (placement === 'right-start') { // submenus: beside the item, flipped left when there is no room
+        const left = r.right + w + MARGIN <= vw ? r.right - 2 : Math.max(MARGIN, r.left - w + 2)
+        el.style.left = `${left}px`
+        el.style.top = `${Math.max(MARGIN, Math.min(r.top - 4, vh - h - MARGIN))}px`
+        return
+      }
       const wantTop = placement.startsWith('top')
       const fitsBelow = r.bottom + GAP + h <= vh - MARGIN
       const fitsAbove = r.top - GAP - h >= MARGIN
@@ -73,10 +79,13 @@ export function Popover({ anchor, open, onClose, placement = 'bottom-start', mat
     const onDown = (e: PointerEvent) => {
       const t = e.target as Node
       if (ref.current?.contains(t) || anchor.current?.contains(t)) return
+      if ((t as Element).closest?.('.popover')) return // a nested popover (submenu, select inside a popover)
       close.current()
     }
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return
+      const all = document.querySelectorAll('.popover')
+      if (all.length && all[all.length - 1] !== ref.current) return // only the innermost popover closes
       e.preventDefault()
       e.stopPropagation() // an Esc for the popover must not also close the dialog or drawer under it
       close.current()

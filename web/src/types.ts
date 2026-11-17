@@ -57,7 +57,14 @@ export interface PrInfo {
 }
 
 export interface Workspace { id: string; name: string; path: string; isGit: boolean }
-export interface Worktree { path: string; branch: string | null; head: string; main: boolean }
+export interface WorktreeMeta { label?: string; note?: string; pinned?: boolean; sleeping?: boolean }
+/** Newer servers enrich the list with git/task/session facts (for the context menu and cleanup). */
+export interface Worktree {
+  path: string; branch: string | null; head: string; main: boolean
+  dirty?: number; ahead?: number; taskId?: string | null; taskStatus?: TaskStatus | null
+  pr?: { state: 'open' | 'merged' | 'declined'; url: string } | null
+  sessions?: number; running?: number; lastActivityAt?: number | null; meta?: WorktreeMeta
+}
 
 export type SessionKind = 'chat' | 'terminal'
 export type SessionStatus = 'idle' | 'running' | 'stopped' | 'done' | 'failed' | 'exited' | 'error'
@@ -76,7 +83,8 @@ export interface Session {
   parentId: string | null
   taskId: string | null
   status: SessionStatus
-  phase?: 'starting' | 'streaming' | 'auth' | null // newer servers: 'starting' = process up, no event yet (cold start)
+  phase?: 'starting' | 'streaming' | 'auth' | null
+  archived?: boolean // its worktree was removed: hidden from the sidebar, transcript kept // newer servers: 'starting' = process up, no event yet (cold start)
   externalSessionId: string | null
   settingsPath: string | null
   model: string | null

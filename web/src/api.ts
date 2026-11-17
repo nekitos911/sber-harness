@@ -4,9 +4,11 @@ const token = document.querySelector<HTMLMetaElement>('meta[name="harness-token"
 
 export class ApiError extends Error {
   status: number
-  constructor(message: string, status: number) {
+  data: unknown // the parsed error body (e.g. a 409 with { dirty, ahead, running })
+  constructor(message: string, status: number, data: unknown = null) {
     super(message)
     this.status = status
+    this.data = data
   }
 }
 
@@ -37,7 +39,7 @@ export async function api<T>(method: Method, path: string, body?: unknown): Prom
   }
   if (!res.ok) {
     const err = data && typeof data === 'object' && 'error' in data ? String(data.error) : `HTTP ${res.status}`
-    throw new ApiError(err, res.status)
+    throw new ApiError(err, res.status, data)
   }
   return data as T
 }

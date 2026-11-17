@@ -10,11 +10,13 @@ interface Props {
   busy?: boolean
   disabled?: boolean
   wide?: boolean
+  /** Destructive submit (red). */
+  danger?: boolean
   children: ReactNode
 }
 
 /** Native <dialog> modal: focus trap, Esc and top layer come from the platform. */
-export function Modal({ title, submitLabel, onSubmit, onClose, busy, disabled, wide, children }: Props) {
+export function Modal({ title, submitLabel, onSubmit, onClose, busy, disabled, wide, danger, children }: Props) {
   const ref = useRef<HTMLDialogElement>(null)
   const titleId = useId()
 
@@ -47,7 +49,7 @@ export function Modal({ title, submitLabel, onSubmit, onClose, busy, disabled, w
         {children}
         <div className="dialog-actions">
           <Button size="lg" onClick={onClose}>Отмена</Button>
-          <Button size="lg" type="submit" variant="primary" disabled={busy || disabled}>{busy ? 'Подождите…' : submitLabel}</Button>
+          <Button size="lg" type="submit" variant={danger ? 'danger' : 'primary'} className={danger ? 'btn-primary' : undefined} disabled={busy || disabled}>{busy ? 'Подождите…' : submitLabel}</Button>
         </div>
       </form>
     </dialog>

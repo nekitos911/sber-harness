@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react'
-import { Bot, ChevronDown, GitPullRequest, KeyRound, ChevronRight, FolderGit2, FolderPlus, GitBranch, GitBranchPlus, House, Inbox, MessageSquarePlus, Moon, Search, Settings, SquareKanban, SquareTerminal, Sun } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react'
+import { Bot, ChevronDown, Ellipsis, GitPullRequest, KeyRound, Pin, ChevronRight, FolderGit2, FolderPlus, GitBranch, GitBranchPlus, House, Inbox, MessageSquarePlus, Moon, Search, Settings, SquareKanban, SquareTerminal, Sun } from 'lucide-react'
 import { openDialog, openScreen, openSession, openWorktree, setState, useActiveCwd, useStore, type Screen } from '../store'
 import { loadWorktrees } from '../ws'
 import { useCurrentTool, useStartingLabel } from '../lib/live'
@@ -8,6 +8,8 @@ import { newChat, newTerminal } from '../lib/actions'
 import type { Session, Workspace, Worktree } from '../types'
 import { StatusIcon, SubStateIcon, subStateLabel } from './bits'
 import { BranchPicker } from './pickers/BranchPicker'
+import { Menu } from './ui'
+import { ideEnabled, isUnread, onWorktreeKey, projectMenu, setUnread, worktreeMenu } from './WorktreeMenu'
 import { useNow } from '../lib/useNow'
 
 const depth = (d: number) => ({ '--depth': d }) as CSSProperties
@@ -29,7 +31,7 @@ export function Sidebar() {
   const running = sessions.filter((s) => s.kind === 'chat' && s.status === 'running').length
   const openPrs = useStore((s) => s.tasks.filter((t) => t.pr?.state === 'open').length)
   const chats = sessions.filter((s) => s.kind === 'chat').length
-  const tree = useMemo(() => buildTree(sessions, query), [sessions, query])
+  const tree = useMemo(() => buildTree(sessions.filter((s) => !s.archived), query), [sessions, query])
 
   return (
     <nav className="sidebar" aria-label="Навигация">
@@ -156,6 +158,8 @@ function buildTree(sessions: Session[], query: string): Tree {
 
 function ProjectNode({ ws, tree, filtering }: { ws: Workspace; tree: Tree; filtering: boolean }) {
   const [open, setOpen] = useState(true)
+  const [menu, setMenu] = useState(false)
+  const projRow = useRef<HTMLDivElement>(null)
   const worktrees = useStore((s) => s.worktrees[ws.id])
   const activeCwd = useActiveCwd()
 
@@ -167,7 +171,8 @@ function ProjectNode({ ws, tree, filtering }: { ws: Workspace; tree: Tree; filte
     for (const s of mine) {
       if (!out.some((w) => normPath(w.path) === normPath(s.cwd))) out.push({ path: s.cwd, branch: s.branch, head: '', main: false })
     }
-    return out
+    // Main copy first, then pinned, then the rest in git's order.
+    return out.sort((a, b) => Number(b.main) - Number(a.main) || Number(!!b.meta?.pinned) - Number(!!a.meta?.pinned))
   }, [worktrees, ws.path, mine])
   const unknown = loaded && list.length > (worktrees?.length || 1)
 
@@ -181,16 +186,17 @@ function ProjectNode({ ws, tree, filtering }: { ws: Workspace; tree: Tree; filte
 
   return (
     <div className="tree-group">
-      <div className="tree-row tree-project" role="button" tabIndex={0} aria-expanded={expanded} data-tip={ws.path} onClick={toggle} onKeyDown={activate(toggle)}>
+      <div ref={projRow} className="tree-row tree-project" role="button" tabIndex={0} aria-expanded={expanded} data-tip={ws.path} onClick={toggle} onKeyDown={activate(toggle)}
+        onContextMenu={(e) => { e.preventDefault(); setMenu(true) }}>
         <ChevronRight className="chev" aria-hidden />
         <FolderGit2 aria-hidden />
         <span className="label">{ws.name}</span>
-        {ws.isGit && (
-          <span className="actions">
-            <RowAction label="Новое рабочее дерево" icon={<GitBranchPlus />} onClick={() => openDialog({ kind: 'worktree', workspaceId: ws.id })} />
-          </span>
-        )}
+        <span className="actions">
+          {ws.isGit && <RowAction label="Новое рабочее дерево" icon={<GitBranchPlus />} onClick={() => openDialog({ kind: 'worktree', workspaceId: ws.id })} />}
+          <RowAction label="Действия с проектом" icon={<Ellipsis />} onClick={() => setMenu(true)} />
+        </span>
       </div>
+      <Menu anchor={projRow} open={menu} onClose={() => setMenu(false)} items={projectMenu(ws)} label={`Проект ${ws.name}`} placement="bottom-end" />
       {expanded && list.map((wt) => {
         const here = mine.filter((s) => normPath(s.cwd) === normPath(wt.path))
         if (filtering && here.length === 0) return null
@@ -200,16 +206,32 @@ function ProjectNode({ ws, tree, filtering }: { ws: Workspace; tree: Tree; filte
   )
 }
 
-function WorktreeNode({ ws, wt, sessions, kids, active }: { ws: Workspace; wt: Worktree; sessions: Session[]; kids: Map<string, Session[]>; active: boolean }) {
-  const changed = useStore((s) => s.git[normPath(wt.path)]?.status?.files.length ?? 0)
-  const pick = () => openWorktree(wt.path)
-  const name = wt.branch ?? (wt.main ? ws.name : basename(wt.path))
+function WorktreeNode({ ws, wt, sessions, kids, active }: { ws: Workspace; wt: Worktree; sessions: Session[]; kids: Map<string, Session[]> ; active: boolean }) {
+  const changed = useStore((s) => s.git[normPath(wt.path)]?.status?.files.length ?? wt.dirty ?? 0)
+  const task = useStore((s) => (wt.taskId ? s.tasks.find((t) => t.id === wt.taskId) : s.tasks.find((t) => !!wt.branch && t.branch === wt.branch)))
+  const [menu, setMenu] = useState(false)
+  const [unread, setUnreadState] = useState(() => isUnread(wt.path))
+  const row = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const on = () => setUnreadState(isUnread(wt.path))
+    window.addEventListener('harness:unread', on)
+    return () => window.removeEventListener('harness:unread', on)
+  }, [wt.path])
+  const pick = () => { openWorktree(wt.path); if (unread) setUnread(wt.path, false) }
+  const name = wt.meta?.label || wt.branch || (wt.main ? ws.name : basename(wt.path))
   const where = { workspaceId: ws.id, cwd: wt.path }
+  const sleeping = !!wt.meta?.sleeping
   return (
-    <div className="wt" data-active={active}>
-      <div className="tree-row tree-wt" role="button" tabIndex={0} data-tip={`${wt.main ? 'Основная рабочая копия' : 'Рабочее дерево'}\n${wt.path}`} aria-current={active ? 'location' : undefined} onClick={pick} onKeyDown={activate(pick)}>
-        {wt.main ? <House aria-label="основная копия" /> : <GitBranch aria-hidden />}
+    <div className="wt" data-active={active} data-sleeping={sleeping || undefined}>
+      <div ref={row} className="tree-row tree-wt" role="button" tabIndex={0}
+        data-tip={`${wt.main ? 'Основная рабочая копия' : 'Рабочее дерево'}${wt.meta?.note ? `\n${wt.meta.note}` : ''}\n${wt.path}`}
+        aria-current={active ? 'location' : undefined} onClick={pick}
+        onKeyDown={(e) => { onWorktreeKey(e, ws, wt); activate(pick)(e) }}
+        onContextMenu={(e) => { e.preventDefault(); setMenu(true) }}>
+        {sleeping ? <Moon aria-label="спит" /> : wt.main ? <House aria-label="основная копия" /> : <GitBranch aria-hidden />}
         <span className="label">{name}</span>
+        {wt.meta?.pinned && <Pin className="wt-pin" aria-label="закреплено" />}
+        {unread && <span className="wt-unread" aria-label="непрочитано" />}
         {changed > 0 && <span className="wt-changes num" data-tip={`Изменённых файлов: ${changed}`}>{changed}</span>}
         <span className="actions">
           <RowAction label="Новый чат в этом дереве" icon={<MessageSquarePlus />} onClick={() => void newChat(where)} />
@@ -219,8 +241,10 @@ function WorktreeNode({ ws, wt, sessions, kids, active }: { ws: Workspace; wt: W
               <GitBranch />
             </BranchPicker>
           )}
+          <RowAction label="Действия с деревом" icon={<Ellipsis />} onClick={() => setMenu(true)} />
         </span>
       </div>
+      <Menu anchor={row} open={menu} onClose={() => setMenu(false)} items={worktreeMenu(ws, wt, task, ideEnabled())} label={`Рабочее дерево ${name}`} placement="bottom-end" />
       {sessions.map((s) => <SessionNode key={s.id} s={s} kids={kids} />)}
     </div>
   )
