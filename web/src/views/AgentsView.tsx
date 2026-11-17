@@ -1,12 +1,12 @@
 import { useMemo, useState } from 'react'
-import { Bot, ListPlus, MessageSquarePlus, Send, Square, Trash2 } from 'lucide-react'
+import { Bot, Ellipsis, ListPlus, MessageSquarePlus, Send, Square, Trash2 } from 'lucide-react'
 import { tryApi } from '../api'
 import { openDialog, openSession, openTask, setState, useStore, without } from '../store'
 import { relTime, ROLE, tokens } from '../lib/format'
 import { useNow } from '../lib/useNow'
 import type { Session, SessionStatus } from '../types'
 import { Branch, StatusIcon, statusText } from '../components/bits'
-import { Select } from '../components/ui'
+import { MenuButton, Select } from '../components/ui'
 
 const GROUPS: { id: string; label: string; match: SessionStatus[] }[] = [
   { id: 'run', label: 'Работают', match: ['running'] },
@@ -133,9 +133,11 @@ function AgentCard({ s, nested, parent }: { s: Session; nested: boolean; parent?
         <span className="muted num">{relTime(s.lastActivityAt, now)}</span>
         <span className="grow" />
         <button type="button" className="icon-btn icon-btn-sm" aria-label="Написать агенту" data-tip="Написать" aria-pressed={mode === 'message'} onClick={() => setMode(mode === 'message' ? null : 'message')}><Send /></button>
-        <button type="button" className="icon-btn icon-btn-sm" aria-label="Дать задачу" data-tip="Дать задачу" aria-pressed={mode === 'assign'} onClick={() => setMode(mode === 'assign' ? null : 'assign')}><ListPlus /></button>
-        {s.status === 'running' && <button type="button" className="icon-btn icon-btn-sm" aria-label="Остановить" data-tip="Остановить" onClick={stop}><Square /></button>}
-        <button type="button" className="icon-btn icon-btn-sm" aria-label="Удалить сессию" data-tip="Удалить" onClick={() => setMode('delete')}><Trash2 /></button>
+        <MenuButton label="Ещё действия" icon={<Ellipsis />} align="right" className="icon-btn-sm" items={[
+          { label: 'Дать задачу…', icon: <ListPlus />, onSelect: () => setMode('assign') },
+          ...(s.status === 'running' ? [{ label: 'Остановить', icon: <Square />, onSelect: stop }] : []),
+          { label: 'Удалить сессию', icon: <Trash2 />, danger: true, divider: true, onSelect: () => setMode('delete') },
+        ]} />
       </div>
       {mode === 'message' && (
         <form className="agent-inline" onSubmit={(e) => { e.preventDefault(); void send() }}>

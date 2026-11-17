@@ -173,3 +173,7 @@ button.chip[aria-pressed="true"] { background: var(--signal-soft); color: var(--
 .crash-card h2 { font-size: 16px; font-weight: 600; }
 .crash-card .mono { color: var(--lamp-fail); overflow-wrap: anywhere; }
 .crash-region .row { flex-wrap: wrap; }
+.dialog-more > .disclosure-head .disclosure-toggle { height: 28px; color: var(--ink-3); font-size: 12.5px; }
+.dialog-more > .disclosure-head .disclosure-toggle:hover { color: var(--ink); }
+.dialog-more .collapse > div { display: grid; gap: 12px; }
+.dialog-more .collapse > div > :first-child { margin-top: 8px; }

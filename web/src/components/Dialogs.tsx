@@ -7,7 +7,7 @@ import { basename, isAbsolutePath } from '../lib/format'
 import type { GitSuggest, Session, Task, Workspace, Worktree } from '../types'
 import { Modal } from './ui/Dialog'
 import { CleanupDialog, DeleteWorktreeDialog, WorktreeInfoDialog } from './WorktreeMenu'
-import { Segmented, Select, SuggestInput } from './ui'
+import { Disclosure, Segmented, Select, SuggestInput } from './ui'
 import { modeShort, useSettings } from '../lib/agents'
 import { pendingDeps, taskKey } from '../lib/tasks'
 import { loadPr } from '../lib/pr'
@@ -162,6 +162,11 @@ function ChatDialog(init: Partial<Where>) {
       })}
     >
       <WhereFields value={where} onChange={setWhere} />
+      <label className="field">
+        <span>Первое сообщение</span>
+        <textarea className="textarea" rows={5} autoFocus placeholder="Что нужно сделать? Можно оставить пустым." value={prompt} onChange={(e) => setPrompt(e.target.value)} />
+      </label>
+      <Disclosure className="dialog-more" summary={<span>Ещё: {agent?.label ?? agentId} · {modeShort(mode)}{role === 'coordinator' ? ' · координатор' : ''}</span>}>
       <div className="dialog-grid">
         <label className="field">
           <span>Агент</span>
@@ -201,12 +206,9 @@ function ChatDialog(init: Partial<Where>) {
         </label>
       </div>
       {role === 'coordinator' && (
-        <p className="field-hint">Координатор разбивает работу на задачи и запускает исполнителей — каждый в своём чате.</p>
+        <p className="field-hint">Координатор разбивает работу на задачи и запускает исполнителей, каждого в своём чате.</p>
       )}
-      <label className="field">
-        <span>Первое сообщение</span>
-        <textarea className="textarea" rows={5} placeholder="Что нужно сделать? Можно оставить пустым." value={prompt} onChange={(e) => setPrompt(e.target.value)} />
-      </label>
+      </Disclosure>
     </Modal>
   )
 }
@@ -290,20 +292,24 @@ function WorktreeDialog({ workspaceId }: { workspaceId?: string }) {
         closeDialog()
       })}
     >
-      <label className="field">
-        <span>Репозиторий</span>
-        <Select label="Репозиторий" size="lg" value={repo} onChange={setRepo} options={git.map((w) => ({ value: w.id, label: w.name, hint: w.path }))} />
-        {!git.length && <span className="field-error">Нет git-репозиториев. Сначала добавьте проект.</span>}
-      </label>
+      {!git.length && <span className="field-error">Нет git-репозиториев. Сначала добавьте проект.</span>}
       <label className="field">
         <span>Ветка</span>
         <input className="input mono" autoFocus placeholder="feature/JIRA-1234" value={name} onChange={(e) => setName(e.target.value)} />
         <span className="field-hint">Имя новой ветки; папка рабочего дерева будет названа так же.</span>
       </label>
-      <label className="field">
-        <span>От ветки</span>
-        <input className="input mono" placeholder="HEAD" value={base} onChange={(e) => setBase(e.target.value)} />
-      </label>
+      <Disclosure className="dialog-more" summary={<span>Ещё: {git.find((w) => w.id === repo)?.name ?? 'репозиторий'} · от {base.trim() || 'HEAD'}</span>}>
+        <div className="dialog-grid">
+          <label className="field">
+            <span>Репозиторий</span>
+            <Select label="Репозиторий" size="lg" value={repo} onChange={setRepo} options={git.map((w) => ({ value: w.id, label: w.name, hint: w.path }))} />
+          </label>
+          <label className="field">
+            <span>От ветки</span>
+            <input className="input mono" placeholder="HEAD" value={base} onChange={(e) => setBase(e.target.value)} />
+          </label>
+        </div>
+      </Disclosure>
     </Modal>
   )
 }
@@ -372,13 +378,17 @@ function StartDialog({ taskId }: { taskId: string }) {
         </label>
       )}
       <label className="field">
-        <span>Агент</span>
-        <Select label="Агент" size="lg" value={agent} onChange={setAgent} options={enabled.map((a) => ({ value: a.id, label: a.label, hint: a.id === defaultAgent ? 'по умолчанию' : undefined }))} />
-      </label>
-      <label className="field">
         <span>Заметки</span>
         <textarea className="textarea" rows={3} autoFocus placeholder="Необязательно: уточнения к задаче, которые получит агент" value={notes} onChange={(e) => setNotes(e.target.value)} />
       </label>
+      {enabled.length > 1 && (
+        <Disclosure className="dialog-more" summary={<span>Ещё: другой агент</span>}>
+          <label className="field">
+            <span>Агент</span>
+            <Select label="Агент" size="lg" value={agent} onChange={setAgent} options={enabled.map((a) => ({ value: a.id, label: a.label, hint: a.id === defaultAgent ? 'по умолчанию' : undefined }))} />
+          </label>
+        </Disclosure>
+      )}
     </Modal>
   )
 }
@@ -450,10 +460,12 @@ function PrDialog({ cwd, base: initBase }: { cwd: string; base?: string }) {
           ? <div className="md-preview">{body.trim() ? <Markdown text={body} /> : <p className="muted">Пусто</p>}</div>
           : <textarea className="textarea" rows={10} aria-labelledby="pr-body-label" aria-invalid={bytes(body) > PR_BODY_BYTES} value={body} onChange={(e) => setBody(e.target.value)} />}
       </div>
-      <label className="field">
-        <span>В ветку</span>
-        <SuggestInput mono label="Целевая ветка PR" value={base} onChange={setBase} suggestions={[...new Set([suggest?.pr.base, ...targets].filter((t): t is string => !!t))]} />
-      </label>
+      <Disclosure className="dialog-more" summary={<span>Ещё: в ветку <span className="mono">{base || '…'}</span></span>}>
+        <label className="field">
+          <span>В ветку</span>
+          <SuggestInput mono label="Целевая ветка PR" value={base} onChange={setBase} suggestions={[...new Set([suggest?.pr.base, ...targets].filter((t): t is string => !!t))]} />
+        </label>
+      </Disclosure>
     </Modal>
   )
 }

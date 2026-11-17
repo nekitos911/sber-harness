@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { ArrowDown, ArrowUp, Check, CircleCheck, CircleX, LogIn, Plus, RefreshCw, TriangleAlert, X } from 'lucide-react'
+import { ArrowDown, ArrowUp, Check, CircleCheck, Pencil, CircleX, LogIn, Plus, RefreshCw, TriangleAlert, X } from 'lucide-react'
 import { api, ApiError, errorText, qs, tryApi } from '../api'
 import { setState, toast, useFeature, useStore } from '../store'
 import { adoptSession } from '../lib/actions'
@@ -175,6 +175,7 @@ function AgentSection({ id, form, update, fieldError, primary }: SectionProps & 
   const label = labels.find((x) => x.id === id)?.label ?? (id === MAIN ? 'GigaCode' : id)
   const modeLabels = a.approvalModeLabels ?? {}
   const catalog = normModels(a.models)
+  const [gradesOpen, setGradesOpen] = useState(false)
   const unavailable = (m: string | undefined) => !!m && catalog.find((x) => x.id === m)?.available === false
 
   return (
@@ -182,11 +183,6 @@ function AgentSection({ id, form, update, fieldError, primary }: SectionProps & 
       <h2>{label}{!primary && <span className="mono muted"> {id}</span>}</h2>
       {primary && <AgentStatus id={id} />}
       <div className="set-rows">
-        {a.enabled !== undefined && (
-          <Row label="Включён" hint="Выключенный агент не предлагается для новых чатов и задач.">
-            <Switch label={`${label} включён`} checked={a.enabled !== false} onChange={(v) => set({ enabled: v })} />
-          </Row>
-        )}
         <Row label="Модель по умолчанию" hint="Если пусто, модель выбирает сам CLI.">
           <ModelPicker variant="field" agentId={id} label="Модель по умолчанию" value={a.model} onChange={(m) => set({ model: m })} placement="bottom-start" emptyText="как в CLI" />
         </Row>
@@ -199,6 +195,14 @@ function AgentSection({ id, form, update, fieldError, primary }: SectionProps & 
       </div>
 
       {primary && (
+        <div className="set-rows">
+          <Row label="Уровни моделей" hint="Какая модель стоит за каждым уровнем у внутренних агентов GigaCode.">
+            <AutoValue value={GRADES.filter((g) => a.modelGrades[g]).map((g) => `${g}: ${catalog.find((m) => m.id === a.modelGrades[g])?.label ?? a.modelGrades[g]}`).join(' · ') || 'как в CLI'}
+              open={gradesOpen} onToggle={() => setGradesOpen(!gradesOpen)} />
+          </Row>
+        </div>
+      )}
+      {primary && gradesOpen && (
         <>
           <h3>Уровни моделей</h3>
           <p className="set-note">Внутренние агенты GigaCode просят модель по уровню; здесь задано, какая модель стоит за каждым.</p>
@@ -237,9 +241,16 @@ function AgentSection({ id, form, update, fieldError, primary }: SectionProps & 
         </>
       )}
 
-      <h3>Запуск</h3>
       <div className="set-rows">
         <CommandRow id={id} a={a} set={set} error={fieldError('command')} />
+      </div>
+      <Advanced id={`agent-${id}`}>
+      <div className="set-rows">
+        {a.enabled !== undefined && (
+          <Row label="Включён" hint="Выключенный агент не предлагается для новых чатов и задач.">
+            <Switch label={`${label} включён`} checked={a.enabled !== false} onChange={(v) => set({ enabled: v })} />
+          </Row>
+        )}
         {a.firstEventTimeoutMs !== undefined && (
           <Row label="Таймаут запуска" hint="Сколько ждать первого ответа CLI (холодный старт с MCP занимает 30–60 с).">
             <Select label="Таймаут запуска" value={String(Math.round(a.firstEventTimeoutMs / 1000))} onChange={(v) => set({ firstEventTimeoutMs: Number(v) * 1000 })}
@@ -252,6 +263,7 @@ function AgentSection({ id, form, update, fieldError, primary }: SectionProps & 
           </Row>
         )}
       </div>
+      </Advanced>
     </section>
   )
 }
@@ -262,6 +274,7 @@ function AgentStatus({ id }: { id: string }) {
   const now = useNow()
   const [checking, setChecking] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
+  const [editPath, setEditPath] = useState(false)
   const refreshOn = useFeature('models-refresh')
   const login = async () => {
     const s = await tryApi<Session>('POST', '/sessions', { kind: 'terminal', agent: id, title: 'Вход в GigaCode' })
@@ -299,7 +312,7 @@ function AgentStatus({ id }: { id: string }) {
       </div>
       {!r.ok && <CliPathFix id={id} error={r.error ?? ''} onChecked={() => void recheck()} />}
       <dl className="status-grid">
-        {r.command && <><dt>Команда</dt><dd className="mono">{r.command}</dd></>}
+        {r.ok && r.command && <><dt>Команда</dt><dd>{editPath ? <CliPathFix id={id} error="" initial={r.command} onChecked={() => { setEditPath(false); void recheck() }} /> : <AutoValue value={r.command} mono open={false} onToggle={() => setEditPath(true)} />}</dd></>}
         {r.node && <><dt>Node</dt><dd className="mono">{r.node}</dd></>}
         {r.entry && <><dt>Точка входа</dt><dd className="mono">{r.entry}</dd></>}
         <dt>Вход</dt>
@@ -411,16 +424,19 @@ function TrackerSection({ form, update, fieldError }: SectionProps) {
             <Input mono className="input-short" value={space} placeholder="PROJ" onChange={(e) => set({ space: e.target.value.trim().toUpperCase() })} />
           </Row>
         )}
+        <Row label="Синхронизация" hint="Как часто перечитывать задачи из трекера." error={fieldError('sync')}>
+          <Select label="Интервал синхронизации" value={String(refresh)} onChange={(v) => update({ ...form, tasks: { ...form.tasks, refreshSec: Number(v) } })}
+            options={[...SYNC, ...(SYNC.some((s) => s.v === refresh) ? [] : [{ v: refresh, l: `каждые ${refresh} с` }])].map((s) => ({ value: String(s.v), label: s.l }))} />
+        </Row>
+      </div>
+      <Advanced id="tracker">
+      <div className="set-rows">
         {t && (
           <Row label="Ссылка на задачу" hint={sample ? <>Пример: <span className="mono">{sample}</span></> : 'Шаблон с {key}; из него берётся {taskUrl}.'} error={fieldError('url')} wide>
             <Input mono value={t.urlTemplate ?? ''} placeholder="https://tracker/swtr/units/all/unit/{key}" onChange={(e) => set({ urlTemplate: e.target.value })} />
           </Row>
         )}
         {t && <StartTransitionRow value={t.onStartTransition ?? ''} statuses={Object.keys(t.statusMap ?? {})} onChange={(v) => set({ onStartTransition: v || null })} />}
-        <Row label="Синхронизация" hint="Как часто перечитывать задачи из трекера." error={fieldError('sync')}>
-          <Select label="Интервал синхронизации" value={String(refresh)} onChange={(v) => update({ ...form, tasks: { ...form.tasks, refreshSec: Number(v) } })}
-            options={[...SYNC, ...(SYNC.some((s) => s.v === refresh) ? [] : [{ v: refresh, l: `каждые ${refresh} с` }])].map((s) => ({ value: String(s.v), label: s.l }))} />
-        </Row>
       </div>
       {/* With board columns the mapping lives in «Доска» (columns own their tracker statuses). */}
       {!form.board && t?.statusMap && Object.keys(t.statusMap).length > 0 && (
@@ -440,6 +456,7 @@ function TrackerSection({ form, update, fieldError }: SectionProps) {
           </div>
         </>
       )}
+      </Advanced>
     </section>
   )
 }
@@ -456,17 +473,25 @@ function GitSection({ form, update, fieldError }: SectionProps) {
     api<GitBranches>('GET', `/git/branches${qs({ cwd: ws.path })}`).then((r) => setBranches((Array.isArray(r?.branches) ? r.branches : []).filter((b) => !b.remote).map((b) => b.name)), () => setBranches([]))
   }, [ws, branchesOn])
   const g = form.git
+  const [editBase, setEditBase] = useState(false)
   const set = (patch: Partial<Settings['git']>) => update({ ...form, git: { ...g, ...patch } })
   const bases = [...new Set(['develop', 'main', 'master', ...branches, ...(g.defaultBase ? [g.defaultBase] : [])])]
   return (
     <section className="settings-section" id="set-git">
       <h2>Git</h2>
       <div className="set-rows">
-        <Row label="Базовая ветка" hint={ws ? `Ветки ${ws.name} и стандартные имена.` : 'От неё создаются ветки задач.'} error={fieldError('base')}>
-          <Select label="Базовая ветка" mono value={g.defaultBase ?? ''} onChange={(v) => set({ defaultBase: v })} options={bases.map((b) => ({ value: b, label: b }))} />
+        <Row label="Базовая ветка" hint="От неё создаются ветки задач." error={fieldError('base')}>
+          {editBase || !g.defaultBase
+            ? <Select label="Базовая ветка" mono value={g.defaultBase ?? ''} onChange={(v) => set({ defaultBase: v })} options={bases.map((b) => ({ value: b, label: b }))} />
+            : <AutoValue value={g.defaultBase} mono open={false} onToggle={() => setEditBase(true)} />}
         </Row>
-        {GIT_TEMPLATES.map((f) => <TemplateRow key={f.key} f={f} value={g[f.key] ?? ''} onChange={(v) => set({ [f.key]: v })} error={fieldError('git')} />)}
+        <TemplateRow f={GIT_TEMPLATES[0]} value={g[GIT_TEMPLATES[0].key] ?? ''} onChange={(v) => set({ [GIT_TEMPLATES[0].key]: v })} error={fieldError('git')} />
       </div>
+      <Advanced id="git">
+        <div className="set-rows">
+          {GIT_TEMPLATES.slice(1).map((f) => <TemplateRow key={f.key} f={f} value={g[f.key] ?? ''} onChange={(v) => set({ [f.key]: v })} error={fieldError('git')} />)}
+        </div>
+      </Advanced>
       <p className="set-note">Превью на примере задачи <span className="mono">{SAMPLE.key}</span> «{SAMPLE.title}», цель <span className="mono">{SAMPLE.target}</span>.</p>
     </section>
   )
@@ -529,12 +554,12 @@ function OrchestrationSection({ form, update }: Omit<SectionProps, 'fieldError'>
           <Segmented label="Режим ревью" value={mode} onChange={(v) => update({ ...form, orchestration: { ...o, reviewMode: v } })}
             options={[{ value: 'builtin', label: 'Внутри агента (как в CLI)' }, { value: 'harness', label: 'Через харнесс (отдельные чаты)' }]} />
         </Row>
-        {mode === 'harness' && <ReviewRows form={form} update={update} />}
       </div>
-      <Disclosure className="settings-advanced" summary={<h3>Дополнительно</h3>}>
+      <Advanced id="orchestration">
+        {mode === 'harness' && <div className="set-rows"><ReviewRows form={form} update={update} /></div>}
         <p className="set-note">Ручная команда /full-task-harness больше не нужна: субагенты идут через harness автоматически. Её можно установить для старых сценариев.</p>
         <InstallFile id={agentId} kind="commands" name="full-task-harness" target="~/.gigacode/commands/full-task-harness.md" title="команда /full-task-harness" action="Установить в ~/.gigacode/commands" />
-      </Disclosure>
+      </Advanced>
     </section>
   )
 }
@@ -642,6 +667,7 @@ function BoardSection({ form, update }: Omit<SectionProps, 'fieldError'>) {
       {free.length > 0 && (
         <Button size="sm" icon={<Plus />} onClick={() => set({ columns: [...cols, { status: free[0].value, label: free[0].label[0].toUpperCase() + free[0].label.slice(1), trackerStatuses: [] }] })}>Добавить колонку</Button>
       )}
+      <Advanced id="board">
       <div className="set-rows">
         <Row label="Когда агент закончил" hint="Карточка получает отметку агента в любом случае.">
           <Segmented label="Когда агент закончил" value={b.onWorkerDone ?? 'stay'} onChange={(v) => set({ onWorkerDone: v })}
@@ -651,6 +677,7 @@ function BoardSection({ form, update }: Omit<SectionProps, 'fieldError'>) {
           <Switch label="Двигать задачу в трекере при переносе карточки" checked={!!b.moveSyncsTracker} onChange={(v) => set({ moveSyncsTracker: v })} />
         </Row>
       </div>
+      </Advanced>
     </section>
   )
 }
@@ -749,8 +776,8 @@ function SectionNav({ sections }: { sections: [string, string][] }) {
 }
 
 /** «CLI не найден»: the path in plain words, a field to fix it and a check; the raw message under «Подробности». */
-function CliPathFix({ id, error, onChecked }: { id: string; error: string; onChecked: () => void }) {
-  const quoted = /"([^"]+)"/.exec(error)?.[1] ?? ''
+function CliPathFix({ id, error, onChecked, initial }: { id: string; error: string; onChecked: () => void; initial?: string }) {
+  const quoted = /"([^"]+)"/.exec(error)?.[1] ?? initial ?? ''
   const exe = quoted ? quoted.split(/[\\/]/).pop() : 'gigacode.cmd'
   const [path, setPath] = useState(quoted)
   const [busy, setBusy] = useState(false)
@@ -770,13 +797,35 @@ function CliPathFix({ id, error, onChecked }: { id: string; error: string; onChe
   }
   return (
     <div className="cli-fix">
-      <p className="status-error">{/not found|не найден/i.test(error) ? <>Не найден {exe}{quoted && <>: <span className="mono">{quoted}</span></>}</> : 'CLI не запускается.'}</p>
+      {error && <p className="status-error">{/not found|не найден/i.test(error) ? <>Не найден {exe}{quoted && <>: <span className="mono">{quoted}</span></>}</> : 'CLI не запускается.'}</p>}
       <div className="cli-fix-row">
         <Input mono aria-label="Путь к gigacode.cmd" value={path} placeholder="C:/Program Files/.gigacode/bin/gigacode.cmd" onChange={(e) => setPath(e.target.value)} />
         <Button disabled={busy || !path.trim()} onClick={() => void check()}>{busy ? 'Проверяем…' : 'Проверить'}</Button>
       </div>
       {err && <p className="field-error">{err}</p>}
       {error && <Disclosure className="cli-raw" summary={<span className="muted">Подробности</span>}><pre className="mono">{error}</pre></Disclosure>}
+    </div>
+  )
+}
+
+/** Per-section «Расширенные»: closed by default, remembered in this browser. */
+function Advanced({ id, children }: { id: string; children: ReactNode }) {
+  const key = `harness.settings.adv.${id}`
+  const [open, setOpen] = useState(() => { try { return localStorage.getItem(key) === '1' } catch { return false } })
+  return (
+    <Disclosure className="settings-adv" open={open} onToggle={(v) => { setOpen(v); try { localStorage.setItem(key, v ? '1' : '0') } catch { /* not remembered */ } }}
+      summary={<span>Расширенные</span>}>
+      {children}
+    </Disclosure>
+  )
+}
+
+/** A value the harness found by itself: «Авто: …» with «Изменить». */
+function AutoValue({ value, mono, open, onToggle }: { value: string; mono?: boolean; open: boolean; onToggle: () => void }) {
+  return (
+    <div className="auto-value">
+      <span className="auto-text"><span className="muted">Авто: </span><span className={mono ? 'mono' : undefined}>{value}</span></span>
+      <Button size="sm" variant="ghost" icon={<Pencil />} onClick={onToggle} aria-expanded={open}>{open ? 'Скрыть' : 'Изменить'}</Button>
     </div>
   )
 }

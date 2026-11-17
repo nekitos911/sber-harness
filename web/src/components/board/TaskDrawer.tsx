@@ -1,5 +1,5 @@
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
-import { ArrowUpToLine, ExternalLink, EyeOff, GitMerge, Lock, Play, Plus, Send, SquareArrowOutUpRight, Trash2, UserPlus, X } from 'lucide-react'
+import { ArrowUpToLine, Ellipsis, ExternalLink, EyeOff, GitMerge, Lock, Pencil, Play, Plus, Send, SquareArrowOutUpRight, Trash2, UserPlus, X } from 'lucide-react'
 import { api, ApiError, errorText, tryApi } from '../../api'
 import { openDialog, openSession, setState, toast, upsert, useFeature, useStore, without } from '../../store'
 import { COLUMNS, fullTime, PRIORITY, relTime } from '../../lib/format'
@@ -9,7 +9,8 @@ import type { Session, Task, TaskPort, TaskStatus } from '../../types'
 import { Branch, Skeleton, StatusIcon, statusText } from '../bits'
 import { Markdown } from '../Markdown'
 import { ChipsInput } from '../ChipsInput'
-import { Checkbox, Segmented, Select, SuggestInput } from '../ui'
+import { Checkbox, Disclosure, IconButton, MenuButton, Segmented, Select, SuggestInput } from '../ui'
+import { useSettings } from '../../lib/agents'
 import { PrChip } from '../PrChip'
 import { openPrSettings, usePr } from '../../lib/pr'
 import type { BoardCtx } from './TaskCard'
@@ -30,7 +31,6 @@ function useDraft(value: string) {
 export function TaskDrawer({ task, ctx, onClose }: { task: Task; ctx: BoardCtx; onClose: () => void }) {
   const ref = useRef<HTMLElement>(null)
   const titleId = useId()
-  const workspaces = useStore((s) => s.workspaces)
   const trackerOn = useStore((s) => s.integrations.tasks)
   const [panel, setPanel] = useState<'assign' | 'send' | null>(null)
   const [confirmDelete, setConfirmDelete] = useState(false)
@@ -71,6 +71,11 @@ export function TaskDrawer({ task, ctx, onClose }: { task: Task; ctx: BoardCtx; 
         <span className="muted" data-tip={`обновлено ${fullTime(task.updatedAt)}`}>
           {task.takenAt ? `в работе с ${relTime(task.takenAt)}` : `обновлено ${relTime(task.updatedAt)}`}
         </span>
+        <MenuButton label="Ещё действия" icon={<Ellipsis />} align="right" items={[
+          { label: 'Назначить агенту…', icon: <UserPlus />, onSelect: () => setPanel('assign') },
+          { label: 'Отправить в сессию…', icon: <Send />, onSelect: () => setPanel('send') },
+          ...(!task.hidden ? [{ label: imported ? 'Скрыть с доски' : 'Удалить задачу', icon: imported ? <EyeOff /> : <Trash2 />, danger: !imported, divider: true, onSelect: () => setConfirmDelete(true) }] : []),
+        ]} />
         <button type="button" className="icon-btn" aria-label="Закрыть" data-tip="Закрыть (Esc)" onClick={onClose}><X /></button>
       </header>
 
@@ -94,83 +99,54 @@ export function TaskDrawer({ task, ctx, onClose }: { task: Task; ctx: BoardCtx; 
         )}
 
         <div className="drawer-actions">
-          {(task.status === 'backlog' || task.status === 'todo' || !session) && (
+          {session ? (
+            <button type="button" className="btn btn-primary" onClick={() => openSession(session.id)}>
+              <StatusIcon session={session} />
+              Открыть сессию
+            </button>
+          ) : (
             <button type="button" className="btn btn-primary" disabled={blocked.length > 0} data-tip={blocked.length ? `Ждёт: ${blocked.join(', ')}` : undefined} onClick={() => openDialog({ kind: 'start', taskId: task.id })}>
               <Play />
               Взять в работу
             </button>
           )}
-          {session && (
-            <button type="button" className="btn" onClick={() => openSession(session.id)}>
-              <StatusIcon session={session} />
-              Открыть сессию
-            </button>
-          )}
-          <button type="button" className="btn btn-ghost" aria-expanded={panel === 'assign'} onClick={() => setPanel(panel === 'assign' ? null : 'assign')}>
-            <UserPlus />
-            Назначить агенту…
-          </button>
-          <button type="button" className="btn btn-ghost" aria-expanded={panel === 'send'} onClick={() => setPanel(panel === 'send' ? null : 'send')}>
-            <Send />
-            В сессию…
-          </button>
+          <span className="grow" />
+          <Select size="sm" className="chip-select" label="Статус" value={task.status} onChange={(v) => void patch({ status: v as TaskStatus })} options={COLUMNS.map((c) => ({ value: c.id, label: c.label }))} />
+          <Select size="sm" className="chip-select" label="Приоритет" value={task.priority ?? ''} onChange={(v) => void patch({ priority: (v || null) as Task['priority'] })}
+            options={[{ value: '', label: 'Без приоритета' }, ...(['high', 'medium', 'low'] as const).map((p) => ({ value: p, label: PRIORITY[p] }))]} />
         </div>
+        {confirmDelete && (
+          <div className="drawer-note drawer-confirm">
+            <span>{imported ? `Скрыть ${key} с доски? В трекере задача останется.` : `Удалить ${task.id} без возможности восстановления?`}</span>
+            <button type="button" className={imported ? 'btn btn-sm' : 'btn btn-sm btn-danger'} onClick={() => void remove()}>{imported ? 'Скрыть' : 'Удалить'}</button>
+            <button type="button" className="btn btn-sm btn-ghost" onClick={() => setConfirmDelete(false)}>Отмена</button>
+          </div>
+        )}
         {panel === 'assign' && <AssignForm task={task} onDone={() => setPanel(null)} />}
         {panel === 'send' && <SendForm task={task} onDone={() => setPanel(null)} />}
         {session && (
           <p className="drawer-assignee">
-            <StatusIcon session={session} /> {session.title} · <span className="mono">{ctx.agents.get(session.agent)?.label ?? session.agent}</span> · {statusText(session)}
+            <StatusIcon session={session} /> {session.title} · {ctx.agents.get(session.agent)?.label ?? session.agent} · {statusText(session)}
           </p>
         )}
 
-        <div className="props">
-          <Prop label="Статус">
-            <Select label="Статус" value={task.status} onChange={(v) => void patch({ status: v as TaskStatus })} options={COLUMNS.map((c) => ({ value: c.id, label: c.label }))} />
-          </Prop>
-          <Prop label="Приоритет">
-            <Select label="Приоритет" value={task.priority ?? ''} onChange={(v) => void patch({ priority: (v || null) as Task['priority'] })}
-              options={[{ value: '', label: 'Без приоритета' }, ...(['high', 'medium', 'low'] as const).map((p) => ({ value: p, label: PRIORITY[p] }))]} />
-          </Prop>
-          <Prop label="Репозиторий">
-            <Select label="Репозиторий" value={task.workspaceId ?? ''} onChange={(v) => void patch({ workspaceId: v || null })}
-              options={[{ value: '', label: 'Не выбран' }, ...workspaces.map((w) => ({ value: w.id, label: w.name }))]} />
-          </Prop>
-          <Prop label="Целевые ветки">
-            <TargetsField task={task} onChange={(targets) => void patch({ targets })} />
-          </Prop>
-          <Prop label="Ветка">
-            <BranchField task={task} />
-          </Prop>
-          <Prop label="Зависимости">
-            <DepsField task={task} ctx={ctx} onChange={(deps) => void patch({ deps })} />
-          </Prop>
-          <Prop label="Метки">
-            <ChipsInput values={task.labels} label="метку" onChange={(labels) => void patch({ labels })} />
-          </Prop>
-        </div>
+        <WorkSummary task={task} />
 
         {imported && <ExternalCard task={task} full={!task.description.trim()} />}
-        <DescriptionField task={task} />
+        {imported ? (task.description.trim() && <div className="md-preview drawer-desc"><Markdown text={task.description} /></div>) : <DescriptionField task={task} />}
         {trackerOn && task.externalId && <TrackerStatus task={task} />}
         <TaskPrs task={task} />
         {task.targets.length > 1 && <Ports task={task} />}
-        <Subtasks task={task} ctx={ctx} />
+        {(ctx.kids.get(task.id)?.length ?? 0) > 0 && <Subtasks task={task} ctx={ctx} />}
+        <Disclosure className="drawer-more" summary={<h3>Ещё: зависимости, метки, подзадачи</h3>}>
+          <div className="props">
+            <Prop label="Зависимости"><DepsField task={task} ctx={ctx} onChange={(deps) => void patch({ deps })} /></Prop>
+            <Prop label="Метки"><ChipsInput values={task.labels} label="метку" onChange={(labels) => void patch({ labels })} /></Prop>
+          </div>
+          {!(ctx.kids.get(task.id)?.length) && <Subtasks task={task} ctx={ctx} />}
+        </Disclosure>
         <Activity task={task} sessions={ctx.sessions} />
 
-        <footer className="drawer-foot">
-          {confirmDelete ? (
-            <>
-              <span>{imported ? `Скрыть ${key} с доски? В трекере задача останется.` : `Удалить ${task.id} без возможности восстановления?`}</span>
-              <button type="button" className="btn btn-danger" onClick={() => void remove()}>{imported ? 'Скрыть' : 'Удалить'}</button>
-              <button type="button" className="btn" onClick={() => setConfirmDelete(false)}>Отмена</button>
-            </>
-          ) : !task.hidden && (
-            <button type="button" className="btn btn-ghost btn-danger" onClick={() => setConfirmDelete(true)}>
-              {imported ? <EyeOff /> : <Trash2 />}
-              {imported ? 'Скрыть с доски' : 'Удалить задачу'}
-            </button>
-          )}
-        </footer>
       </div>
     </aside>
   )
@@ -219,31 +195,73 @@ function BranchField({ task }: { task: Task }) {
   )
 }
 
+/** Local task description: rendered; a click turns it into the editor, leaving it saves. */
 function DescriptionField({ task }: { task: Task }) {
   const [v, setV] = useDraft(task.description)
-  const [edit, setEdit] = useState(!task.description)
+  const [edit, setEdit] = useState(false)
+  return edit ? (
+    <textarea
+      className="textarea"
+      rows={8}
+      autoFocus
+      aria-label="Описание задачи (markdown)"
+      placeholder="Что сделать, критерии готовности, ссылки. Поддерживается markdown."
+      value={v}
+      onChange={(e) => setV(e.target.value)}
+      onBlur={() => { setEdit(false); if (v !== task.description) void patchTask(task.id, { description: v }) }}
+    />
+  ) : (
+    <button type="button" className="md-preview drawer-desc drawer-desc-edit" onClick={() => setEdit(true)} data-tip="Нажмите, чтобы изменить">
+      {v.trim() ? <Markdown text={v} /> : <span className="muted">Добавить описание…</span>}
+    </button>
+  )
+}
+
+/**
+ * Where the work happens, as one line: repository · base → branch · agent. The values fill themselves
+ * (task repo or the only one, targets, branch from the template, default agent); the pencil opens the fields.
+ */
+function WorkSummary({ task }: { task: Task }) {
+  const workspaces = useStore((s) => s.workspaces)
+  const agents = useStore((s) => s.agents)
+  const defaultAgent = useStore((s) => s.defaultAgent)
+  const settings = useSettings()
+  const tasks = useStore((s) => s.tasks)
+  const [open, setOpen] = useState(false)
+  const suggested = (task as Task & { suggestedWorkspaceId?: string | null }).suggestedWorkspaceId
+  const repoId = task.workspaceId ?? suggested ?? (workspaces.length === 1 ? workspaces[0].id : null)
+  const repo = workspaces.find((w) => w.id === repoId)
+  const auto = !task.workspaceId && !!repo
+  const key = taskKey(task, new Map(tasks.map((t) => [t.id, t])))
+  const branch = task.branch ?? (settings?.git.branchTemplate || 'feature/{key}').replaceAll('{key}', key)
+  const agent = agents.find((a) => a.id === defaultAgent)?.label ?? defaultAgent ?? ''
+  const patch = (fields: Partial<Task>) => patchTask(task.id, fields)
   return (
-    <section className="drawer-section">
-      <h3>
-        Описание
-        <Segmented size="sm" label="Режим описания" value={edit ? 'edit' : 'view'} onChange={(v) => setEdit(v === 'edit')} options={[{ value: 'edit', label: 'Текст' }, { value: 'view', label: 'Просмотр' }]} />
-      </h3>
-      {edit ? (
-        <textarea
-          className="textarea"
-          rows={8}
-          aria-label="Описание задачи (markdown)"
-          placeholder="Что сделать, критерии готовности, ссылки. Поддерживается markdown."
-          value={v}
-          onChange={(e) => setV(e.target.value)}
-          onBlur={() => { if (v !== task.description) void patchTask(task.id, { description: v }) }}
-        />
-      ) : (
-        <div className="md-preview" onDoubleClick={() => setEdit(true)}>
-          {v.trim() ? <Markdown text={v} /> : <p className="muted">Описания нет.</p>}
+    <div className="work-summary">
+      <div className="work-line">
+        <span>{repo ? repo.name : <span className="muted">репозиторий не выбран</span>}{auto && <span className="auto-tag">авто</span>}</span>
+        <span className="muted">·</span>
+        <span className="mono">{task.targets[0] ?? 'develop'}{task.targets.length > 1 && <span className="muted"> +{task.targets.length - 1}</span>}</span>
+        <span className="muted">→</span>
+        <span className="mono" data-tip={task.branch ? undefined : 'создастся при запуске'}>{branch}</span>
+        {agent && <><span className="muted">·</span><span>{agent}</span></>}
+        <IconButton size="sm" label={open ? 'Скрыть поля' : 'Изменить репозиторий и ветки'} icon={<Pencil />} onClick={() => setOpen(!open)} aria-expanded={open} />
+      </div>
+      <div className="collapse" data-open={open}>
+        <div>
+          {open && (
+            <div className="props work-fields">
+              <Prop label="Репозиторий">
+                <Select label="Репозиторий" value={task.workspaceId ?? ''} onChange={(v) => void patch({ workspaceId: v || null })}
+                  options={[{ value: '', label: repo && auto ? `Авто: ${repo.name}` : 'Не выбран' }, ...workspaces.map((w) => ({ value: w.id, label: w.name }))]} />
+              </Prop>
+              <Prop label="Целевые ветки"><TargetsField task={task} onChange={(targets) => void patch({ targets })} /></Prop>
+              <Prop label="Ветка"><BranchField task={task} /></Prop>
+            </div>
+          )}
         </div>
-      )}
-    </section>
+      </div>
+    </div>
   )
 }
 
@@ -600,13 +618,13 @@ function Subtasks({ task, ctx }: { task: Task; ctx: BoardCtx }) {
 
 function Activity({ task, sessions }: { task: Task; sessions: Map<string, Session> }) {
   const now = useNow()
-  if (!task.log.length) return null
+  const log = task.log.filter((l) => typeof l.text === 'string' && l.text.trim()) // technical entries without text stay hidden
+  if (!log.length) return null
   const who = (by: string) => (by === 'user' ? 'вы' : by === 'harness' ? 'harness' : sessions.get(by)?.title ?? by)
   return (
-    <section className="drawer-section">
-      <h3>Журнал</h3>
+    <Disclosure className="drawer-more" summary={<h3>Журнал <span className="muted num">{log.length}</span></h3>}>
       <ol className="activity">
-        {task.log.map((l, i) => (
+        {log.map((l, i) => (
           <li key={i}>
             <span className="muted" data-tip={fullTime(l.at)}>{relTime(l.at, now)}</span>
             <span className="activity-by">{who(l.by)}</span>
@@ -614,7 +632,7 @@ function Activity({ task, sessions }: { task: Task; sessions: Map<string, Sessio
           </li>
         ))}
       </ol>
-    </section>
+    </Disclosure>
   )
 }
 

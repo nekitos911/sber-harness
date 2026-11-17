@@ -283,3 +283,19 @@
 .tracker-links h4 { margin: 4px 0 2px; font-size: 12px; font-weight: 600; color: var(--ink-2); }
 .link-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 8px; font-size: 12.5px; }
 .tracker-links .btn { justify-self: start; margin-top: 4px; }
+
+/* ---------- simplified drawer ---------- */
+.drawer-actions { align-items: center; }
+.chip-select.select-trigger { width: auto; height: 26px; padding: 0 6px 0 10px; border-radius: 13px; background: var(--deck-2); border-color: transparent; font-size: 12px; }
+.drawer-confirm { justify-content: flex-start; }
+.work-summary { display: grid; gap: 6px; padding: 8px 10px; border: 1px solid var(--rule); border-radius: var(--r-2); background: var(--ground); }
+.work-line { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-size: 12.5px; color: var(--ink); min-width: 0; }
+.work-line .mono { font-size: 12px; overflow-wrap: anywhere; }
+.work-line .icon-btn { margin-left: auto; }
+.auto-tag { margin-left: 5px; padding: 0 4px; border-radius: 3px; background: var(--deck-3); color: var(--ink-3); font-size: 10.5px; }
+.work-fields { padding-top: 6px; }
+.drawer-desc { margin: 0; }
+.drawer-desc-edit { display: block; width: 100%; text-align: left; color: inherit; font: inherit; cursor: text; }
+.drawer-desc-edit:hover { border-color: var(--rule-strong); }
+.drawer-more .disclosure-toggle h3 { margin: 0; font-size: 12px; font-weight: 600; color: var(--ink-2); }
+.drawer-more .collapse > div > * { margin-top: 10px; }

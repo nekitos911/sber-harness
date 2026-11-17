@@ -408,3 +408,11 @@ button.chip.chip-mono[aria-pressed="true"] { background: var(--signal-soft); col
 .wpanel-head { min-width: 0; overflow: hidden; }
 /* Three tabs do not fit 280px with labels: inactive ones keep only the icon (label in the tooltip/aria). */
 .wpanel-head:has(.wpanel-tab:nth-of-type(3)) .wpanel-tab:not([aria-selected="true"]) .wtab-text { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+
+.settings-adv { margin-top: 4px; }
+.settings-adv > .disclosure-head .disclosure-toggle { height: 30px; color: var(--ink-3); font-size: 12.5px; }
+.settings-adv > .disclosure-head .disclosure-toggle:hover { color: var(--ink); }
+.settings-adv .collapse > div > * + * { margin-top: 8px; }
+.auto-value { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; min-width: 0; padding-top: 4px; }
+.auto-text { min-width: 0; overflow-wrap: anywhere; color: var(--ink-2); }
+.auto-text .mono { font-size: 12px; }

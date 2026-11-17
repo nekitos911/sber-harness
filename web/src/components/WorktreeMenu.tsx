@@ -1,9 +1,9 @@
 import { useMemo, useState, type KeyboardEvent } from 'react'
-import { ClipboardCopy, FolderOpen, Info, ListChecks, Moon, Pin, PinOff, SquareTerminal, Sun, Trash2, Mail, Code } from 'lucide-react'
+import { ClipboardCopy, Ellipsis, FolderOpen, GitBranchPlus, Info, ListChecks, Mail, MessageSquarePlus, Code, Moon, Pin, PinOff, SquareTerminal, Sun, Trash2 } from 'lucide-react'
 import { api, ApiError, errorText, tryApi } from '../api'
 import { closeDialog, getState, hasFeature, openDialog, setState, toast, upsert, useStore } from '../store'
 import { basename, COLUMNS, normPath, relTime } from '../lib/format'
-import { newTerminal } from '../lib/actions'
+import { newChat, newTerminal } from '../lib/actions'
 import { modKey, shortcut } from '../lib/keys'
 import { loadWorktrees } from '../ws'
 import type { Task, TaskStatus, Workspace, Worktree } from '../types'
@@ -45,54 +45,37 @@ const copy = (text: string, what: string) => {
   void navigator.clipboard.writeText(text).then(() => toast(`Скопировано: ${what}`, 'ok'), () => toast('Буфер обмена недоступен', 'error'))
 }
 
-/** Items of the worktree context menu (right click or «…» on a worktree card). */
+/** Worktree context menu: the frequent actions first, the rare ones under «Ещё», delete last. */
 export function worktreeMenu(ws: Workspace, wt: Worktree, task: Task | undefined, ide: boolean): MenuItem[] {
   const meta = wt.meta ?? {}
   const name = wt.branch ?? basename(wt.path)
   const canOpen = hasFeature('open')
   const canMeta = hasFeature('worktree-meta')
-  const items: MenuItem[] = []
-  if (canOpen) items.push({ label: 'Открыть папку', icon: <FolderOpen />, onSelect: () => openFolder(wt.path) })
-  if (canMeta) {
-    items.push(meta.sleeping
-      ? { label: 'Разбудить', icon: <Sun />, onSelect: () => void patchMeta(ws.id, wt.path, { sleeping: false }) }
-      : { label: 'Перевести в сон', icon: <Moon />, onSelect: () => void patchMeta(ws.id, wt.path, { sleeping: true }) })
-  }
-  items.push({ label: 'Отметить непрочитанным', icon: <Mail />, onSelect: () => setUnread(wt.path, true) })
-  if (!wt.main) items.push({ label: 'Удалить', icon: <Trash2 />, danger: true, hint: shortcut('⌫', true), onSelect: () => openDialog({ kind: 'wt-delete', workspaceId: ws.id, path: wt.path }) })
-  if (canMeta) {
-    items.push(
-      { label: 'Изменить сведения…', icon: <Info />, divider: true, onSelect: () => openDialog({ kind: 'wt-info', workspaceId: ws.id, path: wt.path }) },
+  const where = { cwd: wt.path, workspaceId: ws.id }
+  const more: MenuItem[] = [
+    ...(canMeta ? [
+      meta.sleeping
+        ? { label: 'Разбудить', icon: <Sun />, onSelect: () => void patchMeta(ws.id, wt.path, { sleeping: false }) }
+        : { label: 'Перевести в сон', icon: <Moon />, onSelect: () => void patchMeta(ws.id, wt.path, { sleeping: true }) },
       meta.pinned
         ? { label: 'Открепить', icon: <PinOff />, onSelect: () => void patchMeta(ws.id, wt.path, { pinned: false }) }
         : { label: 'Закрепить', icon: <Pin />, onSelect: () => void patchMeta(ws.id, wt.path, { pinned: true }) },
-    )
-  }
-  if (task) {
-    items.push({
-      label: 'Статус задачи', icon: <ListChecks />,
-      children: COLUMNS.map((c) => ({ label: c.id === task.status ? `${c.label} ✓` : c.label, onSelect: () => void moveTask(task, c.id) })),
-    })
-  }
-  items.push(
-    {
-      label: 'Открыть в', icon: <FolderOpen />, divider: true,
-      children: [
-        ...(canOpen ? [{ label: 'Файловом менеджере', onSelect: () => openFolder(wt.path) }] : []),
-        { label: 'Новом терминале', icon: <SquareTerminal />, onSelect: () => void newTerminal({ cwd: wt.path, workspaceId: ws.id }) },
-        ...(ide && canOpen ? [{ label: 'IDE', icon: <Code />, onSelect: () => void tryApi('POST', '/open', { cwd: wt.path, target: 'ide' }) }] : []),
-      ],
-    },
-    {
-      label: 'Копировать', icon: <ClipboardCopy />,
-      children: [
-        { label: 'Путь', onSelect: () => copy(wt.path, 'путь') },
-        ...(wt.branch ? [{ label: 'Ветку', onSelect: () => copy(wt.branch!, 'ветка') }] : []),
-        { label: 'Имя', onSelect: () => copy(meta.label || name, 'имя') },
-      ],
-    },
-  )
-  return items
+      { label: 'Изменить сведения…', icon: <Info />, onSelect: () => openDialog({ kind: 'wt-info', workspaceId: ws.id, path: wt.path }) },
+    ] : []),
+    ...(task ? COLUMNS.map((c) => ({ label: `Статус задачи: ${c.label}${c.id === task.status ? ' ✓' : ''}`, icon: <ListChecks />, onSelect: () => void moveTask(task, c.id) })) : []),
+    ...(ide && canOpen ? [{ label: 'Открыть в IDE', icon: <Code />, onSelect: () => void tryApi('POST', '/open', { cwd: wt.path, target: 'ide' }) }] : []),
+    ...(wt.branch ? [{ label: 'Копировать ветку', icon: <ClipboardCopy />, onSelect: () => copy(wt.branch!, 'ветка') }] : []),
+    { label: 'Копировать имя', icon: <ClipboardCopy />, onSelect: () => copy(meta.label || name, 'имя') },
+    { label: 'Отметить непрочитанным', icon: <Mail />, onSelect: () => setUnread(wt.path, true) },
+  ]
+  return [
+    ...(canOpen ? [{ label: 'Открыть папку', icon: <FolderOpen />, onSelect: () => openFolder(wt.path) }] : []),
+    { label: 'Новый чат', icon: <MessageSquarePlus />, onSelect: () => void newChat(where) },
+    { label: 'Терминал', icon: <SquareTerminal />, onSelect: () => void newTerminal(where) },
+    { label: 'Копировать путь', icon: <ClipboardCopy />, onSelect: () => copy(wt.path, 'путь') },
+    { label: 'Ещё', icon: <Ellipsis />, children: more },
+    ...(!wt.main ? [{ label: 'Удалить рабочее дерево', icon: <Trash2 />, danger: true, divider: true, hint: shortcut('⌫', true), onSelect: () => openDialog({ kind: 'wt-delete', workspaceId: ws.id, path: wt.path }) }] : []),
+  ]
 }
 
 async function moveTask(task: Task, status: TaskStatus) {
@@ -100,12 +83,16 @@ async function moveTask(task: Task, status: TaskStatus) {
   if (t) setState((s) => ({ tasks: upsert(s.tasks, t) }))
 }
 
-/** Items of the project row menu. */
+/** Project row menu. */
 export function projectMenu(ws: Workspace): MenuItem[] {
   return [
+    ...(ws.isGit ? [{ label: 'Новое рабочее дерево…', icon: <GitBranchPlus />, onSelect: () => openDialog({ kind: 'worktree', workspaceId: ws.id }) }] : []),
     ...(hasFeature('open') ? [{ label: 'Открыть папку', icon: <FolderOpen />, onSelect: () => openFolder(ws.path) }] : []),
-    { label: 'Новое рабочее дерево…', icon: <ListChecks />, onSelect: () => openDialog({ kind: 'worktree', workspaceId: ws.id }) },
-    { label: 'Очистить рабочие деревья…', icon: <Trash2 />, onSelect: () => openDialog({ kind: 'wt-cleanup', workspaceId: ws.id }) },
+    ...(ws.isGit ? [{ label: 'Очистить рабочие деревья…', icon: <Trash2 />, onSelect: () => openDialog({ kind: 'wt-cleanup', workspaceId: ws.id }) }] : []),
+    { label: 'Ещё', icon: <Ellipsis />, children: [
+      { label: 'Новый чат в основной копии', icon: <MessageSquarePlus />, onSelect: () => void newChat({ cwd: ws.path, workspaceId: ws.id }) },
+      { label: 'Копировать путь', icon: <ClipboardCopy />, onSelect: () => copy(ws.path, 'путь') },
+    ] },
   ]
 }
 
