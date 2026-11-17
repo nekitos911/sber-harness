@@ -37,7 +37,7 @@ const NO_BUILD_HTML = '<!doctype html><meta charset="utf-8"><title>Harness</titl
 const GRADES = ['default', 'fast', 'review', 'explore'];
 // optional API groups this server implements (docs/ARCHITECTURE.md "Feature flags"); a flag ships with its route
 export const FEATURES = ['branches', 'fs-search', 'pr-status', 'agent-info', 'models-refresh', 'tracker-links', 'board-columns', 'review-loop',
-  'subagents', 'virtual-sessions', 'worker-run', 'skills-install', 'demo', 'worktree-meta', 'open', 'sdd', 'health', 'folders', 'include-dirs', 'questions', 'permissions', 'activity', 'rework'];
+  'subagents', 'virtual-sessions', 'worker-run', 'skills-install', 'demo', 'worktree-meta', 'open', 'sdd', 'health', 'folders', 'include-dirs', 'questions', 'permissions', 'activity', 'rework', 'fs-raw'];
 // titles of operations the UI may follow by sending x-job-id (WS { t: 'job' } frames)
 const JOB_TITLES = {
   'POST /api/tasks/sync': 'Синхронизация с трекером',
@@ -830,7 +830,17 @@ export async function startServer(opts = {}) {
   });
   route('PATCH', '/api/sessions/:id', ({ params, body }) => sessions.patch(params.id, body));
   route('DELETE', '/api/sessions/:id', ({ params }) => sessions.remove(params.id));
-  route('GET', '/api/sessions/:id/messages', ({ params }) => sessions.messages(params.id));
+  // the transcript keeps every tool output whole; the list sends at most 64 KB of each (full text on demand)
+  const OUTPUT_MAX = 64 * 1024;
+  route('GET', '/api/sessions/:id/messages', ({ params }) => sessions.messages(params.id).map((m) => (
+    m.kind === 'tool' && typeof m.tool?.output === 'string' && m.tool.output.length > OUTPUT_MAX
+      ? { ...m, tool: { ...m.tool, output: m.tool.output.slice(0, OUTPUT_MAX), outputTruncated: true } }
+      : m
+  )));
+  route('GET', '/api/sessions/:id/messages/:mid/output', ({ params }) => {
+    const m = sessions.messages(params.id).find((x) => x.id === params.mid) || fail(404, `message ${params.mid} not found`);
+    return { output: m.tool?.output ?? null };
+  });
   route('POST', '/api/sessions/:id/messages', ({ params, body }) => sessions.deliver(params.id, { from: 'user', text: check(body, { text: 'string' }).text }));
   route('POST', '/api/sessions/:id/permission', ({ params, body }) => sessions.permission(params.id, check(body, { permissionId: 'string', optionId: 'string', note: 'string?' })));
   route('POST', '/api/sessions/:id/stop', ({ params }) => sessions.stop(params.id));
@@ -959,6 +969,25 @@ export async function startServer(opts = {}) {
     return serveIndex(res, pathname);
   }
 
+  /** GET /api/fs/raw?cwd=&path= — an image for a chat thumbnail; `?token=` works too (an <img src> sends no headers). */
+  function serveRaw(req, res, u) {
+    if (!tokenOk(req.headers['x-harness-token'] ?? u.searchParams.get('token') ?? undefined)) return sendJson(res, 401, { error: 'missing or invalid token' });
+    const q = check(Object.fromEntries(u.searchParams), { cwd: 'string', path: 'string' });
+    const extra = db.sessions.filter((s) => s.cwd && samePath(s.cwd, q.cwd)).flatMap((s) => s.includeDirs || []);
+    const f = wfs.rawImage([q.cwd, ...extra], q.path);
+    const etag = `"${f.size}-${Math.floor(f.mtimeMs)}"`;
+    const headers = {
+      'content-type': f.type, etag, 'last-modified': new Date(f.mtimeMs).toUTCString(), 'cache-control': 'private, no-cache',
+      'x-content-type-options': 'nosniff', ...(f.type === 'image/svg+xml' ? { 'content-security-policy': 'sandbox' } : {}),
+    };
+    if (req.headers['if-none-match'] === etag) {
+      res.writeHead(304, headers);
+      return res.end();
+    }
+    res.writeHead(200, { ...headers, 'content-length': f.size });
+    return fs.createReadStream(f.abs).pipe(res);
+  }
+
   const server = http.createServer(async (req, res) => {
     const port = server.address()?.port;
     const allowed = [`127.0.0.1:${port}`, `localhost:${port}`, `[::1]:${port}`];
@@ -972,6 +1001,7 @@ export async function startServer(opts = {}) {
     try {
       // liveness for the single-instance lock: no token (it proves nothing secret), still behind the Host guard
       if (u.pathname === '/api/health') return sendJson(res, 200, { ok: true, pid: process.pid, dataDir: config.dataDir });
+      if (u.pathname === '/api/fs/raw' && req.method === 'GET') return serveRaw(req, res, u);
       if (u.pathname === '/api' || u.pathname.startsWith('/api/')) {
         if (!tokenOk(req.headers['x-harness-token'])) return sendJson(res, 401, { error: 'missing or invalid x-harness-token' });
         const candidates = routes.map((r) => ({ r, m: u.pathname.match(r.re) })).filter((x) => x.m);

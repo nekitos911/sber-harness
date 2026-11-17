@@ -133,6 +133,10 @@ if (has(/#subagent\b/)) {
 }
 
 if (delivered) await say(`Received: ${prompt.split('\n')[1]?.slice(0, 120) || ''}`);
+if (has(/#bigoutput\b/)) {
+  emit({ type: 'tool_use', tool_name: 'run_shell_command', tool_id: 'big_1', parameters: { command: 'cat big.log' } });
+  emit({ type: 'tool_result', tool_id: 'big_1', status: 'success', output: `${'строка лога\n'.repeat(10000)}КОНЕЦ` });
+}
 const deny = lines.map((l) => l.match(/#deny\s+(\S+)/)).filter(Boolean).pop();
 if (deny) {
   // headless -p cannot ask for a confirmation: the CLI denies the call

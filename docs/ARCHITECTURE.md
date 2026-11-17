@@ -977,6 +977,16 @@ Durable state (all in `<dataDir>`, atomic writes):
 - Event loop: SDD polling is async; transcripts are serialized per message (a streaming update re-serializes one message,
   not the whole transcript) and `.bak` copies are refreshed at most every 10 s; registry polling reads only small files.
 
+## Images and large tool outputs in chats
+
+- `GET /api/fs/raw?cwd=&path=` (flag `fs-raw`) streams an image for a thumbnail: png/jpg/jpeg/gif/webp/svg only (else
+  400), ≤ 10 MB (413), the path (relative or absolute) must resolve inside `cwd` or an `includeDirs` entry of a session
+  in that cwd (same symlink-aware guard as the file routes; outside → 400). Token via `x-harness-token` or `?token=`
+  (an `<img src>` sends no headers). Headers: `etag` + `last-modified` (`If-None-Match` → 304), `cache-control: private,
+  no-cache`, `x-content-type-options: nosniff`; svg also `content-security-policy: sandbox`.
+- The transcript keeps every tool output whole; `GET /api/sessions/:id/messages` returns `tool.output` cut to 64 K
+  characters with `tool.outputTruncated: true`; `GET /api/sessions/:id/messages/:mid/output` → `{ output }` (full).
+
 ## Feature flags (client/server version skew)
 
 `GET /api/state` returns `features: string[]` — the optional API groups this server implements, e.g. `sdd`, `subagents`,

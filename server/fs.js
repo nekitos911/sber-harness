@@ -199,3 +199,30 @@ export async function listDirs(dir, { hidden = false } = {}) {
     roots: await fsRoots(),
   };
 }
+
+// ---- images for chat thumbnails (GET /api/fs/raw) ----
+const IMAGE_TYPES = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml' };
+export const RAW_MAX = 10 * 1024 * 1024;
+
+/** An image inside one of `bases` (the session cwd, then its includeDirs); same guard as every fs route. */
+export function rawImage(bases, rel) {
+  if (typeof rel !== 'string' || !rel) fail(400, 'path is required');
+  const type = IMAGE_TYPES[path.extname(rel).toLowerCase()] || fail(400, 'only png, jpg, jpeg, gif, webp and svg images are served');
+  let abs = null;
+  for (const base of bases) {
+    try {
+      abs = resolveInside(base, rel).abs;
+      break;
+    } catch {}
+  }
+  if (!abs) fail(400, 'path is outside the session folder and its extra folders');
+  let st;
+  try {
+    st = fs.statSync(abs);
+  } catch {
+    fail(404, `not found: ${rel}`);
+  }
+  if (!st.isFile()) fail(404, `not a file: ${rel}`);
+  if (st.size > RAW_MAX) fail(413, 'image is larger than 10 MB');
+  return { abs, type, size: st.size, mtimeMs: st.mtimeMs };
+}
