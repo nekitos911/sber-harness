@@ -86,7 +86,10 @@ the "done when" checklist.
 - No CI status (sourcecontrol does not provide it); "observe and propose" loops for PR/CI are not implemented.
 - GigaCode's built-in sub-agents cannot be turned off; the harness steers away from them and shows them.
 - In ACP mode a session has no `pid`, so "stalled" does not apply there.
-- `mcp.test` failed under load once (it was being fixed at handoff time; if it reappears, look for a race in the test).
+- On Windows, node-pty's delayed `process.kill(shellPid)` fallback on terminal close is disabled (it could kill another
+  process that had reused the pid) by patching a private field (`killPty` in `server/sessions.js`). **Re-check it when
+  upgrading `@lydell/node-pty`.** Every kill the harness performs goes through a single function that checks the process is
+  still alive and records the reason (`killReason`).
 
 ## 7. Development and debugging
 
