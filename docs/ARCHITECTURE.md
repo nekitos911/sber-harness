@@ -393,6 +393,8 @@ POST   /api/git/pr              {cwd, title, body, base?} -> { url, existing }  
                                  existing: an OPEN PR with the same head+base already existed and is returned instead;
                                  400 with byte counts when title/body exceed integrations.pr.limits — UTF-8 BYTES)
 
+POST   /api/git/pr/decline  { cwd, index } -> { ok: true }   (sourcecontrol decline via integrations.pr.declineTool,
+                                 default "git_decline_pull_request" with {project, repository, pullRequestIndex}; feature `pr-decline`)
 GET    /api/fs/search?cwd=&q=&limit=  -> [{ path, score }]   (for @-mentions: `git ls-files --cached --others --exclude-standard`
                                  (fallback: recursive walk skipping .git/node_modules), cached per cwd ~10 s, fuzzy subsequence
                                  match on the path with a bonus for basename hits; default limit 30, max 100)
