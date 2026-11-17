@@ -8,6 +8,7 @@
 //   #nooutput       stderr only, exit 0 (silent failure)   #warn  stderr warning on a normal run
 //   #auth           login link on stderr, ~2 s wait, then a normal run
 //   #run <profile> <spec>   worker_run (a sub-agent in its own chat); waits, then says "worker_run result: <summary>"
+//   #deny <tool>    a tool call the CLI denies in headless mode   #question <q> | <option> | ...   its own question tool
 // "/models" answers with test/fixtures/gigacode.models.txt; --model outside that list fails like GigaCode (stderr, exit 1).
 // MOCK_AGENT_ARGV_FILE: appends { argv (incl. node flags), env (GIGACODE_*, settings path, MCP_SECRET_*) } per run.
 // Harness API through mcp/harness-mcp.js (env HARNESS_*; retries while the harness restarts). Turn counts per session id live in
@@ -132,6 +133,18 @@ if (has(/#subagent\b/)) {
 }
 
 if (delivered) await say(`Received: ${prompt.split('\n')[1]?.slice(0, 120) || ''}`);
+const deny = lines.map((l) => l.match(/#deny\s+(\S+)/)).filter(Boolean).pop();
+if (deny) {
+  // headless -p cannot ask for a confirmation: the CLI denies the call
+  emit({ type: 'tool_use', tool_name: deny[1], tool_id: 'deny_1', parameters: { command: 'rm -rf build' } });
+  emit({ type: 'tool_result', tool_id: 'deny_1', status: 'error', output: `Tool "${deny[1]}" requires user approval in non-interactive mode (approval mode ${opt('--approval-mode')})` });
+}
+const question = lines.map((l) => l.match(/#question\s+(.+)/)).filter(Boolean).pop();
+if (question) {
+  const [q, ...options] = question[1].split('|').map((x) => x.trim());
+  emit({ type: 'tool_use', tool_name: 'ask_user_question', tool_id: 'q_1', parameters: { questions: [{ question: q, options: options.map((label) => ({ label })), multiSelect: false }] } });
+  emit({ type: 'tool_result', tool_id: 'q_1', status: 'error', output: 'question tool is not available in non-interactive mode' });
+}
 if (has(/#raw\b/)) process.stdout.write('plain line 1\nplain line 2\n');
 if (has(/#slow\b/)) await say('slow '.repeat(20), 250);
 

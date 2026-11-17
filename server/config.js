@@ -51,7 +51,7 @@ export function loadConfig({ root = CODE_ROOT, overrides = {}, dataDir, configFi
   cfg.mcpServers ||= {};
   cfg.integrations ||= {};
   cfg.git = { defaultBase: 'main', excludeFromCommit: ['.superpowers/'], networkTimeoutSec: 120, ...cfg.git };
-  cfg.session = { idleWindowSec: 90, ...cfg.session };
+  cfg.session = { idleWindowSec: 90, stallSec: 300, ...cfg.session };
   cfg.terminal = { autoRespawn: true, ...cfg.terminal };
   cfg.orchestration = { workerMayCommit: false, reviewMode: 'builtin', subagents: 'harness', ...cfg.orchestration };
   cfg.orchestration.review = { grade: 'review', approvalMode: 'plan', maxRounds: 2, agent: null, ...cfg.orchestration.review };

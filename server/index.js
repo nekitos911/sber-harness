@@ -37,7 +37,7 @@ const NO_BUILD_HTML = '<!doctype html><meta charset="utf-8"><title>Harness</titl
 const GRADES = ['default', 'fast', 'review', 'explore'];
 // optional API groups this server implements (docs/ARCHITECTURE.md "Feature flags"); a flag ships with its route
 export const FEATURES = ['branches', 'fs-search', 'pr-status', 'agent-info', 'models-refresh', 'tracker-links', 'board-columns', 'review-loop',
-  'subagents', 'virtual-sessions', 'worker-run', 'skills-install', 'demo', 'worktree-meta', 'open', 'sdd', 'health', 'folders', 'include-dirs'];
+  'subagents', 'virtual-sessions', 'worker-run', 'skills-install', 'demo', 'worktree-meta', 'open', 'sdd', 'health', 'folders', 'include-dirs', 'questions', 'permissions', 'activity'];
 // titles of operations the UI may follow by sending x-job-id (WS { t: 'job' } frames)
 const JOB_TITLES = {
   'POST /api/tasks/sync': 'Синхронизация с трекером',
@@ -237,6 +237,7 @@ export async function startServer(opts = {}) {
       git: pick(config.git, GIT_KEYS),
       tasks: { refreshSec: t.refreshSec ?? 0 },
       board: config.board,
+      session: { stallSec: config.session.stallSec },
       ide: config.ide ?? null,
       orchestration: { reviewMode: config.orchestration.reviewMode, subagents: config.orchestration.subagents, workerMayCommit: !!config.orchestration.workerMayCommit, review: config.orchestration.review },
       integrations: {
@@ -434,6 +435,11 @@ export async function startServer(opts = {}) {
       patch.git = body.git;
     }
     if (body.board !== undefined) patch.board = boardPatch(body.board);
+    if (body.session !== undefined) {
+      const sec = body.session?.stallSec;
+      if (!isObj(body.session) || Object.keys(body.session).some((k) => k !== 'stallSec') || !Number.isInteger(sec) || sec < 30) fail(400, 'session accepts { stallSec: integer >= 30 }');
+      patch.session = { stallSec: sec };
+    }
     if (body.ide !== undefined) {
       const ide = body.ide;
       if (ide !== null && (!isObj(ide) || typeof ide.command !== 'string' || !ide.command.trim() || (ide.args !== undefined && !isStrList(ide.args)))) {
@@ -810,6 +816,7 @@ export async function startServer(opts = {}) {
   route('DELETE', '/api/sessions/:id', ({ params }) => sessions.remove(params.id));
   route('GET', '/api/sessions/:id/messages', ({ params }) => sessions.messages(params.id));
   route('POST', '/api/sessions/:id/messages', ({ params, body }) => sessions.deliver(params.id, { from: 'user', text: check(body, { text: 'string' }).text }));
+  route('POST', '/api/sessions/:id/permission', ({ params, body }) => sessions.permission(params.id, check(body, { permissionId: 'string', optionId: 'string', note: 'string?' })));
   route('POST', '/api/sessions/:id/stop', ({ params }) => sessions.stop(params.id));
   route('POST', '/api/sessions/:id/restart', ({ params }) => sessions.restart(params.id));
   route('GET', '/api/sessions/:id/log', ({ params }) => sessions.logTail(params.id));

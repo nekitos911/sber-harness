@@ -900,6 +900,13 @@ served inside cwd/includeDirs; Stop → `session/cancel`; the process is restart
 a system note). Same identity/launcher resolution as headless. A mock ACP agent (`scripts/mock-acp-agent.js`) covers tests.
 Feature flags: `questions`, `permissions`, `acp`.
 
+Implementation status: questions (a–c) and headless permissions are implemented (flags `questions`, `permissions`);
+the ACP transport is NOT implemented yet (no `acp` flag). Notes: the question card's answer is an ordinary message
+(`POST /api/sessions/:id/messages` with «Ответ на вопрос «…»: …»); any delivery to the session clears `waitingFor`
+'answer'/'permission'. A permission answer also sets `permission.resolved` (+ `resolvedAt`) on the card; a second answer →
+409; `note` is appended to the delivered message. allow_once sets `session.approvalOnce` (consumed by the next turn).
+The mock agent has `#deny <tool>` and `#question <q> | <option> | …`.
+
 ## Session activity states (what the UI shows)
 
 Session gains `lastEventAt: number | null` (last stdout event of the current turn), `waitingFor: 'answer' | 'auth' | null`
@@ -908,6 +915,9 @@ running AND phase !== 'auth' AND no event for `session.stallSec` (default 300, i
 re-evaluated every 15 s; flips are broadcast). Derived UI state, in priority order:
 `waiting_answer` (waitingFor) → `stalled` → `starting` (phase starting/auth) → `running` → `error`/`failed` → `stopped` →
 `done` (worker_done done) → `exited` (terminal) → `idle` (turn finished, ready for the next message).
+Implementation: `waitingFor` may also be `'permission'` (headless denial card); `/api/settings` exposes and accepts
+`session: { stallSec }` (integer ≥ 30); the re-check period is `session.stallCheckSec` (config only, default 15); any event
+clears `stalled`; `lastEventAt` is not broadcast on its own (it rides on the next session frame). Feature flag `activity`.
 
 ## Nothing is lost on restart (harness, browser, PC)
 

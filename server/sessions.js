@@ -39,6 +39,24 @@ export function normalizeIncludeDirs(dirs, cwd, strict = true) {
 const tail = (text) => (text ? `\n\nstderr:\n${text.slice(-2000).trim()}` : '');
 const fence = (lines) => `\`\`\`text\n${lines.join('\n')}\n\`\`\``;
 const REGISTRY_POLL_MS = 2000;
+const QUESTION_TOOLS = ['ask_user_question', 'ask_user', 'AskUserQuestion']; // VERIFY the real GigaCode name
+const DENIAL_RE = /(requires? (user )?(approval|confirmation)|not allowed|denied|permission|подтвержд|запрещ)/i; // VERIFY
+export const PERMISSION_OPTIONS = [
+  { id: 'allow_once', label: 'Разрешить один раз' },
+  { id: 'allow_session', label: 'Разрешать в этой сессии' },
+  { id: 'reject', label: 'Запретить' },
+];
+
+/** A structured question tool call -> { text, options: [{label, description?}], multiSelect } (tolerant of shapes). */
+export function parseQuestion(input = {}) {
+  const q = Array.isArray(input?.questions) ? input.questions[0] || {} : input || {};
+  const opts = Array.isArray(q.options) ? q.options : Array.isArray(input?.options) ? input.options : [];
+  return {
+    text: String(q.question ?? q.text ?? q.prompt ?? input?.question ?? ''),
+    options: opts.map((o) => (typeof o === 'string' ? { label: o } : { label: String(o?.label ?? o?.text ?? o?.value ?? ''), ...(o?.description ? { description: String(o.description) } : {}) })).filter((o) => o.label),
+    multiSelect: !!(q.multiSelect ?? input?.multiSelect),
+  };
+}
 
 /**
  * Working folder of a session created without cwd/workspace: a chat gets its own folder (survives restarts), an agent
@@ -92,6 +110,13 @@ export function createSessions({ config, store, bus, getUrl, catalog = null }) {
       console.error('[sessions] sessionChanged hook failed:', e);
     }
     return s;
+  }
+
+  /** waitingFor: 'answer' (ask / a question card) | 'permission' | 'auth' | null; any delivery clears answer/permission. */
+  function setWaiting(s, what) {
+    if (s.waitingFor === what) return;
+    s.waitingFor = what;
+    emit(s);
   }
 
   function addMessage(s, fields) {
@@ -324,7 +349,13 @@ export function createSessions({ config, store, bus, getUrl, catalog = null }) {
     const r = runtime(s.id);
     const c = r.cur;
     s.lastActivityAt = Date.now();
+    if (ev.type !== 'auth') s.lastEventAt = s.lastActivityAt;
+    if (s.stalled) {
+      s.stalled = false;
+      emit(s);
+    }
     if (ev.type === 'auth') {
+      s.waitingFor = 'auth';
       // the CLI waits for a browser login (first run on this machine); it continues by itself afterwards
       const label = config.agents[s.agent]?.label || s.agent;
       const text = `🔑 ${label} ждёт авторизацию…${ev.code ? ` Код: ${ev.code}` : ''}`;
@@ -338,6 +369,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null }) {
     }
     if (s.phase !== 'streaming' && !(s.phase === 'auth' && ev.type === 'raw')) {
       s.phase = 'streaming';
+      if (s.waitingFor === 'auth') s.waitingFor = null;
       emit(s);
     }
     if (ev.parentToolId) return subagentProgress(s, c, ev);
@@ -403,14 +435,29 @@ export function createSessions({ config, store, bus, getUrl, catalog = null }) {
       }
       case 'tool_call': {
         c.assistant = c.thought = null;
+        const qTools = config.agents[s.agent]?.questionTools ?? QUESTION_TOOLS;
+        if (qTools.includes(String(ev.name).replace(/^.*[.:]/, ''))) {
+          // the CLI's own question: a card the user answers; whatever headless returns for the call stays hidden
+          c.questions = new Set([...(c.questions || []), ev.id]);
+          addMessage(s, { kind: 'question', text: '', question: { id: ev.id, ...parseQuestion(ev.input) } });
+          setWaiting(s, 'answer');
+          break;
+        }
         const sub = SUBAGENT_TOOLS.test(ev.name) ? openVirtual(s, ev) : null;
         c.tools.set(ev.id, addMessage(s, { kind: 'tool', text: ev.name, tool: { id: ev.id, name: ev.name, input: ev.input, output: null, status: 'running', ...(sub ? { subSessionId: sub } : {}) } }));
         break;
       }
       case 'tool_result': {
         c.assistant = c.thought = null;
+        if (c.questions?.has(ev.id)) break;
         const m = c.tools.get(ev.id);
         const status = ev.isError ? 'error' : 'ok';
+        const denial = config.agents[s.agent]?.denialPattern;
+        if (ev.isError && (denial ? new RegExp(denial, 'i') : DENIAL_RE).test(String(ev.output ?? ''))) {
+          // headless -p cannot wait for a confirmation, so the CLI denied: ask the user instead
+          addMessage(s, { kind: 'permission', text: '', permission: { id: newId('p'), toolId: ev.id, tool: m?.tool?.name ?? 'tool', input: m?.tool?.input ?? null, reason: String(ev.output ?? '').slice(0, 2000), transport: 'headless', options: PERMISSION_OPTIONS, resolved: null } });
+          setWaiting(s, 'permission');
+        }
         if (m) {
           m.tool = { ...m.tool, output: ev.output, status };
           updateMessage(s, m);
@@ -447,7 +494,9 @@ export function createSessions({ config, store, bus, getUrl, catalog = null }) {
     s.turnFlags = {};
     r.cur = { assistant: null, thought: null, raw: null, tools: new Map(), subTools: new Map(), gotText: false };
     for (const it of items) addMessage(s, { kind: 'user', text: it.text, from: it.from, ...(it.options ? { options: it.options } : {}) });
-    Object.assign(s, { status: 'running', queued: 0, lastActivityAt: Date.now() });
+    Object.assign(s, { status: 'running', queued: 0, lastActivityAt: Date.now(), lastEventAt: null, stalled: false });
+    const approvalOnce = s.approvalOnce; // «Разрешить один раз»: this turn only
+    delete s.approvalOnce;
     emit(s);
 
     let res;
@@ -468,7 +517,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null }) {
         // a slash command only works as the first word of the prompt; the rest becomes its $ARGUMENTS
         if (pre) prompt = prompt.startsWith('/') ? `${prompt}\n\n${pre}` : `${pre}\n\n${prompt}`;
       }
-      const ctx = turnCtx(s, agentCfg, prompt);
+      const ctx = turnCtx(approvalOnce ? { ...s, approvalMode: approvalOnce } : s, agentCfg, prompt);
       fs.mkdirSync(runDir(s.id), { recursive: true });
       launcher.prepare(ctx);
       r.registryTimer = setInterval(() => pollRegistry(s), REGISTRY_POLL_MS);
@@ -596,7 +645,8 @@ export function createSessions({ config, store, bus, getUrl, catalog = null }) {
     } else if (res.stderrTail.trim()) {
       addMessage(s, { kind: 'system', text: `⚠ ${res.stderrTail.trim().slice(-2000)}` });
     }
-    Object.assign(s, { status, pid: null, pidStartedAt: null, phase: null, turnOffset: null, lastActivityAt: Date.now() });
+    Object.assign(s, { status, pid: null, pidStartedAt: null, phase: null, turnOffset: null, lastActivityAt: Date.now(), stalled: false });
+    if (s.waitingFor === 'auth') s.waitingFor = null;
     for (const v of db.sessions.filter((x) => x.virtual && x.parentId === s.id && x.status === 'running')) {
       Object.assign(v, { status: 'failed', lastActivityAt: Date.now() });
       emit(v);
@@ -695,6 +745,33 @@ export function createSessions({ config, store, bus, getUrl, catalog = null }) {
     const flag = launchers[agentCfg.launcher]?.dirFlag;
     return { command: shellLine([exe.file, ...exe.args, ...(flag ? includeDirs.flatMap((d) => [flag, d]) : [])]), env: exe.env || {} };
   }
+
+  // ---- stalled: running, not logging in, no event for session.stallSec while the pid is alive ----
+  const stallTimer = setInterval(() => {
+    const limit = (Number(config.session?.stallSec) || 300) * 1000;
+    for (const s of db.sessions) {
+      if (s.kind !== 'chat' || s.virtual) continue;
+      const stalled = s.status === 'running' && s.phase !== 'auth' && !!s.pid && Date.now() - (s.lastEventAt || s.lastActivityAt) > limit && isAlive(s.pid);
+      if (!!s.stalled !== stalled) {
+        s.stalled = stalled;
+        emit(s);
+      }
+    }
+  }, (Number(config.session?.stallCheckSec) || 15) * 1000);
+  stallTimer.unref?.();
+
+  /** One approval mode more permissive than the session's (approvalModes order), or the last one. */
+  function nextMode(s) {
+    const modes = config.agents[s.agent]?.approvalModes || [];
+    const cur = s.approvalMode || config.agents[s.agent]?.approvalMode;
+    return modes[Math.min(modes.indexOf(cur) + 1, modes.length - 1)] ?? cur ?? null;
+  }
+
+  const inputSummary = (input) => {
+    if (input == null) return '';
+    const text = typeof input === 'string' ? input : input.command ?? input.file_path ?? input.path ?? JSON.stringify(input);
+    return String(text).length > 300 ? `${String(text).slice(0, 300)}…` : String(text);
+  };
 
   // ---- public API ----
 
@@ -835,6 +912,34 @@ export function createSessions({ config, store, bus, getUrl, catalog = null }) {
       return s;
     },
 
+    /**
+     * Answer to a permission card (headless: the CLI already denied, so the answer is a new message):
+     * allow_once = next turn one approval mode more permissive, allow_session = the session keeps that mode, reject.
+     */
+    permission(sid, { permissionId, optionId, note } = {}) {
+      const s = get(sid);
+      if (typeof permissionId !== 'string' || typeof optionId !== 'string') fail(400, 'permissionId and optionId are required');
+      if (note != null && typeof note !== 'string') fail(400, 'note must be a string');
+      const msg = store.messages(sid).find((m) => m.kind === 'permission' && m.permission?.id === permissionId) || fail(404, `permission request ${permissionId} not found`);
+      const p = msg.permission;
+      if (p.resolved) fail(409, `already answered: ${p.resolved}`);
+      if (!p.options.some((o) => o.id === optionId)) fail(400, `optionId must be one of ${p.options.map((o) => o.id).join(', ')}`);
+      msg.permission = { ...p, resolved: optionId, resolvedAt: Date.now() };
+      updateMessage(s, msg);
+      const what = `${p.tool}${p.input != null ? ` ${inputSummary(p.input)}` : ''}`;
+      let text;
+      if (optionId === 'reject') text = `Не выполняй это (${p.tool}); найди другой путь или спроси.`;
+      else {
+        const mode = nextMode(s);
+        if (optionId === 'allow_session') s.approvalMode = mode;
+        else s.approvalOnce = mode;
+        text = `Разрешаю: выполни ${what}`;
+      }
+      return api.deliver(sid, { from: 'user', text: note?.trim() ? `${text}
+
+${note.trim()}` : text });
+    },
+
     /** Queue a message for a chat session (starts a turn if idle) or type it into a terminal. */
     deliver(sid, { from = 'user', text, options }) {
       const s = get(sid);
@@ -846,6 +951,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null }) {
         r.pty.write(`${text}\r`);
         return { queued: false };
       }
+      if (s.waitingFor === 'answer' || s.waitingFor === 'permission') s.waitingFor = null; // answered (by anyone)
       s.queue.push({ id: newId('q'), from, text, at: Date.now(), ...(options ? { options } : {}) });
       if (!r.running) {
         startTurn(s);
@@ -965,6 +1071,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null }) {
 
     /** Harness shutdown: agent turns keep running (re-attached on the next start); terminals are closed. */
     close() {
+      clearInterval(stallTimer);
       for (const r of rt.values()) {
         clearInterval(r.registryTimer);
         r.handle?.detach();

@@ -55,7 +55,7 @@ export function parseProfile(text) {
   return { meta, body: m[2].trim() };
 }
 
-export const SUBAGENT_CONTEXT = 'Ты работаешь внутри harness. Субагентов запускай инструментом mcp__harness__agent с теми же аргументами, что у встроенного agent (subagent_type, prompt, model) — встроенный agent не используй: harness откроет каждого субагента отдельным чатом и вернёт тебе его результат так же.';
+export const SUBAGENT_CONTEXT = 'Ты работаешь внутри harness. Субагентов запускай инструментом mcp__harness__agent с теми же аргументами, что у встроенного agent (subagent_type, prompt, model) — встроенный agent не используй: harness откроет каждого субагента отдельным чатом и вернёт тебе его результат так же. Вопросы человеку — через mcp__harness__ask (варианты в options), затем заверши ход.';
 const CONTEXT_LAUNCHERS = new Set(['gigacode', 'qwen', 'gemini', 'mock']);
 
 export const render = (tpl, vars) => String(tpl).replace(/\{(\w+)\}/g, (m, k) => (Object.hasOwn(vars, k) ? String(vars[k] ?? '') : m));
@@ -775,9 +775,11 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
         if (parent) {
           const choices = options ? `\nOptions: ${options.map((o) => `"${o}"`).join(', ')}` : '';
           sessions.deliver(parent.id, { from: c.id, options, text: fromSession(c, `Question: ${a.question}${choices}\n(Answer with send_message to "${c.id}".)`) });
+          sessions.update(c.id, { waitingFor: 'answer' }); // until a reply is delivered to it
           return { delivered: parent.id, note };
         }
         notify({ kind: 'question', sessionId: c?.id ?? null, taskId: c?.taskId ?? null, text: a.question, options });
+        if (c) sessions.update(c.id, { waitingFor: 'answer' });
         return { delivered: 'user', note };
       },
     },
