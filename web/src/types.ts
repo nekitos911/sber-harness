@@ -89,7 +89,7 @@ export interface Worktree {
 
 export type SessionKind = 'chat' | 'terminal'
 export type SessionStatus = 'idle' | 'running' | 'stopped' | 'done' | 'failed' | 'exited' | 'error'
-export type SessionRole = 'solo' | 'coordinator' | 'worker' | 'reviewer'
+export type SessionRole = 'solo' | 'coordinator' | 'worker' | 'reviewer' | 'subagent'
 
 export interface Session {
   id: string
@@ -105,7 +105,8 @@ export interface Session {
   taskId: string | null
   status: SessionStatus
   phase?: 'starting' | 'streaming' | 'auth' | null
-  archived?: boolean // its worktree was removed: hidden from the sidebar, transcript kept // newer servers: 'starting' = process up, no event yet (cold start)
+  archived?: boolean // its worktree was removed: hidden from the sidebar, transcript kept
+  virtual?: boolean // a built-in sub-agent of the parent's stream: read-only chat // newer servers: 'starting' = process up, no event yet (cold start)
   externalSessionId: string | null
   settingsPath: string | null
   model: string | null
@@ -130,6 +131,7 @@ export interface ToolCall {
   output: string | null
   status: 'running' | 'ok' | 'error'
   progress?: string[] // built-in sub-agent activity under this call (agent tool), last lines
+  subSessionId?: string | null // the virtual chat of that sub-agent
 }
 
 export interface Message {
@@ -181,6 +183,7 @@ export interface AgentMeta {
   auth?: 'ok' | 'required' | 'unknown'
   catalog?: { at: number | null; error?: string | null } | null
   modelRefs?: { file: string; model: string; available: boolean | null }[]
+  commands?: Record<string, 'installed' | 'missing' | 'different'>
   models?: ModelEntry[]
   seen: {
     models: string[]

@@ -19,7 +19,7 @@ export const SESSION_STATUS: Record<SessionStatus, string> = {
   error: 'ошибка запуска',
 }
 
-export const ROLE: Record<SessionRole, string> = { solo: 'solo', coordinator: 'координатор', worker: 'исполнитель', reviewer: 'ревью' }
+export const ROLE: Record<SessionRole, string> = { solo: 'solo', coordinator: 'координатор', worker: 'исполнитель', reviewer: 'ревью', subagent: 'субагент' }
 
 export const PRIORITY = { high: 'Высокий', medium: 'Средний', low: 'Низкий' } as const
 

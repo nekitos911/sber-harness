@@ -255,3 +255,6 @@
 .composer-mirror mark { color: transparent; background: var(--signal-soft); border-radius: 3px; box-shadow: 0 0 0 1px color-mix(in srgb, var(--signal) 30%, transparent); }
 .suggest { min-width: 320px; }
 .suggest .option-label strong { font-weight: 600; color: var(--ink); }
+.virtual-bar { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border: 1px dashed var(--rule-strong); border-radius: var(--r-3); color: var(--ink-3); font-size: 12.5px; }
+.virtual-bar .btn { margin-left: auto; }
+.tool-agent .disclosure-head .btn { flex-shrink: 0; }

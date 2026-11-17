@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { ArrowDown, Check, Copy, Ellipsis, ExternalLink, KeyRound, GitCompareArrows, LoaderCircle, MessageSquare, RotateCcw, ScrollText, Square, Trash2 } from 'lucide-react'
 import { api, errorText, tryApi } from '../api'
-import { openTab, openTask, setState, showPanel, upsert, useStore, without } from '../store'
+import { openSession, openTab, openTask, setState, showPanel, upsert, useStore, without } from '../store'
 import { loadMessages, loadSubagents } from '../ws'
 import { basename, normPath, ROLE } from '../lib/format'
 import { fileEdit } from '../lib/toolcall'
@@ -144,7 +144,12 @@ export function ChatView({ id, active }: { id: string; active: boolean }) {
               <button type="button" className="btn btn-sm" onClick={reset}>Сбросить статус</button>
             </div>
           )}
-          <Composer session={session} active={active} />
+          {session.virtual ? (
+            <div className="virtual-bar">
+              <span>Внутренний субагент GigaCode: писать можно в родительский чат.</span>
+              {session.parentId && <button type="button" className="btn btn-sm" onClick={() => openSession(session.parentId!)}>Открыть родительский чат</button>}
+            </div>
+          ) : <Composer session={session} active={active} />}
           <WhereLine session={session} />
         </div>
       </div>

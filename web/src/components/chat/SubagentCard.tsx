@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { Bot, Check, LoaderCircle, X } from 'lucide-react'
+import { Bot, Check, LoaderCircle, MessageSquare, X } from 'lucide-react'
+import { openSession } from '../../store'
 import type { ToolCall } from '../../types'
 import { Markdown } from '../Markdown'
 import { Disclosure } from '../ui'
@@ -40,6 +41,11 @@ export function SubagentCard({ tool }: { tool: ToolCall }) {
       open={open}
       onToggle={setOpen}
       chevron="end"
+      actions={tool.subSessionId ? (
+        <button type="button" className="btn btn-ghost btn-sm" onClick={() => openSession(tool.subSessionId!)}>
+          <MessageSquare />Открыть чат субагента
+        </button>
+      ) : undefined}
       summary={<>
         {running ? <LoaderCircle className="tool-st spinner" data-s="running" aria-label="работает" />
           : tool.status === 'error' ? <X className="tool-st" data-s="error" aria-label="ошибка" />

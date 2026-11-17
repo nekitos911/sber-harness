@@ -18,6 +18,8 @@ export function WorkersPanel({ sessionId, workers }: { sessionId: string; worker
   const sub = useStore((s) => s.subagents[sessionId])
   const all = useStore((s) => s.sessions)
   const reviewers = all.filter((s) => s.role === 'reviewer' && workers.some((w) => w.id === s.parentId))
+  const own = workers.filter((w) => !w.virtual)
+  const inner = workers.filter((w) => w.virtual)
   const [open, setOpen] = useState(true)
   const now = useNow()
   const internal = sub?.items ?? []
@@ -36,12 +38,18 @@ export function WorkersPanel({ sessionId, workers }: { sessionId: string; worker
       </button>
       <div className="collapse" data-open={open}>
         <div>
-          {workers.map((w) => (
+          {own.map((w) => (
             <div key={w.id} role="presentation">
               <WorkerRow w={w} now={now} />
               {reviewers.filter((r) => r.parentId === w.id).map((r) => <WorkerRow key={r.id} w={r} now={now} nested />)}
             </div>
           ))}
+          {inner.length > 0 && (
+            <>
+              <div className="workers-sub">Субагенты команды</div>
+              {inner.map((w) => <WorkerRow key={w.id} w={w} now={now} />)}
+            </>
+          )}
           {internal.length > 0 && (
             <>
               <div className="workers-sub">
@@ -66,7 +74,7 @@ function WorkerRow({ w, now, nested }: { w: Session; now: number; nested?: boole
     <div className="worker-row" data-nested={nested || undefined} data-enter={w.createdAt > Date.now() - 3000 || undefined}>
       <StatusIcon session={w} />
       <button type="button" className="worker-title ellipsis" onClick={() => openSession(w.id)} data-tip={`${w.title}: ${statusText(w)}`}>
-        {w.role === 'reviewer' && <span className="role-tag">ревью</span>}
+        {(w.role === 'reviewer' || w.role === 'subagent') && <span className="role-tag">{w.role === 'reviewer' ? 'ревью' : 'субагент'}</span>}
         {w.title}
         {doing && <span className="muted"> · {doing}</span>}
       </button>
@@ -74,7 +82,7 @@ function WorkerRow({ w, now, nested }: { w: Session; now: number; nested?: boole
         {w.tokensIn + w.tokensOut > 0 && <span data-tip="токены">{tokens(w.tokensIn + w.tokensOut)}</span>}
         <span>{relTime(w.lastActivityAt, now)}</span>
       </span>
-      {w.status === 'running' && (
+      {w.status === 'running' && !w.virtual && (
         <button type="button" className="link-btn" onClick={() => void tryApi('POST', `/sessions/${w.id}/stop`)}>Остановить</button>
       )}
     </div>

@@ -308,7 +308,7 @@ function SessionRow({ s, nested, level = 0, caret }: { s: Session; nested: boole
     >
       {s.phase === 'auth' ? <KeyRound className="st st-auth" aria-label="ждёт авторизацию" /> : s.kind === 'terminal' && s.status !== 'exited' ? <SquareTerminal className="st" aria-label="терминал" /> : <StatusIcon session={s} />}
       <span className="label">
-        {s.role === 'reviewer' && <span className="role-tag">ревью</span>}
+        {(s.role === 'reviewer' || s.role === 'subagent') && <span className="role-tag">{s.role === 'reviewer' ? 'ревью' : 'субагент'}</span>}
         {s.title || s.id}
         {doing && <span className="sess-doing">{nested ? ' · ' : ' - '}{doing}</span>}
       </span>

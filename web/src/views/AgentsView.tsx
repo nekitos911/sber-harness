@@ -29,7 +29,7 @@ function ordered(list: Session[]) {
 
 export function AgentsView() {
   const sessions = useStore((s) => s.sessions)
-  const chats = useMemo(() => sessions.filter((s) => s.kind === 'chat').sort((a, b) => b.lastActivityAt - a.lastActivityAt), [sessions])
+  const chats = useMemo(() => sessions.filter((s) => s.kind === 'chat' && !s.virtual && !s.archived).sort((a, b) => b.lastActivityAt - a.lastActivityAt), [sessions])
   const byId = useMemo(() => new Map(sessions.map((s) => [s.id, s])), [sessions])
 
   return (

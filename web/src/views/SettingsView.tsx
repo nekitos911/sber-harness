@@ -371,8 +371,9 @@ function CommandRow({ id, a, set, error }: { id: string; a: AgentSettings; set: 
       {presets.length > 0 && (
         <Select label="Команда для задачи" mono value={custom ? CUSTOM : value || CUSTOM}
           onChange={(v) => { if (v === CUSTOM) setCustom(true); else { setCustom(false); set({ taskPromptTemplate: v }) } }}
-          options={[...presets.map((p) => ({ value: p, label: p.split('\n')[0], text: p })), { value: CUSTOM, label: 'Свой шаблон…', text: 'Свой шаблон' }]} />
+          options={[...presets.map((p) => ({ value: p, label: p.split('\n')[0], text: p, hint: PRESET_HINT[p.split(/\s/)[0]] })), { value: CUSTOM, label: 'Свой шаблон…', text: 'Свой шаблон' }]} />
       )}
+      {cmd === 'full-task-harness' && <InstallCommand id={id} name="full-task-harness" />}
       {(custom || !presets.length) && (
         <>
           <Textarea ref={area} mono rows={3} aria-label="Шаблон команды" placeholder="/full-task {taskUrl}{notes}" value={value} onChange={(e) => set({ taskPromptTemplate: e.target.value || null })} />
@@ -654,5 +655,45 @@ function NotifySection() {
         </Row>
       </div>
     </section>
+  )
+}
+
+const PRESET_HINT: Record<string, string> = {
+  '/full-task': 'команда сама запускает субагентов внутри CLI',
+  '/full-task-ui': 'то же для задач с интерфейсом',
+  '/full-task-harness': 'субагенты отдельными интерактивными чатами (как в Orca)',
+}
+
+/** A command file shipped with the harness: installed into ~/.gigacode/commands only on an explicit click. */
+function InstallCommand({ id, name }: { id: string; name: string }) {
+  const meta = useAgentMeta(id)
+  const [confirm, setConfirm] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const state = meta?.commands?.[name]
+  if (!meta || !state) return null
+  const target = `~/.gigacode/commands/${name}.md`
+  const install = async () => {
+    setBusy(true)
+    const r = await tryApi('POST', `/agents/${encodeURIComponent(id)}/commands/install`, { name, force: state === 'different' || undefined })
+    setBusy(false)
+    setConfirm(false)
+    if (r !== undefined) { toast(`Команда /${name} установлена`, 'ok'); loadAgentMeta(id, true) }
+  }
+  return (
+    <div className="install-cmd">
+      {state === 'installed' ? <span className="ok-text"><CircleCheck className="ok" aria-hidden />/{name} установлена</span>
+        : state === 'different' ? <span className="field-warn"><TriangleAlert aria-hidden />Установлена другая версия /{name}</span>
+          : <span className="field-warn"><TriangleAlert aria-hidden />/{name} не установлена в GigaCode</span>}
+      {state !== 'installed' && !confirm && <Button size="sm" onClick={() => setConfirm(true)}>{state === 'different' ? 'Обновить' : 'Установить в ~/.gigacode/commands'}</Button>}
+      {confirm && (
+        <div className="install-confirm" role="alertdialog" aria-label="Подтверждение установки">
+          <span>Записать файл <span className="mono">{target}</span>?{state === 'different' && ' Текущий файл будет перезаписан.'}</span>
+          <Button size="sm" variant={state === 'different' ? 'danger' : 'primary'} className={state === 'different' ? 'btn-primary' : undefined} disabled={busy} onClick={() => void install()}>
+            {busy ? 'Записываем…' : state === 'different' ? 'Перезаписать' : 'Установить'}
+          </Button>
+          <Button size="sm" variant="ghost" onClick={() => setConfirm(false)}>Отмена</Button>
+        </div>
+      )}
+    </div>
   )
 }
