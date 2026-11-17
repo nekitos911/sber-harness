@@ -293,7 +293,9 @@ export async function startServer(opts = {}) {
         const result = await hit.r.handler({ req, body, params, query: Object.fromEntries(u.searchParams) });
         return sendJson(res, 200, result);
       }
-      if (vite) return vite.middlewares(req, res, () => serveIndex(res, u.pathname).catch((e) => sendJson(res, 500, { error: e.message })));
+      if (vite) {
+        return vite.middlewares(req, res, (err) => (err ? sendJson(res, 500, { error: err.message }) : serveIndex(res, u.pathname).catch((e) => sendJson(res, 500, { error: e.message }))));
+      }
       return serveStatic(req, res, u.pathname);
     } catch (e) {
       const status = Number.isInteger(e.status) ? e.status : 500;

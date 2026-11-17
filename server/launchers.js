@@ -190,8 +190,9 @@ const claude = {
     const model = session.model || agentCfg.model;
     if (model) args.push('--model', model);
     if (session.externalSessionId) args.push('--resume', session.externalSessionId);
-    // Variadic flags go last so they cannot swallow other arguments.
-    args.push('--mcp-config', mcpConfigPath, '--disallowedTools', 'Task', 'Agent');
+    // Variadic flags go last so they cannot swallow other arguments. Harness tools are pre-allowed:
+    // in -p mode a tool that needs permission is simply denied.
+    args.push('--mcp-config', mcpConfigPath, '--allowedTools', 'mcp__harness', '--disallowedTools', 'Task', 'Agent');
     return args;
   },
   env: () => ({}),

@@ -1,9 +1,11 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import WebSocket from 'ws';
+import { startServer } from '../server/index.js';
 import { startTestServer, makeRepo, tmpDir, rmrf, waitFor } from './helpers.js';
 
 let h;
@@ -180,5 +182,25 @@ test('terminal session runs a command in a PTY', async (t) => {
   } finally {
     ws.close();
     await h.api('DELETE', `/api/sessions/${s.id}`);
+  }
+});
+
+test('restart: an interrupted chat turn becomes idle with a system message', async () => {
+  const dataDir = tmpDir('harness-data-');
+  const old = {
+    id: 's_old', kind: 'chat', title: 'old', agent: 'mock', launcherId: 'mock', cwd: repo, workspaceId: null, branch: null, role: 'solo',
+    parentId: null, taskId: null, status: 'running', externalSessionId: 'x', settingsPath: null, model: null, approvalMode: null,
+    autoReport: false, queued: 2, preview: '', command: null, pid: 123, createdAt: 1, lastActivityAt: 1,
+  };
+  fs.writeFileSync(path.join(dataDir, 'db.json'), JSON.stringify({ seq: { task: 0 }, tasks: [], workspaces: [], notifications: [], sessions: [old] }));
+  const srv = await startServer({ dataDir, port: 0 });
+  try {
+    const get = (p) => fetch(srv.url + p, { headers: { 'x-harness-token': srv.token } }).then((r) => r.json());
+    const s = (await get('/api/state')).sessions[0];
+    assert.deepEqual([s.status, s.queued, s.pid], ['idle', 0, null]);
+    assert.match((await get('/api/sessions/s_old/messages'))[0].text, /harness restarted/);
+  } finally {
+    await srv.close();
+    rmrf(dataDir);
   }
 });
