@@ -39,7 +39,7 @@ export function WorkersPanel({ sessionId, workers }: { sessionId: string; worker
             <>
               <div className="workers-sub">
                 Внутренние агенты
-                {sub && sub.problems.length > 0 && <span title={sub.problems.join('\n')}> · пропущено записей: {sub.problems.length}</span>}
+                {sub && sub.problems.length > 0 && <span data-tip={sub.problems.join('\n')}> · пропущено записей: {sub.problems.length}</span>}
               </div>
               {internal.map((a) => <InternalRow key={a.id} a={a} now={now} />)}
             </>
@@ -58,12 +58,12 @@ function WorkerRow({ w, now }: { w: Session; now: number }) {
   return (
     <div className="worker-row" data-enter={w.createdAt > Date.now() - 3000 || undefined}>
       <StatusIcon session={w} />
-      <button type="button" className="worker-title ellipsis" onClick={() => openSession(w.id)} title={`${w.title}: ${statusText(w)}`}>
+      <button type="button" className="worker-title ellipsis" onClick={() => openSession(w.id)} data-tip={`${w.title}: ${statusText(w)}`}>
         {w.title}
         {doing && <span className="muted"> · {doing}</span>}
       </button>
       <span className="worker-meta mono num">
-        {w.tokensIn + w.tokensOut > 0 && <span title="токены">{tokens(w.tokensIn + w.tokensOut)}</span>}
+        {w.tokensIn + w.tokensOut > 0 && <span data-tip="токены">{tokens(w.tokensIn + w.tokensOut)}</span>}
         <span>{relTime(w.lastActivityAt, now)}</span>
       </span>
       {w.status === 'running' && (
@@ -77,7 +77,7 @@ function InternalRow({ a, now }: { a: SubAgent; now: number }) {
   const doing = a.activity?.tool ?? a.lastText?.split('\n').filter(Boolean).pop()
   const at = a.activity?.since ?? a.lastActivity
   return (
-    <div className="worker-row worker-internal" data-state={a.state} title={`${a.name}: ${subStateLabel(a.state)}${a.lastText ? `\n${a.lastText}` : ''}`}>
+    <div className="worker-row worker-internal" data-state={a.state} data-tip={`${a.name}: ${subStateLabel(a.state)}${a.lastText ? `\n${a.lastText}` : ''}`}>
       <SubStateIcon state={a.state} />
       <span className="worker-title ellipsis">
         {a.name}

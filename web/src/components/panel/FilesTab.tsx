@@ -66,7 +66,7 @@ export function FilesTab({ cwd, status }: { cwd: string; status: GitStatus | nul
       )
     }
     return (
-      <button type="button" key={e.path} className="file-row" style={style} data-git={st} title={e.path} onClick={() => openTab({ kind: 'file', cwd, path: e.path })}>
+      <button type="button" key={e.path} className="file-row" style={style} data-git={st} data-tip={e.path} onClick={() => openTab({ kind: 'file', cwd, path: e.path })}>
         <span className="chev" aria-hidden />
         <File aria-hidden />
         <span className="ellipsis grow">{e.name}</span>

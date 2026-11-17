@@ -1,4 +1,6 @@
 import { useEffect, useId, useRef, type ReactNode } from 'react'
+import { X } from 'lucide-react'
+import { Button, IconButton } from './controls'
 
 interface Props {
   title: string
@@ -28,7 +30,8 @@ export function Modal({ title, submitLabel, onSubmit, onClose, busy, disabled, w
       className="dialog"
       style={wide ? { width: 'min(640px, calc(100vw - 32px))' } : undefined}
       aria-labelledby={titleId}
-      onClose={onClose}
+      // StrictMode re-runs the mount effect (close + showModal); the stale close event must not dismiss the reopened dialog.
+      onClose={(e) => { if (!e.currentTarget.open) onClose() }}
       onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}
     >
       <form
@@ -37,11 +40,14 @@ export function Modal({ title, submitLabel, onSubmit, onClose, busy, disabled, w
           if (!busy && !disabled) onSubmit()
         }}
       >
-        <h2 id={titleId}>{title}</h2>
+        <div className="dialog-head">
+          <h2 id={titleId}>{title}</h2>
+          <IconButton label="Закрыть" icon={<X />} size="sm" onClick={onClose} />
+        </div>
         {children}
         <div className="dialog-actions">
-          <button type="button" className="btn" onClick={onClose}>Отмена</button>
-          <button type="submit" className="btn btn-primary" disabled={busy || disabled}>{busy ? 'Подождите…' : submitLabel}</button>
+          <Button size="lg" onClick={onClose}>Отмена</Button>
+          <Button size="lg" type="submit" variant="primary" disabled={busy || disabled}>{busy ? 'Подождите…' : submitLabel}</Button>
         </div>
       </form>
     </dialog>

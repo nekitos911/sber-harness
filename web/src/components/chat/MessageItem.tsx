@@ -1,5 +1,5 @@
 import { memo, useState, type MouseEvent } from 'react'
-import { Check, ChevronRight, Copy, GitCompare, LoaderCircle, TriangleAlert, X } from 'lucide-react'
+import { Check, Copy, GitCompare, LoaderCircle, TriangleAlert, X } from 'lucide-react'
 import { tryApi } from '../../api'
 import { openSession, openTab, useStore } from '../../store'
 import { basename, fullTime, normPath } from '../../lib/format'
@@ -8,6 +8,7 @@ import { parseDiff, type DiffFile, type DiffLine } from '../../lib/diff'
 import type { Message, ToolCall } from '../../types'
 import { Markdown } from '../Markdown'
 import { DiffLines } from '../DiffLines'
+import { Disclosure, IconButton } from '../ui'
 
 export const MessageItem = memo(function MessageItem({ m, fresh = false }: { m: Message; fresh?: boolean }) {
   const body = <MessageBody m={m} />
@@ -57,7 +58,7 @@ function UserMessage({ m }: { m: Message }) {
   const sender = useStore((s) => (m.from && m.from !== 'user' ? s.sessions.find((x) => x.id === m.from) : undefined))
   const fromOther = m.from && m.from !== 'user'
   return (
-    <div className="msg msg-user" title={fullTime(m.at)}>
+    <div className="msg msg-user" data-tip={fullTime(m.at)}>
       {fromOther && (
         <div className="msg-from">
           от{' '}
@@ -74,14 +75,9 @@ function UserMessage({ m }: { m: Message }) {
 function Thought({ text }: { text: string }) {
   const first = text.trim().split('\n')[0]
   return (
-    <details className="msg msg-thought">
-      <summary>
-        <ChevronRight className="chev" aria-hidden />
-        Размышления
-        <span className="ellipsis">{first}</span>
-      </summary>
+    <Disclosure className="msg msg-thought" summary={<>Размышления <span className="ellipsis">{first}</span></>}>
       <Markdown text={text} />
-    </details>
+    </Disclosure>
   )
 }
 
@@ -105,7 +101,7 @@ function SystemNote({ text }: { text: string }) {
         {items.map((x) => {
           const bad = /✗|×|fail/i.test(x)
           return (
-            <span key={x} className="mcp-item" data-bad={bad || undefined} title={bad ? 'не запустился' : 'работает'}>
+            <span key={x} className="mcp-item" data-bad={bad || undefined} data-tip={bad ? 'не запустился' : 'работает'}>
               {bad ? <X aria-hidden /> : <Check aria-hidden />}
               {x.replace(/\s*[✓✔✗×]\s*$/, '')}
             </span>
@@ -149,14 +145,16 @@ function GenericTool({ tool }: { tool: ToolCall }) {
   const [full, setFull] = useState(false)
   const out = tool.output ?? ''
   return (
-    <details className="msg tool" data-s={tool.status}>
-      <summary>
+    <Disclosure
+      className="msg tool"
+      chevron="end"
+      summary={<>
         <ToolStatus status={tool.status} />
         <span className="tool-name">{tool.name}</span>
         <span className="tool-sum ellipsis">{summarizeInput(tool.input)}</span>
-        <ChevronRight className="chev" aria-hidden />
-      </summary>
-      <div className="tool-body">
+      </>}
+    >
+      <div className="tool-body" data-s={tool.status}>
         <div className="tool-label">Вход</div>
         <pre>{typeof tool.input === 'string' ? tool.input : JSON.stringify(tool.input, null, 2)}</pre>
         {tool.output !== null && (
@@ -171,7 +169,7 @@ function GenericTool({ tool }: { tool: ToolCall }) {
           </>
         )}
       </div>
-    </details>
+    </Disclosure>
   )
 }
 
@@ -203,25 +201,23 @@ function EditBlock({ tool, sessionId, file, created, added, removed, lines }: Ed
     if (cwd && rel) openTab({ kind: 'diff', cwd, path: rel })
   }
   return (
-    <details className="msg tool tool-edit" data-s={tool.status} open={lines.length <= 16}>
-      <summary>
+    <Disclosure
+      className="msg tool tool-edit"
+      defaultOpen={lines.length <= 16}
+      chevron="end"
+      summary={<>
         <ToolStatus status={tool.status} />
         <span className="tool-verb">{created ? 'Создан' : 'Изменён'}</span>
-        <span className="tool-file ellipsis" title={file}>{basename(file)}</span>
+        <span className="tool-file ellipsis" data-tip={file}>{basename(file)}</span>
         <span className="diff-stat num"><span className="add">+{added}</span> <span className="del">−{removed}</span></span>
-        <span className="grow" />
-        {rel && (
-          <button type="button" className="icon-btn icon-btn-sm" onClick={openDiff} aria-label={`Открыть diff ${basename(file)}`} title="Открыть diff файла">
-            <GitCompare />
-          </button>
-        )}
-        <button type="button" className="icon-btn icon-btn-sm" onClick={copy} aria-label={copied ? 'Скопировано' : 'Копировать новый текст'} title={copied ? 'Скопировано' : 'Копировать новый текст'}>
-          {copied ? <Check /> : <Copy />}
-        </button>
-        <ChevronRight className="chev" aria-hidden />
-      </summary>
+      </>}
+      actions={<>
+        {rel && <IconButton size="sm" label={`Открыть diff ${basename(file)}`} icon={<GitCompare />} onClick={openDiff} />}
+        <IconButton size="sm" label={copied ? 'Скопировано' : 'Копировать новый текст'} icon={copied ? <Check /> : <Copy />} onClick={copy} />
+      </>}
+    >
       <DiffLines lines={lines} numbers={lines.some((l) => l.new !== null)} limit={400} label={`Изменения ${basename(file)}`} />
       {tool.status === 'error' && tool.output && <pre className="tool-err">{tool.output.slice(0, OUTPUT_LIMIT)}</pre>}
-    </details>
+    </Disclosure>
   )
 }

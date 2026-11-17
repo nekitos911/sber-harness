@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ChevronRight, FileText, RefreshCw } from 'lucide-react'
+import { FileText, RefreshCw } from 'lucide-react'
 import { api, errorText, qs } from '../api'
 import { openTab } from '../store'
 import { parseDiff, type DiffFile } from '../lib/diff'
 import { plural } from '../lib/format'
 import { Skeleton } from '../components/bits'
 import { DiffLines } from '../components/DiffLines'
+import { Disclosure } from '../components/ui'
 import { splitPath, useGit } from '../lib/git'
 
 const FILE_LINES = 1500 // render cap per file until the user asks for the rest
@@ -36,7 +37,7 @@ export function DiffView({ cwd, path }: { cwd: string; path: string | null }) {
   return (
     <div className="diff-view">
       <div className="file-bar">
-        <span className="mono ellipsis" title={cwd}>{path ?? 'Все изменения'}</span>
+        <span className="mono ellipsis" data-tip={cwd}>{path ?? 'Все изменения'}</span>
         {diff !== null && (
           <span className="diff-stat num">
             {!path && `${files.length} ${plural(files.length, 'файл', 'файла', 'файлов')} `}<span className="add">+{added}</span> <span className="del">−{removed}</span>
@@ -49,7 +50,7 @@ export function DiffView({ cwd, path }: { cwd: string; path: string | null }) {
             Открыть файл
           </button>
         )}
-        <button type="button" className="icon-btn" aria-label="Обновить diff" title="Обновить" onClick={() => setTick(tick + 1)}>
+        <button type="button" className="icon-btn" aria-label="Обновить diff" data-tip="Обновить" onClick={() => setTick(tick + 1)}>
           <RefreshCw />
         </button>
       </div>
@@ -71,19 +72,21 @@ export function DiffView({ cwd, path }: { cwd: string; path: string | null }) {
 function FileDiff({ f, open }: { f: DiffFile; open: boolean }) {
   const { dir, name } = splitPath(f.path)
   return (
-    <details className="diff-file" open={open}>
-      <summary className="diff-file-head">
-        <ChevronRight className="chev" aria-hidden />
-        <span className="ellipsis" title={f.oldPath && f.oldPath !== f.path ? `${f.oldPath} → ${f.path}` : f.path}>
+    <Disclosure
+      className="diff-file"
+      defaultOpen={open}
+      summary={<>
+        <span className="ellipsis" data-tip={f.oldPath && f.oldPath !== f.path ? `${f.oldPath} → ${f.path}` : f.path}>
           {f.status === 'renamed' && f.oldPath ? <span className="mono">{f.oldPath} → {f.path}</span> : <><strong>{name}</strong>{dir && <span className="muted"> {dir}</span>}</>}
         </span>
         {f.status !== 'modified' && <span className="chip">{STATUS[f.status]}</span>}
         <span className="grow" />
         <span className="diff-stat num"><span className="add">+{f.added}</span> <span className="del">−{f.removed}</span></span>
-      </summary>
+      </>}
+    >
       {f.status === 'binary'
-        ? <p className="muted diff-note">Двоичный файл — содержимое не показывается.</p>
+        ? <p className="muted diff-note">Двоичный файл, содержимое не показывается.</p>
         : <DiffLines lines={f.lines} limit={FILE_LINES} label={`Изменения ${f.path}`} />}
-    </details>
+    </Disclosure>
   )
 }

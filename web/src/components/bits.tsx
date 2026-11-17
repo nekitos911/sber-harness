@@ -27,7 +27,7 @@ export function StatusIcon({ session }: { session: StatusLike }) {
 export function Branch({ name }: { name: string | null | undefined }) {
   if (!name) return null
   return (
-    <span className="branch" title={name}>
+    <span className="branch" data-tip={name}>
       <GitBranch aria-hidden />
       <span>{name}</span>
     </span>

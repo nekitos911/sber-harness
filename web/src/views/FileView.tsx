@@ -137,7 +137,7 @@ export default function FileView({ cwd, path }: { cwd: string; path: string }) {
   return (
     <div className="file-view">
       <div className="file-bar">
-        <span className="mono ellipsis" title={`${cwd} / ${path}`}>{path}</span>
+        <span className="mono ellipsis" data-tip={`${cwd} / ${path}`}>{path}</span>
         {dirty && <span className="muted">· изменён</span>}
         <span className="grow" />
         <kbd>Ctrl</kbd>+<kbd>S</kbd>

@@ -10,6 +10,7 @@ import { Dialogs } from './components/Dialogs'
 import { Toasts } from './components/Toasts'
 import { Loading } from './components/bits'
 import { CommandPalette } from './components/CommandPalette'
+import { TooltipLayer } from './components/ui'
 import { BoardView } from './views/BoardView'
 import { AgentsView } from './views/AgentsView'
 import { InboxView } from './views/InboxView'
@@ -81,6 +82,7 @@ export function App() {
       {palette && <CommandPalette onClose={() => setPalette(false)} />}
       <Toasts />
       <AuthExpired />
+      <TooltipLayer />
     </div>
   )
 }

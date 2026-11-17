@@ -40,7 +40,7 @@ export function WorktreeHome({ cwd }: { cwd: string }) {
           <h1>{branch ?? basename(cwd)}</h1>
           <p className="muted">
             {ws ? `${ws.name} · ` : ''}{main ? 'основная рабочая копия' : 'рабочее дерево'}
-            <span className="mono wt-home-path" title={cwd}>{cwd}</span>
+            <span className="mono wt-home-path" data-tip={cwd}>{cwd}</span>
           </p>
         </div>
       </header>

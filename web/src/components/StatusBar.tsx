@@ -30,7 +30,7 @@ export function StatusBar() {
         <span
           className="end"
           style={broken.length ? { color: 'var(--lamp-fail)' } : undefined}
-          title={enabled.map((m) => `${m.name}: ${m.problem ?? (m.ok ? 'ok' : m.error ?? 'ошибка')}`).join('\n') || 'MCP-серверы не настроены'}
+          data-tip={enabled.map((m) => `${m.name}: ${m.problem ?? (m.ok ? 'ok' : m.error ?? 'ошибка')}`).join('\n') || 'MCP-серверы не настроены'}
         >
           MCP: {enabled.length} {plural(enabled.length, 'сервер', 'сервера', 'серверов')}
           {broken.length > 0 && `, с ошибкой: ${broken.length}`}

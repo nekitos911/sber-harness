@@ -5,7 +5,7 @@ import { basename } from '../lib/format'
 import { useGit } from '../lib/git'
 import type { GitStatus, Session } from '../types'
 import { StatusIcon } from './bits'
-import { MenuButton } from './Menu'
+import { MenuButton } from './ui/Menu'
 import { newChat, newTerminal, workspaceFor } from '../lib/actions'
 
 export function BrandMark() {
@@ -27,24 +27,24 @@ export function TopBar({ onCommand }: { onCommand: () => void }) {
     <header className="topbar">
       <div className="topbar-left">
         <BrandMark />
-        <button type="button" className="icon-btn" aria-pressed={sidebar} aria-label="Боковая панель" title="Боковая панель" onClick={() => setState({ sidebar: !sidebar })}>
+        <button type="button" className="icon-btn" aria-pressed={sidebar} aria-label="Боковая панель" data-tip="Боковая панель" onClick={() => setState({ sidebar: !sidebar })}>
           <PanelLeft />
         </button>
-        <button type="button" className="icon-btn" disabled={!canBack} aria-label="Назад" title="Назад" onClick={() => navigate('back')}>
+        <button type="button" className="icon-btn" disabled={!canBack} aria-label="Назад" data-tip="Назад" onClick={() => navigate('back')}>
           <ArrowLeft />
         </button>
-        <button type="button" className="icon-btn" disabled={!canForward} aria-label="Вперёд" title="Вперёд" onClick={() => navigate('forward')}>
+        <button type="button" className="icon-btn" disabled={!canForward} aria-label="Вперёд" data-tip="Вперёд" onClick={() => navigate('forward')}>
           <ArrowRight />
         </button>
       </div>
       {cwd ? <TabBar key={wtKey(cwd)} cwd={cwd} /> : <div className="grow" />}
       <div className="topbar-right">
-        <button type="button" className="btn btn-ghost" onClick={onCommand} title="Команды (Ctrl+K)">
+        <button type="button" className="btn btn-ghost" onClick={onCommand} data-tip="Команды (Ctrl+K)">
           <Command />
           Команда
         </button>
         {cwd && (
-          <button type="button" className="icon-btn" aria-pressed={panel} aria-label="Панель файлов и изменений" title="Панель файлов и изменений" onClick={() => setState({ panel: !panel })}>
+          <button type="button" className="icon-btn" aria-pressed={panel} aria-label="Панель файлов и изменений" data-tip="Панель файлов и изменений" onClick={() => setState({ panel: !panel })}>
             <PanelRight />
           </button>
         )}
@@ -95,7 +95,7 @@ function TabBar({ cwd }: { cwd: string }) {
               data-enter={!seen.current!.has(`${k}|${key}`) || undefined}
               data-leaving={closing === key || undefined}
               data-file={file || undefined}
-              title={hint}
+              data-tip={hint}
               onClick={() => activateTab(cwd, key)}
               onAuxClick={(e) => { if (e.button === 1) close(key, true) }}
               onKeyDown={(e) => {

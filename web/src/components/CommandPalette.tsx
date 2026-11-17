@@ -60,7 +60,7 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
       ref={ref}
       className="dialog palette"
       aria-label="Команды"
-      onClose={onClose}
+      onClose={(e) => { if (!e.currentTarget.open) onClose() }}
       onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}
     >
       <input

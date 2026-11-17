@@ -5,7 +5,9 @@ import { adoptSession } from '../lib/actions'
 import { loadWorktrees } from '../ws'
 import { basename, isAbsolutePath } from '../lib/format'
 import type { GitSuggest, Session, Workspace, Worktree } from '../types'
-import { Modal } from './Modal'
+import { Modal } from './ui/Dialog'
+import { Segmented, Select, SuggestInput } from './ui'
+import { modeShort } from '../lib/agents'
 import { Markdown } from './Markdown'
 
 export function Dialogs() {
@@ -98,21 +100,23 @@ function WhereFields({ value, onChange }: { value: Where; onChange: (w: Where) =
     <div className="dialog-grid">
       <label className="field">
         <span>Проект</span>
-        <select
-          className="select"
+        <Select
+          label="Проект"
+          size="lg"
           value={value.workspaceId}
-          onChange={(e) => onChange({ workspaceId: e.target.value, cwd: workspaces.find((w) => w.id === e.target.value)?.path ?? '' })}
-        >
-          {workspaces.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
-        </select>
+          onChange={(id) => onChange({ workspaceId: id, cwd: workspaces.find((w) => w.id === id)?.path ?? '' })}
+          options={workspaces.map((w) => ({ value: w.id, label: w.name, hint: w.path }))}
+        />
       </label>
       <label className="field">
         <span>Рабочая копия</span>
-        <select className="select" value={value.cwd} title={value.cwd} onChange={(e) => onChange({ ...value, cwd: e.target.value })}>
-          {options.map((o) => (
-            <option key={o.path} value={o.path}>{(o.branch ?? basename(o.path)) + (o.main ? ' — основная' : '')}</option>
-          ))}
-        </select>
+        <Select
+          label="Рабочая копия"
+          size="lg"
+          value={value.cwd}
+          onChange={(cwd) => onChange({ ...value, cwd })}
+          options={options.map((o) => ({ value: o.path, label: o.branch ?? basename(o.path), hint: o.main ? 'основная копия' : o.path }))}
+        />
       </label>
     </div>
   )
@@ -155,25 +159,35 @@ function ChatDialog(init: Partial<Where>) {
       <div className="dialog-grid">
         <label className="field">
           <span>Агент</span>
-          <select className="select" value={agentId} onChange={(e) => { setAgentId(e.target.value); setMode(enabled.find((a) => a.id === e.target.value)?.approvalMode ?? '') }}>
-            {enabled.map((a) => <option key={a.id} value={a.id}>{a.label}</option>)}
-          </select>
+          <Select
+            label="Агент"
+            size="lg"
+            value={agentId}
+            onChange={(id) => { setAgentId(id); setMode(enabled.find((a) => a.id === id)?.approvalMode ?? '') }}
+            options={enabled.map((a) => ({ value: a.id, label: a.label, hint: a.id === defaultAgent ? 'по умолчанию' : undefined }))}
+          />
           {!enabled.length && <span className="field-error">Нет включённых агентов в конфигурации</span>}
         </label>
         <label className="field">
           <span>Режим подтверждений</span>
-          <select className="select" value={mode} onChange={(e) => setMode(e.target.value)}>
-            {(agent?.approvalModes ?? []).map((m) => <option key={m} value={m}>{m}</option>)}
-          </select>
+          <Select
+            label="Режим подтверждений"
+            size="lg"
+            value={mode}
+            onChange={setMode}
+            options={(agent?.approvalModes ?? []).map((m) => ({ value: m, label: modeShort(m), hint: agent?.approvalModeLabels?.[m] ?? m }))}
+          />
         </label>
       </div>
       <div className="dialog-grid">
         <div className="field">
           <span id="role-label">Роль</span>
-          <div className="seg" role="group" aria-labelledby="role-label">
-            <button type="button" aria-pressed={role === 'solo'} onClick={() => setRole('solo')}>Один агент</button>
-            <button type="button" aria-pressed={role === 'coordinator'} onClick={() => setRole('coordinator')}>Координатор</button>
-          </div>
+          <Segmented
+            label="Роль"
+            value={role}
+            onChange={setRole}
+            options={[{ value: 'solo', label: 'Один агент' }, { value: 'coordinator', label: 'Координатор', hint: 'Разбивает работу и запускает исполнителей' }]}
+          />
         </div>
         <label className="field">
           <span>Название</span>
@@ -222,10 +236,16 @@ function TerminalDialog(init: Partial<Where>) {
       <WhereFields value={where} onChange={setWhere} />
       <label className="field">
         <span>Программа</span>
-        <select className="select" value={program} onChange={(e) => setProgram(e.target.value)}>
-          <option value="shell">Оболочка{shell ? ` (${shell})` : ''}</option>
-          {agents.filter((a) => a.enabled).map((a) => <option key={a.id} value={a.id}>{a.label} — интерактивный режим</option>)}
-        </select>
+        <Select
+          label="Программа"
+          size="lg"
+          value={program}
+          onChange={setProgram}
+          options={[
+            { value: 'shell', label: 'Оболочка', hint: shell || undefined },
+            ...agents.filter((a) => a.enabled).map((a) => ({ value: a.id, label: a.label, hint: 'интерактивный режим CLI' })),
+          ]}
+        />
       </label>
       <label className="field">
         <span>Команда при запуске</span>
@@ -266,9 +286,7 @@ function WorktreeDialog({ workspaceId }: { workspaceId?: string }) {
     >
       <label className="field">
         <span>Репозиторий</span>
-        <select className="select" value={repo} onChange={(e) => setRepo(e.target.value)}>
-          {git.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
-        </select>
+        <Select label="Репозиторий" size="lg" value={repo} onChange={setRepo} options={git.map((w) => ({ value: w.id, label: w.name, hint: w.path }))} />
         {!git.length && <span className="field-error">Нет git-репозиториев. Сначала добавьте проект.</span>}
       </label>
       <label className="field">
@@ -313,9 +331,7 @@ function StartDialog({ taskId }: { taskId: string }) {
       <p className="muted" style={{ marginTop: -6 }}>{task.title}</p>
       <label className="field">
         <span>Агент</span>
-        <select className="select" value={agent} onChange={(e) => setAgent(e.target.value)}>
-          {enabled.map((a) => <option key={a.id} value={a.id}>{a.label}{a.id === defaultAgent ? ' — по умолчанию' : ''}</option>)}
-        </select>
+        <Select label="Агент" size="lg" value={agent} onChange={setAgent} options={enabled.map((a) => ({ value: a.id, label: a.label, hint: a.id === defaultAgent ? 'по умолчанию' : undefined }))} />
       </label>
       <label className="field">
         <span>Заметки</span>
@@ -386,10 +402,7 @@ function PrDialog({ cwd }: { cwd: string }) {
       <div className="field">
         <span className="row" style={{ justifyContent: 'space-between' }}>
           <span id="pr-body-label">Описание <ByteCount value={body} limit={PR_BODY_BYTES} /></span>
-          <span className="seg" role="group" aria-label="Режим описания">
-            <button type="button" aria-pressed={!preview} onClick={() => setPreview(false)}>Текст</button>
-            <button type="button" aria-pressed={preview} onClick={() => setPreview(true)}>Просмотр</button>
-          </span>
+          <Segmented size="sm" label="Режим описания" value={preview ? 'view' : 'edit'} onChange={(v) => setPreview(v === 'view')} options={[{ value: 'edit', label: 'Текст' }, { value: 'view', label: 'Просмотр' }]} />
         </span>
         {preview
           ? <div className="md-preview">{body.trim() ? <Markdown text={body} /> : <p className="muted">Пусто</p>}</div>
@@ -397,10 +410,7 @@ function PrDialog({ cwd }: { cwd: string }) {
       </div>
       <label className="field">
         <span>В ветку</span>
-        <input className="input mono" list="pr-targets" value={base} onChange={(e) => setBase(e.target.value)} />
-        <datalist id="pr-targets">
-          {[...new Set([suggest?.pr.base, ...targets].filter(Boolean))].map((t) => <option key={t} value={t} />)}
-        </datalist>
+        <SuggestInput mono label="Целевая ветка PR" value={base} onChange={setBase} suggestions={[...new Set([suggest?.pr.base, ...targets].filter((t): t is string => !!t))]} />
       </label>
     </Modal>
   )

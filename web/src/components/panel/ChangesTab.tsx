@@ -93,7 +93,7 @@ export function ChangesTab({ cwd }: { cwd: string }) {
           {files.length === 0 ? 'Нет изменений' : <>Изменено файлов: <span className="num">{files.length}</span></>}
           {totals && files.length > 0 && <span className="diff-stat num"><span className="add">+{totals.add}</span> <span className="del">−{totals.del}</span></span>}
           {(status.ahead > 0 || status.behind > 0) && (
-            <span className="muted num ahead" title={status.upstream ?? ''}>
+            <span className="muted num ahead" data-tip={status.upstream ?? ''}>
               {status.ahead > 0 && <><ArrowUp size={11} aria-label="впереди" />{status.ahead} </>}
               {status.behind > 0 && <><ArrowDown size={11} aria-label="позади" />{status.behind}</>}
             </span>
@@ -119,10 +119,10 @@ export function ChangesTab({ cwd }: { cwd: string }) {
         <h3>
           Коммит
           {taskKey && suggest?.taskId && (
-            <button type="button" className="chip chip-mono" title="Открыть задачу" onClick={() => openTask(suggest.taskId!)}>{taskKey}</button>
+            <button type="button" className="chip chip-mono" data-tip="Открыть задачу" onClick={() => openTask(suggest.taskId!)}>{taskKey}</button>
           )}
           {suggest && (title !== suggest.commit.title || body !== suggest.commit.body) && (
-            <button type="button" className="btn btn-ghost btn-sm" style={{ marginLeft: 'auto' }} onClick={reapply} title="Подставить предложенные заголовок и описание">
+            <button type="button" className="btn btn-ghost btn-sm" style={{ marginLeft: 'auto' }} onClick={reapply} data-tip="Подставить предложенные заголовок и описание">
               <RotateCcw />
               Предложенный текст
             </button>
@@ -135,7 +135,7 @@ export function ChangesTab({ cwd }: { cwd: string }) {
             <button type="button" className="btn btn-primary" disabled={!title.trim() || !files.length || !!busy} onClick={commit}>
               {busy === 'commit' ? 'Коммит…' : `Закоммитить ${files.length ? files.length : ''}`.trim()}
             </button>
-            <button type="button" className="btn" disabled={!!busy} onClick={push} title={status.upstream ? `в ${status.upstream}` : 'Опубликовать ветку'}>
+            <button type="button" className="btn" disabled={!!busy} onClick={push} data-tip={status.upstream ? `в ${status.upstream}` : 'Опубликовать ветку'}>
               <Upload />
               {busy === 'push' ? 'Push…' : 'Push'}
             </button>
@@ -154,7 +154,7 @@ export function ChangesTab({ cwd }: { cwd: string }) {
         {log === null ? <Skeleton rows={3} /> : log.length === 0 ? <p className="muted">Коммитов пока нет.</p> : (
           <div>
             {log.map((c) => (
-              <div key={c.hash} className="commit-row" title={c.subject}>
+              <div key={c.hash} className="commit-row" data-tip={c.subject}>
                 <span className="mono">{shortHash(c.hash)}</span>
                 <span className="subject">{c.subject}</span>
                 <span className="by">{c.author} · {relTime(c.at, now)}</span>
@@ -176,7 +176,7 @@ function ChangeRow({ cwd, f, diff, loaded, open, onToggle }: { cwd: string; f: G
         <button type="button" className="change-chev" aria-expanded={open} aria-label={open ? `Свернуть diff ${name}` : `Показать diff ${name} здесь`} onClick={onToggle}>
           <ChevronRight aria-hidden />
         </button>
-        <button type="button" className="change-open" title={`${f.path}: ${STATUS_LABEL[f.status]}. Открыть diff во вкладке`} onClick={() => openTab({ kind: 'diff', cwd, path: f.path })}>
+        <button type="button" className="change-open" data-tip={`${f.path}: ${STATUS_LABEL[f.status]}. Открыть diff во вкладке`} onClick={() => openTab({ kind: 'diff', cwd, path: f.path })}>
           <span className="gs" data-s={f.status} aria-label={STATUS_LABEL[f.status]}>{gsLetter(f.status)}</span>
           <span className="change-name">{name}</span>
           {dir && <span className="change-dir">{dir}</span>}

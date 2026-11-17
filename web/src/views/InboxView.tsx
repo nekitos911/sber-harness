@@ -86,7 +86,7 @@ function Item({ n }: { n: Notification }) {
           {session && <button type="button" className="chip" onClick={open}>{session.title}</button>}
           {task && <button type="button" className="chip chip-mono" onClick={() => { void read(); openTask(task.id) }}>{task.externalId ?? task.id}</button>}
           <span className="grow" />
-          <time className="muted num" title={fullTime(n.at)}>{relTime(n.at, now)}</time>
+          <time className="muted num" data-tip={fullTime(n.at)}>{relTime(n.at, now)}</time>
         </div>
         <button type="button" className="inbox-text" onClick={open} disabled={!session && !task}>{n.text}</button>
         {n.options?.length && n.sessionId ? <ReplyOptions options={n.options} to={n.sessionId} onSent={() => void read()} /> : null}

@@ -9,6 +9,7 @@ import type { Session, Task, TaskPort, TaskStatus } from '../../types'
 import { Branch, Skeleton, StatusIcon, statusText } from '../bits'
 import { Markdown } from '../Markdown'
 import { ChipsInput } from '../ChipsInput'
+import { Checkbox, Segmented, Select, SuggestInput } from '../ui'
 import type { BoardCtx } from './TaskCard'
 
 async function patchTask(id: string, fields: Partial<Task> & { comment?: string }) {
@@ -58,17 +59,17 @@ export function TaskDrawer({ task, ctx, onClose }: { task: Task; ctx: BoardCtx; 
   return (
     <aside ref={ref} className="drawer" role="dialog" aria-modal="false" aria-labelledby={titleId} tabIndex={-1}>
       <header className="drawer-head">
-        <span className="mono card-id" title={task.id}>{task.parentId ? `${key} · ${task.id}` : key}</span>
+        <span className="mono card-id" data-tip={task.id}>{task.parentId ? `${key} · ${task.id}` : key}</span>
         {task.externalUrl && (
-          <a className="icon-btn icon-btn-sm" href={task.externalUrl} target="_blank" rel="noreferrer noopener" aria-label="Открыть в трекере" title="Открыть в трекере">
+          <a className="icon-btn icon-btn-sm" href={task.externalUrl} target="_blank" rel="noreferrer noopener" aria-label="Открыть в трекере" data-tip="Открыть в трекере">
             <ExternalLink />
           </a>
         )}
         <span className="grow" />
-        <span className="muted" title={`обновлено ${fullTime(task.updatedAt)}`}>
+        <span className="muted" data-tip={`обновлено ${fullTime(task.updatedAt)}`}>
           {task.takenAt ? `в работе с ${relTime(task.takenAt)}` : `обновлено ${relTime(task.updatedAt)}`}
         </span>
-        <button type="button" className="icon-btn" aria-label="Закрыть" title="Закрыть (Esc)" onClick={onClose}><X /></button>
+        <button type="button" className="icon-btn" aria-label="Закрыть" data-tip="Закрыть (Esc)" onClick={onClose}><X /></button>
       </header>
 
       <div className="drawer-body">
@@ -85,14 +86,14 @@ export function TaskDrawer({ task, ctx, onClose }: { task: Task; ctx: BoardCtx; 
           </div>
         )}
         {task.snapshot && (task.snapshot.title !== task.title || task.snapshot.description !== task.description) && (
-          <div className="drawer-note" title={task.snapshot.title}>
+          <div className="drawer-note" data-tip={task.snapshot.title}>
             После взятия в работу задача изменилась в трекере (снимок от {fullTime(task.snapshot.at)}).
           </div>
         )}
 
         <div className="drawer-actions">
           {(task.status === 'backlog' || task.status === 'todo' || !session) && (
-            <button type="button" className="btn btn-primary" disabled={blocked.length > 0} title={blocked.length ? `Ждёт: ${blocked.join(', ')}` : undefined} onClick={() => openDialog({ kind: 'start', taskId: task.id })}>
+            <button type="button" className="btn btn-primary" disabled={blocked.length > 0} data-tip={blocked.length ? `Ждёт: ${blocked.join(', ')}` : undefined} onClick={() => openDialog({ kind: 'start', taskId: task.id })}>
               <Play />
               Взять в работу
             </button>
@@ -122,21 +123,15 @@ export function TaskDrawer({ task, ctx, onClose }: { task: Task; ctx: BoardCtx; 
 
         <div className="props">
           <Prop label="Статус">
-            <select className="select" value={task.status} onChange={(e) => void patch({ status: e.target.value as TaskStatus })}>
-              {COLUMNS.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
-            </select>
+            <Select label="Статус" value={task.status} onChange={(v) => void patch({ status: v as TaskStatus })} options={COLUMNS.map((c) => ({ value: c.id, label: c.label }))} />
           </Prop>
           <Prop label="Приоритет">
-            <select className="select" value={task.priority ?? ''} onChange={(e) => void patch({ priority: (e.target.value || null) as Task['priority'] })}>
-              <option value="">Без приоритета</option>
-              {(['high', 'medium', 'low'] as const).map((p) => <option key={p} value={p}>{PRIORITY[p]}</option>)}
-            </select>
+            <Select label="Приоритет" value={task.priority ?? ''} onChange={(v) => void patch({ priority: (v || null) as Task['priority'] })}
+              options={[{ value: '', label: 'Без приоритета' }, ...(['high', 'medium', 'low'] as const).map((p) => ({ value: p, label: PRIORITY[p] }))]} />
           </Prop>
           <Prop label="Репозиторий">
-            <select className="select" value={task.workspaceId ?? ''} onChange={(e) => void patch({ workspaceId: e.target.value || null })}>
-              <option value="">Не выбран</option>
-              {workspaces.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
-            </select>
+            <Select label="Репозиторий" value={task.workspaceId ?? ''} onChange={(v) => void patch({ workspaceId: v || null })}
+              options={[{ value: '', label: 'Не выбран' }, ...workspaces.map((w) => ({ value: w.id, label: w.name }))]} />
           </Prop>
           <Prop label="Целевые ветки">
             <TargetsField task={task} onChange={(targets) => void patch({ targets })} />
@@ -212,7 +207,7 @@ function BranchField({ task }: { task: Task }) {
       className="input mono"
       placeholder="создаётся при запуске"
       aria-label="Рабочая ветка задачи"
-      title={task.branch ?? undefined}
+      data-tip={task.branch ?? undefined}
       value={v}
       onChange={(e) => setV(e.target.value)}
       onBlur={() => { if (v.trim() !== (task.branch ?? '')) void patchTask(task.id, { branch: v.trim() || null }) }}
@@ -228,10 +223,7 @@ function DescriptionField({ task }: { task: Task }) {
     <section className="drawer-section">
       <h3>
         Описание
-        <span className="seg" role="group" aria-label="Режим описания">
-          <button type="button" aria-pressed={edit} onClick={() => setEdit(true)}>Текст</button>
-          <button type="button" aria-pressed={!edit} onClick={() => setEdit(false)}>Просмотр</button>
-        </span>
+        <Segmented size="sm" label="Режим описания" value={edit ? 'edit' : 'view'} onChange={(v) => setEdit(v === 'edit')} options={[{ value: 'edit', label: 'Текст' }, { value: 'view', label: 'Просмотр' }]} />
       </h3>
       {edit ? (
         <textarea
@@ -255,8 +247,6 @@ function DescriptionField({ task }: { task: Task }) {
 function TargetsField({ task, onChange }: { task: Task; onChange: (t: string[]) => void }) {
   const allTasks = useStore((s) => s.tasks)
   const [v, setV] = useState('')
-  const input = useRef<HTMLInputElement>(null)
-  const listId = useId()
   // Team branches: develop, release/1.54.0; typing "rel" offers the release/ prefix.
   const known = useMemo(() => [...new Set(['develop', 'main', 'release/', ...allTasks.flatMap((t) => t.targets)])], [allTasks])
   const targets = task.targets
@@ -270,11 +260,11 @@ function TargetsField({ task, onChange }: { task: Task; onChange: (t: string[]) 
     <div className="targets">
       <div className="chips">
         {targets.map((t, i) => (
-          <span key={t} className={i === 0 ? 'chip chip-mono chip-primary' : 'chip chip-mono'} title={i === 0 ? 'Основная: здесь делается работа' : 'Портируется cherry-pick'}>
+          <span key={t} className={i === 0 ? 'chip chip-mono chip-primary' : 'chip chip-mono'} data-tip={i === 0 ? 'Основная: здесь делается работа' : 'Портируется cherry-pick'}>
             {i > 0 && <GitMerge aria-hidden />}
             {t}
             {i > 0 && (
-              <button type="button" className="chip-x" aria-label={`Сделать ${t} основной`} title="Сделать основной" onClick={() => onChange([t, ...targets.filter((x) => x !== t)])}>
+              <button type="button" className="chip-x" aria-label={`Сделать ${t} основной`} data-tip="Сделать основной" onClick={() => onChange([t, ...targets.filter((x) => x !== t)])}>
                 <ArrowUpToLine />
               </button>
             )}
@@ -285,19 +275,17 @@ function TargetsField({ task, onChange }: { task: Task; onChange: (t: string[]) 
         ))}
       </div>
       <div className="row">
-        <input
-          ref={input}
-          className="input mono"
-          list={listId}
+        <SuggestInput
+          mono
+          label="Добавить целевую ветку"
           placeholder="develop или release/1.54.0, Enter — добавить"
-          aria-label="Добавить целевую ветку"
           value={v}
-          onChange={(e) => setV(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); add() } }}
+          onChange={setV}
+          onEnter={() => add()}
+          suggestions={known.filter((k) => !targets.includes(k))}
         />
-        <datalist id={listId}>{known.filter((k) => !targets.includes(k)).map((k) => <option key={k} value={k} />)}</datalist>
-        <button type="button" className="btn btn-sm" onClick={() => { setV('release-'); input.current?.focus() }} title="Добавить релизную ветку">
-          release-x.y.z
+        <button type="button" className="btn btn-sm" onClick={() => setV('release/')} data-tip="Добавить релизную ветку">
+          release/…
         </button>
       </div>
       <p className="field-hint">Первая — где делается работа, остальные — куда портируется cherry-pick'ом.</p>
@@ -328,7 +316,7 @@ function DepsField({ task, ctx, onChange }: { task: Task; ctx: BoardCtx; onChang
           const dep = ctx.byId.get(d)
           const waiting = dep && dep.status !== 'done'
           return (
-            <span key={d} className={waiting ? 'chip chip-fail' : 'chip chip-done'} title={dep ? `${dep.title} — ${COLUMNS.find((c) => c.id === dep.status)?.label}` : 'задача удалена'}>
+            <span key={d} className={waiting ? 'chip chip-fail' : 'chip chip-done'} data-tip={dep ? `${dep.title} — ${COLUMNS.find((c) => c.id === dep.status)?.label}` : 'задача удалена'}>
               {waiting && <Lock aria-hidden />}
               <button type="button" className="chip-link mono" onClick={() => dep && ctx.onOpen(d)}>{d}</button>
               <button type="button" className="chip-x" aria-label={`Убрать зависимость ${d}`} onClick={() => toggle(d)}><X /></button>
@@ -348,11 +336,11 @@ function DepsField({ task, ctx, onChange }: { task: Task; ctx: BoardCtx; onChang
           <input className="input" autoFocus placeholder="Поиск задачи" aria-label="Поиск задачи" value={q} onChange={(e) => setQ(e.target.value)} />
           <div className="deps-list">
             {options.map((t) => (
-              <label key={t.id} className="deps-option">
-                <input type="checkbox" checked={task.deps.includes(t.id)} onChange={() => toggle(t.id)} />
-                <span className="mono muted">{t.id}</span>
-                <span className="ellipsis">{t.title}</span>
-              </label>
+              <div key={t.id} className="deps-option">
+                <Checkbox checked={task.deps.includes(t.id)} onChange={() => toggle(t.id)}>
+                  <span className="mono muted">{t.id}</span> {t.title}
+                </Checkbox>
+              </div>
             ))}
             {options.length === 0 && <p className="muted" style={{ padding: 8 }}>Нет задач</p>}
           </div>
@@ -375,7 +363,6 @@ function TrackerStatus({ task }: { task: Task }) {
   const [status, setStatus] = useState('')
   const [comment, setComment] = useState('')
   const [busy, setBusy] = useState(false)
-  const listId = useId()
 
   useEffect(() => {
     let live = true
@@ -408,14 +395,12 @@ function TrackerStatus({ task }: { task: Task }) {
         {list === 'loading' ? (
           <Skeleton rows={1} label="Загрузка переходов…" />
         ) : transitions ? (
-          <select className="select" aria-label="Переход в трекере" value={status} onChange={(e) => setStatus(e.target.value)} disabled={!transitions.length}>
-            <option value="">{transitions.length ? 'Выберите переход…' : 'Нет доступных переходов'}</option>
-            {transitions.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
-          </select>
+          <Select label="Переход в трекере" value={status} onChange={setStatus} disabled={!transitions.length}
+            placeholder={transitions.length ? 'Выберите переход…' : 'Нет доступных переходов'}
+            options={transitions.map((t) => ({ value: t.id, label: t.label }))} />
         ) : (
           <>
-            <input className="input" list={listId} placeholder="Новый статус" aria-label="Новый статус в трекере" value={status} onChange={(e) => setStatus(e.target.value)} />
-            <datalist id={listId}>{known.map((k) => <option key={k} value={k} />)}</datalist>
+            <SuggestInput label="Новый статус в трекере" placeholder="Новый статус" value={status} onChange={setStatus} suggestions={known} />
           </>
         )}
         <button type="button" className="btn" disabled={!status.trim() || busy} onClick={() => void submit()}>{busy ? 'Меняем…' : 'Изменить в трекере'}</button>
@@ -487,11 +472,11 @@ function Ports({ task }: { task: Task }) {
           return (
             <div key={target} className="port-row">
               <GitMerge aria-hidden />
-              <span className="mono ellipsis" title={target}>{target}</span>
+              <span className="mono ellipsis" data-tip={target}>{target}</span>
               {p ? <span className={PORT_STATUS[p.status].cls}>{PORT_STATUS[p.status].label}</span> : <span className="chip">не перенесено</span>}
               <span className="grow" />
               {p?.sessionId && (
-                <button type="button" className="icon-btn icon-btn-sm" aria-label="Открыть сессию портирования" title="Открыть сессию" onClick={() => openSession(p.sessionId!)}>
+                <button type="button" className="icon-btn icon-btn-sm" aria-label="Открыть сессию портирования" data-tip="Открыть сессию" onClick={() => openSession(p.sessionId!)}>
                   <SquareArrowOutUpRight />
                 </button>
               )}
@@ -556,10 +541,7 @@ function Subtasks({ task, ctx }: { task: Task; ctx: BoardCtx }) {
       {adding && (
         <form className="subtask-form" onSubmit={(e) => { e.preventDefault(); void add() }}>
           <input className="input" autoFocus placeholder="Название подзадачи" aria-label="Название подзадачи" value={title} onChange={(e) => setTitle(e.target.value)} />
-          <select className="select" aria-label="Репозиторий подзадачи" value={repo} onChange={(e) => setRepo(e.target.value)}>
-            <option value="">Репозиторий…</option>
-            {workspaces.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
-          </select>
+          <Select label="Репозиторий подзадачи" value={repo} onChange={setRepo} placeholder="Репозиторий…" options={workspaces.map((w) => ({ value: w.id, label: w.name }))} />
           <button type="submit" className="btn btn-sm" disabled={!title.trim()}>Добавить</button>
         </form>
       )}
@@ -577,7 +559,7 @@ function Activity({ task, sessions }: { task: Task; sessions: Map<string, Sessio
       <ol className="activity">
         {task.log.map((l, i) => (
           <li key={i}>
-            <span className="muted" title={fullTime(l.at)}>{relTime(l.at, now)}</span>
+            <span className="muted" data-tip={fullTime(l.at)}>{relTime(l.at, now)}</span>
             <span className="activity-by">{who(l.by)}</span>
             <span className="activity-text">{l.text}</span>
           </li>
@@ -608,22 +590,15 @@ function AssignForm({ task, onDone }: { task: Task; onDone: () => void }) {
     <div className="drawer-form">
       <label className="field">
         <span>Агент</span>
-        <select className="select" value={agent} onChange={(e) => setAgent(e.target.value)}>
-          {enabled.map((a) => <option key={a.id} value={a.id}>{a.label}</option>)}
-        </select>
+        <Select label="Агент" value={agent} onChange={setAgent} options={enabled.map((a) => ({ value: a.id, label: a.label }))} />
       </label>
       <label className="field">
         <span>Репозиторий</span>
-        <select className="select" value={repo} onChange={(e) => setRepo(e.target.value)}>
-          {workspaces.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
-        </select>
+        <Select label="Репозиторий" value={repo} onChange={setRepo} options={workspaces.map((w) => ({ value: w.id, label: w.name }))} />
       </label>
       <div className="field">
         <span>Рабочая копия</span>
-        <div className="seg" role="group" aria-label="Рабочая копия">
-          <button type="button" aria-pressed={worktree === 'new'} onClick={() => setWorktree('new')}>Новая ветка</button>
-          <button type="button" aria-pressed={worktree === 'current'} onClick={() => setWorktree('current')}>Текущая</button>
-        </div>
+        <Segmented label="Рабочая копия" value={worktree} onChange={setWorktree} options={[{ value: 'new', label: 'Новая ветка' }, { value: 'current', label: 'Текущая' }]} />
       </div>
       <button type="button" className="btn btn-primary" disabled={!agent || busy} onClick={() => void submit()}>
         {busy ? 'Запуск…' : 'Назначить'}
@@ -650,9 +625,7 @@ function SendForm({ task, onDone }: { task: Task; onDone: () => void }) {
     <div className="drawer-form">
       <label className="field" style={{ gridColumn: '1 / -1' }}>
         <span>Чат</span>
-        <select className="select" value={target} onChange={(e) => setTarget(e.target.value)}>
-          {chats.map((c) => <option key={c.id} value={c.id}>{c.title} — {statusText(c)}</option>)}
-        </select>
+        <Select label="Чат" value={target} onChange={setTarget} options={chats.map((c) => ({ value: c.id, label: c.title, hint: statusText(c) }))} />
       </label>
       <button type="button" className="btn btn-primary" disabled={!target || busy} onClick={() => void submit()}>
         {busy ? 'Отправка…' : 'Отправить задачу'}

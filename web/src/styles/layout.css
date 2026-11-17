@@ -133,7 +133,7 @@
 .tabstrip { display: flex; align-items: stretch; flex: 1; min-width: 0; }
 .tabbar { display: flex; align-items: stretch; flex: 0 1 auto; min-width: 0; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
 .tabbar::-webkit-scrollbar { display: none; }
-.tabstrip > .menu-anchor { align-self: center; margin: 0 4px; }
+.tabstrip > .icon-btn { align-self: center; margin: 0 4px; }
 
 .tab {
   position: relative; display: flex; align-items: center; gap: 7px; flex-shrink: 0;
@@ -172,18 +172,4 @@
 .search svg { position: absolute; left: 8px; top: 7px; width: 14px; height: 14px; color: var(--ink-4); pointer-events: none; }
 .search .input { padding-left: 28px; }
 .view-head .select { width: auto; max-width: 200px; }
-
-/* ---------- popover menu ---------- */
-
-.menu-anchor { position: relative; align-self: center; }
-.menu {
-  position: absolute; z-index: 30; min-width: 220px; padding: 4px;
-  border-radius: var(--r-2); background: var(--deck); box-shadow: var(--shadow-pop);
-  animation: pop-in 140ms var(--ease-out);
-}
-.menu button {
-  display: flex; align-items: center; gap: 8px; width: 100%; height: 28px; padding: 0 8px;
-  border: 0; border-radius: var(--r-1); background: transparent; color: var(--ink-2); text-align: left; white-space: nowrap;
-}
-.menu button:hover, .menu button:focus-visible { background: var(--deck-2); color: var(--ink); outline: none; }
-.menu svg { width: 14px; height: 14px; color: var(--ink-3); }
+.tree-row:has([aria-expanded="true"]) .actions { display: flex; }

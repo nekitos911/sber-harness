@@ -1,0 +1,148 @@
+/* Design-system layer: popover, listbox/select, combobox, menu, tooltip, switch, checkbox, segmented, disclosure.
+   Heights: 24 (sm, in-row), 28 (default), 32 (lg: dialogs, settings). One radius scale: 4 controls, 6 panels. */
+
+.btn-lg { height: 32px; padding: 0 12px; }
+.btn-danger.btn-primary, .btn-primary.btn-danger { background: var(--lamp-fail); color: #fff; }
+
+/* ---------- popover (top layer) ---------- */
+
+.popover {
+  position: fixed; inset: auto; margin: 0; padding: 4px; min-width: 180px; max-width: min(420px, calc(100vw - 16px));
+  border: 0; border-radius: var(--r-2); background: var(--deck); color: var(--ink); box-shadow: var(--shadow-pop);
+  overflow: visible; animation: pop-in 140ms var(--ease-out);
+}
+.popover[data-side="top"] { transform-origin: bottom left; }
+.popover[data-side="bottom"] { transform-origin: top left; }
+.popover[data-placement$="end"] { transform-origin: top right; }
+.popover::backdrop { display: none; }
+
+/* ---------- options (listbox, menu, combobox) ---------- */
+
+.listbox, .menu-list { display: grid; gap: 1px; max-height: min(360px, 60vh); overflow-y: auto; outline: none; }
+.option {
+  display: flex; align-items: center; gap: 8px; min-height: 28px; padding: 4px 8px;
+  border-radius: var(--r-1); color: var(--ink-2); cursor: pointer; user-select: none;
+}
+.option[data-active] { background: var(--deck-2); color: var(--ink); }
+.option[aria-disabled="true"] { opacity: 0.5; cursor: default; }
+.option[aria-disabled="true"][data-active] { background: transparent; }
+.option > svg { width: 14px; height: 14px; flex-shrink: 0; color: var(--ink-3); }
+.option[data-danger] { color: var(--lamp-fail); }
+.option[data-danger] > svg { color: var(--lamp-fail); }
+.option-main { flex: 1; min-width: 0; display: grid; gap: 1px; }
+.option-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.option-label[data-mono] { font-family: var(--font-mono); font-size: 12px; font-weight: 350; }
+.option-hint { color: var(--ink-3); font-size: 11.5px; line-height: 1.35; white-space: normal; }
+.option-check { width: 14px; height: 14px; flex-shrink: 0; color: var(--ink); }
+.option-empty { padding: 8px; color: var(--ink-3); font-size: 12.5px; }
+.option kbd { margin-left: auto; }
+
+/* ---------- select trigger ---------- */
+
+.select-trigger {
+  display: inline-flex; align-items: center; gap: 6px; width: 100%; min-width: 0; height: var(--h-ctl); padding: 0 6px 0 9px;
+  border: 1px solid var(--rule); border-radius: var(--r-1); background: var(--well); color: var(--ink); text-align: left;
+  transition: border-color var(--t-fast) ease, background-color var(--t-fast) ease;
+}
+.select-trigger:hover:not(:disabled) { border-color: var(--rule-strong); }
+.select-trigger[aria-expanded="true"] { border-color: var(--signal); box-shadow: 0 0 0 3px var(--signal-soft); }
+.select-trigger:disabled { opacity: 0.5; cursor: default; }
+.select-trigger[aria-invalid="true"] { border-color: var(--lamp-fail); }
+.select-trigger > svg:not(.select-chev) { width: 14px; height: 14px; flex-shrink: 0; color: var(--ink-3); }
+.select-sm { height: 24px; font-size: 12px; }
+.select-lg { height: 32px; }
+.select-value { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.select-value[data-placeholder] { color: var(--ink-4); }
+.select-trigger[data-mono] .select-value { font-family: var(--font-mono); font-size: 12px; font-weight: 350; }
+.select-chev { width: 14px; height: 14px; flex-shrink: 0; color: var(--ink-3); transition: transform var(--t-fast) var(--ease-out); }
+.select-trigger[aria-expanded="true"] .select-chev { transform: rotate(180deg); }
+.view-head .select-trigger { width: auto; max-width: 220px; }
+
+/* ---------- combobox (search + list) ---------- */
+
+.combo { display: flex; flex-direction: column; min-width: 300px; max-height: min(460px, 70vh); }
+.combo-search { position: relative; flex-shrink: 0; margin: -4px -4px 4px; border-bottom: 1px solid var(--rule-soft); }
+.combo-search svg { position: absolute; left: 12px; top: 11px; width: 14px; height: 14px; color: var(--ink-4); pointer-events: none; }
+.combo-input { width: 100%; height: 36px; padding: 0 12px 0 32px; border: 0; background: transparent; color: var(--ink); outline: none; }
+.combo-input::placeholder { color: var(--ink-4); }
+.combo-list { flex: 1; min-height: 0; overflow-y: auto; display: grid; gap: 1px; align-content: start; }
+.combo-group { padding: 8px 8px 3px; color: var(--ink-3); font-size: 11px; font-weight: 600; }
+.combo-footer { flex-shrink: 0; margin: 4px -4px -4px; padding: 8px; border-top: 1px solid var(--rule-soft); }
+.combo-notice { margin: 0 4px 4px; padding: 6px 8px; border-radius: var(--r-1); background: var(--fail-soft); color: var(--lamp-fail); font-size: 12px; overflow-wrap: anywhere; }
+
+/* ---------- tooltip ---------- */
+
+.tooltip {
+  position: fixed; inset: auto; margin: 0; padding: 4px 8px; max-width: 320px;
+  border: 0; border-radius: var(--r-1); background: var(--ink); color: var(--canvas);
+  font-size: 11.5px; line-height: 1.4; white-space: pre-line; pointer-events: none;
+  animation: fade-in 100ms var(--ease-out);
+}
+
+/* ---------- switch ---------- */
+
+.switch {
+  position: relative; flex-shrink: 0; width: 30px; height: 18px; padding: 0; border: 0; border-radius: 9px;
+  background: var(--deck-3); box-shadow: inset 0 0 0 1px var(--rule-strong); transition: background-color var(--t-fast) ease;
+}
+.switch-thumb {
+  position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: var(--ink-3);
+  transition: transform var(--t-base) var(--ease-out), background-color var(--t-fast) ease;
+}
+.switch[aria-checked="true"] { background: var(--lamp-done); box-shadow: none; }
+.switch[aria-checked="true"] .switch-thumb { transform: translateX(12px); background: #fff; }
+.switch:disabled { opacity: 0.5; cursor: default; }
+
+/* ---------- checkbox ---------- */
+
+.checkbox { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; min-width: 0; }
+.checkbox[data-disabled] { opacity: 0.5; cursor: default; }
+.checkbox-box {
+  display: grid; place-items: center; width: 14px; height: 14px; flex-shrink: 0;
+  border: 1px solid var(--rule-strong); border-radius: 3px; background: var(--well);
+  transition: background-color var(--t-fast) ease, border-color var(--t-fast) ease;
+}
+.checkbox-box svg { width: 11px; height: 11px; color: var(--primary-ink); stroke-width: 3; opacity: 0; transform: scale(0.8); transition: opacity var(--t-fast) var(--ease-out), transform var(--t-fast) var(--ease-out); }
+.checkbox input:checked + .checkbox-box { background: var(--primary); border-color: var(--primary); }
+.checkbox input:checked + .checkbox-box svg { opacity: 1; transform: none; }
+.checkbox input:focus-visible + .checkbox-box { outline: 2px solid var(--focus); outline-offset: 1px; }
+.checkbox-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---------- segmented ---------- */
+
+.segmented { display: inline-flex; padding: 2px; gap: 2px; border-radius: var(--r-1); background: var(--well); border: 1px solid var(--rule); max-width: 100%; }
+.segmented button {
+  height: 22px; padding: 0 10px; border: 0; border-radius: 3px; background: transparent; color: var(--ink-3);
+  font-size: 12px; font-weight: 500; white-space: nowrap; transition: background-color var(--t-fast) ease, color var(--t-fast) ease;
+}
+.segmented-md button { height: 26px; }
+.segmented button:hover:not(:disabled) { color: var(--ink); }
+.segmented button[aria-checked="true"] { background: var(--deck-3); color: var(--ink); box-shadow: 0 1px 0 rgba(0, 0, 0, 0.12); }
+.segmented button[data-tone="access"][aria-checked="true"] { background: var(--full-access-soft); color: var(--full-access); }
+.segmented button[data-tone="access"]:not([aria-checked="true"]) { color: color-mix(in srgb, var(--full-access) 70%, var(--ink-3)); }
+.segmented button:disabled { opacity: 0.5; cursor: default; }
+
+/* ---------- disclosure (replaces <details>) ---------- */
+
+.disclosure-head { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.disclosure-toggle {
+  display: flex; align-items: center; gap: 7px; flex: 1; min-width: 0; padding: 0; border: 0; background: transparent;
+  color: inherit; font: inherit; text-align: left;
+}
+.disclosure .chev { width: 12px; height: 12px; flex-shrink: 0; color: var(--ink-4); transition: transform var(--t-fast) var(--ease-out); }
+.disclosure[data-open="true"] > .disclosure-head .chev { transform: rotate(90deg); }
+
+/* ---------- dialog head ---------- */
+
+.dialog-head { display: flex; align-items: center; gap: 8px; margin-bottom: -2px; }
+.dialog-head h2 { flex: 1; }
+.dialog-head .icon-btn { margin-right: -8px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .popover, .tooltip { animation-name: fade-in; }
+  .switch-thumb, .checkbox-box svg { transition-property: background-color, opacity; }
+}
+
+/* Toggle chips (allowed grades, filters): pressed = on. */
+button.chip[aria-pressed="false"] { background: transparent; box-shadow: inset 0 0 0 1px var(--rule-strong); color: var(--ink-3); }
+button.chip[aria-pressed="true"] { background: var(--signal-soft); color: var(--signal); }

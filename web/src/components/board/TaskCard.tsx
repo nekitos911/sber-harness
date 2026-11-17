@@ -32,34 +32,34 @@ export const TaskCard = memo(function TaskCard({ task, ctx }: { task: Task; ctx:
     <>
       <div className="card-top">
         <span className="card-id mono">{task.parentId ? task.id : key}</span>
-        {parent && <span className="card-parent mono" title={`Подзадача ${parent.id}: ${parent.title}`}>↳ {taskKey(parent, ctx.byId)}</span>}
+        {parent && <span className="card-parent mono" data-tip={`Подзадача ${parent.id}: ${parent.title}`}>↳ {taskKey(parent, ctx.byId)}</span>}
         <span className="grow" />
         {task.hidden && <span className="chip">скрыта</span>}
-        {trackerDiffers(task) && <span className="card-ext" title="Статус в трекере">{task.externalStatus}</span>}
+        {trackerDiffers(task) && <span className="card-ext" data-tip="Статус в трекере">{task.externalStatus}</span>}
         {task.priority && <PriorityMark p={task.priority} />}
       </div>
       <button type="button" className="card-title" onKeyDown={stop}>{task.title}</button>
       <div className="card-meta">
         {ws && ctx.showRepo && (
-          <span className="chip" title={task.branch ? `${ws.name} · ${task.branch}` : ws.name}>
+          <span className="chip" data-tip={task.branch ? `${ws.name} · ${task.branch}` : ws.name}>
             <FolderGit2 aria-hidden />
             <span className="ellipsis">{ws.name}</span>
           </span>
         )}
         {unusualTargets(task) && task.targets.map((t, i) => (
-          <span key={t} className="chip chip-mono" title={i === 0 ? 'Основная целевая ветка' : 'Портирование'}>
+          <span key={t} className="chip chip-mono" data-tip={i === 0 ? 'Основная целевая ветка' : 'Портирование'}>
             {i > 0 && <GitMerge aria-hidden />}
             {t}
           </span>
         ))}
         {task.labels.map((l) => <span key={l} className="chip">{l}</span>)}
         {waiting.length > 0 ? (
-          <span className="chip chip-fail" title={`Ждёт: ${waiting.join(', ')}`}><Lock aria-hidden />блок: {waiting.join(', ')}</span>
+          <span className="chip chip-fail" data-tip={`Ждёт: ${waiting.join(', ')}`}><Lock aria-hidden />блок: {waiting.join(', ')}</span>
         ) : task.deps.length > 0 && (
-          <span className="chip" title={`Зависит от: ${task.deps.join(', ')} — выполнены`}><Link2 aria-hidden />{task.deps.length}</span>
+          <span className="chip" data-tip={`Зависит от: ${task.deps.join(', ')} — выполнены`}><Link2 aria-hidden />{task.deps.length}</span>
         )}
         {kids.length > 0 && (
-          <span className={kidsDone === kids.length ? 'chip chip-done' : 'chip'} title="Подзадачи: готово / всего">
+          <span className={kidsDone === kids.length ? 'chip chip-done' : 'chip'} data-tip="Подзадачи: готово / всего">
             <ListChecks aria-hidden />
             <span className="num">{kidsDone}/{kids.length}</span>
           </span>
@@ -69,7 +69,7 @@ export const TaskCard = memo(function TaskCard({ task, ctx }: { task: Task; ctx:
         <button
           type="button"
           className="btn btn-sm card-start"
-          title={waiting.length ? `Ждёт: ${waiting.join(', ')}` : 'Агент по умолчанию, новое рабочее дерево задачи'}
+          data-tip={waiting.length ? `Ждёт: ${waiting.join(', ')}` : 'Агент по умолчанию, новое рабочее дерево задачи'}
           aria-label={`Взять в работу ${task.id}`}
           disabled={waiting.length > 0}
           onPointerDown={stop}
@@ -83,7 +83,7 @@ export const TaskCard = memo(function TaskCard({ task, ctx }: { task: Task; ctx:
       {(session || task.externalUrl) && (
         <div className="card-foot">
           {session && (
-            <span className="card-agent" title={session.title}>
+            <span className="card-agent" data-tip={session.title}>
               <StatusIcon session={session} />
               <span>{ctx.agents.get(session.agent)?.label ?? session.agent}</span>
               <span className="muted">{statusText(session)}</span>
@@ -91,7 +91,7 @@ export const TaskCard = memo(function TaskCard({ task, ctx }: { task: Task; ctx:
           )}
           <span className="grow" />
           {task.externalUrl && (
-            <a className="icon-btn icon-btn-sm" href={task.externalUrl} target="_blank" rel="noreferrer noopener" aria-label="Открыть в трекере" title="Открыть в трекере" onClick={stop} onKeyDown={stop} onPointerDown={stop}>
+            <a className="icon-btn icon-btn-sm" href={task.externalUrl} target="_blank" rel="noreferrer noopener" aria-label="Открыть в трекере" data-tip="Открыть в трекере" onClick={stop} onKeyDown={stop} onPointerDown={stop}>
               <ExternalLink />
             </a>
           )}

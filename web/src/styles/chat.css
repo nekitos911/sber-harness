@@ -57,21 +57,19 @@
   font-family: var(--font-mono); font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere;
 }
 
-details > summary { list-style: none; }
-details > summary::-webkit-details-marker { display: none; }
-details > summary .chev { width: 12px; height: 12px; flex-shrink: 0; color: var(--ink-4); transition: transform 120ms var(--ease-out); }
-details[open] > summary .chev { transform: rotate(90deg); }
 
 .msg-thought { color: var(--ink-3); font-size: 13px; }
-.msg-thought summary { display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 12.5px; min-width: 0; }
-.msg-thought summary .ellipsis { color: var(--ink-4); }
+.msg-thought .disclosure-toggle { gap: 6px; height: 24px; font-size: 12.5px; color: var(--ink-3); }
+.msg-thought .disclosure-toggle:hover { color: var(--ink-2); }
+.msg-thought .disclosure-toggle .ellipsis { color: var(--ink-4); }
 .msg-thought .md { padding: 6px 0 0 18px; }
 
 .tool { font-size: 12.5px; line-height: 1.5; }
-.tool summary { display: flex; align-items: center; gap: 7px; height: 26px; padding: 0 6px; margin: 0 -6px; border-radius: var(--r-1); cursor: pointer; min-width: 0; color: var(--ink-3); }
-.tool summary:hover { background: var(--deck); color: var(--ink-2); }
-.tool summary .chev { opacity: 0; margin-left: auto; }
-.tool summary:hover .chev, .tool[open] summary .chev, .tool summary:focus-visible .chev { opacity: 1; }
+.tool > .disclosure-head { height: 26px; padding: 0 6px; margin: 0 -6px; border-radius: var(--r-1); color: var(--ink-3); }
+.tool > .disclosure-head:hover { background: var(--deck); color: var(--ink-2); }
+.tool .disclosure-toggle { height: 100%; gap: 7px; }
+.tool > .disclosure-head .chev { opacity: 0; margin-left: auto; }
+.tool > .disclosure-head:hover .chev, .tool[data-open="true"] > .disclosure-head .chev, .tool .disclosure-toggle:focus-visible .chev { opacity: 1; }
 .tool-name { font-family: var(--font-mono); font-size: 12px; color: var(--ink-2); flex-shrink: 0; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tool-sum { flex: 1; color: var(--ink-3); font-family: var(--font-mono); font-size: 12px; }
 .tool-st { width: 13px; height: 13px; flex-shrink: 0; color: var(--ink-4); }
@@ -88,10 +86,11 @@ details[open] > summary .chev { transform: rotate(90deg); }
 .tool-err { margin: 0 10px 10px; }
 
 .tool-edit { border: 1px solid var(--rule); border-radius: var(--r-2); background: var(--deck); overflow: hidden; }
-.tool-edit summary { height: 32px; margin: 0; padding: 0 6px 0 10px; border-radius: 0; color: var(--ink-2); }
-.tool-edit summary:hover { background: var(--deck-2); }
-.tool-edit[open] summary { border-bottom: 1px solid var(--rule-soft); }
-.tool-edit summary .chev { opacity: 1; margin-left: 2px; }
+.tool-edit > .disclosure-head { height: 32px; margin: 0; padding: 0 6px 0 10px; border-radius: 0; color: var(--ink-2); }
+.tool-edit > .disclosure-head:hover { background: var(--deck-2); }
+.tool-edit[data-open="true"] > .disclosure-head { border-bottom: 1px solid var(--rule-soft); }
+.tool-edit > .disclosure-head .chev { opacity: 1; margin-left: auto; }
+.tool-edit .disclosure-toggle .diff-stat { margin-left: 4px; }
 .tool-verb { color: var(--ink-3); }
 .tool-file { font-family: var(--font-mono); font-size: 12px; color: var(--ink); min-width: 0; }
 .tool-edit .diff-table { max-height: 440px; overflow: auto; padding: 2px 0; font-size: 12px; line-height: 19px; }
@@ -104,7 +103,7 @@ details[open] > summary .chev { transform: rotate(90deg); }
 .chat-working svg { width: 14px; height: 14px; }
 
 .turn-files { border: 1px solid var(--rule); border-radius: var(--r-2); font-size: 12.5px; }
-.turn-files summary { display: flex; align-items: center; gap: 7px; height: 32px; padding: 0 10px; cursor: pointer; color: var(--ink-2); }
+.turn-files .disclosure-toggle { height: 32px; padding: 0 10px; color: var(--ink-2); }
 .turn-file {
   display: flex; align-items: center; gap: 10px; width: 100%; height: 28px; padding: 0 10px 0 29px;
   border: 0; border-top: 1px solid var(--rule-soft); background: none; color: var(--ink); text-align: left;
@@ -152,21 +151,7 @@ details[open] > summary .chev { transform: rotate(90deg); }
 }
 .composer-input::placeholder { color: var(--ink-4); }
 .composer-bar { display: flex; align-items: center; gap: 6px; min-height: 28px; margin-left: -6px; }
-.composer-model { font-size: 11.5px; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-.mode-chip {
-  position: relative; display: inline-flex; align-items: center; height: 24px; padding: 0 22px 0 10px;
-  border-radius: 12px; background: var(--deck-2); color: var(--ink-2); font-size: 12px; font-weight: 500; white-space: nowrap;
-}
-.mode-chip::after {
-  content: ""; position: absolute; right: 9px; top: 9px; width: 5px; height: 5px;
-  border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(45deg); pointer-events: none;
-}
-.mode-chip select {
-  position: absolute; inset: 0; width: 100%; opacity: 0; cursor: pointer;
-}
-.mode-chip:focus-within { outline: 2px solid var(--focus); outline-offset: 1px; }
-.mode-chip > span:not(.sr-only) { pointer-events: none; }
 
 .composer-send, .composer-stop {
   display: grid; place-items: center; width: 28px; height: 28px; padding: 0; flex-shrink: 0;
@@ -216,11 +201,10 @@ details[open] > summary .chev { transform: rotate(90deg); }
 .worker-internal .worker-title:hover { text-decoration: none; }
 .worker-internal[data-state="unverifiable"] { opacity: 0.7; }
 
-input.composer-model {
-  width: 120px; height: 24px; padding: 0 6px; border: 1px solid transparent; border-radius: var(--r-1);
-  background: transparent; color: var(--ink-3); font-family: var(--font-mono); text-align: right;
-}
-input.composer-model:hover { border-color: var(--rule); }
-input.composer-model:focus { outline: none; border-color: var(--signal); color: var(--ink); text-align: left; }
-input.composer-model::placeholder { color: var(--ink-3); }
-.mode-chip.chip-access { background: var(--full-access-soft); color: var(--full-access); }
+
+/* Approval mode in the composer bar: a pill select; full access is the yellow chip. */
+.mode-select.select-trigger { width: auto; height: 24px; padding: 0 6px 0 10px; border: 0; border-radius: 12px; background: var(--deck-2); color: var(--ink-2); font-size: 12px; font-weight: 500; }
+.mode-select.select-trigger[aria-expanded="true"] { box-shadow: 0 0 0 2px var(--focus); }
+.mode-select.mode-access { background: var(--full-access-soft); color: var(--full-access); }
+.mode-select.mode-access .select-chev { color: var(--full-access); }
+.chat-meta .branch-btn { color: var(--ink-3); flex-shrink: 1; min-width: 0; }

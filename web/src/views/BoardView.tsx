@@ -13,6 +13,7 @@ import { byOrder } from '../lib/tasks'
 import type { Task, TaskStatus } from '../types'
 import { TaskCard, type BoardCtx } from '../components/board/TaskCard'
 import { TaskDrawer } from '../components/board/TaskDrawer'
+import { Select } from '../components/ui'
 
 type Cols = Record<TaskStatus, string[]>
 const COL_PREFIX = 'col:'
@@ -164,12 +165,9 @@ export function BoardView() {
           <input className="input" type="search" placeholder="Поиск задач" aria-label="Поиск задач" value={query} onChange={(e) => setQuery(e.target.value)} />
         </div>
         {workspaces.length > 1 && (
-          <select className="select" aria-label="Фильтр по репозиторию" value={repo} onChange={(e) => setRepo(e.target.value)}>
-            <option value="">Все репозитории</option>
-            {workspaces.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
-          </select>
+          <Select label="Фильтр по репозиторию" value={repo} onChange={setRepo} options={[{ value: '', label: 'Все репозитории' }, ...workspaces.map((w) => ({ value: w.id, label: w.name }))]} />
         )}
-        <button type="button" className="btn btn-ghost" aria-pressed={showHidden} onClick={() => setShowHidden(!showHidden)} title="Скрытые с доски задачи">
+        <button type="button" className="btn btn-ghost" aria-pressed={showHidden} onClick={() => setShowHidden(!showHidden)} data-tip="Скрытые с доски задачи">
           {showHidden ? <Eye /> : <EyeOff />}
           Скрытые
         </button>
@@ -224,7 +222,7 @@ function Column({ status, label, ids, ctx, repo, dragging }: { status: TaskStatu
         <span className="col-mark" data-s={status} aria-hidden />
         <h2 id={`col-${status}`}>{label}</h2>
         <span className="col-count num">{ids.length}</span>
-        <button type="button" className="icon-btn icon-btn-sm" aria-label={`Добавить задачу в «${label}»`} title="Добавить задачу" onClick={() => setAdding(true)}>
+        <button type="button" className="icon-btn icon-btn-sm" aria-label={`Добавить задачу в «${label}»`} data-tip="Добавить задачу" onClick={() => setAdding(true)}>
           <Plus />
         </button>
       </header>

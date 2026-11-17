@@ -24,7 +24,7 @@ code, pre, kbd, .mono, .diff-table, .tool-name, .tool-sum, .tool-file, .branch, 
 :focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
 ::selection { background: var(--term-sel); color: inherit; }
 input, textarea { caret-color: var(--signal); }
-:root { interpolate-size: allow-keywords; } /* lets <details> animate to height: auto where supported */
+
 
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-thumb { background: var(--rule-strong); border-radius: 10px; border: 3px solid transparent; background-clip: content-box; }
@@ -234,11 +234,7 @@ kbd {
 .collapse[data-open="true"] { grid-template-rows: 1fr; }
 .collapse > div { min-height: 0; overflow: hidden; }
 
-details::details-content {
-  block-size: 0; overflow: hidden;
-  transition: block-size var(--t-base) var(--ease-out), content-visibility var(--t-base) allow-discrete;
-}
-details[open]::details-content { block-size: auto; }
+
 
 /* ---------- shared entrances (only on elements marked data-enter: new, not history) ---------- */
 
@@ -253,7 +249,7 @@ details[open]::details-content { block-size: auto; }
   .st[data-s="running"], .spinner { animation-duration: 2.4s; }
   .dialog[open], .auth-card, [data-enter] { animation-name: fade-in !important; }
   .toast, .toast[data-leaving] { transform: none; }
-  .collapse, details::details-content { transition: none; }
+  .collapse { transition: none; }
   .skeleton span { animation: none; }
 }
 

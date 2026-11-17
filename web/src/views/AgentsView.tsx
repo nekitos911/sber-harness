@@ -6,6 +6,7 @@ import { relTime, ROLE, tokens } from '../lib/format'
 import { useNow } from '../lib/useNow'
 import type { Session, SessionStatus } from '../types'
 import { Branch, StatusIcon, statusText } from '../components/bits'
+import { Select } from '../components/ui'
 
 const GROUPS: { id: string; label: string; match: SessionStatus[] }[] = [
   { id: 'run', label: 'Работают', match: ['running'] },
@@ -105,7 +106,7 @@ function AgentCard({ s, nested, parent }: { s: Session; nested: boolean; parent?
     <article className="agent-card" data-nested={nested} data-s={s.status}>
       <div className="agent-top">
         <StatusIcon session={s} />
-        <button type="button" className="agent-title ellipsis" onClick={() => openSession(s.id)} title="Открыть чат">{s.title || s.id}</button>
+        <button type="button" className="agent-title ellipsis" onClick={() => openSession(s.id)} data-tip="Открыть чат">{s.title || s.id}</button>
         {s.role !== 'solo' && <span className="role" data-role={s.role}>{ROLE[s.role]}</span>}
       </div>
       <div className="agent-meta">
@@ -114,11 +115,11 @@ function AgentCard({ s, nested, parent }: { s: Session; nested: boolean; parent?
         <span className="muted">{statusText(s)}</span>
         {s.queued > 0 && <span className="chip chip-run">в очереди: {s.queued}</span>}
         {s.tokensIn + s.tokensOut > 0 && (
-          <span className="mono muted num" title={`вход ${s.tokensIn}, выход ${s.tokensOut}`}>{tokens(s.tokensIn + s.tokensOut)}</span>
+          <span className="mono muted num" data-tip={`вход ${s.tokensIn}, выход ${s.tokensOut}`}>{tokens(s.tokensIn + s.tokensOut)}</span>
         )}
       </div>
       {task && (
-        <button type="button" className="agent-task" onClick={() => openTask(task.id)} title="Открыть задачу">
+        <button type="button" className="agent-task" onClick={() => openTask(task.id)} data-tip="Открыть задачу">
           <span className="mono">{task.externalId ?? task.id}</span>
           <span className="ellipsis">{task.title}</span>
         </button>
@@ -126,15 +127,15 @@ function AgentCard({ s, nested, parent }: { s: Session; nested: boolean; parent?
       {!nested && parent && (
         <button type="button" className="agent-parent" onClick={() => openSession(parent.id)}>↳ от {parent.title}</button>
       )}
-      {s.branch && <div className="agent-where" title={s.cwd}><Branch name={s.branch} /></div>}
+      {s.branch && <div className="agent-where" data-tip={s.cwd}><Branch name={s.branch} /></div>}
       {s.preview && <p className="agent-preview">{s.preview}</p>}
       <div className="agent-foot" data-open={mode !== null || undefined}>
         <span className="muted num">{relTime(s.lastActivityAt, now)}</span>
         <span className="grow" />
-        <button type="button" className="icon-btn icon-btn-sm" aria-label="Написать агенту" title="Написать" aria-pressed={mode === 'message'} onClick={() => setMode(mode === 'message' ? null : 'message')}><Send /></button>
-        <button type="button" className="icon-btn icon-btn-sm" aria-label="Дать задачу" title="Дать задачу" aria-pressed={mode === 'assign'} onClick={() => setMode(mode === 'assign' ? null : 'assign')}><ListPlus /></button>
-        {s.status === 'running' && <button type="button" className="icon-btn icon-btn-sm" aria-label="Остановить" title="Остановить" onClick={stop}><Square /></button>}
-        <button type="button" className="icon-btn icon-btn-sm" aria-label="Удалить сессию" title="Удалить" onClick={() => setMode('delete')}><Trash2 /></button>
+        <button type="button" className="icon-btn icon-btn-sm" aria-label="Написать агенту" data-tip="Написать" aria-pressed={mode === 'message'} onClick={() => setMode(mode === 'message' ? null : 'message')}><Send /></button>
+        <button type="button" className="icon-btn icon-btn-sm" aria-label="Дать задачу" data-tip="Дать задачу" aria-pressed={mode === 'assign'} onClick={() => setMode(mode === 'assign' ? null : 'assign')}><ListPlus /></button>
+        {s.status === 'running' && <button type="button" className="icon-btn icon-btn-sm" aria-label="Остановить" data-tip="Остановить" onClick={stop}><Square /></button>}
+        <button type="button" className="icon-btn icon-btn-sm" aria-label="Удалить сессию" data-tip="Удалить" onClick={() => setMode('delete')}><Trash2 /></button>
       </div>
       {mode === 'message' && (
         <form className="agent-inline" onSubmit={(e) => { e.preventDefault(); void send() }}>
@@ -144,10 +145,9 @@ function AgentCard({ s, nested, parent }: { s: Session; nested: boolean; parent?
       )}
       {mode === 'assign' && (
         <div className="agent-inline">
-          <select className="select" autoFocus aria-label="Задача для агента" defaultValue="" onChange={(e) => e.target.value && void assign(e.target.value)}>
-            <option value="" disabled>{free.length ? 'Выберите задачу…' : 'Нет задач в «Бэклог» и «К работе»'}</option>
-            {free.map((t) => <option key={t.id} value={t.id}>{t.externalId ?? t.id} — {t.title}</option>)}
-          </select>
+          <Select autoFocus label="Задача для агента" value="" onChange={(id) => void assign(id)} disabled={!free.length}
+            placeholder={free.length ? 'Выберите задачу…' : 'Нет задач в «Бэклог» и «К работе»'}
+            options={free.map((t) => ({ value: t.id, label: t.title, text: `${t.externalId ?? t.id} ${t.title}`, hint: t.externalId ?? t.id }))} />
         </div>
       )}
       {mode === 'delete' && (
