@@ -58,11 +58,22 @@
 }
 
 
+/* Thought: «Размышлял 11 с», the text one click away (muted, smaller). */
 .msg-thought { color: var(--ink-3); font-size: 13px; }
 .msg-thought .disclosure-toggle { gap: 6px; height: 24px; font-size: 12.5px; color: var(--ink-3); }
 .msg-thought .disclosure-toggle:hover { color: var(--ink-2); }
-.msg-thought .disclosure-toggle .ellipsis { color: var(--ink-4); }
-.msg-thought .md { padding: 6px 0 0 18px; }
+.thought-icon { width: 13px; height: 13px; }
+.thought-text { padding: 4px 0 2px 19px; font-size: 12px; line-height: 1.55; color: var(--ink-3); white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* Turn: header clock, folded tool runs, changed files, the «НОВОЕ» mark. */
+.turn-head { font-size: 11.5px; color: var(--ink-3); margin: -4px 0 -2px; }
+.tool-run-text { color: var(--ink-2); flex-shrink: 0; max-width: 70%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tool-run-fail { color: var(--lamp-fail); flex-shrink: 0; font-size: 11.5px; }
+.tool-run .tool-sum { color: var(--ink-3); }
+.tool-run-list { display: grid; gap: 4px; margin: 4px 0 6px 20px; }
+.new-divider { display: flex; align-items: center; gap: 8px; color: var(--signal); font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }
+.new-divider::before, .new-divider::after { content: ""; flex: 1; height: 1px; background: color-mix(in srgb, var(--signal) 55%, transparent); }
+.new-divider::before { flex: 0 0 12px; }
 
 .tool { font-size: 12.5px; line-height: 1.5; }
 .tool > .disclosure-head { height: 26px; padding: 0 6px; margin: 0 -6px; border-radius: var(--r-1); color: var(--ink-3); }
@@ -100,16 +111,19 @@
 .diff-stat .del { color: var(--del-ink); }
 
 .chat-working { display: flex; align-items: center; gap: 8px; color: var(--lamp-run); font-size: 13px; font-variant-numeric: tabular-nums; animation: fade-in var(--t-base) var(--ease-out); }
-.chat-working svg { width: 14px; height: 14px; }
+.chat-working svg { width: 14px; height: 14px; flex-shrink: 0; }
+.chat-working .muted { color: var(--ink-3); }
+.chat-stall { border-color: color-mix(in srgb, var(--lamp-stall) 45%, var(--rule)); }
+.chat-stall > svg { width: 14px; height: 14px; color: var(--lamp-stall); flex-shrink: 0; }
 
-.turn-files { border: 1px solid var(--rule); border-radius: var(--r-2); font-size: 12.5px; }
-.turn-files .disclosure-toggle { height: 32px; padding: 0 10px; color: var(--ink-2); }
-.turn-file {
-  display: flex; align-items: center; gap: 10px; width: 100%; height: 28px; padding: 0 10px 0 29px;
-  border: 0; border-top: 1px solid var(--rule-soft); background: none; color: var(--ink); text-align: left;
-}
-.turn-file:hover { background: var(--deck-2); }
-.turn-file-dir { margin-left: auto; max-width: 50%; font-family: var(--font-mono); font-size: 11px; direction: rtl; }
+.turn-files { border: 1px solid var(--rule); border-radius: var(--r-2); font-size: 12.5px; overflow: hidden; }
+.turn-files-head { display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 10px; color: var(--ink-2); }
+.turn-file { border-top: 1px solid var(--rule-soft); }
+.turn-file > .disclosure-head { display: flex; align-items: center; padding-right: 4px; }
+.turn-file > .disclosure-head:hover { background: var(--deck-2); }
+.turn-file .disclosure-toggle { flex: 1; min-width: 0; height: 28px; gap: 8px; padding: 0 6px 0 10px; color: var(--ink); }
+.turn-file-name { flex: 1; min-width: 0; font-family: var(--font-mono); font-size: 12px; text-align: left; }
+.turn-file .diff-lines, .turn-file .collapse > div > * { margin: 0; }
 
 .chat-alert {
   display: flex; align-items: center; gap: 8px; padding: 6px 6px 6px 12px;
@@ -257,3 +271,33 @@
 .virtual-bar { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border: 1px dashed var(--rule-strong); border-radius: var(--r-3); color: var(--ink-3); font-size: 12.5px; }
 .virtual-bar .btn { margin-left: auto; }
 .tool-agent .disclosure-head .btn { flex-shrink: 0; }
+
+/* Steps of a tool run: every call and thought in order, scrollable, the running one marked. */
+.tool-steps { display: grid; gap: 1px; max-height: 320px; overflow-y: auto; margin: 4px 0 6px 20px; padding: 4px; border: 1px solid var(--rule-soft); border-radius: var(--r-2); background: var(--deck); overscroll-behavior: contain; }
+.step { border-radius: var(--r-1); }
+.step[data-current] { background: var(--run-soft); }
+.step > .disclosure > .disclosure-head { height: 26px; padding: 0 4px; border-radius: var(--r-1); }
+.step > .disclosure > .disclosure-head:hover { background: var(--deck-2); }
+.step .disclosure-toggle { flex: 1; min-width: 0; gap: 7px; height: 100%; color: var(--ink-2); font-size: 12.5px; }
+.step:not(.step-thought) .disclosure-toggle .chev { margin-left: auto; opacity: 0.5; }
+.step-icon { display: inline-flex; flex-shrink: 0; color: var(--ink-3); }
+.step-icon svg, svg.step-icon { width: 13px; height: 13px; }
+svg.step-icon.spinner { color: var(--lamp-run); }
+.step[data-error] .step-icon { color: var(--lamp-fail); }
+.step-text { flex: 1; min-width: 0; text-align: left; }
+.step-text .mono { font-size: 11.5px; }
+.step-link { justify-self: start; padding: 0; border: 0; background: none; color: var(--signal); font-size: 11.5px; }
+.step-link:hover { text-decoration: underline; }
+.step-thought .msg-thought { padding: 0 4px; }
+.step-details { display: grid; gap: 6px; margin: 2px 4px 6px 24px; }
+.step-details pre { margin: 0; max-height: 240px; overflow: auto; padding: 6px 8px; border-radius: var(--r-1); background: var(--well); font-family: var(--font-mono); font-size: 11.5px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.step-details pre[data-error="true"] { color: var(--lamp-fail); }
+.step-foot { display: flex; align-items: center; gap: 4px; font-size: 11px; }
+.run-images { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 2px 20px; }
+.thumb { width: 96px; height: 64px; padding: 0; overflow: hidden; border: 1px solid var(--rule); border-radius: var(--r-1); background: var(--well); cursor: zoom-in; }
+.thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.thumb-wait { display: block; width: 100%; height: 100%; background: var(--deck-2); }
+.lightbox { max-width: min(92vw, 1400px); max-height: 92vh; padding: 8px; border: 1px solid var(--rule); border-radius: var(--r-2); background: var(--ground); cursor: zoom-out; }
+.lightbox::backdrop { background: rgba(0, 0, 0, 0.7); }
+.lightbox img { display: block; max-width: 100%; max-height: calc(92vh - 48px); margin: 0 auto; }
+.lightbox-name { display: block; margin-top: 6px; font-size: 11px; color: var(--ink-3); text-align: center; overflow-wrap: anywhere; }

@@ -10,9 +10,11 @@ import { Markdown } from '../Markdown'
 import { DiffLines } from '../DiffLines'
 import { Disclosure, IconButton } from '../ui'
 import { isSubagentTool, SubagentCard } from './SubagentCard'
+import { ThoughtBlock } from './ToolSteps'
 
-export const MessageItem = memo(function MessageItem({ m, fresh = false }: { m: Message; fresh?: boolean }) {
-  const body = <MessageBody m={m} />
+/** `until`: for a thought, when it ended (null = still thinking); the thought shows how long it took. */
+export const MessageItem = memo(function MessageItem({ m, fresh = false, until }: { m: Message; fresh?: boolean; until?: number | null }) {
+  const body = m.kind === 'thought' ? <ThoughtBlock m={m} until={until === undefined ? m.at : until} /> : <MessageBody m={m} />
   // Messages that arrive while the chat is open fade in; the loaded history does not replay.
   return (
     <div className="msg-wrap" data-kind={m.kind} data-enter={fresh || undefined}>
@@ -27,7 +29,7 @@ function MessageBody({ m }: { m: Message }) {
   switch (m.kind) {
     case 'user': return <UserMessage m={m} />
     case 'assistant': return <div className="msg msg-assistant"><Markdown text={m.text} /></div>
-    case 'thought': return <Thought text={m.text} />
+    case 'thought': return <ThoughtBlock m={m} until={m.at} />
     case 'tool': return m.tool ? <ToolCard tool={m.tool} sessionId={m.sessionId} /> : null
     case 'error': return m.action === 'pick-model' ? <PickModelError m={m} /> : <div className="msg msg-error" role="alert">{m.text}{m.link && <LinkButton href={m.link} />}</div>
     case 'system': return <>{<SystemNote text={m.text} />}{m.link && <LinkButton href={m.link} />}</>
@@ -70,15 +72,6 @@ function UserMessage({ m }: { m: Message }) {
       )}
       <Markdown text={m.text} />
     </div>
-  )
-}
-
-function Thought({ text }: { text: string }) {
-  const first = text.trim().split('\n')[0]
-  return (
-    <Disclosure className="msg msg-thought" summary={<>Размышления <span className="ellipsis">{first}</span></>}>
-      <Markdown text={text} />
-    </Disclosure>
   )
 }
 

@@ -1,10 +1,9 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { ArrowDown, Check, Copy, Ellipsis, ExternalLink, KeyRound, GitCompareArrows, LoaderCircle, MessageSquare, RotateCcw, ScrollText, Square, Trash2 } from 'lucide-react'
+import { ArrowDown, Check, Copy, Ellipsis, ExternalLink, KeyRound, GitCompareArrows, MessageSquare, RotateCcw, ScrollText, Square, Trash2 } from 'lucide-react'
 import { api, errorText, tryApi } from '../api'
-import { openSession, openTab, openTask, setState, showPanel, upsert, useFeature, useStore, without } from '../store'
+import { openSession, openTask, setState, showPanel, upsert, useFeature, useStore, without } from '../store'
 import { loadMessages, loadSubagents } from '../ws'
 import { basename, normPath, ROLE } from '../lib/format'
-import { fileEdit } from '../lib/toolcall'
 import { useGit } from '../lib/git'
 import { useElapsed, useStartingLabel } from '../lib/live'
 import { useSdd } from '../lib/sdd'
@@ -14,8 +13,9 @@ import type { Message, Session } from '../types'
 import { Branch, Loading, Skeleton, StatusIcon, statusText } from '../components/bits'
 import { MenuButton } from '../components/ui/Menu'
 import { BranchPicker } from '../components/pickers/BranchPicker'
-import { Disclosure } from '../components/ui'
 import { MessageItem } from '../components/chat/MessageItem'
+import { ActivityLine, buildItems, StallBanner, ToolRun, TurnFiles, TurnHead } from '../components/chat/Turn'
+import { sessionVisualState } from '../lib/sessionState'
 import { Composer } from '../components/chat/Composer'
 import { WorkersPanel } from '../components/chat/WorkersPanel'
 
@@ -40,6 +40,14 @@ export function ChatView({ id, active }: { id: string; active: boolean }) {
   // Reading position survives a reload: distance from the bottom, saved when the page goes away.
   const fromBottom = useRef(0)
   const restored = useRef(false)
+  const anchor = useRef<number | null>(null) // distance from the bottom kept while older messages are added on top
+  const seenKey = `seen:${id}`
+  const [newSince, setNewSince] = useState<number | null>(() => loadDraft<number>(seenKey))
+  const wasActive = useRef(active)
+  useEffect(() => {
+    if (active && !wasActive.current) setNewSince(loadDraft<number>(seenKey)) // re-shown: a fresh «НОВОЕ» mark
+    wasActive.current = active
+  }, [active, seenKey])
   useEffect(() => {
     const save = () => saveDraft(`scroll:${id}`, fromBottom.current > 48 ? Math.round(fromBottom.current) : null)
     window.addEventListener('pagehide', save)
@@ -59,6 +67,19 @@ export function ChatView({ id, active }: { id: string; active: boolean }) {
   const running = session?.status === 'running'
   const starting = useStartingLabel(session ?? PLACEHOLDER)
   const lastText = list.length ? list[list.length - 1].text.length : 0
+  const lastAt = list.length ? list[list.length - 1].at : 0
+  const hidden = Math.max(0, list.length - limit)
+  const visible = useMemo(() => (hidden ? list.slice(hidden) : list), [list, hidden])
+  const runningTurn = running && list.length ? list[list.length - 1].turn : null
+  const items = useMemo(() => buildItems(visible, runningTurn, newSince, session?.lastActivityAt), [visible, runningTurn, newSince, session?.lastActivityAt])
+
+  // Read up to here: remembered for the next «НОВОЕ» mark.
+  useEffect(() => { if (active && atBottom && stick.current && lastAt) saveDraft(seenKey, lastAt) }, [active, atBottom, lastAt, seenKey])
+  // «Показать ранее» adds messages on top: keep what the user was looking at in place.
+  useLayoutEffect(() => {
+    const el = scroller.current
+    if (el && anchor.current !== null) { el.scrollTop = el.scrollHeight - anchor.current; anchor.current = null }
+  }, [limit])
 
   // Follow new output unless the user scrolled up to read.
   useLayoutEffect(() => {
@@ -66,6 +87,13 @@ export function ChatView({ id, active }: { id: string; active: boolean }) {
     if (!el || !active) return
     if (!restored.current && list.length) {
       restored.current = true
+      const mark = el.querySelector<HTMLElement>('.new-divider')
+      if (mark && mark.offsetTop < el.scrollHeight - el.clientHeight) { // unread messages below the fold: start at the mark
+        el.scrollTop = mark.offsetTop - 48
+        stick.current = false
+        setAtBottom(false)
+        return
+      }
       const saved = loadDraft<number>(`scroll:${id}`)
       if (saved) {
         el.scrollTop = el.scrollHeight - el.clientHeight - saved
@@ -108,8 +136,11 @@ export function ChatView({ id, active }: { id: string; active: boolean }) {
     if ((await tryApi<unknown>('DELETE', `/sessions/${id}`)) !== undefined) setState((s) => ({ sessions: without(s.sessions, id) }))
   }
 
-  const hidden = Math.max(0, list.length - limit)
-  const visible = hidden ? list.slice(hidden) : list
+  const showOlder = () => {
+    const el = scroller.current
+    anchor.current = el ? el.scrollHeight - el.scrollTop : null
+    setLimit(limit + PAGE)
+  }
 
   return (
     <div className="chat">
@@ -139,14 +170,21 @@ export function ChatView({ id, active }: { id: string; active: boolean }) {
             </div>
           )}
           {hidden > 0 && (
-            <button type="button" className="btn btn-ghost btn-sm chat-older" onClick={() => setLimit(limit + PAGE)}>
-              Показать ранние ({hidden})
+            <button type="button" className="btn btn-ghost btn-sm chat-older" onClick={showOlder}>
+              Показать ранее ({hidden})
             </button>
           )}
-          {visible.map((m) => <MessageItem key={m.id} m={m} fresh={m.at > shownAt.current} />)}
+          {items.map((it) => {
+            switch (it.kind) {
+              case 'msg': return <MessageItem key={it.key} m={it.m} until={it.until} fresh={it.m.at > shownAt.current} />
+              case 'tools': return <ToolRun key={it.key} msgs={it.msgs} cwd={session.cwd} live={running} />
+              case 'head': return <TurnHead key={it.key} start={it.start} end={it.end} />
+              case 'files': return <TurnFiles key={it.key} msgs={it.msgs} cwd={session.cwd} />
+              case 'new': return <div key={it.key} className="new-divider" role="separator" aria-label="Новые сообщения"><span>Новое</span></div>
+            }
+          })}
           {running && session.phase === 'auth' ? <AuthCard session={session} messages={list} />
-            : running && <div className="chat-working" role="status"><LoaderCircle className="spinner" aria-hidden />{starting || 'Работает…'}</div>}
-          {!running && <TurnFiles messages={list} cwd={session.cwd} />}
+            : running && <ActivityLine session={session} list={list} starting={starting} />}
         </div>
       </div>
 
@@ -159,6 +197,7 @@ export function ChatView({ id, active }: { id: string; active: boolean }) {
         )}
         <div className="chat-col">
           <WorkersPanel sessionId={id} workers={workers} />
+          {sessionVisualState(session) === 'stalled' && <StallBanner session={session} />}
           {session.status === 'error' && (
             <div className="chat-alert" role="alert">
               Агент не запустился. Проверьте команду агента в конфигурации и лог.
@@ -254,39 +293,6 @@ function WhereLine({ session }: { session: Session }) {
 }
 
 /** Files the agent edited in its last turn, with line counts; click opens the diff. */
-function TurnFiles({ messages, cwd }: { messages: Message[]; cwd: string }) {
-  const files = useMemo(() => {
-    const last = messages.length ? messages[messages.length - 1].turn : -1
-    const map = new Map<string, { added: number; removed: number }>()
-    for (let i = messages.length - 1; i >= 0 && messages[i].turn === last; i--) {
-      const m = messages[i]
-      const e = m.kind === 'tool' && m.tool?.status !== 'error' ? fileEdit(m.tool?.input) : null
-      if (!e) continue
-      const cur = map.get(e.file) ?? { added: 0, removed: 0 }
-      map.set(e.file, { added: cur.added + e.added, removed: cur.removed + e.removed })
-    }
-    return [...map.entries()]
-  }, [messages])
-
-  if (!files.length) return null
-  const rel = (f: string) => {
-    const a = normPath(f)
-    const root = normPath(cwd)
-    return a.startsWith(`${root}/`) ? f.slice(cwd.replace(/[\\/]+$/, '').length + 1) : f
-  }
-  return (
-    <Disclosure className="turn-files" summary={<>Изменено файлов: {files.length}</>}>
-      {files.map(([f, c]) => (
-        <button key={f} type="button" className="turn-file" onClick={() => openTab({ kind: 'diff', cwd, path: rel(f) })} data-tip={f}>
-          <span className="ellipsis">{basename(f)}</span>
-          <span className="muted ellipsis turn-file-dir">{rel(f)}</span>
-          <span className="diff-stat num"><span className="add">+{c.added}</span> <span className="del">−{c.removed}</span></span>
-        </button>
-      ))}
-    </Disclosure>
-  )
-}
-
 /** GigaCode opened a browser login: the link, a copy button and a timer; the run continues by itself after login. */
 function AuthCard({ session, messages }: { session: Session; messages: Message[] }) {
   const link = [...messages].reverse().find((m) => m.link)?.link ?? null

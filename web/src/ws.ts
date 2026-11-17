@@ -157,6 +157,7 @@ function apply(ev: ServerEvent) {
     case 'session.del':
       closeSessionTab(ev.id)
       saveDraft(`scroll:${ev.id}`, null)
+      saveDraft(`seen:${ev.id}`, null)
       setState((s) => {
         const messages = { ...s.messages }
         const subagents = { ...s.subagents }

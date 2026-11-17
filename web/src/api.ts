@@ -54,6 +54,18 @@ export async function tryApi<T>(method: Method, path: string, body?: unknown): P
   }
 }
 
+/** A binary GET (images) as an object URL; the caller revokes it. */
+export async function apiBlobUrl(path: string): Promise<string> {
+  let res: Response
+  try {
+    res = await fetch(`/api${path}`, { headers: { 'x-harness-token': token } })
+  } catch {
+    throw new ApiError('Сервер недоступен', 0)
+  }
+  if (!res.ok) throw new ApiError(`HTTP ${res.status}`, res.status)
+  return URL.createObjectURL(await res.blob())
+}
+
 export const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e))
 
 export function qs(params: Record<string, string | number | null | undefined>) {
