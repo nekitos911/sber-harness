@@ -53,41 +53,53 @@ data/                          runtime state (gitignored)
   "host": "127.0.0.1",
   "port": 4777,
   "dataDir": "./data",
-  "shell": { "command": "powershell.exe", "args": ["-NoLogo"] },   // non-win default: $SHELL or /bin/bash
+  "shell": { "command": "powershell.exe",                // non-win default: $SHELL or /bin/bash
+             "args": ["-NoLogo", "-NoExit", "-Command", "[Console]::InputEncoding=[Console]::OutputEncoding=[System.Text.Encoding]::UTF8"] },
   "defaultAgent": "gigacode",
-  "worktreeRoot": null,                 // null => <repo>/../<repoName>.worktrees
-  "agents": {                           // key = agent id used everywhere (session.agent)
+  "workspaces": { "root": null, "repos": [] },          // auto-registered on start
+  "worktreeRoot": null,                                  // null => <repoParent>/<repoName>-worktrees
+  "git": { ... },                                        // see "Branches, commits, PRs"
+  "tasks": { "promptTemplate": "..." },                  // see "Prompt templates"
+  "session": { "idleWindowSec": 90 },
+  "orchestration": { "workerMayCommit": false },
+  "agents": {                                            // key = agent id used everywhere (session.agent)
     "gigacode": {
-      "launcher": "gigacode",           // which launcher implementation in server/launchers.js
+      "launcher": "gigacode",                            // implementation in server/launchers.js
       "label": "GigaCode",
-      "command": "gigacode",            // string (resolved via PATH/PATHEXT) or argv array ["node","C:/.../cli.js"]
-      "approvalMode": "yolo",           // passed through to the CLI
-      "approvalModes": ["plan", "default", "auto-edit", "yolo"],
+      "command": "C:/Program Files/.gigacode/bin/gigacode.cmd",   // the shim; see "GigaCode launcher"
+      "node": null, "cliEntry": null,                    // optional explicit pair (both or neither)
+      "nodeArgs": ["--max-old-space-size=6144"],
+      "approvalMode": "auto", "approvalModes": ["plan", "default", "auto-edit", "auto"],
       "model": null,
-      "settingsEnv": "GIGACODE_CLI_SYSTEM_SETTINGS_PATH",  // env var that points CLI to per-session settings.json (VERIFY)
-      "settings": { "chatRecording": true },              // merged into per-session settings.json
-      "inheritUserMcpFrom": "~/.gigacode/settings.json",  // copy user's mcpServers into per-session settings
-      "firstEventTimeoutMs": 30000,
+      "models": [],                                      // model catalogue for the UI dropdown (filled locally)
+      "settingsEnv": "GIGACODE_SYSTEM_SETTINGS_PATH",
+      "settings": { "agents": { "modelGrades": {}, "allowedGrades": [] }, "chatRecording": true },
+      "inheritUserMcp": false,                           // copy ~/.gigacode/settings.json mcpServers into the run file
+      "taskPromptTemplate": "/full-task {taskUrl}{notes}",
+      "firstEventTimeoutMs": 120000,                     // cold start with ~9 MCP servers takes 30-60 s
       "env": {}
     },
-    "claude": { "launcher": "claude", "label": "Claude Code", "command": "claude", "approvalMode": "acceptEdits",
-                "approvalModes": ["default", "acceptEdits", "plan", "bypassPermissions"], "enabled": false },
-    "mock":   { "launcher": "mock", "label": "Mock agent (demo)" }
+    "claude": { "launcher": "claude", "command": "claude", "approvalMode": "acceptEdits", "enabled": false, ... },
+    "mock":   { "launcher": "mock", "label": "Mock agent (demo)", ... }
   },
-  "agentMcpServers": {},                // extra MCP servers injected into every agent session (gemini/qwen mcpServers format)
-  "mcpServers": {                       // console-level MCP clients (the harness itself calls them)
-    "tracker": { "enabled": false, "transport": "stdio", "command": "node", "args": ["scripts/mock-mcp.js"], "timeoutMs": 15000 }
-    // http: { "transport": "http", "url": "http://...", "headers": {} }
-  },
-  "mcpSecretsFile": null,               // null => env HARNESS_MCP_SECRETS or <dataDir>/mcp-secrets.json; { "<server>": { "env": {}, "headers": {} } }
+  "agentMcpServers": {},                  // extra MCP servers injected into every agent run (gemini/qwen mcpServers format)
+  "mcpServersFrom": "~/.gigacode/settings.json",   // console MCP servers (config.mcpServers merged over these)
+  "mcpServers": { },                      // console-level MCP clients (the harness itself calls them), see "Console MCP"
+  "mcpSecretsFile": null,
   "integrations": {
-    "tasks": { "enabled": false, "server": "tracker", "tool": "list_issues", "args": {},
-               "itemsPath": "issues",
-               "map": { "externalId": "key", "title": "summary", "description": "description", "externalUrl": "url", "status": "status", "priority": "priority" },
-               "statusMap": { "Open": "todo", "In Progress": "in_progress", "Review": "review", "Done": "done" } },
-    "pr":    { "enabled": false, "server": "tracker", "tool": "create_pull_request",
-               "args": { "repo": "{repo}", "source": "{branch}", "target": "{base}", "title": "{title}", "description": "{body}" },
-               "urlPath": "url" }                       // base branch: git.defaultBase
+    "tasks": { "enabled": false, "format": "onework-markdown", "server": "onework", "space": "PROJ",
+               "tools": { "find": "sbertrack_findIssues", "get": "sbertrack_getIssue", "meta": "sbertrack_getIssueMeta",
+                          "transition": "sbertrack_updateIssueStatus", "links": "sbertrack_listLinks", "me": "sbertrack_getUser" },
+               "limit": 100, "refreshSec": 0, "urlTemplate": "",            // e.g. "https://<tracker>/swtr/units/all/unit/{key}"
+               "statusMap": { "todo": "todo", "development": "in_progress", "qa": "review", "done": "done", ... },
+               "priorityMap": { "low": "low", "mid": "medium", "high": "high" },
+               "closedStatuses": ["done", "cancelled", "declined"] },
+               // format "json" (other providers): "itemsPath", "map", "transition": { "args": {...} } — see server/integrations/tasks.js
+    "pr":    { "enabled": false, "server": "sourcecontrol", "tool": "git_create_pull_request",
+               "args": { "project": "{project}", "repository": "{repository}", "head": "{branch}", "base": "{base}", "title": "{title}", "body": "{body}" },
+               "urlPath": "html_url",
+               "listTool": "git_list_pull_requests", "listArgs": { ... "state": "OPEN" }, "listItemsPath": "pulls",
+               "limits": { "titleBytes": 100, "bodyBytes": 512 } }
   }
 }
 ```
@@ -116,7 +128,12 @@ interface Task {
   assigneeSessionId: string | null   // the worker session currently/last working on it
   externalId: string | null  // id in external tracker (import dedupe key with `source`)
   externalUrl: string | null
-  source: string | null      // integration name, e.g. "tracker"
+  source: string | null      // integration name, e.g. "onework"
+  externalStatus: string | null      // raw tracker status   } see "Board <-> tracker semantics"
+  statusManual: boolean              // a human moved the card
+  hidden: boolean
+  takenAt: number | null
+  snapshot: { title, description, externalStatus, at } | null
   log: { at: number, by: string, text: string }[]   // by = "user" | session id | "harness"
   createdAt: number
   updatedAt: number
@@ -137,7 +154,8 @@ type SessionStatus =
   | 'done'      // worker reported worker_done(status=done)
   | 'failed'    // worker reported failed, or turn crashed
   | 'exited'    // terminal: process exited
-  | 'error'     // could not start (bad command, timeout before first event)
+  | 'stopped'   // chat: stopped by the user (the next message resumes)
+  | 'error'     // could not start (bad command, timeout before first event, no output at all)
 
 interface Session {
   id: string                   // "s_xxxxxx"
@@ -161,6 +179,9 @@ interface Session {
   preview: string              // last ~200 chars of agent text, for boards
   command: string | null       // terminal: initial command typed into the shell (e.g. "gigacode")
   pid: number | null
+  phase: 'starting' | 'streaming' | null   // chat turn: spawned without output yet ("starting / waiting for MCP") | output flows
+  tokensIn: number             // cumulative over turns, from each run's result usage (0 when unknown)
+  tokensOut: number
   createdAt: number
   lastActivityAt: number
 }
@@ -175,8 +196,10 @@ interface Message {
   from: string | null          // user messages: "user" | sender session id (delivered by orchestration)
   tool: null | {               // kind === 'tool'
     id: string, name: string, input: unknown, output: string | null,
-    status: 'running' | 'ok' | 'error'
+    status: 'running' | 'ok' | 'error',
+    progress?: string[]        // built-in sub-agent activity under this call (agent tool): compact lines, last 50
   }
+  options?: string[]           // user message carrying a question from `ask`: suggested answers (buttons)
   turn: number                 // turn counter within the session
 }
 
@@ -184,7 +207,8 @@ interface Notification {
   id: string, at: number, read: boolean,
   kind: 'question' | 'done' | 'failed' | 'escalation' | 'info' | 'error',
   sessionId: string | null, taskId: string | null,
-  text: string
+  text: string,
+  options?: string[]           // kind 'question': suggested answers
 }
 ```
 
@@ -192,7 +216,9 @@ Persistence (`<dataDir>`): `db.json` = `{ seq: {task}, tasks, workspaces, sessio
 `transcripts/<sessionId>.json` = `Message[]`, `terms/<sessionId>.log` = raw terminal output (ring, last 2 MB),
 `runs/<sessionId>/settings.json` (+ `mcp.json` for claude), `runs/<sessionId>/stderr.log`, `token`.
 Writes are debounced and atomic (write tmp + rename). On startup, sessions with status `running` become `idle`
-(chat) or `exited` (terminal) and get a system message "harness restarted".
+(chat) or `exited` (terminal) and get a system message "harness restarted". System messages starting with `⚠` are
+warnings (e.g. stderr of a successful run); a system message "Model: … · MCP: onework ✓, java-lsp ✗" is added once
+per session from the CLI's init event.
 
 ## Agent launchers (`server/launchers.js`)
 
@@ -200,7 +226,8 @@ Writes are debounced and atomic (write tmp + rename). On startup, sessions with 
 /** @typedef {{ prompt: string, session: Session, agentCfg: object, settingsPath: string, mcpConfigPath: string, harnessMcp: {command: string, args: string[], env: Record<string,string>} }} TurnCtx */
 /** @typedef {{
  *   id: string,
- *   buildArgs(ctx: TurnCtx): string[],          // argv after the executable; prompt is ONE element
+ *   resolve(agentCfg): { file, args, env },      // executable (+ leading args, env); runs before anything is created
+ *   buildArgs(ctx: TurnCtx): string[],          // argv after resolve().args; prompt is ONE element
  *   env(ctx: TurnCtx): Record<string,string>,    // extra env (e.g. settings path var)
  *   prepare(ctx: TurnCtx): void,                 // write per-session settings/mcp config files (idempotent)
  *   parse(line: any, state: object): NormalizedEvent[]   // one parsed NDJSON object -> 0..n events
@@ -213,17 +240,21 @@ type NormalizedEvent =
   | { type: 'tool_call', id: string, name: string, input: unknown }
   | { type: 'tool_result', id: string, output: string, isError: boolean }
   | { type: 'error', text: string }
-  | { type: 'result', text: string | null, isError: boolean }   // end of turn
+  | { type: 'init', model: string | null, mcpServers: { name, status }[] }   // CLI start (system/init)
+  | { type: 'result', text: string | null, isError: boolean, tokensIn?, tokensOut? }   // end of turn; usage of the whole run
   | { type: 'meta', raw: unknown }                       // anything unknown; kept in stderr.log only
+// text/thought/tool_call/tool_result/error may carry parentToolId: the event belongs to a built-in sub-agent started by
+// that tool call (stream-json parent_tool_use_id) and is shown as tool.progress of the parent call, never in the main chat.
+// runner.js adds { type: 'raw', text } for each non-JSON stdout line.
 ```
 
-Launchers: `gigacode`, `qwen`, `gemini` (same argv family: `[--resume <id>] -p <prompt> --output-format stream-json
---approval-mode <mode> [--model <m>]`, per-session settings via env var), `claude` (`-p <prompt> --output-format
-stream-json --verbose --permission-mode <mode> --mcp-config <file> [--resume <id>]`), `mock`
-(`node scripts/mock-agent.js` with the gigacode argv). One shared tolerant normalizer handles both the
-Gemini-style (`init/message/tool_use/tool_result/error/result`) and the Claude-style
-(`system/assistant/user/result`, `stream_event`) stream-json shapes. Any object with `session_id`/`sessionId`
-yields a `session` event.
+Launchers: `gigacode`, `qwen`, `gemini` (same argv family: `[--resume <id>] -p <prompt> --approval-mode <mode>
+--output-format stream-json [--model <m>]`, per-session settings via env var), `claude` (`-p <prompt> --output-format
+stream-json --verbose --permission-mode <mode> [--model] [--resume <id>] --mcp-config <file> --allowedTools mcp__harness
+--disallowedTools Task Agent`), `mock` (`node scripts/mock-agent.js` with the gigacode argv). One shared tolerant
+normalizer handles the Claude/Qwen style (`system/assistant/user/result`, `stream_event`; GigaCode and claude) and the
+Gemini style (`init/message/tool_use/tool_result/error/result`; gemini). Any object with `session_id`/`sessionId`
+yields a `session` event. Tokens come from the `result` event only (per-step assistant usage does not add up to it).
 
 Executable resolution (runner.js), never through a shell: argv array is used as-is; a string is looked up
 in PATH (+PATHEXT on Windows); `.exe` runs directly; npm `.cmd` shims are parsed to `node <entry.js>`;
@@ -232,11 +263,15 @@ anything else fails with a clear message telling the user to set `command` as an
 ## Turn lifecycle (sessions.js + runner.js)
 
 1. `deliver(sessionId, {from, text})` pushes to the session queue. If the session is not `running`, start a turn.
-2. Turn: append `user` message, status `running`, `launcher.prepare()`, spawn, read stdout line by line
-   (buffer partial lines, ignore non-JSON lines into stderr.log), apply events to the transcript.
+2. Turn: append `user` message, status `running` + `phase: 'starting'`, `launcher.prepare()`, spawn, read stdout line by
+   line (partial lines buffered, 8 MB cap), `phase: 'streaming'` on the first output, apply events to the transcript.
+   First prompt of a CLI session = preamble + text; if the text starts with `/` (slash command, e.g. `/full-task <url>`)
+   it is text + "\n\n" + preamble instead, because a slash command only works as the first word.
 3. No stdout line within `firstEventTimeoutMs` → kill process tree, `error` message with stderr tail, status `error`.
-4. Exit: if no `result` event and exit code != 0 → `error` message with stderr tail. Status back to `idle`
-   unless the worker already set `done`/`failed`.
+4. Exit (`phase` back to null): exit != 0 without a `result` → `error` message leading with stderr (a fatal CLI error leaves
+   stdout empty); exit 0 without a single event → `error` "exited without any output" + stderr, status `error` (e.g. the
+   GigaCode identity check); stderr text after a successful run → `system` message prefixed `⚠` (warning).
+   Status back to `idle` unless the worker already set `done`/`failed` (or the user stopped it: `stopped`).
 5. Post-turn: if worker with `autoReport` and no `worker_done` during this turn and queue empty →
    escalation delivered to parent (or notification to user if no parent). Then if queue non-empty → next turn.
 6. `stop` kills the process tree (`taskkill /T /F` on Windows) and clears the queue.
@@ -264,7 +299,7 @@ HTTP: `POST /api/agent/<tool>` with headers `x-harness-token`, `x-harness-sessio
 | `worker_start` | `task_id?` or `spec` (+`title?`), `agent?`, `workspace?`, `worktree?: 'current' \| 'new'`, `branch?`, `model?` | creates worker chat session (child of caller), task → `in_progress`, starts first turn with worker preamble + spec. 409 if the task already has an active worker or deps not done |
 | `worker_list` | – | caller's child sessions with status/task/preview |
 | `send_message` | `to: <sessionId> \| 'parent' \| 'user'`, `body` | delivers (wakes target) |
-| `ask` | `question` | like send_message to parent (or user notification `question`); answer arrives as the next message |
+| `ask` | `question`, `options?: string[]` | like send_message to parent (or user notification `question`); options go on the delivered message / notification; answer arrives as the next message |
 | `worker_done` | `summary`, `status: 'done' \| 'failed'` | task → `review` (done) / `todo` (failed) + log; session status done/failed; parent gets a delivery with summary + now-ready tasks; user gets a notification |
 
 `mcp/harness-mcp.js`: stdio MCP server (JSON-RPC 2.0, newline-delimited) implementing `initialize`,
@@ -274,25 +309,28 @@ Reads `HARNESS_URL`, `HARNESS_TOKEN`, `HARNESS_SESSION_ID` from env; falls back 
 
 Every chat session gets the harness MCP server injected (settings.json `mcpServers.harness` or `--mcp-config`).
 
-**Sub-agents exist only through orchestration.** A worker is always a harness session created by
-`worker_start` (from a coordinator agent) or by `POST /api/tasks/:id/assign` (from the UI, same code path),
-so every sub-agent has its own chat in the UI. Built-in sub-agent tools of the CLIs are disabled where the
-CLI allows it (claude: `--disallowedTools Task Agent`; gigacode/qwen/gemini: `agents.<id>.settings` may carry the
-CLI's tool-exclude setting, VERIFY on target) and the coordinator/worker preambles forbid them explicitly.
-There are no pre-created agents: the Agents board shows only sessions that exist.
+**Workers vs built-in helpers.** Parallel task work the user should see goes through `worker_start` (from a
+coordinator) or `POST /api/tasks/:id/assign|start` (from the UI, same code path): every worker is a harness session
+with its own chat. GigaCode's built-in `agent` tool cannot be disabled and `/full-task` relies on it for review, so it is
+allowed for internal helpers (review, exploration); their activity is shown read-only (tool.progress of the parent
+call, and the registry below). claude runs with `--disallowedTools Task Agent`. There are no pre-created agents.
 
 Preambles (built in `orchestration.js`, prepended to the first prompt of a session):
-- coordinator (`role: 'coordinator'`): you coordinate; split work into tasks (`task_create` with deps),
-  start workers with `worker_start`, never use built-in sub-agent tools, after starting workers END YOUR TURN —
-  the harness wakes you with each worker report; answer worker questions with `send_message`.
-- worker: Task id/title, Session id, Parent id, cwd/branch; do only this task inside cwd; `ask` then end turn
-  for questions; finish with `worker_done(summary, status)`; commit changes to the current branch, do not push;
-  never use built-in sub-agent tools.
+- coordinator (`role: 'coordinator'`): you coordinate; split work into tasks (`task_create` with deps), start workers
+  with `worker_start`, after starting workers END YOUR TURN — the harness wakes you with each worker report; answer
+  worker questions with `send_message`; multi-repo and multi-target rules; built-in agent tool only for helpers.
+- worker: Task key/title, Session id, Parent, cwd/branch, base = targets[0]; do only this task inside cwd; stay on the
+  branch; `ask` then end turn for questions; finish with `worker_done(summary, status)`. Unless
+  `orchestration.workerMayCommit`: do NOT commit/push/merge/create PRs/write to the tracker unless the task says so
+  (the user commits from the UI). Commit message format `<KEY> <summary>` (no colon, no feat:/fix:, no Co-authored-by,
+  no AI mentions). Port-conflict workers may `git cherry-pick --continue`.
+- both: `Registry dir: <registryDir>` — record built-in helper sub-agents there (see the registry section).
 
 ## UI HTTP API (all under `/api`, header `x-harness-token` required)
 
 ```
-GET    /api/state                         -> { tasks, workspaces, sessions, notifications, agents: [{id,label,launcher,approvalModes,approvalMode,enabled}], shell: {command}, integrations: {tasks: bool, pr: bool} }
+GET    /api/state                         -> { tasks, workspaces, sessions, notifications, agents: [{id,label,launcher,approvalModes,approvalMode,enabled,models,model}],
+                                              defaultAgent, shell: {command}, integrations: {tasks: bool, pr: bool, tasksProblem: {error, at} | null} }
 POST   /api/workspaces          {path, name?}            -> Workspace
 DELETE /api/workspaces/:id
 GET    /api/workspaces/:id/worktrees                     -> Worktree[]
@@ -305,9 +343,15 @@ DELETE /api/tasks/:id
 POST   /api/tasks/:id/move      {status, beforeId?: string|null}   -> Task  (DnD: put before beforeId, or at end)
 POST   /api/tasks/:id/assign    {agent?, workspaceId?, cwd?, worktree?: 'current'|'new', sessionId?} -> Session
                                  (sessionId given => deliver the task to that existing session instead of creating one)
-POST   /api/tasks/:id/start     {agent?}   -> Session   ("Взять в работу": assign with defaults = default agent, worktree 'new' in task's workspace, task prompt template)
+POST   /api/tasks/:id/start     {agent?, notes?} -> Session (+ jumped: true when the task already had a live worker)
+                                 ("Взять в работу": default agent, worktree 'new' in task's workspace, task prompt template)
 POST   /api/tasks/:id/port      {target, agent?} -> { target, branch, cwd, status, sessionId }
 POST   /api/tasks/sync                                   -> { imported, updated }   (integrations.tasks)
+GET    /api/tasks/:id/external                           -> { key, title, fields: {Status, Priority, …}, description, attributes }
+                                 (onework getIssue, parsed; fills an empty task.description)
+GET    /api/tasks/:id/transitions                        -> { current, transitions: [{ id, label }] }   (onework getIssueMeta)
+POST   /api/tasks/:id/tracker-status {transition, comment?} -> Task   (onework: transition id from /transitions;
+                                 "json" format: {status, comment?}); 501 when not configured
 
 POST   /api/sessions            {kind, agent?, cwd?, workspaceId?, title?, prompt?, role?, approvalMode?, model?, command?} -> Session
 PATCH  /api/sessions/:id        {title?, approvalMode?, model?, autoReport?}            -> Session
@@ -317,6 +361,7 @@ POST   /api/sessions/:id/messages {text}                  -> { queued: boolean }
 POST   /api/sessions/:id/stop
 POST   /api/sessions/:id/restart                          (terminal: respawn; chat: reset status to idle)
 GET    /api/sessions/:id/log                              -> { text }   (stderr/raw tail)
+GET    /api/sessions/:id/subagents                        -> { items, problems }   (registry, read-only)
 
 GET    /api/git/status?cwd=     -> { branch, upstream, ahead, behind, files: [{ path, x, y, status: 'M'|'A'|'D'|'R'|'?'|'U' }] }
 GET    /api/git/diff?cwd=&path= -> { diff }   (unified; path optional = whole tree; untracked files shown as added)
@@ -326,7 +371,9 @@ GET    /api/git/suggest?cwd=    -> { taskId, key, branch, base,
                                      pr: { title, body, base } }     (prefill for the PR dialog, user edits before create)
 POST   /api/git/commit          {cwd, message, paths?}   -> { hash }   (paths absent => all changes; message = title + "\n\n" + body)
 POST   /api/git/push            {cwd}                    -> { output }
-POST   /api/git/pr              {cwd, title, body, base?} -> { url }   (integrations.pr; 501 if disabled)
+POST   /api/git/pr              {cwd, title, body, base?} -> { url, existing }   (integrations.pr; 501 if disabled;
+                                 existing: an OPEN PR with the same head+base already existed and is returned instead;
+                                 400 with byte counts when title/body exceed integrations.pr.limits — UTF-8 BYTES)
 
 GET    /api/fs/list?cwd=&path=  -> [{ name, path, dir: boolean, size }]   (path relative to cwd; '' = root; dirs first; skips .git and node_modules)
 GET    /api/fs/file?cwd=&path=  -> { path, content, size, binary: boolean }   (text up to 2 MB; binary => content '')
@@ -335,7 +382,7 @@ PUT    /api/fs/file             {cwd, path, content} -> { ok: true }
 
 GET    /api/mcp/servers         -> [{ name, enabled, transport, ok, error?, problem?, tools: [{name, description}] }]
 
-GET    /api/settings            -> { agents: { <id>: { approvalMode, approvalModes, model, modelGrades: { default?, fast?, review?, explore? }, allowedGrades, taskPromptTemplate } },
+GET    /api/settings            -> { agents: { <id>: { approvalMode, approvalModes, model, models, modelGrades: { default?, fast?, review?, explore? }, allowedGrades, taskPromptTemplate } },
                                      defaultAgent, git: {...}, tasks: { refreshSec } }
 PUT    /api/settings            same shape (partial) -> saved into harness.config.local.json (never secrets; approvalMode validated)
                                  modelGrades/allowedGrades map to agents.<id>.settings.agents.{modelGrades,allowedGrades}
@@ -356,6 +403,7 @@ Server → client (JSON per frame):
 { t: 'workspaces', workspaces }
 { t: 'term', id, data }        (only to sockets attached to that terminal)
 { t: 'term.replay', id, data } (full buffer, sent on attach)
+{ t: 'subagents', sessionId, items }   (registry rows, while the session runs, on change)
 ```
 Client → server: `{ t: 'term.attach', id }`, `{ t: 'term.detach', id }`, `{ t: 'term.in', id, data }`,
 `{ t: 'term.resize', id, cols, rows }`.
@@ -367,21 +415,22 @@ Config (`git` section):
 "git": {
   "defaultBase": "develop",
   "branchTemplate": "feature/{key}",            // auto-created branches (worker_start/assign with worktree "new")
-  "portBranchTemplate": "{branch}-{target}",    // e.g. feature/JIRA-1234-release-1.54.0
-  "commitTitleTemplate": "{key}: {title}",
-  "prTitleTemplate": "{key}: {title}"
+  "portBranchTemplate": "{branch}-{targetSlug}",   // feature/PROJ-14822-rel154 for release/1.54.0
+  "commitTitleTemplate": "{key} {title}",        // team convention: key, space, summary (no colon, no feat:/fix:)
+  "prTitleTemplate": "{key} {title}"
 },
 "tasks": {
-  "promptTemplate": "{key}: {title}\n\n{description}\n\nTargets: {targets}\nLink: {url}"
-  // per agent override: agents.<id>.taskPromptTemplate, e.g. "/full-task {key}" (a custom CLI command
-  // that takes the task + its SDD). Vars: {key} {id} {title} {description} {url} {targets} {branch} {repo}
+  "promptTemplate": "{key}: {title}\n\n{description}\n\nTarget branches: {targets}\nLink: {taskUrl}{notes}"
+  // per agent override: agents.<id>.taskPromptTemplate (gigacode: "/full-task {taskUrl}{notes}"); see "Prompt templates"
 }
 ```
 - Task key `{key}` = `externalId` of the ROOT task (follow parentId up) when it came from the tracker (e.g.
   `JIRA-1234`, the space prefix comes from the tracker), else the root's local id (`T-12`). Subtasks share the
   root's key, so the same branch name `feature/JIRA-1234` is used in every microservice repo.
   Branch names are sanitized (`[^A-Za-z0-9._/-]` → `-`); if the branch already exists in that repo (and isn't
-  this task's own branch), suffix `-2`, `-3`…. Auto-created worktree directory is named after the branch.
+  this task's own branch), suffix `-2`, `-3`…. Worktree directories stay short (MAX_PATH):
+  `<repoParent>/<repoName>-worktrees/<KEY>` for task worktrees, `…/<branch tail>` otherwise (suffix -2… if taken).
+  `{targetSlug}`: `release/x.y.z` → `rel<x><y>` (release/1.54.0 → rel154), anything else → the sanitized target.
 - New worktree for a task: `git worktree add -b <branch> <dir> <start>` where `<start>` = `targets[0]` if it
   exists locally, else `origin/<targets[0]>`, else HEAD. `task.branch` is stored.
 - Worker's first prompt = worker preamble + task prompt rendered from `agents.<id>.taskPromptTemplate` ??
@@ -392,7 +441,9 @@ Config (`git` section):
 Work happens once, on `task.branch` started from `targets[0]`. Each other target gets a port:
 `POST /api/tasks/:id/port {target, agent?}` (UI button per target) or agent tool `task_port`:
 1. new worktree from `<target>` with branch `portBranchTemplate`;
-2. `git cherry-pick -x` of `git rev-list --reverse <targets[0]>..<task.branch>` (fallback to `origin/<targets[0]>`);
+2. requires commits on `task.branch` ahead of `targets[0]` (else 409 "commit the work first"); picks only the commits the
+   target lacks: `git log --cherry-pick --right-only --no-merges --reverse --format=%H <target>...<task.branch>`
+   (none → 409 "already contains every change"), then `git cherry-pick -x` of those;
 3. clean → port `status: 'clean'`, log entry; conflict → leave the cherry-pick in progress, port `status: 'conflict'`,
    start a worker session in that worktree (parent = caller/coordinator) with a preamble: resolve conflicts,
    `git cherry-pick --continue`, run checks, `worker_done`. Its `worker_done` sets the port to done/failed.
@@ -410,47 +461,42 @@ coordinator/user; the board shows subtask progress (done/total).
   changed file).
 - `commit.title` = `commitTitleTemplate`; `commit.body` = last `worker_done` summary for that task (if any) +
   bullet list of changed files. `pr.title` = `prTitleTemplate`; `pr.body` = task description excerpt + external URL +
-  last worker summary + `git log <base>..HEAD --oneline` as bullets.
-- Worker preamble tells agents: commit messages must start with `{key}: ` and the worker stays on its branch.
+  `Target: <base>` + last worker summary + `git log <base>..HEAD --oneline` as bullets; `base` = the port target when cwd
+  is a port worktree, else `targets[0]`. PR title/body suggestions are cut to `integrations.pr.limits` (UTF-8 bytes, on a
+  code point boundary, with "…"); the create call itself never truncates (400 with byte counts instead).
+- Worker preamble tells agents the commit format `<KEY> <summary>` and that the worker stays on its branch.
 
 ## GigaCode launcher: known facts from the target machine (do not "simplify")
 
-- Installed at `C:\Program Files\.gigacode\bin\gigacode.cmd` (default `agents.gigacode.command`).
-- Real invocation (no shell, argv array, prompt = one element, `--approval-mode` AFTER the prompt, no invented flags —
-  anything else must be confirmed with `--help`):
-  new: `<node.exe> --max-old-space-size=6144 <cli-entry.js> -p <prompt> --approval-mode <mode> --output-format stream-json [--model <id>]`
-  resume: `<node.exe> --max-old-space-size=6144 <cli-entry.js> --resume <sessionId> -p <text> --approval-mode <mode> --output-format stream-json`
-- Agent process env (set only by the runner): `GIGACODE_SYSTEM_SETTINGS_PATH`, `GIGACODE_PACKAGE_IDENTITY`,
-  `GIGACODE_PACKAGE_LAUNCHER` (path of the .cmd shim), `MCP_SECRET_<NAME>` for every secret (see Console MCP),
-  `HARNESS_URL`, `HARNESS_TOKEN`, `HARNESS_SESSION_ID`.
-- If the configured launcher cannot start, show the error and stop. Never fall back to another launcher.
-- `agents.gigacode.command` points at the `gigacode.cmd` shim (or PATH name). The shim sits next to its bundled
-  runtime: resolve to `<shimDir>/runtime/node/node.exe` + `<shimDir>/lib/cli-entry.js` (fall back to parsing the
-  shim text for the entry, then to `process.execPath`). Optional explicit pair `agents.gigacode.node` +
-  `agents.gigacode.cliEntry` — both or neither, both must exist; checked BEFORE anything else is created (worktree).
-- **Package identity guard**: cli-entry.js requires env `GIGACODE_PACKAGE_IDENTITY` (64 hex) and
-  `GIGACODE_PACKAGE_LAUNCHER` (absolute path of the shim). Both are declared inside the shim text as
-  `set "GIGACODE_PACKAGE_IDENTITY=<64 hex>"`. Read the shim, extract, pass in env. Missing identity → fail
-  immediately with a clear message (otherwise the CLI says "the public launcher and standalone payload identities do not match").
-- Per-session settings: env `GIGACODE_SYSTEM_SETTINGS_PATH` → `<dataDir>/runs/<sid>/settings.json`, written as UTF-8.
-  It is layered over the user's `~/.gigacode/settings.json` (permissions and the user's own MCP servers come from
-  there; the harness never overrides them). Contents, exactly:
-  `{ "agents": { "modelGrades": {...}, "allowedGrades": [...] }, "chatRecording": true, "mcpServers": { "harness": {...} } }`
-  — `mcpServers` holds ONLY servers the harness deliberately gives the agent (`harness` + `agentMcpServers`).
-  Never write `permissions`. Empty grades map is valid. Write failure → session `error` (and a worktree created for
-  this start is removed), never a stuck "running".
-  Same path on every turn (resume), file removed when the session is deleted.
-- Approval modes: `plan | default | auto-edit | auto` (validated against `approvalModes`; unknown → refuse).
-- Resume requires `chatRecording: true`, the same cwd and the same settings path. A session never resumes with a
-  different cwd, settings path or launcher — refuse explicitly.
-- The user's task command: `taskPromptTemplate: "/full-task-ui {taskUrl}{notes}"` (takes the task + its SDD).
+Authoritative details: `docs/GIGACODE-FACTS.md`; fixtures: `test/fixtures/gigacode.*`.
+- Install: `ROOT\bin\gigacode.cmd` (shim, default `agents.gigacode.command`), `ROOT\runtime\node\node.exe` (bundled Node —
+  the system Node must not run cli-entry), `ROOT\lib\cli-entry.js`. The shim sets `ROOT=%~dp0..`.
+- Resolution (before anything else is created, e.g. a worktree): explicit `agents.gigacode.node` + `cliEntry` (both or
+  neither, both must exist) → parsed from the shim (`set "ROOT=…"` + the quoted call line, `%~dp0`/`%ROOT%` expanded) →
+  `<shimDir>/../runtime/node/node.exe` + `<shimDir>/../lib/cli-entry.js` → the same under `<shimDir>` → clear error.
+  The `.cmd` itself is never spawned (no honest exit codes). Never fall back to another launcher or to the system node.
+- argv: `[--max-old-space-size=6144, cli-entry.js, (--resume <id>)?, -p, <prompt>, --approval-mode, <mode>, --output-format, stream-json, (--model <m>)?]`.
+- Env (set only by the runner): `GIGACODE_SYSTEM_SETTINGS_PATH`, `GIGACODE_PACKAGE_IDENTITY` (64 hex from the shim's
+  `set "GIGACODE_PACKAGE_IDENTITY=…"`; missing → fail immediately), `GIGACODE_PACKAGE_LAUNCHER` (shim path),
+  `MCP_SECRET_<NAME>` for every secret, `HARNESS_URL`, `HARNESS_TOKEN`, `HARNESS_SESSION_ID`. Without the identity env the
+  CLI writes only to stderr and exits 0 → reported as "exited without any output".
+- Per-session settings `<dataDir>/runs/<sid>/settings.json` (UTF-8, same path every turn, removed with the session):
+  `{ "agents": { "modelGrades": {...}, "allowedGrades": [...] }, "chatRecording": true, "mcpServers": { harness, ...agentMcpServers } }`.
+  Never `permissions`. `inheritUserMcp: true` also copies the user's `~/.gigacode/settings.json` mcpServers (merge vs
+  replace is unconfirmed). Write failure → error, and a worktree created for this start is removed.
+- Approval modes `plan | default | auto-edit | auto` (validated). Resume needs `chatRecording`, the same cwd, settings
+  path and launcher (a changed launcher is refused).
+- Stream: Qwen-Code / Claude style; cold start (`system/init`) can take 30–60 s → `firstEventTimeoutMs` 120000 and
+  `session.phase: 'starting'` for the UI. Fatal errors: empty stdout + exit 1 + stderr. Warnings: stderr at exit 0.
+- Task command: `taskPromptTemplate: "/full-task {taskUrl}{notes}"` — slash commands work only as the first word.
 
 ### Prompt templates
 Single pass with a replacer FUNCTION (task text may contain `$&`, `$'`, `$$`); substituted text is never expanded
 again; unknown `{placeholders}` are left as is; a task template without any of `{taskUrl} {key} {id} {description}`
 is a config error (agent would start without the task); empty notes are fine.
 Vars: `{key} {id} {title} {description} {url} {taskUrl} {targets} {branch} {repo} {notes} {runId} {registryDir}
-{settingsPath} {approvalMode}`. `{notes}` = `" " + notes` when the user typed notes at start, else `""`.
+{settingsPath} {approvalMode}`. `{taskUrl}` = `externalUrl` (from `integrations.tasks.urlTemplate`) or the key when there is
+none. `{notes}` = `" " + notes` when the user typed notes at start, else `""`.
 `{runId}` = session id, `{registryDir}` = `<dataDir>/runs/<sid>/registry`.
 
 ### Run robustness
@@ -461,8 +507,10 @@ Vars: `{key} {id} {title} {description} {url} {taskUrl} {targets} {branch} {repo
 - stdout: line buffer with a cap (lines > 8 MB are truncated with a marker); non-JSON lines are NOT dropped:
   consecutive ones are shown in the feed as one `system` message (mono). stderr → `runs/<sid>/stderr.log`; its tail
   goes into the error message when the process dies before the first event.
-- Usage: `result` events may carry token counts (`stats`/`usage`, `input_token_count`/`output_token_count`) →
-  cumulative `session.tokensIn` / `session.tokensOut` (0 when unknown).
+- Usage: from the `result` event only (`usage` / `stats`) → cumulative `session.tokensIn` / `session.tokensOut` (0 when unknown).
+- Ops: one harness per `dataDir` (a live pid in `<dataDir>/server.json` that is not ours → refuse to start); a busy port →
+  error naming the port and `netstat -ano | findstr :<port>`; `*.stale-*` folders under `data/` and the worktree roots are
+  swept on start (best effort); folders are deleted by renaming to `<dir>.stale-<ts>` first (files held by AV/indexer).
 - Chat without a repository: cwd = `<dataDir>/chats/<sid>` (created, survives restarts), no worktree.
 - Worktrees: reuse the task's worktree in that repo if it exists; removal = `git worktree remove --force` +
   `git worktree prune --expire now`, then the directory: on Windows rename to `.stale-<ts>` first, then
@@ -481,7 +529,9 @@ idle done failed interrupted unverifiable`; optional `model role parentId worktr
 activity{tool,since} tokensIn tokensOut settledAt`. Reader rules: broken record → skipped (counted in a
 `problems` list, never crash); `working` whose `lastActivity` (or `startedAt` if null) is older than
 `session.idleWindowSec` (default 90) → shown as `unverifiable` (file never rewritten); terminal states without
-`settledAt` are flagged; tokens default to 0. These rows are separate from harness workers (which are real
+`settledAt` are flagged; tokens default to 0. Timestamps are ISO-8601 strings (epoch numbers accepted). The tail of
+`log.jsonl` gives `lastEvent: { ts, event, state, note, tool }` and `lastText` falls back to its `note`. Item fields:
+agent.json fields + `flags: string[]` + `lastEvent`. These rows are separate from harness workers (which are real
 sessions with their own chats).
 
 ## Board ↔ tracker semantics
@@ -494,12 +544,17 @@ sessions with their own chats).
   are not added (existing ones are kept). `DELETE` of an imported task = `hidden: true` (re-import keeps it hidden);
   local tasks are really deleted. Search by key also finds hidden/closed ones; UI has a "show hidden" toggle.
 - Column comes from `statusMap(externalStatus)` on import unless `statusManual`. Moving a card NEVER changes the
-  tracker; changing tracker status is an explicit action: `POST /api/tasks/:id/tracker-status { status, comment? }`
-  → `transitionTask()` in `server/integrations/tasks.js` (501 when `integrations.tasks.transition` is not configured).
+  tracker; changing tracker status is an explicit action: `GET /api/tasks/:id/transitions` then
+  `POST /api/tasks/:id/tracker-status { transition, comment? }` → `transitionTask()` in `server/integrations/tasks.js`.
+- onework (`format: "onework-markdown"`): the tools answer MARKDOWN. Import = `tools.find` with
+  `{space_code: <space>, assignee: "me", page_size: 100, page_number: n}` while `has_next` (≤ 20 pages, stops at `limit`),
+  lines `N. **<KEY>** — <summary> [<status> | <priority>] @<assignee>`; closed statuses filtered on our side; no
+  description in the list → `GET /api/tasks/:id/external` fetches it lazily. Tool errors arrive as text
+  (`reported tool error`, `{"error":"…"}`) and become errors with the inner message.
 - Periodic sync: `integrations.tasks.refreshSec` (0 = off, min 10) while at least one UI client is connected;
   only changed tasks are broadcast (signature = key + status + title). On failure the board keeps the local snapshot
   and `GET /api/state` → `integrations.tasksProblem: { error, at } | null` is shown as a banner ("tracker unavailable,
-  showing snapshot from HH:MM"). `limit` goes into the tool args (server-side limit).
+  showing snapshot from HH:MM"). JSON format: `limit` goes into the tool args (server-side limit).
 
 ## Console MCP: servers, secrets and failures
 Three separate MCP layers — never mix them:
@@ -515,9 +570,12 @@ Three separate MCP layers — never mix them:
    transition / links / me is config data (`integrations.tasks.tools`), never hardcoded.
 
 Secrets:
+- Server entries in `mcpServersFrom` use the gemini/qwen format: `{ type: "http", url, headers }` or `{ httpUrl }` → http,
+  `{ command, args, env }` → stdio.
 - Secrets file: `HARNESS_MCP_SECRETS` || `CONSOLE_MCP_SECRETS` || `config.mcpSecretsFile` || `<dataDir>/mcp-secrets.json`.
-  Formats: JSON `{ "<name>": "<value>" }`, or text lines `name=value` (`#` comments), or a single bare value
-  (no `=`) which means `onework/Authorization`. Names `scope/header` and `scope_header` are equivalent.
+  Formats: JSON `{ "<name>": "<value>" }`, or text lines `server/Name=value` (`#` comments, split on the first `=`), or a
+  single bare value (no `=`) which means `onework/Authorization`. Names `scope/header` and `scope_header` are equivalent.
+  A `server/Name` secret goes to THAT server: `headers[Name]` for http, `env[Name]` for stdio.
 - Config string values (env, headers, args, url) may reference secrets: `${env:NAME}` (process env, else secret NAME)
   and `$secret:scope/header` / `${secret:scope/header}`. Resolved at call time; never logged, never returned by an API.
 - Every secret is also exported to stdio MCP children and agent processes as `MCP_SECRET_<NAME>`
