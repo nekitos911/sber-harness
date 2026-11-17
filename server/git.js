@@ -329,12 +329,20 @@ export async function sweepStale(parent) {
     .map((n) => fs.promises.rm(path.join(parent, n), { recursive: true, force: true, maxRetries: 3 }).catch(() => {})));
 }
 
-/** `worktree remove --force` + `prune --expire now`, then whatever is left of the folder. */
+/**
+ * `worktree remove --force`, then whatever is left of the folder, then `prune --expire now`. A worktree git refused to
+ * remove (locked, ...) is left as is: its folder is never deleted behind git's back.
+ */
 export async function removeWorktree(cwd, wtPath) {
   const dir = path.resolve(wtPath);
-  const r = await git(cwd, ['worktree', 'remove', '--force', dir], { ok: [0, 128] });
+  const r = await git(cwd, ['worktree', 'remove', '--force', dir], { ok: [0, 1, 128, 255] });
+  if (r.code && (await worktrees(cwd)).some((w) => samePath(w.path, dir))) {
+    fail(400, `git не удалил рабочее дерево ${dir}: ${(r.stderr || r.stdout).trim()}`);
+  }
+  // git unregistered it but may have left files (Windows: a file held open by another process)
+  const gone = await removeDir(dir);
   await git(cwd, ['worktree', 'prune', '--expire', 'now'], { ok: [0, 128] });
-  if (!(await removeDir(dir)) && r.code) fail(400, `не удалось удалить рабочее дерево ${dir}: ${r.stderr.trim()}`);
+  if (!gone) fail(400, `рабочее дерево снято с учёта git, но папку ${dir} удалить не удалось (файлы заняты другим процессом?)`);
 }
 
 /** project + repository = the last two path segments of the origin URL (ssh://, https://, scp-like), without .git. */

@@ -175,6 +175,10 @@ export function createTasks({ store, bus, defaultBase = 'main' }) {
     move(id, status, beforeId = null) {
       const task = get(id);
       validate({ status });
+      // validated before anything changes: a bad beforeId leaves the task as it was
+      const col = beforeId ? column(status, id) : null;
+      const idx = col ? col.findIndex((t) => t.id === beforeId) : -1;
+      if (col && idx < 0) fail(400, `beforeId ${beforeId} не в колонке ${status}`);
       if (task.status !== status) task.log.push({ at: Date.now(), by: 'user', type: 'status', text: `Статус: ${STATUS_LABEL[status] ?? status}`, data: { to: status } });
       task.status = status;
       task.statusManual = true; // a human moved the card: tracker sync no longer changes its column
@@ -182,9 +186,6 @@ export function createTasks({ store, bus, defaultBase = 'main' }) {
         task.order = endOrder(status, id);
         return emit(task);
       }
-      const col = column(status, id);
-      const idx = col.findIndex((t) => t.id === beforeId);
-      if (idx < 0) fail(400, `beforeId ${beforeId} не в колонке ${status}`);
       const next = col[idx];
       const prev = col[idx - 1];
       task.order = prev ? (prev.order + next.order) / 2 : next.order - 1;

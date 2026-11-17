@@ -18,7 +18,7 @@ import * as git from './git.js';
 import * as wfs from './fs.js';
 import { createMcpManager, loadSecrets, secretsFile, serverDefs } from './mcp-client.js';
 import { launchers, gigacodeCommand } from './launchers.js';
-import { isAlive } from './runner.js';
+import { isAlive, resolveCommand, spawnOptions } from './runner.js';
 import { createModelCatalog, scanModelRefs } from './models.js';
 import { readSdd } from './sdd.js';
 import { createHistory, historyMessages } from './history.js';
@@ -77,6 +77,7 @@ function limiter(n) {
   });
 }
 const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+const insidePath = (dir, p) => { const rel = path.relative(dir, p); return !rel.startsWith('..') && !path.isAbsolute(rel); };
 const samePath = (a, b) => (process.platform === 'win32' ? path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase() : path.resolve(a) === path.resolve(b));
 
 /** Validates `obj` against { field: 'string' | 'string?' | 'boolean?' | 'number?' | 'array?' }. */
@@ -665,12 +666,17 @@ export async function startServer(opts = {}) {
   }
 
   // ---- worktree management ----
-  const openSpawner = opts.openSpawner || spawnProcess; // tests inject a stub instead of launching a file manager
+  // tests inject a stub instead of launching a file manager; a .cmd launcher (code.cmd) is resolved like the agent CLIs
+  const openSpawner = opts.openSpawner || ((command, args, o) => {
+    const { file, args: pre } = resolveCommand(command);
+    return spawnProcess(file, [...pre, ...args], o);
+  });
   const wtCache = new Map(); // path -> { at, data: Promise } — the git-heavy fields (dirty, ahead)
   const WT_CACHE_MS = 30000;
   const gitSlots = limiter(4); // ~10 repos x 10-20 worktrees: at most 4 enrichment git runs at a time
   const metaKey = (p) => (process.platform === 'win32' ? path.resolve(p).toLowerCase() : path.resolve(p));
-  const sessionsIn = (p) => db.sessions.filter((s) => !s.virtual && samePath(s.cwd, p));
+  // sessions working in the worktree `root`, also from a subfolder of it (a known worktreePath is exact)
+  const sessionsIn = (root) => db.sessions.filter((s) => !s.virtual && (s.worktreePath ? samePath(s.worktreePath, root) : insidePath(root, s.cwd)));
   const waitGone = async (pid) => {
     for (let i = 0; i < 50; i++) {
       try { process.kill(pid, 0); } catch { return; }
@@ -728,7 +734,44 @@ export async function startServer(opts = {}) {
   async function listWorktrees(ws, enrich = false) {
     const list = await git.worktrees(ws.path);
     await orch.linkAgentWorktrees([[ws, list]]).catch(() => {});
-    return Promise.all(list.map((wt) => worktreeView(ws, wt, enrich)));
+    // meta remembers its repository: a leftover folder of it (below) is attributed even under a shared worktreeRoot
+    let tagged = false;
+    for (const wt of list.filter((w) => !w.main)) {
+      const m = db.worktreeMeta?.[metaKey(wt.path)];
+      if (m && !m.repo) {
+        m.repo = list[0].path;
+        tagged = true;
+      }
+    }
+    if (tagged) store.save();
+    return [...(await Promise.all(list.map((wt) => worktreeView(ws, wt, enrich)))), ...orphanWorktrees(list)];
+  }
+
+  /**
+   * Folders git no longer lists but the harness knows (a meta entry) under the worktree root: a removal that failed
+   * part-way (Windows: git unregistered it, a held file kept the folder). Listed so its lastError shows and
+   * «Удалить папку» (DELETE with orphan: true) can finish the job.
+   */
+  function orphanWorktrees(list) {
+    const main = list[0]?.path;
+    if (!main) return [];
+    const root = git.worktreeRootFor(main, config.worktreeRoot);
+    let dirs = [];
+    try {
+      dirs = fs.readdirSync(root, { withFileTypes: true }).filter((d) => d.isDirectory() && !/\.stale-\d+$/.test(d.name)).map((d) => path.join(root, d.name));
+    } catch {}
+    return dirs.filter((p) => {
+      const meta = db.worktreeMeta?.[metaKey(p)];
+      if (!meta || list.some((w) => samePath(w.path, p))) return false;
+      return meta.repo ? samePath(meta.repo, main) : !config.worktreeRoot; // the default <repo>-worktrees is this repo's
+    }).map((p) => {
+      const meta = db.worktreeMeta[metaKey(p)];
+      return {
+        path: p, branch: null, head: null, main: false, orphan: true, detached: false, enriched: true, dirty: null, ahead: null,
+        taskId: null, taskStatus: null, pr: null, sessions: 0, running: 0, lastActivityAt: meta.lastError?.at ?? null,
+        meta, createdBy: meta.createdBy || 'external',
+      };
+    });
   }
 
   async function worktreeView(ws, wt, enrich) {
@@ -935,7 +978,22 @@ export async function startServer(opts = {}) {
   });
   route('DELETE', '/api/workspaces/:id/worktrees', async ({ params, body }) => {
     const ws = getWs(params.id);
-    check(body, { path: 'string', force: 'boolean?', deleteBranch: 'string?' });
+    check(body, { path: 'string', force: 'boolean?', deleteBranch: 'string?', orphan: 'boolean?' });
+    if (body.orphan) {
+      // «Удалить папку»: a leftover git no longer lists — only the folder goes (rename + rm), no git command on it
+      const list = await git.worktrees(ws.path);
+      const o = orphanWorktrees(list).find((x) => samePath(x.path, body.path)) || fail(404, `не оставшаяся папка рабочего дерева ${ws.name}: ${body.path}`);
+      for (const s of sessionsIn(o.path)) sessions.archive(s.id, true, { stop: true });
+      if (!(await git.removeDir(o.path))) {
+        orch.markWorktree(o.path, { lastError: { text: 'Не удалось удалить папку: файлы заняты другим процессом', at: Date.now() } });
+        fail(409, `не удалось удалить папку ${o.path}: файлы заняты другим процессом`);
+      }
+      delete db.worktreeMeta[metaKey(o.path)];
+      store.save();
+      bus.send({ t: 'worktree.meta', path: o.path, meta: {} });
+      await git.git(ws.path, ['worktree', 'prune', '--expire', 'now'], { ok: [0, 128] }).catch(() => {});
+      return { removed: true, orphan: true, branchDeleted: false, archivedSessions: 0 };
+    }
     if (body.deleteBranch && !['no', 'safe', 'force'].includes(body.deleteBranch)) fail(400, 'deleteBranch: no, safe или force');
     const wt = (await git.worktrees(ws.path)).find((w) => samePath(w.path, body.path)) || fail(404, `не рабочее дерево ${ws.name}: ${body.path}`);
     if (wt.main) fail(400, 'основное рабочее дерево репозитория удалить нельзя');
@@ -958,13 +1016,13 @@ export async function startServer(opts = {}) {
     try {
       await git.removeWorktree(ws.path, wt.path);
     } catch (e) {
-      orch.markWorktree(wt.path, { lastError: { text: `Не удалось удалить: ${e.message}`, at: Date.now() } }); // «Не удалось удалить» under it
+      orch.markWorktree(wt.path, { lastError: { text: `Не удалось удалить: ${e.message}`, at: Date.now() }, repo: ws.path }); // «Не удалось удалить» under it
       throw e;
     }
     orch.markWorktree(wt.path, { lastError: undefined });
     // parents that could read this worktree (a child's includeDirs) stop referring to it
     for (const s of db.sessions.filter((x) => (x.includeDirs || []).some((d) => samePath(d, wt.path)))) {
-      sessions.patch(s.id, { includeDirs: s.includeDirs.filter((d) => !samePath(d, wt.path)) });
+      sessions.patch(s.id, { includeDirs: s.includeDirs.filter((d) => !samePath(d, wt.path)) }, { strict: false });
     }
     let branchDeleted = false;
     if (wt.branch && body.deleteBranch && body.deleteBranch !== 'no') {
@@ -986,13 +1044,8 @@ export async function startServer(opts = {}) {
       }
       for (const s of here) if (s.kind === 'terminal' || s.status === 'running') try { sessions.stop(s.id); } catch {}
     }
-    db.worktreeMeta ||= {};
-    const key = metaKey(p);
-    const meta = { ...db.worktreeMeta[key] };
-    for (const k of ['label', 'note', 'pinned', 'sleeping']) if (k in body) meta[k] = body[k];
-    db.worktreeMeta[key] = meta;
-    store.save();
-    return meta;
+    // stored and broadcast (`worktree.meta`) like every other meta change
+    return orch.markWorktree(p, Object.fromEntries(['label', 'note', 'pinned', 'sleeping'].filter((k) => k in body).map((k) => [k, body[k]])));
   });
   route('POST', '/api/open', async ({ body }) => {
     check(body, { cwd: 'string', target: 'string' });
@@ -1009,8 +1062,15 @@ export async function startServer(opts = {}) {
       command = process.platform === 'win32' ? 'explorer.exe' : process.platform === 'darwin' ? 'open' : 'xdg-open';
       args = [p];
     }
-    const child = openSpawner(command, args, { detached: true, stdio: 'ignore', shell: false });
-    child.on?.('error', () => {});
+    const failOpen = (e) => fail(400, `Не удалось запустить «${[command].flat()[0]}»: ${e.message}`);
+    let child;
+    try {
+      child = openSpawner(command, args, spawnOptions({ stdio: 'ignore' }, { group: true }));
+    } catch (e) {
+      failOpen(e);
+    }
+    child.on('error', () => {});
+    if (!child.pid) await new Promise((resolve, reject) => child.once('error', reject)).catch(failOpen); // ENOENT etc. come async
     child.unref?.();
     return { ok: true };
   });
@@ -1114,7 +1174,8 @@ export async function startServer(opts = {}) {
   });
   route('POST', '/api/git/checkout', async ({ body }) => {
     check(body, { cwd: 'string', branch: 'string', create: 'boolean?', from: 'string?' });
-    const busy = db.sessions.find((s) => s.kind === 'chat' && s.status === 'running' && samePath(s.cwd, body.cwd));
+    const top = (await git.git(body.cwd, ['rev-parse', '--show-toplevel'], { ok: [0, 128] })).stdout.trim();
+    const busy = sessionsIn(top ? path.resolve(top) : body.cwd).find((s) => s.kind === 'chat' && s.status === 'running');
     if (busy) fail(409, `В этой папке сейчас работает агент (${busy.title}); остановите его или дождитесь окончания, прежде чем переключать ветку.`);
     jobStep(`git checkout ${body.branch}`);
     const r = await git.checkout(body.cwd, body);
@@ -1285,7 +1346,8 @@ export async function startServer(opts = {}) {
         const hit = candidates.find((x) => x.r.method === req.method);
         if (!hit) return sendJson(res, 405, { error: 'метод не поддерживается' });
         const body = req.method === 'GET' || req.method === 'HEAD' ? {} : await readBody(req);
-        const params = Object.fromEntries(Object.entries(hit.m.groups || {}).map(([k, v]) => [k, decodeURIComponent(v)]));
+        const decode = (v) => { try { return decodeURIComponent(v); } catch { return fail(400, `неверная %-кодировка в адресе: ${v}`); } };
+        const params = Object.fromEntries(Object.entries(hit.m.groups || {}).map(([k, v]) => [k, decode(v)]));
         const call = () => hit.r.handler({ req, body, params, query: Object.fromEntries(u.searchParams) });
         const jobId = req.headers['x-job-id'];
         const result = typeof jobId === 'string' && JOB_ID_RE.test(jobId) ? await runJob({ id: jobId, title: hit.r.title, send: bus.send }, call) : await call();

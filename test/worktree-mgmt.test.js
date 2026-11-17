@@ -15,7 +15,7 @@ let ws;
 
 before(async () => {
   makeRepo(repo);
-  h = await startTestServer({}, { openSpawner: (command, args, opts) => { spawned.push({ command, args, opts }); return { on() {}, unref() {} }; } });
+  h = await startTestServer({}, { openSpawner: (command, args, opts) => { spawned.push({ command, args, opts }); return { pid: 1, on() {}, unref() {} }; } });
   ws = (await h.api('POST', '/api/workspaces', { path: repo })).body;
 });
 after(async () => {
@@ -40,7 +40,8 @@ test('enriched worktree list: dirty, ahead, task, sessions, meta', async () => {
   const chat = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', cwd: wt.path })).body;
   await h.api('PATCH', '/api/worktrees/meta', { path: wt.path, label: 'Лимиты', pinned: true });
   const item = await waitFor(async () => (await list()).find((w) => w.path === wt.path && w.dirty === 1));
-  assert.deepEqual([item.ahead, item.taskId, item.taskStatus, item.sessions, item.running, item.meta, item.createdBy], [1, t.id, 'todo', 1, 0, { createdBy: 'user', label: 'Лимиты', pinned: true }, 'user']);
+  assert.deepEqual([item.ahead, item.taskId, item.taskStatus, item.sessions, item.running, { ...item.meta, repo: undefined }, item.createdBy], [1, t.id, 'todo', 1, 0, { createdBy: 'user', label: 'Лимиты', pinned: true, repo: undefined }, 'user']);
+  assert.equal(path.resolve(item.meta.repo), path.resolve(repo), 'meta remembers its repository');
   assert.ok(item.lastActivityAt >= chat.lastActivityAt, 'newest of session activity and the git dir mtime');
   const main = (await list()).find((w) => w.main);
   assert.deepEqual([main.dirty, main.ahead], [0, 0]);
@@ -83,7 +84,7 @@ test('removal: refuses dirty/unmerged without force, archives sessions, safe bra
 test('open in the file manager or the configured IDE, only for registered folders', async () => {
   assert.equal((await h.api('POST', '/api/open', { cwd: repo, target: 'explorer' })).status, 200);
   const fm = spawned.at(-1);
-  assert.deepEqual([fm.args, fm.opts.detached, fm.opts.shell], [[path.resolve(repo)], true, false]);
+  assert.deepEqual([fm.args, fm.opts.windowsHide, fm.opts.shell], [[path.resolve(repo)], true, undefined]);
   assert.equal(fm.command, process.platform === 'win32' ? 'explorer.exe' : process.platform === 'darwin' ? 'open' : 'xdg-open');
   assert.equal((await h.api('POST', '/api/open', { cwd: root, target: 'explorer' })).status, 400, 'not a registered workspace');
   assert.equal((await h.api('POST', '/api/open', { cwd: repo, target: 'ide' })).status, 400, 'no IDE configured');

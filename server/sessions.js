@@ -1397,7 +1397,8 @@ ${note.trim()}` : text });
       bus.send({ t: 'session.del', id: s.id });
     },
 
-    patch(sid, p) {
+    /** strict false (internal callers): an includeDirs entry that no longer exists is dropped, not a 400. */
+    patch(sid, p, { strict = true } = {}) {
       const s = get(sid);
       for (const k of ['title', 'approvalMode', 'model']) if (k in p && p[k] !== null && typeof p[k] !== 'string') fail(400, `${k}: нужна строка`);
       for (const k of ['autoReport', 'archived', 'stop']) if (k in p && typeof p[k] !== 'boolean') fail(400, `${k}: нужно true или false`);
@@ -1407,7 +1408,7 @@ ${note.trim()}` : text });
       if ('approvalMode' in p) s.approvalMode = p.approvalMode || null;
       if ('model' in p) s.model = p.model || null;
       if ('autoReport' in p) s.autoReport = p.autoReport;
-      if ('includeDirs' in p) s.includeDirs = normalizeIncludeDirs(p.includeDirs, s.cwd); // applies from the next turn
+      if ('includeDirs' in p) s.includeDirs = normalizeIncludeDirs(p.includeDirs, s.cwd, strict); // applies from the next turn
       if ('allowedTools' in p) {
         if (!Array.isArray(p.allowedTools) || p.allowedTools.some((x) => typeof x !== 'string' || !x.trim())) fail(400, 'allowedTools: нужен массив непустых строк');
         s.allowedTools = [...new Set(p.allowedTools.map((x) => x.trim()))];

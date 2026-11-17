@@ -22,11 +22,19 @@ export function resolveInside(cwd, rel = '') {
   const root = fs.realpathSync(cwd);
   const abs = path.resolve(root, rel);
   if (!inside(root, abs)) fail(400, 'путь выходит за пределы папки');
+  // the real path of the deepest existing ancestor + the parts still missing: a junction/symlink anywhere above is seen
   let real = abs;
-  try {
-    real = fs.realpathSync(abs);
-  } catch {
-    try { real = path.join(fs.realpathSync(path.dirname(abs)), path.basename(abs)); } catch {}
+  const missing = [];
+  for (;;) {
+    try {
+      real = path.join(fs.realpathSync(real), ...missing);
+      break;
+    } catch {
+      const up = path.dirname(real);
+      if (up === real) break;
+      missing.unshift(path.basename(real));
+      real = up;
+    }
   }
   if (!inside(root, real)) fail(400, 'путь выходит за пределы папки');
   return { root, abs };

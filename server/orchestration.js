@@ -274,11 +274,17 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
       const patch = { status: 'in_progress', assigneeSessionId: s.id };
       if (!task.workspaceId && ws) patch.workspaceId = ws.id;
       if (placement !== 'current' || (!task.branch && branch && !task.targets.includes(branch))) patch.branch = branch;
-      // the parent CLI can read the child's files from its next turn
-      if (caller && made) sessions.patch(caller.id, { includeDirs: [...(caller.includeDirs || []), cwd] });
       if (!task.takenAt) {
         patch.takenAt = Date.now();
         patch.snapshot = { title: task.title, description: task.description, externalStatus: task.externalStatus ?? null, at: patch.takenAt };
+      }
+      try {
+        sessions.deliver(s.id, { from: by, text: o.spec ?? taskPrompt({ ...task, ...patch }, s, { notes: o.notes }) });
+      } catch (e) {
+        // never an orphan: no worker session or worktree stays behind a failed start
+        sessions.remove(s.id, { force: true });
+        if (made?.created) await git.removeWorktree(made.repo, made.wt.path).catch(() => {});
+        throw e;
       }
       tasks.update(task.id, patch, by);
       tasks.addLog(task.id, by, `Взята в работу: ${config.agents[agent]?.label || agent}${branch ? `, ветка ${branch}` : ''}`, 'started', { sessionId: s.id, agent, branch: branch ?? null });
@@ -287,7 +293,8 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
         db.prefs ||= {};
         db.prefs.lastWorkspaceBySpace = { ...db.prefs.lastWorkspaceBySpace, [prefix]: ws.id }; // a hint for the next task of this space
       }
-      sessions.deliver(s.id, { from: by, text: o.spec ?? taskPrompt(task, s, { notes: o.notes }) });
+      // the parent CLI can read the child's files from its next turn (a stale entry of the parent is dropped, not a 400)
+      if (caller && made) sessions.patch(caller.id, { includeDirs: [...(caller.includeDirs || []), cwd] }, { strict: false });
       return s;
     })();
     starting.set(task.id, run);
@@ -460,14 +467,22 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
       cwd = wt.path;
       branch = wt.branch;
       markWorktree(cwd, { ...madeBy(caller), ...(name ? { label: name } : {}), parentWorktree: caller.worktreePath || caller.cwd });
-      sessions.patch(caller.id, { includeDirs: [...(caller.includeDirs || []), cwd] });
     }
-    const s = await sessions.create({
-      kind: 'chat', agent, cwd, role: 'worker', parentId: caller.id, model, approvalMode: mode, branch, ephemeral: true, autoReport: false, persistent,
-      title: a.title || [a.profile || 'agent', a.description].filter(Boolean).join(' · '),
-    });
-    if (!persistent && (s.worktreePath ?? s.cwd) !== (caller.worktreePath ?? caller.cwd)) sessions.update(s.id, { persistent: true });
-    sessions.deliver(s.id, { from: caller.id, text: [profile?.body, `## Задание\n${a.spec}`].filter(Boolean).join('\n\n') });
+    let s = null;
+    try {
+      s = await sessions.create({
+        kind: 'chat', agent, cwd, role: 'worker', parentId: caller.id, model, approvalMode: mode, branch, ephemeral: true, autoReport: false, persistent,
+        title: a.title || [a.profile || 'agent', a.description].filter(Boolean).join(' · '),
+      });
+      if (!persistent && (s.worktreePath ?? s.cwd) !== (caller.worktreePath ?? caller.cwd)) sessions.update(s.id, { persistent: true });
+      sessions.deliver(s.id, { from: caller.id, text: [profile?.body, `## Задание\n${a.spec}`].filter(Boolean).join('\n\n') });
+    } catch (e) {
+      // never an orphan: no sub-agent chat or worktree stays behind a failed start
+      if (s) sessions.remove(s.id, { force: true });
+      if (a.worktree === 'new') await git.removeWorktree(base, cwd).catch(() => {});
+      throw e;
+    }
+    if (a.worktree === 'new') sessions.patch(caller.id, { includeDirs: [...(caller.includeDirs || []), cwd] }, { strict: false });
     return { sessionId: s.id };
   }
 
