@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react'
-import { Bot, ChevronDown, Ellipsis, GitPullRequest, KeyRound, Pin, ChevronRight, FolderGit2, FolderPlus, GitBranch, GitBranchPlus, House, Inbox, MessageSquarePlus, Moon, Search, Settings, SquareKanban, SquareTerminal, Sun } from 'lucide-react'
+import { Bot, ChevronDown, Ellipsis, GitPullRequest, Pin, ChevronRight, FolderGit2, FolderPlus, GitBranch, GitBranchPlus, House, Inbox, MessageSquarePlus, Moon, Search, Settings, SquareKanban, SquareTerminal, Sun } from 'lucide-react'
 import { openDialog, openScreen, openSession, openWorktree, setState, useActiveCwd, useStore, type Screen } from '../store'
 import { loadWorktrees } from '../ws'
-import { useCurrentTool, useStartingLabel } from '../lib/live'
+import { useCurrentTool, useStateLine } from '../lib/live'
+import { sessionVisualState, stateSummary } from '../lib/sessionState'
 import { basename, normPath, relTime, tokens } from '../lib/format'
 import { newChat, newTerminal } from '../lib/actions'
 import type { Session, Workspace, Worktree } from '../types'
@@ -197,6 +198,7 @@ function ProjectNode({ ws, tree, filtering }: { ws: Workspace; tree: Tree; filte
         </span>
       </div>
       <Menu anchor={projRow} open={menu} onClose={() => setMenu(false)} items={projectMenu(ws)} label={`Проект ${ws.name}`} placement="bottom-end" />
+      {!expanded && <StateSummary sessions={withKids(mine, tree.kids)} />}
       {expanded && list.map((wt) => {
         const here = mine.filter((s) => normPath(s.cwd) === normPath(wt.path))
         if (filtering && here.length === 0) return null
@@ -245,6 +247,7 @@ function WorktreeNode({ ws, wt, sessions, kids, active }: { ws: Workspace; wt: W
         </span>
       </div>
       <Menu anchor={row} open={menu} onClose={() => setMenu(false)} items={worktreeMenu(ws, wt, task, ideEnabled())} label={`Рабочее дерево ${name}`} placement="bottom-end" />
+      <StateSummary sessions={withKids(sessions, kids)} />
       {sessions.map((s) => <SessionNode key={s.id} s={s} kids={kids} />)}
     </div>
   )
@@ -287,15 +290,17 @@ function SessionRow({ s, nested, level = 0, caret }: { s: Session; nested: boole
   const current = useStore((st) => st.view.kind === 'wt' && st.wt[normPath(st.view.cwd)]?.active === `s:${s.id}`)
   const now = useNow()
   const tool = useCurrentTool(s)
-  const starting = useStartingLabel(s)
+  const v = sessionVisualState(s)
+  const line = useStateLine(s)
   const open = () => openSession(s.id)
   const preview = s.preview.split('\n').map((l) => l.trim()).filter(Boolean).pop()
-  const doing = starting || (nested ? (tool || (s.status === 'running' ? 'работает' : '')) : (tool || preview))
+  // Running: the tool in use; calm top-level rows: the last line of the answer.
+  const doing = v === 'running' ? tool : !nested && (v === 'idle' || v === 'done') ? preview : ''
   return (
     <div
       className="tree-row tree-sess"
       role="button"
-      data-s={s.status}
+      data-s={v}
       data-nested={nested || undefined}
       data-depth={level > 1 ? level : undefined}
       data-enter={s.createdAt > APP_START || undefined}
@@ -306,14 +311,16 @@ function SessionRow({ s, nested, level = 0, caret }: { s: Session; nested: boole
       onKeyDown={activate(open)}
       style={depth(0)}
     >
-      {s.phase === 'auth' ? <KeyRound className="st st-auth" aria-label="ждёт авторизацию" /> : s.kind === 'terminal' && s.status !== 'exited' ? <SquareTerminal className="st" aria-label="терминал" /> : <StatusIcon session={s} />}
+      <StatusIcon session={s} />
       <span className="label">
         {(s.role === 'reviewer' || s.role === 'subagent') && <span className="role-tag">{s.role === 'reviewer' ? 'ревью' : 'субагент'}</span>}
         {s.title || s.id}
-        {doing && <span className="sess-doing">{nested ? ' · ' : ' - '}{doing}</span>}
+        {doing && <span className="sess-doing"> · {doing}</span>}
       </span>
-      <span className="agent">{s.kind === 'terminal' ? 'shell' : s.model ?? s.agent}</span>
-      {caret ? (
+      <span className="sess-state" data-s={v}>
+        {line || <><span className="agent">{s.kind === 'terminal' ? 'shell' : s.model ?? s.agent}</span> · {relTime(s.lastActivityAt, now)}</>}
+      </span>
+      {caret && (
         <button
           type="button"
           className="caret"
@@ -324,10 +331,27 @@ function SessionRow({ s, nested, level = 0, caret }: { s: Session; nested: boole
         >
           <ChevronDown />
         </button>
-      ) : (
-        <span className="meta">{relTime(s.lastActivityAt, now)}</span>
       )}
     </div>
+  )
+}
+
+/** A session and all its workers, for summaries. */
+function withKids(roots: Session[], kids: Map<string, Session[]>): Session[] {
+  const out: Session[] = []
+  const walk = (s: Session) => { out.push(s); for (const k of kids.get(s.id) ?? []) walk(k) }
+  roots.forEach(walk)
+  return out
+}
+
+/** «1 ждёт ответа · 2 работают»: attention first, only what is not calm; nothing when all is quiet. */
+function StateSummary({ sessions }: { sessions: Session[] }) {
+  const items = stateSummary(sessions)
+  if (!items.length) return null
+  return (
+    <span className="state-summary">
+      {items.map((i, n) => <span key={i.state} data-s={i.state}>{n > 0 && <span className="muted"> · </span>}{i.text}</span>)}
+    </span>
   )
 }
 

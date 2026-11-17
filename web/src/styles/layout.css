@@ -105,7 +105,13 @@
 .tree-sess .label { color: var(--ink); }
 .tree-sess .st { width: 13px; height: 13px; }
 .sess-doing { color: var(--ink-3); }
-.tree-sess[data-s="failed"] .label, .tree-sess[data-s="error"] .label { color: var(--lamp-fail); }
+.tree-sess[data-s="error"] .label { color: var(--lamp-fail); }
+.tree-sess[data-s="waiting_answer"] .label { font-weight: 600; }
+.sess-state { flex-shrink: 0; max-width: 46%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--state-ink, var(--ink-3)); font-variant-numeric: tabular-nums; }
+.sess-state .agent { font-family: var(--font-mono); }
+/* «1 ждёт ответа · 2 работают» under a worktree header or a collapsed project */
+.state-summary { display: block; padding: 0 8px 2px 30px; font-size: 11px; color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.state-summary [data-s] { color: var(--state-ink, var(--ink-3)); }
 .tree-sess[aria-current="true"] { background: var(--deck-3); }
 .tree-sess[data-nested] { padding-left: 40px; }
 .tree-kids { position: relative; }

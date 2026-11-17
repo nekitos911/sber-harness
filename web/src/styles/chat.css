@@ -239,7 +239,6 @@
 .auth-wait-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .auth-wait-actions .btn { text-decoration: none; }
 .auth-link { min-width: 0; flex: 1; font-size: 11.5px; }
-.st.st-auth { color: var(--lamp-run); }
 .error-card { display: grid; gap: 8px; font-family: var(--font-ui); font-size: 13px; }
 .link-btn-out { justify-self: start; margin-top: 4px; text-decoration: none; }
 .msg-wrap > .link-btn-out { align-self: center; }

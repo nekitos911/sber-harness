@@ -1,4 +1,4 @@
-import type { NotificationKind, SessionRole, SessionStatus, TaskStatus } from '../types'
+import type { NotificationKind, SessionRole, TaskStatus } from '../types'
 
 export const COLUMNS: { id: TaskStatus; label: string }[] = [
   { id: 'backlog', label: 'Бэклог' },
@@ -8,16 +8,6 @@ export const COLUMNS: { id: TaskStatus; label: string }[] = [
   { id: 'done', label: 'Готово' },
 ]
 export const statusLabel = (s: TaskStatus) => COLUMNS.find((c) => c.id === s)?.label ?? s
-
-export const SESSION_STATUS: Record<SessionStatus, string> = {
-  idle: 'ждёт ввода',
-  running: 'работает',
-  stopped: 'остановлен',
-  done: 'готово',
-  failed: 'провал',
-  exited: 'завершён',
-  error: 'ошибка запуска',
-}
 
 export const ROLE: Record<SessionRole, string> = { solo: 'solo', coordinator: 'координатор', worker: 'исполнитель', reviewer: 'ревью', subagent: 'субагент' }
 

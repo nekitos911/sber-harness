@@ -1,25 +1,43 @@
-import { CircleCheck, CircleDashed, CircleDot, CirclePause, CircleSlash, CircleStop, Clock, GitBranch, Lock, LoaderCircle, RotateCw, TriangleAlert, type LucideIcon } from 'lucide-react'
-import { SESSION_STATUS } from '../lib/format'
+import { Circle, CircleCheck, CircleDashed, CircleDot, CircleHelp, CircleSlash, CircleX, Clock, GitBranch, KeyRound, Lock, LoaderCircle, RotateCw, Square, SquareTerminal, TriangleAlert, type LucideIcon } from 'lucide-react'
+import { sessionVisualState, STATE_LABEL, type VisualState } from '../lib/sessionState'
 import type { Session, SubAgentState } from '../types'
 
-type StatusLike = Pick<Session, 'status' | 'kind'>
+type StatusLike = Pick<Session, 'status' | 'kind'> & Partial<Pick<Session, 'phase' | 'waitingFor' | 'stalled'>>
 
-export const statusText = (s: StatusLike) => (s.kind === 'terminal' && s.status === 'idle' ? 'запущен' : SESSION_STATUS[s.status])
+export const statusText = (s: StatusLike) => STATE_LABEL[sessionVisualState(s)]
 
-const ICONS = {
+const ICONS: Record<VisualState, LucideIcon> = {
+  waiting_answer: CircleHelp,
+  stalled: TriangleAlert,
+  auth: KeyRound,
+  starting: CircleDashed,
   running: LoaderCircle,
-  idle: CircleDot,
-  stopped: CirclePause,
+  error: CircleX,
+  stopped: Square,
   done: CircleCheck,
-  failed: TriangleAlert,
-  error: TriangleAlert,
-  exited: CircleStop,
+  exited: SquareTerminal,
+  terminal: SquareTerminal,
+  idle: Circle,
 }
 
+/** The session's state as an icon whose colour and shape differ per state; the words are in aria-label. */
 export function StatusIcon({ session }: { session: StatusLike }) {
-  const Icon = ICONS[session.status]
+  const v = sessionVisualState(session)
+  const Icon = ICONS[v]
+  return <Icon className="st" data-s={v} role="img" aria-label={STATE_LABEL[v]} />
+}
+
+const LEGEND: VisualState[] = ['running', 'starting', 'waiting_answer', 'stalled', 'auth', 'idle', 'done', 'error', 'stopped']
+
+/** One line explaining the state icons (agents screen header). */
+export function StateLegend() {
   return (
-    <Icon className="st" data-s={session.status} data-kind={session.kind} role="img" aria-label={statusText(session)} />
+    <ul className="state-legend" aria-label="Обозначения состояний">
+      {LEGEND.map((v) => {
+        const Icon = ICONS[v]
+        return <li key={v}><Icon className="st" data-s={v} aria-hidden />{STATE_LABEL[v]}</li>
+      })}
+    </ul>
   )
 }
 

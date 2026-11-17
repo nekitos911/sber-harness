@@ -105,6 +105,9 @@ export interface Session {
   taskId: string | null
   status: SessionStatus
   phase?: 'starting' | 'streaming' | 'auth' | null
+  lastEventAt?: number | null // last stdout event of the current turn (newer servers)
+  waitingFor?: 'answer' | 'auth' | null // called `ask` and no reply yet, or needs a login (newer servers)
+  stalled?: boolean // running, process alive, but silent for session.stallSec (newer servers)
   archived?: boolean // its worktree was removed: hidden from the sidebar, transcript kept
   virtual?: boolean // a built-in sub-agent of the parent's stream: read-only chat // newer servers: 'starting' = process up, no event yet (cold start)
   externalSessionId: string | null

@@ -21,7 +21,8 @@
 .col-mark[data-s="backlog"] { background: transparent; box-shadow: inset 0 0 0 1.5px var(--ink-4); }
 .col-mark[data-s="todo"] { background: var(--ink-3); }
 .col-mark[data-s="in_progress"], .lane-mark[data-g="run"] { background: var(--lamp-run); }
-.col-mark[data-s="review"], .lane-mark[data-g="idle"] { background: var(--lamp-wait); }
+.col-mark[data-s="review"] { background: var(--lamp-wait); }
+.lane-mark[data-g="you"] { background: var(--lamp-ask); }
 .col-mark[data-s="done"], .lane-mark[data-g="done"] { background: var(--lamp-done); }
 .lane-mark[data-g="fail"] { background: var(--lamp-fail); }
 
@@ -180,7 +181,8 @@
   position: relative; display: grid; gap: 6px; padding: 10px; flex-shrink: 0;
   background: var(--deck); border: 1px solid var(--rule); border-radius: var(--r-2);
 }
-.agent-card[data-s="failed"], .agent-card[data-s="error"] { border-color: color-mix(in srgb, var(--lamp-fail) 40%, var(--rule)); }
+.agent-card[data-s="error"], .agent-card[data-s="waiting_answer"], .agent-card[data-s="stalled"] { border-color: color-mix(in srgb, var(--state-ink) 40%, var(--rule)); }
+.agent-state { color: var(--state-ink, var(--ink-3)); font-variant-numeric: tabular-nums; }
 .agent-card[data-nested="true"] { margin-left: 16px; }
 .agent-card[data-nested="true"]::before {
   content: ""; position: absolute; left: -11px; top: -8px; height: 26px; width: 9px;

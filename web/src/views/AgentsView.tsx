@@ -4,15 +4,19 @@ import { tryApi } from '../api'
 import { openDialog, openSession, openTask, setState, useStore, without } from '../store'
 import { relTime, ROLE, tokens } from '../lib/format'
 import { useNow } from '../lib/useNow'
-import type { Session, SessionStatus } from '../types'
-import { Branch, StatusIcon, statusText } from '../components/bits'
+import type { Session } from '../types'
+import { Branch, StateLegend, StatusIcon, statusText } from '../components/bits'
+import { useStateLine } from '../lib/live'
+import { sessionVisualState, type VisualState } from '../lib/sessionState'
 import { MenuButton, Select } from '../components/ui'
 
-const GROUPS: { id: string; label: string; match: SessionStatus[] }[] = [
-  { id: 'run', label: 'Работают', match: ['running'] },
-  { id: 'idle', label: 'Ждут ввода', match: ['idle', 'stopped'] },
+/** Lanes by visual state; «Ждут вас» shows only when someone does. */
+const GROUPS: { id: string; label: string; match: VisualState[]; optional?: boolean }[] = [
+  { id: 'you', label: 'Ждут вас', match: ['waiting_answer', 'auth'], optional: true },
+  { id: 'run', label: 'Работают', match: ['running', 'starting', 'stalled'] },
+  { id: 'idle', label: 'Свободны', match: ['idle', 'stopped'] },
   { id: 'done', label: 'Готово', match: ['done'] },
-  { id: 'fail', label: 'Ошибки', match: ['failed', 'error', 'exited'] },
+  { id: 'fail', label: 'Ошибки', match: ['error', 'exited'] },
 ]
 
 /** Coordinator first, then its workers from the same group right under it. */
@@ -37,6 +41,7 @@ export function AgentsView() {
       <header className="view-head">
         <h1>Агенты</h1>
         <span className="count">{chats.length}</span>
+        <StateLegend />
         <span className="grow" />
         <button type="button" className="btn" onClick={() => openDialog({ kind: 'chat' })}>
           <MessageSquarePlus />
@@ -53,7 +58,8 @@ export function AgentsView() {
       ) : (
         <div className="lanes">
           {GROUPS.map((g) => {
-            const list = chats.filter((s) => g.match.includes(s.status))
+            const list = chats.filter((s) => g.match.includes(sessionVisualState(s)))
+            if (g.optional && !list.length) return null
             return (
               <section key={g.id} className="lane" aria-labelledby={`lane-${g.id}`}>
                 <header className="col-head">
@@ -80,6 +86,7 @@ function AgentCard({ s, nested, parent }: { s: Session; nested: boolean; parent?
   const agents = useStore((st) => st.agents)
   const tasks = useStore((st) => st.tasks)
   const now = useNow()
+  const line = useStateLine(s)
   const [mode, setMode] = useState<'message' | 'assign' | 'delete' | null>(null)
   const [text, setText] = useState('')
   const task = s.taskId ? tasks.find((t) => t.id === s.taskId) : undefined
@@ -103,7 +110,7 @@ function AgentCard({ s, nested, parent }: { s: Session; nested: boolean; parent?
   }
 
   return (
-    <article className="agent-card" data-nested={nested} data-s={s.status}>
+    <article className="agent-card" data-nested={nested} data-s={sessionVisualState(s)}>
       <div className="agent-top">
         <StatusIcon session={s} />
         <button type="button" className="agent-title ellipsis" onClick={() => openSession(s.id)} data-tip={s.title || s.id} data-tip-trunc>{s.title || s.id}</button>
@@ -112,7 +119,7 @@ function AgentCard({ s, nested, parent }: { s: Session; nested: boolean; parent?
       <div className="agent-meta">
         <span>{agents.find((a) => a.id === s.agent)?.label ?? s.agent}</span>
         {s.model && <span className="mono muted">{s.model}</span>}
-        <span className="muted">{statusText(s)}</span>
+        <span className="agent-state" data-s={sessionVisualState(s)}>{line || statusText(s)}</span>
         {s.queued > 0 && <span className="chip chip-run">в очереди: {s.queued}</span>}
         {s.tokensIn + s.tokensOut > 0 && (
           <span className="mono muted num" data-tip={`вход ${s.tokensIn}, выход ${s.tokensOut}`}>{tokens(s.tokensIn + s.tokensOut)}</span>

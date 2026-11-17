@@ -31,6 +31,8 @@
   --lamp-done: #4fbf78;
   --lamp-fail: #ef6060;
   --lamp-off: #6e6e6e;
+  --lamp-ask: #b18cff;    /* waiting for the person's answer */
+  --lamp-stall: #ff7a3d;  /* running but silent */
 
   --run-soft: rgba(240, 163, 58, 0.12);
   --fail-soft: rgba(239, 96, 96, 0.1);
@@ -112,6 +114,8 @@
   --lamp-done: #23914d;
   --lamp-fail: #d33b3b;
   --lamp-off: #8f8f8f;
+  --lamp-ask: #7a4fe0;
+  --lamp-stall: #d9541a;
 
   --run-soft: rgba(196, 118, 10, 0.1);
   --fail-soft: rgba(211, 59, 59, 0.08);
