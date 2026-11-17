@@ -331,3 +331,15 @@
 .board-area { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .filters-body { display: grid; gap: 4px; justify-items: start; padding: 6px; }
 .lane-hint { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-3); font-size: 11px; }
+/* the task card's live line and next steps */
+.card-live { display: grid; gap: 4px; min-width: 0; flex: 1; }
+.card-live-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.card-live-line { display: inline-flex; align-items: center; gap: 5px; min-width: 0; flex: 1; padding: 0; border: 0; background: none; color: var(--ink-2); font: inherit; text-align: left; }
+.card-live-line:hover { color: var(--ink); }
+.card-live-line .st { width: 13px; height: 13px; flex: none; }
+.card-live[data-s="waiting_answer"] .card-live-line, .card-live[data-s="waiting_permission"] .card-live-line { color: var(--signal); }
+.card-changes { flex: none; color: var(--ink-3); }
+.card-actions { display: flex; flex-wrap: wrap; gap: 2px; margin-left: -6px; }
+.btn-xs { height: 22px; padding: 0 6px; gap: 4px; font-size: 11.5px; }
+.btn-xs svg { width: 12px; height: 12px; }
+.card-foot .card-live + .grow { display: none; } /* the live line takes the room; the tracker link stays at the end */

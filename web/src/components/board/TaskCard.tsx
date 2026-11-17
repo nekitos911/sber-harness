@@ -1,13 +1,16 @@
 import { memo, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent } from 'react'
-import { Check, CircleDot, LoaderCircle, X, ExternalLink, FolderGit2, GitMerge, Link2, ListChecks, Lock, Play } from 'lucide-react'
+import { Check, CircleDot, LoaderCircle, X, ExternalLink, FolderGit2, GitCommitHorizontal, GitCompare, GitMerge, GitPullRequest, Link2, ListChecks, Lock, Play, Wrench } from 'lucide-react'
 import { PRIORITY } from '../../lib/format'
 import { pendingDeps, taskKey, trackerDiffers, unusualTargets } from '../../lib/tasks'
 import type { AgentInfo, Priority, Session, Task, Workspace } from '../../types'
 import { StatusIcon, statusText } from '../bits'
-import { sessionVisualState } from '../../lib/sessionState'
+import { dur, sessionVisualState, STATE_LABEL } from '../../lib/sessionState'
+import { useCurrentTool, useStateLine, useTurnStart } from '../../lib/live'
+import { useNow } from '../../lib/useNow'
+import { normPath, plural } from '../../lib/format'
 import { PrGlyph } from '../PrChip'
-import { openSession } from '../../store'
-import { StartPopover } from './Rework'
+import { openDialog, openSession, openTab, openWorktree, showPanel, useFeature, useStore, wtKey } from '../../store'
+import { ReworkPopover, StartPopover } from './Rework'
 
 export interface BoardCtx {
   byId: Map<string, Task>
@@ -98,13 +101,7 @@ export const TaskCard = memo(function TaskCard({ task, ctx }: { task: Task; ctx:
       {ctx.trackerSync[task.id] && <span className="card-sync" role="status">{ctx.trackerSync[task.id].text}</span>}
       {(session || task.externalUrl) && (
         <div className="card-foot">
-          {task.agentState && session ? <AgentBadge task={task} session={session} ctx={ctx} /> : session && (
-            <span className="card-agent" data-tip={session.title} data-tip-trunc>
-              <StatusIcon session={session} />
-              <span>{ctx.agents.get(session.agent)?.label ?? session.agent}</span>
-              <span className="muted">{statusText(session)}</span>
-            </span>
-          )}
+          {session && (REVIEW.has(task.agentState ?? '') ? <AgentBadge task={task} session={session} ctx={ctx} /> : <CardLive task={task} session={session} />)}
           <span className="grow" />
           {task.externalUrl && (
             <a className="icon-btn icon-btn-sm" href={task.externalUrl} target="_blank" rel="noreferrer noopener" aria-label="Открыть в трекере" data-tip="Открыть в трекере" onClick={stop} onKeyDown={stop} onPointerDown={stop}>
@@ -139,20 +136,63 @@ const AGENT_STATE: Record<NonNullable<Task['agentState']>, { text: string; tone:
   changes_requested: { text: 'замечания ревью', tone: 'run' },
 }
 
+const REVIEW = new Set(['reviewing', 'approved', 'changes_requested'])
+const WAITS = new Set(['waiting_answer', 'waiting_permission', 'auth', 'stalled'])
+
+/**
+ * The card's live line: what its agent does now («Выполняет: Edit sum.js · 2 мин», «ждёт разрешения 3 мин»,
+ * «агент закончил»), the worktree's uncommitted changes, one click into the chat; once it finished, what to do next.
+ */
+function CardLive({ task, session }: { task: Task; session: Session }) {
+  const v = sessionVisualState(session)
+  const tool = useCurrentTool(session)
+  const line = useStateLine(session)
+  const start = useTurnStart(session)
+  const now = useNow()
+  const reworkOn = useFeature('rework')
+  const [reworking, setReworking] = useState(false)
+  const reworkRef = useRef<HTMLButtonElement>(null)
+  const cwd = session.worktreePath ?? session.cwd
+  const changed = useStore((st) => st.git[wtKey(cwd)]?.status?.files.filter((f) => !f.service).length
+    ?? Object.values(st.worktrees).flat().find((w) => normPath(w.path) === normPath(cwd))?.dirty
+    ?? task.worktrees?.find((w) => normPath(w.path) === normPath(cwd))?.dirty ?? 0)
+  // its turn is over on a task still open: the next step is the person's (look at the diff, commit, PR, rework)
+  const finished = task.agentState === 'done' || v === 'done' || (v === 'idle' && (task.status === 'review' || task.status === 'in_progress'))
+  const since = session.lastEventAt ?? session.lastActivityAt
+  const text = v === 'running' && tool ? `Выполняет: ${tool}`
+    : WAITS.has(v) ? `${STATE_LABEL[v]} ${dur(now - since)}`
+      : finished ? `агент закончил ${dur(now - session.lastActivityAt)} назад`
+        : line || statusText(session)
+  const go = (fn: () => void) => (e: MouseEvent) => { e.stopPropagation(); fn() }
+  return (
+    <div className="card-live" data-s={v}>
+      <div className="card-live-row">
+        <button type="button" className="card-live-line" data-tip={`${session.title}: открыть чат`} onPointerDown={stop} onKeyDown={stop} onClick={go(() => openSession(session.id))}>
+          <StatusIcon session={session} />
+          <span className="ellipsis">{text}</span>
+          {v === 'running' && tool && start && <span className="muted num">{dur(now - start)}</span>}
+        </button>
+        {changed > 0 && <span className="card-changes num" data-tip={`${changed} ${plural(changed, 'незакоммиченный файл', 'незакоммиченных файла', 'незакоммиченных файлов')}`}>±{changed}</span>}
+      </div>
+      {finished && (
+        <div className="card-actions" onPointerDown={stop} onKeyDown={stop}>
+          <button type="button" className="btn btn-ghost btn-xs" onClick={go(() => openTab({ kind: 'diff', cwd, path: null }))}><GitCompare />Дифф</button>
+          {changed > 0 && <button type="button" className="btn btn-ghost btn-xs" onClick={go(() => { openWorktree(cwd); showPanel('changes') })}><GitCommitHorizontal />Коммит</button>}
+          {!task.pr && <button type="button" className="btn btn-ghost btn-xs" onClick={go(() => openDialog({ kind: 'pr', cwd }))}><GitPullRequest />PR</button>}
+          {reworkOn && (
+            <>
+              <button ref={reworkRef} type="button" className="btn btn-ghost btn-xs" aria-expanded={reworking} onClick={go(() => setReworking(true))}><Wrench />Доработать</button>
+              {reworking && <span className="contents" onClick={stop}><ReworkPopover task={task} anchor={reworkRef} open onClose={() => setReworking(false)} /></span>}
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 /** What the agent (and the harness review) is doing; click opens that chat (the reviewer's while reviewing). */
 function AgentBadge({ task, session, ctx }: { task: Task; session: Session; ctx: BoardCtx }) {
-  const review = task.agentState === 'reviewing' || task.agentState === 'approved' || task.agentState === 'changes_requested'
-  if (!review) {
-    // The agent itself: the same state, icon and words as in the sidebar.
-    return (
-      <button type="button" className="agent-badge" data-s={sessionVisualState(session)} data-tip={`${session.title}: открыть чат`}
-        onPointerDown={stop} onKeyDown={stop} onClick={(e) => { e.stopPropagation(); openSession(session.id) }}>
-        <StatusIcon session={session} />
-        <span className="agent-badge-name">{ctx.agents.get(session.agent)?.label ?? session.agent}</span>
-        {statusText(session)}
-      </button>
-    )
-  }
   const st = AGENT_STATE[task.agentState!]
   const reviewer = [...ctx.sessions.values()].filter((x) => x.parentId === session.id && x.role === 'reviewer').sort((a, b) => b.createdAt - a.createdAt)[0]
   const target = (task.agentState === 'reviewing' || task.agentState === 'approved' || task.agentState === 'changes_requested') && reviewer ? reviewer : session

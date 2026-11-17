@@ -123,7 +123,10 @@ function actionLine(tool: string, input: unknown): { icon: ReactNode; text: stri
 
 /** Headless: the CLI already said no; what the buttons do is retry with an allowance, allow for the chat, or leave it. */
 const HEADLESS_LABEL = (o: PermissionOption) =>
-  isReject(o) ? 'Оставить отклонённым' : isOnce(o) ? 'Разрешить и повторить' : /session|always/i.test(`${o.id} ${o.kind ?? ''}`) ? 'Разрешать всегда в этой сессии' : optionLabel(o)
+  isReject(o) ? 'Оставить отклонённым' : isOnce(o) ? 'Разрешить и повторить' : isProject(o) ? 'Разрешать всегда в этом проекте'
+    : /session|always/i.test(`${o.id} ${o.kind ?? ''}`) ? 'Разрешать всегда в этой сессии' : optionLabel(o)
+/** allow_project: every chat of this project (the agent's settings for this workspace), not only this one. */
+const isProject = (o: PermissionOption) => /project/i.test(`${o.id} ${o.kind ?? ''}`)
 
 const isReject = (o: PermissionOption) => /reject|deny/i.test(`${o.id} ${o.kind ?? ''}`)
 const isOnce = (o: PermissionOption) => /allow_once|^allow$/i.test(o.kind ?? o.id)
@@ -134,6 +137,7 @@ function resolvedText(o: PermissionOption | undefined, id: string) {
   if (!o) return id === 'cancelled' ? 'Отменено' : 'Решено'
   if (isReject(o)) return 'Запрещено'
   if (isOnce(o)) return 'Разрешено один раз'
+  if (isProject(o)) return 'Разрешено в этом проекте'
   return /session|always/i.test(`${o.id} ${o.kind ?? ''}`) ? 'Разрешено в этой сессии' : optionLabel(o)
 }
 
@@ -180,7 +184,7 @@ export function PermissionCard({ m }: { m: Message }) {
         <span className="ellipsis">{who}{!o // «cancelled» (Stop, a new turn) or an option this client does not know
           ? `${resolvedText(o, choice)}: ${p.pattern ?? text}`
           : headless
-            ? (rejected ? `Оставлено отклонённым: ${p.pattern ?? text}` : `Разрешено: ${p.pattern ?? text}${isOnce(o) ? ' · повтор отправлен' : ' · для этого чата'}`)
+            ? (rejected ? `Оставлено отклонённым: ${p.pattern ?? text}` : `Разрешено: ${p.pattern ?? text}${isOnce(o) ? ' · повтор отправлен' : isProject(o) ? ' · для этого проекта' : ' · для этого чата'}`)
             : `${resolvedText(o, choice)}: ${text}`}</span>
       </div>
     )
