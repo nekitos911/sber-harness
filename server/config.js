@@ -50,7 +50,7 @@ export function loadConfig({ root = CODE_ROOT, overrides = {}, dataDir, configFi
   cfg.agentMcpServers ||= {};
   cfg.mcpServers ||= {};
   cfg.integrations ||= {};
-  cfg.git = { defaultBase: 'main', ...cfg.git };
+  cfg.git = { defaultBase: 'main', excludeFromCommit: ['.superpowers/'], ...cfg.git };
   cfg.session = { idleWindowSec: 90, ...cfg.session };
   cfg.orchestration = { workerMayCommit: false, reviewMode: 'builtin', subagents: 'harness', ...cfg.orchestration };
   cfg.orchestration.review = { grade: 'review', approvalMode: 'plan', maxRounds: 2, agent: null, ...cfg.orchestration.review };

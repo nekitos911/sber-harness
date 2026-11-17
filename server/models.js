@@ -4,7 +4,7 @@
 // one at a time per agent, in the background; failures are stored, never fatal.
 import fs from 'node:fs';
 import path from 'node:path';
-import { CODE_ROOT } from './config.js';
+import { CODE_ROOT, expandHome } from './config.js';
 import { launchers } from './launchers.js';
 import { runTurn, killTree } from './runner.js';
 import { secretEnv } from './mcp-client.js';
@@ -37,6 +37,40 @@ export function parseModelIds(text, pattern = null) {
     }
   }
   return [...found.values()];
+}
+
+/** shortcut: `<dir>/<name with *>` only (no ** or wildcard folders); enough for agents/*.md, upgrade if configs need more. */
+function globFiles(pattern) {
+  const p = expandHome(pattern);
+  const re = new RegExp(`^${path.basename(p).replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*')}$`, 'i');
+  try {
+    return fs.readdirSync(path.dirname(p), { withFileTypes: true }).filter((d) => d.isFile() && re.test(d.name)).map((d) => path.join(path.dirname(p), d.name)).sort();
+  } catch {
+    return [];
+  }
+}
+
+const family = (id) => id.match(/^[A-Za-z]+/)?.[0].toLowerCase();
+const baseId = (id) => id.toLowerCase().replace(/-\d+[km]$/, ''); // "-262k" context suffix is optional in references
+
+/**
+ * Model ids referenced by agent/command files (agents.<id>.modelRefsScan): frontmatter `model:` values that look like ids
+ * and tokens of a catalogue model family (Qwen, GLM, ...). available: in the discovered catalogue, null = not discovered.
+ */
+export function scanModelRefs(patterns, models) {
+  const families = new Set(models.map((m) => family(m.id)).filter(Boolean));
+  const discovered = models.some((m) => m.available !== null) ? new Set(models.filter((m) => m.available).map((m) => baseId(m.id))) : null;
+  const refs = [];
+  for (const file of (Array.isArray(patterns) ? patterns : []).flatMap(globFiles)) {
+    let text;
+    try { text = fs.readFileSync(file, 'utf8'); } catch { continue; }
+    const front = text.match(/^---\r?\n([\s\S]*?)\r?\n---/)?.[1] || '';
+    const declared = front.match(/^model:\s*["']?([^"'\r\n#]+?)["']?\s*$/m)?.[1];
+    const ids = new Set(declared && /\d/.test(declared) ? [declared] : []);
+    for (const { id } of parseModelIds(text)) if (families.has(family(id))) ids.add(id);
+    for (const model of ids) refs.push({ file, model, available: discovered ? discovered.has(baseId(model)) : null });
+  }
+  return refs;
 }
 
 export function createModelCatalog({ config, store, getUrl }) {

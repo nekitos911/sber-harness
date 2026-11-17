@@ -716,6 +716,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null }) {
         phase: null,
         turnOffset: null,
         ...(o.ephemeral ? { ephemeral: true, runResult: null } : {}),
+        ...(o.inWorktree === true ? { inWorktree: true } : {}), // a worker started inside its task's linked worktree
         createdAt: now,
         lastActivityAt: now,
       };

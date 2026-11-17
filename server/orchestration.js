@@ -186,12 +186,13 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
       } else {
         branch = await git.currentBranch(cwd);
       }
+      const inWorktree = !!made || (await git.worktrees(cwd).catch(() => [])).some((w) => !w.main && samePath(w.path, cwd));
       const key = tasks.key(task);
       let s;
       try {
         s = await sessions.create({
           kind: 'chat', agent, cwd, workspaceId: ws?.id, title: `${key}: ${task.title}`, role: 'worker',
-          parentId: caller?.id ?? null, taskId: task.id, model: o.model, branch,
+          parentId: caller?.id ?? null, taskId: task.id, model: o.model, branch, inWorktree,
         });
       } catch (e) {
         if (made?.created) await git.removeWorktree(made.repo, made.wt.path).catch(() => {});
@@ -542,6 +543,10 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
       `[harness] You are a WORKER session in a local multi-agent harness. ${who}`,
       `Task: ${key} - ${task.title} (task id ${task.id}).`,
       `Working directory: ${s.cwd}. Branch: ${s.branch || task.branch || '(current)'}. Base branch (primary target): ${task.targets[0]}.`,
+      // for task commands that make their own worktree (/full-task): this one is it
+      ...(s.inWorktree
+        ? [`Ты уже в рабочем дереве задачи \`${s.cwd}\` (ветка \`${s.branch || task.branch}\`) — это и есть worktree задачи; не создавай другой.${config.orchestration?.workerMayCommit ? '' : ' Коммиты/пуш/PR/трекер — только пользователь из UI.'} После финального сообщения твоей команды вызови worker_done с тем же текстом.`]
+        : []),
       'Rules:',
       '- Do only this task and only inside the working directory.',
       '- Stay on your branch: do not switch or create branches.',
@@ -784,7 +789,8 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
   async function gitSuggest(cwd) {
     if (typeof cwd !== 'string' || !cwd) fail(400, 'cwd is required');
     const dir = path.resolve(cwd);
-    const st = await git.status(dir);
+    const st = await git.status(dir, config.git.excludeFromCommit);
+    const work = st.files.filter((f) => !f.service); // git.excludeFromCommit: never suggested
     const g = gitCfg();
     let task = null;
     let portRec = null;
@@ -809,10 +815,10 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
     }
     const base = portRec?.target ?? task?.targets[0] ?? g.defaultBase;
     const key = task ? tasks.key(task) : null;
-    const fallback = st.branch && st.branch !== base ? st.branch : st.files[0] ? `Update ${st.files[0].path}` : 'Update';
+    const fallback = st.branch && st.branch !== base ? st.branch : work[0] ? `Update ${work[0].path}` : 'Update';
     const title = (tpl) => (task ? render(tpl, { key, id: task.id, title: task.title, branch: st.branch || '', target: base }) : fallback);
     const summary = task ? lastSummary(task) : null;
-    const files = st.files.map((f) => `- ${f.path}`).join('\n');
+    const files = work.map((f) => `- ${f.path}`).join('\n');
     const baseRef = (await git.refExists(dir, base)) ? base : `origin/${base}`;
     const commits = await git.onelines(dir, `${baseRef}..HEAD`);
     const desc = task?.description?.trim();

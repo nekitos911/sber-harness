@@ -18,7 +18,8 @@ import * as git from './git.js';
 import * as wfs from './fs.js';
 import { createMcpManager, loadSecrets, secretsFile, serverDefs } from './mcp-client.js';
 import { launchers } from './launchers.js';
-import { createModelCatalog } from './models.js';
+import { createModelCatalog, scanModelRefs } from './models.js';
+import { readSdd } from './sdd.js';
 import { DEMO_PORT, demoOverrides, seedDemoRepos, seedDemoTasks } from './demo.js';
 import { importTasks, transitionTask, getExternal, getTransitions, importChildren, syncColumn } from './integrations/tasks.js';
 import { createPullRequest, prStatus, refreshTaskPr } from './integrations/pr.js';
@@ -34,7 +35,7 @@ const NO_BUILD_HTML = '<!doctype html><meta charset="utf-8"><title>Harness</titl
 const GRADES = ['default', 'fast', 'review', 'explore'];
 // optional API groups this server implements (docs/ARCHITECTURE.md "Feature flags"); a flag ships with its route
 export const FEATURES = ['branches', 'fs-search', 'pr-status', 'agent-info', 'models-refresh', 'tracker-links', 'board-columns', 'review-loop',
-  'subagents', 'virtual-sessions', 'worker-run', 'skills-install', 'demo', 'worktree-meta', 'open'];
+  'subagents', 'virtual-sessions', 'worker-run', 'skills-install', 'demo', 'worktree-meta', 'open', 'sdd'];
 const GIT_KEYS = ['defaultBase', 'branchTemplate', 'portBranchTemplate', 'commitTitleTemplate', 'prTitleTemplate'];
 const TASK_VARS = ['{taskUrl}', '{key}', '{id}', '{description}'];
 const hasTaskVar = (tpl) => TASK_VARS.some((v) => tpl.includes(v));
@@ -470,6 +471,7 @@ export async function startServer(opts = {}) {
     return {
       id, resolved: resolveAgentView(a), auth: meta?.auth ?? 'unknown', seen: meta ? seen : null, catalog: catalog.info(id), models: catalog.merged(id),
       commands: shippedStatus(a, 'commands'), skills: shippedStatus(a, 'skills'),
+      modelRefs: scanModelRefs(a.modelRefsScan, catalog.merged(id)), // read-only: the harness never edits these files
     };
   }
 
@@ -533,6 +535,20 @@ export async function startServer(opts = {}) {
     }
     return null;
   }
+
+  // ---- /full-task SDD artifacts: polled while a session in that folder runs, broadcast on change ----
+  const sddSeen = new Map(); // folder key -> last JSON
+  const sddTimer = setInterval(() => {
+    if (!wss.clients.size) return;
+    const cwds = new Map(db.sessions.filter((s) => s.status === 'running' && !s.virtual && s.cwd).map((s) => [metaKey(s.cwd), s.cwd]));
+    for (const [k, cwd] of cwds) {
+      const data = readSdd(cwd);
+      const json = JSON.stringify(data);
+      if ((sddSeen.get(k) ?? '{"plans":[]}') !== json) bus.send({ t: 'sdd', cwd, ...data });
+      sddSeen.set(k, json);
+    }
+  }, 3000);
+  sddTimer.unref?.();
 
   // ---- routes ----
   const routes = [];
@@ -734,7 +750,7 @@ export async function startServer(opts = {}) {
 
   // git
   route('GET', '/api/git/status', async ({ query }) => {
-    const st = await git.status(cwdOf(query));
+    const st = await git.status(cwdOf(query), config.git.excludeFromCommit);
     refreshBranch(query.cwd, st.branch);
     return st;
   });
@@ -764,7 +780,7 @@ export async function startServer(opts = {}) {
   });
   route('POST', '/api/git/commit', ({ body }) => {
     check(body, { cwd: 'string', message: 'string', paths: 'array?' });
-    return git.commit(body.cwd, body.message, body.paths);
+    return git.commit(body.cwd, body.message, body.paths, config.git.excludeFromCommit);
   });
   route('POST', '/api/git/push', ({ body }) => git.push(check(body, { cwd: 'string' }).cwd));
   route('POST', '/api/git/pr', async ({ body }) => {
@@ -778,6 +794,7 @@ export async function startServer(opts = {}) {
   });
 
   // files
+  route('GET', '/api/sdd', ({ query }) => readSdd(path.resolve(cwdOf(query))));
   route('GET', '/api/fs/list', ({ query }) => wfs.list(cwdOf(query), query.path || ''));
   route('GET', '/api/fs/search', ({ query }) => wfs.searchFiles(cwdOf(query), query.q || '', query.limit));
   route('GET', '/api/fs/file', ({ query }) => wfs.readFile(cwdOf(query), check(query, { path: 'string' }).path));
@@ -981,6 +998,7 @@ export async function startServer(opts = {}) {
       closed = true;
       clearInterval(syncTimer);
       clearInterval(prTimer);
+      clearInterval(sddTimer);
       await catalog.close();
       sessions.close();
       mcp.close();

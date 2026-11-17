@@ -29,7 +29,11 @@ function fileStatus(x, y) {
   return 'M';
 }
 
-export async function status(cwd) {
+/** git.excludeFromCommit: "dir/" = that folder at the repository top, otherwise a top-relative path. */
+export const isService = (file, patterns = []) => patterns.some((p) => (p.endsWith('/') ? file.startsWith(p) : file === p || file.startsWith(`${p}/`)));
+const excludeSpecs = (patterns = []) => patterns.map((p) => `:(top,exclude)${p}`);
+
+export async function status(cwd, exclude = []) {
   const { stdout } = await git(cwd, ['status', '--porcelain=v1', '-b', '-z', '-uall']);
   const res = { branch: null, upstream: null, ahead: 0, behind: 0, files: [] };
   const parts = stdout.split('\0');
@@ -51,7 +55,8 @@ export async function status(cwd) {
     }
     const [x, y] = p;
     if (x === 'R' || x === 'C') i++; // -z puts the original path of a rename in the next field
-    res.files.push({ path: p.slice(3), x, y, status: fileStatus(x, y) });
+    const file = p.slice(3);
+    res.files.push({ path: file, x, y, status: fileStatus(x, y), ...(isService(file, exclude) ? { service: true } : {}) });
   }
   return res;
 }
@@ -84,11 +89,18 @@ export async function onelines(cwd, range) {
   return r.code ? [] : r.stdout.split('\n').filter(Boolean);
 }
 
-export async function commit(cwd, message, paths) {
+export async function commit(cwd, message, paths, exclude = []) {
   if (typeof message !== 'string' || !message.trim()) fail(400, 'commit message is required');
   if (paths?.length) {
-    await git(cwd, ['add', '-A', '--', ...paths]);
-    await git(cwd, ['commit', '-m', message, '--', ...paths]);
+    const keep = paths.filter((p) => !isService(p, exclude));
+    if (!keep.length) fail(400, `only service files selected (git.excludeFromCommit: ${exclude.join(', ')}); they are never committed by the harness`);
+    await git(cwd, ['add', '-A', '--', ...keep]);
+    await git(cwd, ['commit', '-m', message, '--', ...keep]);
+  } else if (exclude.length) {
+    // commit-all minus service files; the pathspec form also skips service files staged earlier
+    const spec = [':/', ...excludeSpecs(exclude)];
+    await git(cwd, ['add', '-A', '--', ...spec]);
+    await git(cwd, ['commit', '-m', message, '--', ...spec]);
   } else {
     await git(cwd, ['add', '-A']);
     await git(cwd, ['commit', '-m', message]);
