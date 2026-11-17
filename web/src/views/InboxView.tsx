@@ -5,6 +5,7 @@ import { openSession, openTask, setState, useStore } from '../store'
 import { fullTime, NOTIFY_KIND, relTime } from '../lib/format'
 import { useNow } from '../lib/useNow'
 import type { Notification, NotificationKind } from '../types'
+import { ReplyOptions } from '../components/chat/MessageItem'
 
 const ICON: Record<NotificationKind, typeof Info> = {
   question: CircleHelp, done: CircleCheck, failed: TriangleAlert, escalation: Megaphone, info: Info, error: CircleAlert,
@@ -88,6 +89,7 @@ function Item({ n }: { n: Notification }) {
           <time className="muted num" title={fullTime(n.at)}>{relTime(n.at, now)}</time>
         </div>
         <button type="button" className="inbox-text" onClick={open} disabled={!session && !task}>{n.text}</button>
+        {n.options?.length && n.sessionId ? <ReplyOptions options={n.options} to={n.sessionId} onSent={() => void read()} /> : null}
         {replying ? (
           <form className="inbox-reply" onSubmit={(e) => { e.preventDefault(); void reply() }}>
             <textarea

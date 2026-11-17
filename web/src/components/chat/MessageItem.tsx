@@ -1,5 +1,6 @@
 import { memo, useState, type MouseEvent } from 'react'
 import { Check, ChevronRight, Copy, LoaderCircle, X } from 'lucide-react'
+import { tryApi } from '../../api'
 import { openSession, useStore } from '../../store'
 import { basename, fullTime } from '../../lib/format'
 import { fileEdit, summarizeInput, type FileEdit } from '../../lib/toolcall'
@@ -7,6 +8,13 @@ import type { Message, ToolCall } from '../../types'
 import { Markdown } from '../Markdown'
 
 export const MessageItem = memo(function MessageItem({ m }: { m: Message }) {
+  const body = <MessageBody m={m} />
+  if (!m.options?.length) return body
+  // `ask` from a worker arrives here with from = worker id: the click answers that worker.
+  return <>{body}<ReplyOptions options={m.options} to={m.from && m.from !== 'user' ? m.from : m.sessionId} /></>
+})
+
+function MessageBody({ m }: { m: Message }) {
   switch (m.kind) {
     case 'user': return <UserMessage m={m} />
     case 'assistant': return <div className="msg msg-assistant"><Markdown text={m.text} /></div>
@@ -15,7 +23,28 @@ export const MessageItem = memo(function MessageItem({ m }: { m: Message }) {
     case 'error': return <div className="msg msg-error" role="alert">{m.text}</div>
     case 'system': return <div className="msg msg-system"><Markdown text={m.text} /></div>
   }
-})
+}
+
+/** One-click answers for an `ask` with options; the chosen text is sent as the reply. */
+export function ReplyOptions({ options, to, onSent }: { options: string[]; to: string; onSent?: () => void }) {
+  const [sent, setSent] = useState<string | null>(null)
+  const pick = async (o: string) => {
+    setSent(o)
+    const res = await tryApi<{ queued: boolean }>('POST', `/sessions/${encodeURIComponent(to)}/messages`, { text: o })
+    if (!res) { setSent(null); return }
+    onSent?.()
+  }
+  return (
+    <div className="reply-options" role="group" aria-label="Варианты ответа">
+      {options.map((o) => (
+        <button key={o} type="button" className="btn btn-sm" aria-pressed={sent === o} disabled={sent !== null} onClick={() => void pick(o)}>
+          {sent === o && <Check />}
+          {o}
+        </button>
+      ))}
+    </div>
+  )
+}
 
 function UserMessage({ m }: { m: Message }) {
   const sender = useStore((s) => (m.from && m.from !== 'user' ? s.sessions.find((x) => x.id === m.from) : undefined))

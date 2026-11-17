@@ -1,6 +1,4 @@
-import { tryApi } from '../api'
-import { openSession, setState, upsert } from '../store'
-import type { Session, Task } from '../types'
+import type { Task } from '../types'
 
 /** Tracker key of the root task (subtasks share it), else the root's local id. */
 export function taskKey(task: Task, byId: Map<string, Task>): string {
@@ -21,11 +19,18 @@ export const unusualTargets = (task: Task) =>
 
 export const byOrder = (a: Task, b: Task) => a.order - b.order || a.createdAt - b.createdAt
 
-/** «Взять в работу»: server picks default agent + new worktree, we open the new chat. */
-export async function startTask(task: Task) {
-  const s = await tryApi<Session>('POST', `/tasks/${encodeURIComponent(task.id)}/start`, {})
-  if (s) {
-    setState((st) => ({ sessions: upsert(st.sessions, s) }))
-    openSession(s.id)
-  }
+
+const norm = (s: string) => s.toLowerCase().replace(/[\s_-]+/g, '')
+const COLUMN_NAMES: Record<string, string[]> = {
+  backlog: ['backlog', 'бэклог'],
+  todo: ['todo', 'кработе'],
+  in_progress: ['inprogress', 'вработе'],
+  review: ['review', 'inreview', 'ревью', 'наревью'],
+  done: ['done', 'готово', 'closed', 'закрыто'],
 }
+
+/** Tracker status worth showing on the card: it exists and does not read like the card's column. */
+export const trackerDiffers = (t: Task) =>
+  !!t.externalStatus && !(COLUMN_NAMES[t.status] ?? []).includes(norm(t.externalStatus))
+
+export const isImported = (t: Task) => !!(t.source || t.externalId)

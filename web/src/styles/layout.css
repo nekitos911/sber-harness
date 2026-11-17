@@ -162,3 +162,14 @@
 .menu button:hover, .menu button:focus-visible { background: var(--deck-2); color: var(--ink); outline: none; }
 .menu svg { width: 14px; height: 14px; color: var(--ink-3); }
 @keyframes menu-in { from { opacity: 0; transform: scale(0.97); } }
+
+.sb-new { padding: 0 10px 8px; }
+.sb-new .btn { width: 100%; justify-content: flex-start; }
+
+/* Agent-internal sub-agents: dashed rail, no actions (they have no chat of their own). */
+.rail-sub::before { background: none; border-left: 1px dashed var(--rule-strong); width: 0; }
+.rail-sub > .tree-row::before { background: none; border-top: 1px dashed var(--rule-strong); height: 0; }
+.tree-sublabel { padding: 2px 0 0 14px; color: var(--ink-4); font-size: 11px; }
+.tree-sub { cursor: default; height: 24px; font-size: 12px; color: var(--ink-3); }
+.tree-sub:hover { background: transparent; color: var(--ink-2); }
+.tree-sub .st { width: 13px; height: 13px; }

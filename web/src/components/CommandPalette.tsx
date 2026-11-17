@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { Bot, FileText, FolderPlus, Inbox, MessageSquare, Moon, PanelLeft, PanelRight, SquareKanban, SquareTerminal } from 'lucide-react'
+import { Bot, FileText, FolderPlus, GitBranchPlus, Inbox, MessageSquare, Moon, PanelLeft, PanelRight, Settings, SquareKanban, SquareTerminal } from 'lucide-react'
 import { getState, openDialog, openSession, openTab, openTask, setState, useStore } from '../store'
 import { StatusIcon } from './bits'
+import { currentWhere, newChat } from '../lib/actions'
 
 interface Command { id: string; label: string; hint?: string; icon: ReactNode; run: () => void }
 
@@ -19,7 +20,10 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
   }, [])
 
   const commands = useMemo<Command[]>(() => [
-    { id: 'chat', label: 'Новый чат', icon: <MessageSquare />, run: () => openDialog({ kind: 'chat' }) },
+    { id: 'chat', label: 'Новый чат', icon: <MessageSquare />, run: () => void newChat(currentWhere()) },
+    { id: 'chat-form', label: 'Новый чат с настройками…', icon: <MessageSquare />, run: () => openDialog({ kind: 'chat' }) },
+    { id: 'worktree', label: 'Новое рабочее дерево', icon: <GitBranchPlus />, run: () => openDialog({ kind: 'worktree' }) },
+    { id: 'settings', label: 'Настройки', icon: <Settings />, run: () => openTab({ kind: 'settings' }) },
     { id: 'term', label: 'Новый терминал', icon: <SquareTerminal />, run: () => openDialog({ kind: 'terminal' }) },
     { id: 'ws', label: 'Добавить проект', icon: <FolderPlus />, run: () => openDialog({ kind: 'workspace' }) },
     { id: 'board', label: 'Доска задач', icon: <SquareKanban />, run: () => openTab({ kind: 'board' }) },

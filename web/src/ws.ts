@@ -1,6 +1,6 @@
 import { api, errorText, wsUrl } from './api'
-import { getState, setState, tabKey, toast, upsert, without } from './store'
-import type { AppState, ClientEvent, Message, ServerEvent, Worktree } from './types'
+import { closeTab, getState, setState, tabKey, toast, upsert, without, type Tab } from './store'
+import type { AppState, ClientEvent, Message, ServerEvent, SubAgent, Worktree } from './types'
 
 type TermListener = (data: string, replay: boolean) => void
 
@@ -59,12 +59,14 @@ async function refreshState() {
     const st = await api<AppState>('GET', '/state')
     setState((s) => {
       const ids = new Set(st.sessions.map((x) => x.id))
-      const tabs = s.tabs.filter((t) => t.kind !== 'session' || ids.has(t.id))
-      const active = tabs.some((t) => tabKey(t) === s.active) ? s.active : tabs[0] ? tabKey(tabs[0]) : ''
+      const kept = s.tabs.filter((t) => t.kind !== 'session' || ids.has(t.id))
+      const tabs: Tab[] = kept.length ? kept : [{ kind: 'board' }]
+      const active = tabs.some((t) => tabKey(t) === s.active) ? s.active : tabKey(tabs[0])
       return {
         loaded: true,
         tasks: st.tasks, sessions: st.sessions, workspaces: st.workspaces, notifications: st.notifications,
-        agents: st.agents, shell: st.shell?.command ?? '', integrations: st.integrations ?? { tasks: false, pr: false },
+        agents: st.agents, defaultAgent: st.defaultAgent ?? null,
+        shell: st.shell?.command ?? '', integrations: st.integrations ?? { tasks: false, pr: false },
         tabs, active,
       }
     })
@@ -72,6 +74,7 @@ async function refreshState() {
     for (const id of Object.keys(getState().messages)) {
       loadMessages(id).catch(() => undefined)
     }
+    for (const s of st.sessions) if (s.kind === 'chat' && s.status === 'running') void loadSubagents(s.id)
   } catch (e) {
     toast(`Не удалось загрузить состояние: ${errorText(e)}`, 'error')
   }
@@ -89,6 +92,14 @@ export async function loadMessages(sessionId: string) {
   } finally {
     loading.delete(sessionId)
   }
+}
+
+/** Agent-internal sub-agents of a session (read-only registry); live updates come over WS. */
+export async function loadSubagents(sessionId: string) {
+  try {
+    const r = await api<{ items: SubAgent[]; problems: string[] }>('GET', `/sessions/${encodeURIComponent(sessionId)}/subagents`)
+    setState((s) => ({ subagents: { ...s.subagents, [sessionId]: { items: r.items ?? [], problems: r.problems ?? [] } } }))
+  } catch { /* older server or no registry: nothing to show */ }
 }
 
 export async function loadWorktrees(workspaceId: string) {
@@ -111,15 +122,15 @@ function apply(ev: ServerEvent) {
       setState((s) => ({ sessions: upsert(s.sessions, ev.session) }))
       break
     case 'session.del':
+      closeTab(tabKey({ kind: 'session', id: ev.id }))
       setState((s) => {
-        const key = `s:${ev.id}`
-        const tabs = s.tabs.filter((t) => tabKey(t) !== key)
         const messages = { ...s.messages }
+        const subagents = { ...s.subagents }
+        const drafts = { ...s.drafts }
         delete messages[ev.id]
-        return {
-          sessions: without(s.sessions, ev.id), messages, tabs,
-          active: s.active === key ? (tabs[0] ? tabKey(tabs[0]) : '') : s.active,
-        }
+        delete subagents[ev.id]
+        delete drafts[ev.id]
+        return { sessions: without(s.sessions, ev.id), messages, subagents, drafts }
       })
       break
     case 'msg': {
@@ -135,6 +146,11 @@ function apply(ev: ServerEvent) {
       break
     case 'workspaces':
       setState({ workspaces: ev.workspaces })
+      break
+    case 'subagents':
+      setState((s) => ({
+        subagents: { ...s.subagents, [ev.sessionId]: { items: ev.items, problems: s.subagents[ev.sessionId]?.problems ?? [] } },
+      }))
       break
     case 'term':
     case 'term.replay':

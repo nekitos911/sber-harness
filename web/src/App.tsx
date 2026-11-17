@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useState, type CSSProperties } from 'react'
-import { Bot, Inbox, SquareKanban, WifiOff } from 'lucide-react'
-import { openTab, tabKey, useStore, type Tab } from './store'
+import { WifiOff } from 'lucide-react'
+import { tabKey, useStore, type Tab } from './store'
 import { reconnectNow } from './ws'
 import { TopBar } from './components/TopBar'
 import { Sidebar } from './components/Sidebar'
@@ -13,6 +13,7 @@ import { CommandPalette } from './components/CommandPalette'
 import { BoardView } from './views/BoardView'
 import { AgentsView } from './views/AgentsView'
 import { InboxView } from './views/InboxView'
+import { SettingsView } from './views/SettingsView'
 import { ChatView } from './views/ChatView'
 import { DiffView } from './views/DiffView'
 
@@ -46,12 +47,11 @@ export function App() {
           {tabs.map((t) => {
             const key = tabKey(t)
             return (
-              <section key={key} className="tabpanel" role="tabpanel" hidden={key !== active} aria-label={key}>
+              <section key={key} className="tabpanel" hidden={key !== active}>
                 <TabContent tab={t} active={key === active} />
               </section>
             )
           })}
-          {tabs.length === 0 && <Launcher />}
         </div>
       </main>
       {panel && <WorkspacePanel />}
@@ -68,6 +68,7 @@ function TabContent({ tab, active }: { tab: Tab; active: boolean }) {
     case 'board': return <BoardView />
     case 'agents': return <AgentsView />
     case 'inbox': return <InboxView />
+    case 'settings': return <SettingsView />
     case 'session': return <SessionTab id={tab.id} active={active} />
     case 'file': return <Suspense fallback={<Loading />}><FileView cwd={tab.cwd} path={tab.path} /></Suspense>
     case 'diff': return <DiffView cwd={tab.cwd} path={tab.path} />
@@ -79,19 +80,6 @@ function SessionTab({ id, active }: { id: string; active: boolean }) {
   if (!kind) return <Loading />
   if (kind === 'terminal') return <Suspense fallback={<Loading />}><TerminalView id={id} active={active} /></Suspense>
   return <ChatView id={id} active={active} />
-}
-
-function Launcher() {
-  return (
-    <div className="empty">
-      <h2>Все вкладки закрыты</h2>
-      <div className="row">
-        <button type="button" className="btn" onClick={() => openTab({ kind: 'board' })}><SquareKanban />Задачи</button>
-        <button type="button" className="btn" onClick={() => openTab({ kind: 'agents' })}><Bot />Агенты</button>
-        <button type="button" className="btn" onClick={() => openTab({ kind: 'inbox' })}><Inbox />Входящие</button>
-      </div>
-    </div>
-  )
 }
 
 function ConnectionBanner() {

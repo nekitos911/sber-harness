@@ -1,13 +1,14 @@
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
-import { ArrowUpToLine, ExternalLink, GitMerge, Lock, Play, Plus, Send, SquareArrowOutUpRight, Trash2, UserPlus, X } from 'lucide-react'
+import { ArrowUpToLine, ExternalLink, EyeOff, GitMerge, Lock, Play, Plus, Send, SquareArrowOutUpRight, Trash2, UserPlus, X } from 'lucide-react'
 import { tryApi } from '../../api'
-import { openSession, setState, toast, upsert, useStore, without } from '../../store'
+import { openDialog, openSession, setState, toast, upsert, useStore, without } from '../../store'
 import { COLUMNS, fullTime, PRIORITY, relTime } from '../../lib/format'
-import { pendingDeps, startTask, taskKey } from '../../lib/tasks'
+import { isImported, pendingDeps, taskKey } from '../../lib/tasks'
 import { useNow } from '../../lib/useNow'
 import type { Session, Task, TaskPort, TaskStatus } from '../../types'
 import { Branch, StatusIcon, statusText } from '../bits'
 import { Markdown } from '../Markdown'
+import { ChipsInput } from '../ChipsInput'
 import type { BoardCtx } from './TaskCard'
 
 async function patchTask(id: string, fields: Partial<Task> & { comment?: string }) {
@@ -27,12 +28,14 @@ export function TaskDrawer({ task, ctx, onClose }: { task: Task; ctx: BoardCtx; 
   const ref = useRef<HTMLElement>(null)
   const titleId = useId()
   const workspaces = useStore((s) => s.workspaces)
+  const trackerOn = useStore((s) => s.integrations.tasks)
   const [panel, setPanel] = useState<'assign' | 'send' | null>(null)
   const [confirmDelete, setConfirmDelete] = useState(false)
 
   useEffect(() => { ref.current?.focus() }, [])
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && !e.defaultPrevented) onClose() }
+    // Esc closes the drawer unless a modal on top of it (start/PR dialog) is handling it.
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && !e.defaultPrevented && !document.querySelector('dialog[open]')) onClose() }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
   }, [onClose])
@@ -43,10 +46,12 @@ export function TaskDrawer({ task, ctx, onClose }: { task: Task; ctx: BoardCtx; 
   const blocked = pendingDeps(task, ctx.byId)
   const patch = (fields: Partial<Task>) => patchTask(task.id, fields)
 
+  const imported = isImported(task)
+  // Imported tasks are only hidden by DELETE (re-import keeps them hidden); local ones are deleted.
   const remove = async () => {
     const ok = await tryApi<unknown>('DELETE', `/tasks/${encodeURIComponent(task.id)}`)
     if (ok === undefined) return
-    setState((s) => ({ tasks: without(s.tasks, task.id) }))
+    setState((s) => ({ tasks: imported ? upsert(s.tasks, { ...task, hidden: true }) : without(s.tasks, task.id) }))
     onClose()
   }
 
@@ -60,7 +65,9 @@ export function TaskDrawer({ task, ctx, onClose }: { task: Task; ctx: BoardCtx; 
           </a>
         )}
         <span className="grow" />
-        <span className="muted" title={fullTime(task.updatedAt)}>обновлено {relTime(task.updatedAt)}</span>
+        <span className="muted" title={`обновлено ${fullTime(task.updatedAt)}`}>
+          {task.takenAt ? `в работе с ${relTime(task.takenAt)}` : `обновлено ${relTime(task.updatedAt)}`}
+        </span>
         <button type="button" className="icon-btn" aria-label="Закрыть" title="Закрыть (Esc)" onClick={onClose}><X /></button>
       </header>
 
@@ -71,10 +78,21 @@ export function TaskDrawer({ task, ctx, onClose }: { task: Task; ctx: BoardCtx; 
           </button>
         )}
         <TitleField id={titleId} task={task} />
+        {task.hidden && (
+          <div className="drawer-note">
+            Задача скрыта с доски.
+            <button type="button" className="btn btn-sm" onClick={() => void patch({ hidden: false })}>Вернуть на доску</button>
+          </div>
+        )}
+        {task.snapshot && (task.snapshot.title !== task.title || task.snapshot.description !== task.description) && (
+          <div className="drawer-note" title={task.snapshot.title}>
+            После взятия в работу задача изменилась в трекере (снимок от {fullTime(task.snapshot.at)}).
+          </div>
+        )}
 
         <div className="drawer-actions">
           {(task.status === 'backlog' || task.status === 'todo' || !session) && (
-            <button type="button" className="btn btn-primary" disabled={blocked.length > 0} title={blocked.length ? `Ждёт: ${blocked.join(', ')}` : undefined} onClick={() => void startTask(task)}>
+            <button type="button" className="btn btn-primary" disabled={blocked.length > 0} title={blocked.length ? `Ждёт: ${blocked.join(', ')}` : undefined} onClick={() => openDialog({ kind: 'start', taskId: task.id })}>
               <Play />
               Взять в работу
             </button>
@@ -130,11 +148,12 @@ export function TaskDrawer({ task, ctx, onClose }: { task: Task; ctx: BoardCtx; 
             <DepsField task={task} ctx={ctx} onChange={(deps) => void patch({ deps })} />
           </Prop>
           <Prop label="Метки">
-            <LabelsField labels={task.labels} onChange={(labels) => void patch({ labels })} />
+            <ChipsInput values={task.labels} label="метку" onChange={(labels) => void patch({ labels })} />
           </Prop>
         </div>
 
         <DescriptionField task={task} />
+        {trackerOn && task.externalId && <TrackerStatus task={task} />}
         {task.targets.length > 1 && <Ports task={task} />}
         <Subtasks task={task} ctx={ctx} />
         <Activity task={task} sessions={ctx.sessions} />
@@ -142,14 +161,14 @@ export function TaskDrawer({ task, ctx, onClose }: { task: Task; ctx: BoardCtx; 
         <footer className="drawer-foot">
           {confirmDelete ? (
             <>
-              <span>Удалить {task.id} без возможности восстановления?</span>
-              <button type="button" className="btn btn-danger" onClick={() => void remove()}>Удалить</button>
+              <span>{imported ? `Скрыть ${key} с доски? В трекере задача останется.` : `Удалить ${task.id} без возможности восстановления?`}</span>
+              <button type="button" className="btn btn-danger" onClick={() => void remove()}>{imported ? 'Скрыть' : 'Удалить'}</button>
               <button type="button" className="btn" onClick={() => setConfirmDelete(false)}>Отмена</button>
             </>
-          ) : (
+          ) : !task.hidden && (
             <button type="button" className="btn btn-ghost btn-danger" onClick={() => setConfirmDelete(true)}>
-              <Trash2 />
-              Удалить задачу
+              {imported ? <EyeOff /> : <Trash2 />}
+              {imported ? 'Скрыть с доски' : 'Удалить задачу'}
             </button>
           )}
         </footer>
@@ -341,31 +360,35 @@ function DepsField({ task, ctx, onChange }: { task: Task; ctx: BoardCtx; onChang
   )
 }
 
-function LabelsField({ labels, onChange }: { labels: string[]; onChange: (l: string[]) => void }) {
-  const [v, setV] = useState('')
-  const add = () => {
-    const next = v.split(',').map((x) => x.trim()).filter((x) => x && !labels.includes(x))
-    if (next.length) onChange([...labels, ...next])
-    setV('')
+/** Changing the tracker status is explicit; moving the card never touches the tracker. */
+function TrackerStatus({ task }: { task: Task }) {
+  const tasks = useStore((s) => s.tasks)
+  const known = useMemo(() => [...new Set(tasks.map((t) => t.externalStatus).filter((x): x is string => !!x))], [tasks])
+  const [status, setStatus] = useState('')
+  const [comment, setComment] = useState('')
+  const [busy, setBusy] = useState(false)
+  const listId = useId()
+  const submit = async () => {
+    setBusy(true)
+    const res = await tryApi<Task | { ok: true }>('POST', `/tasks/${encodeURIComponent(task.id)}/tracker-status`, { status: status.trim(), comment: comment.trim() || undefined })
+    setBusy(false)
+    if (res === undefined) return
+    if (res && 'id' in res) setState((s) => ({ tasks: upsert(s.tasks, res) }))
+    toast(`Статус в трекере: ${status.trim()}`, 'ok')
+    setStatus('')
+    setComment('')
   }
   return (
-    <div className="chips">
-      {labels.map((l) => (
-        <span key={l} className="chip">
-          {l}
-          <button type="button" className="chip-x" aria-label={`Убрать метку ${l}`} onClick={() => onChange(labels.filter((x) => x !== l))}><X /></button>
-        </span>
-      ))}
-      <input
-        className="input input-inline"
-        placeholder="метка"
-        aria-label="Добавить метку"
-        value={v}
-        onChange={(e) => setV(e.target.value)}
-        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); add() } }}
-        onBlur={add}
-      />
-    </div>
+    <section className="drawer-section">
+      <h3>Статус в трекере <span className="chip chip-mono">{task.externalStatus ?? 'неизвестен'}</span></h3>
+      <p className="field-hint">Перемещение карточки по доске не меняет статус в трекере — только эта форма.</p>
+      <div className="tracker-form">
+        <input className="input" list={listId} placeholder="Новый статус" aria-label="Новый статус в трекере" value={status} onChange={(e) => setStatus(e.target.value)} />
+        <datalist id={listId}>{known.map((k) => <option key={k} value={k} />)}</datalist>
+        <button type="button" className="btn" disabled={!status.trim() || busy} onClick={() => void submit()}>{busy ? 'Меняем…' : 'Изменить в трекере'}</button>
+        <textarea className="textarea" rows={2} placeholder="Комментарий (необязательно)" aria-label="Комментарий к смене статуса" value={comment} onChange={(e) => setComment(e.target.value)} />
+      </div>
+    </section>
   )
 }
 

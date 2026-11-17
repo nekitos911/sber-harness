@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react'
-import { Bot, ChevronRight, FolderGit2, FolderPlus, GitBranch, GitBranchPlus, Inbox, MessageSquarePlus, Moon, Search, SquareKanban, SquareTerminal, Sun } from 'lucide-react'
+import { Bot, ChevronRight, FolderGit2, FolderPlus, GitBranch, GitBranchPlus, Inbox, MessageSquarePlus, Moon, Search, Settings, SquareKanban, SquareTerminal, Sun } from 'lucide-react'
 import { openDialog, openSession, openTab, setState, tabKey, useActiveCwd, useStore } from '../store'
 import { loadWorktrees } from '../ws'
-import { basename, normPath, relTime } from '../lib/format'
+import { basename, normPath, relTime, tokens } from '../lib/format'
+import { currentWhere, newChat } from '../lib/actions'
 import type { Session, Workspace, Worktree } from '../types'
-import { StatusIcon } from './bits'
+import { StatusIcon, SubStateIcon, subStateLabel } from './bits'
 import { useNow } from '../lib/useNow'
 
 const depth = (d: number) => ({ '--depth': d }) as CSSProperties
@@ -34,6 +35,12 @@ export function Sidebar() {
         <Search aria-hidden />
         <input className="input" type="search" placeholder="Поиск" aria-label="Поиск по сессиям и проектам" value={query} onChange={(e) => setQuery(e.target.value)} />
       </div>
+      <div className="sb-new">
+        <button type="button" className="btn" onClick={() => void newChat(currentWhere())} title="Чат с агентом по умолчанию в текущей папке">
+          <MessageSquarePlus />
+          Новый чат
+        </button>
+      </div>
 
       <div className="nav">
         <NavItem tab="board" icon={<SquareKanban />} label="Задачи" />
@@ -51,8 +58,8 @@ export function Sidebar() {
         <button type="button" className="icon-btn icon-btn-sm" title="Добавить проект" aria-label="Добавить проект" onClick={() => openDialog({ kind: 'workspace' })}>
           <FolderPlus />
         </button>
-        <button type="button" className="icon-btn icon-btn-sm" title="Новый чат" aria-label="Новый чат" onClick={() => openDialog({ kind: 'chat' })}>
-          <MessageSquarePlus />
+        <button type="button" className="icon-btn icon-btn-sm" title="Новое рабочее дерево" aria-label="Новое рабочее дерево" onClick={() => openDialog({ kind: 'worktree' })}>
+          <GitBranchPlus />
         </button>
       </div>
 
@@ -74,10 +81,13 @@ export function Sidebar() {
       </div>
 
       <div className="sb-foot">
-        <button type="button" className="btn btn-ghost btn-sm" onClick={() => openDialog({ kind: 'terminal' })}>
-          <SquareTerminal />
-          Терминал
+        <button type="button" className="icon-btn" title="Настройки" aria-label="Настройки" onClick={() => openTab({ kind: 'settings' })}>
+          <Settings />
         </button>
+        <button type="button" className="icon-btn" title="Новый терминал" aria-label="Новый терминал" onClick={() => openDialog({ kind: 'terminal' })}>
+          <SquareTerminal />
+        </button>
+        <span className="grow" />
         <button
           type="button"
           className="icon-btn"
@@ -175,9 +185,9 @@ function ProjectNode({ ws, tree, filtering }: { ws: Workspace; tree: Tree; filte
         <FolderGit2 aria-hidden />
         <span className="label">{ws.name}</span>
         <span className="actions">
-          <RowAction label="Новый чат здесь" icon={<MessageSquarePlus />} onClick={() => openDialog({ kind: 'chat', workspaceId: ws.id, cwd: ws.path })} />
+          <RowAction label="Новый чат здесь" icon={<MessageSquarePlus />} onClick={() => void newChat({ workspaceId: ws.id, cwd: ws.path })} />
           <RowAction label="Новый терминал здесь" icon={<SquareTerminal />} onClick={() => openDialog({ kind: 'terminal', workspaceId: ws.id, cwd: ws.path })} />
-          {ws.isGit && <RowAction label="Новая рабочая копия" icon={<GitBranchPlus />} onClick={() => openDialog({ kind: 'worktree', workspaceId: ws.id })} />}
+          {ws.isGit && <RowAction label="Новое рабочее дерево" icon={<GitBranchPlus />} onClick={() => openDialog({ kind: 'worktree', workspaceId: ws.id })} />}
         </span>
       </div>
       {expanded && (
@@ -206,8 +216,8 @@ function WorktreeNode({ ws, wt, sessions, kids, active }: { ws: Workspace; wt: W
         <span className="label mono" style={{ fontSize: 12 }}>{name}</span>
         {wt.main && wt.branch && <span className="meta">основная</span>}
         <span className="actions">
-          <RowAction label="Новый чат в этой копии" icon={<MessageSquarePlus />} onClick={() => openDialog({ kind: 'chat', workspaceId: ws.id, cwd: wt.path })} />
-          <RowAction label="Новый терминал в этой копии" icon={<SquareTerminal />} onClick={() => openDialog({ kind: 'terminal', workspaceId: ws.id, cwd: wt.path })} />
+          <RowAction label="Новый чат в этом дереве" icon={<MessageSquarePlus />} onClick={() => void newChat({ workspaceId: ws.id, cwd: wt.path })} />
+          <RowAction label="Новый терминал в этом дереве" icon={<SquareTerminal />} onClick={() => openDialog({ kind: 'terminal', workspaceId: ws.id, cwd: wt.path })} />
         </span>
       </div>
       {sessions.map((s) => <SessionNode key={s.id} s={s} kids={kids} d={2} />)}
@@ -225,7 +235,28 @@ function SessionNode({ s, kids, d }: { s: Session; kids: Map<string, Session[]>;
           {children.map((c) => <SessionNode key={c.id} s={c} kids={kids} d={0} />)}
         </div>
       )}
+      <InternalAgents sessionId={s.id} d={d} />
     </>
+  )
+}
+
+/** Agent-internal sub-agents (read-only registry rows): no chat of their own, so no actions. */
+function InternalAgents({ sessionId, d }: { sessionId: string; d: number }) {
+  const sub = useStore((st) => st.subagents[sessionId])
+  if (!sub?.items.length) return null
+  return (
+    <div className="rail rail-sub" style={depth(d)} aria-label="Внутренние агенты">
+      <div className="tree-sublabel">внутренние · {sub.items.length}</div>
+      {sub.items.map((a) => (
+        <div key={a.id} className="tree-row tree-sub" title={`${a.name} — ${subStateLabel(a.state)}${a.lastText ? `
+${a.lastText}` : ''}`}>
+          <SubStateIcon state={a.state} />
+          <span className="label">{a.name}</span>
+          <span className="agent">{a.activity?.tool ?? a.model ?? ''}</span>
+          {a.tokensIn + a.tokensOut > 0 && <span className="meta">{tokens(a.tokensIn + a.tokensOut)}</span>}
+        </div>
+      ))}
+    </div>
   )
 }
 

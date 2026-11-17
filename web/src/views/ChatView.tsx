@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { ArrowDown, ChevronRight, Ellipsis, GitCompareArrows, LoaderCircle, MessageSquare, RotateCcw, ScrollText, Square, Trash2 } from 'lucide-react'
 import { api, errorText, tryApi } from '../api'
 import { openTab, openTask, setState, showPanel, upsert, useStore, without } from '../store'
-import { loadMessages } from '../ws'
+import { loadMessages, loadSubagents } from '../ws'
 import { basename, normPath, ROLE } from '../lib/format'
 import { fileEdit } from '../lib/toolcall'
 import type { Message, Session } from '../types'
@@ -27,6 +27,8 @@ export function ChatView({ id, active }: { id: string; active: boolean }) {
   const scroller = useRef<HTMLDivElement>(null)
   const stick = useRef(true)
   const [atBottom, setAtBottom] = useState(true)
+
+  useEffect(() => { void loadSubagents(id) }, [id])
 
   useEffect(() => {
     if (messages) return
@@ -121,7 +123,7 @@ export function ChatView({ id, active }: { id: string; active: boolean }) {
           </button>
         )}
         <div className="chat-col">
-          {workers.length > 0 && <WorkersPanel workers={workers} />}
+          <WorkersPanel sessionId={id} workers={workers} />
           {session.status === 'error' && (
             <div className="chat-alert" role="alert">
               Агент не запустился. Проверьте команду агента в конфигурации и лог.

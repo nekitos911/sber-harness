@@ -5,11 +5,11 @@ import {
 } from '@dnd-kit/core'
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { Plus, RefreshCw, Search } from 'lucide-react'
+import { CloudOff, Eye, EyeOff, Plus, RefreshCw, Search } from 'lucide-react'
 import { api, errorText, tryApi } from '../api'
-import { getState, setState, toast, upsert, useStore } from '../store'
+import { getState, openDialog, setState, toast, upsert, useStore } from '../store'
 import { COLUMNS, statusLabel } from '../lib/format'
-import { byOrder, startTask } from '../lib/tasks'
+import { byOrder } from '../lib/tasks'
 import type { Task, TaskStatus } from '../types'
 import { TaskCard, type BoardCtx } from '../components/board/TaskCard'
 import { TaskDrawer } from '../components/board/TaskDrawer'
@@ -23,10 +23,12 @@ export function BoardView() {
   const workspaces = useStore((s) => s.workspaces)
   const agents = useStore((s) => s.agents)
   const syncEnabled = useStore((s) => s.integrations.tasks)
+  const trackerProblem = useStore((s) => s.integrations.tasksProblem)
   const focusTaskId = useStore((s) => s.focusTaskId)
 
   const [query, setQuery] = useState('')
   const [repo, setRepo] = useState('')
+  const [showHidden, setShowHidden] = useState(false)
   const [openId, setOpenId] = useState<string | null>(null)
   const [drag, setDrag] = useState<{ id: string; cols: Cols; from: TaskStatus } | null>(null)
   const [syncing, setSyncing] = useState(false)
@@ -45,7 +47,7 @@ export function BoardView() {
       workspaces: new Map(workspaces.map((w) => [w.id, w])),
       agents: new Map(agents.map((a) => [a.id, a])),
       onOpen: setOpenId,
-      onStart: (t) => { void startTask(t) },
+      onStart: (t) => openDialog({ kind: 'start', taskId: t.id }),
     }
   }, [tasks, byId, sessions, workspaces, agents])
 
@@ -55,10 +57,12 @@ export function BoardView() {
     for (const t of [...tasks].sort(byOrder)) {
       if (repo && t.workspaceId !== repo) continue
       if (q && ![t.id, t.title, t.externalId ?? '', ...t.labels].some((v) => v.toLowerCase().includes(q))) continue
+      // Hidden tasks stay findable by their key.
+      if (t.hidden && !showHidden && !(q && [t.id, t.externalId ?? ''].some((v) => v.toLowerCase().includes(q)))) continue
       out[t.status]?.push(t.id)
     }
     return out
-  }, [tasks, query, repo])
+  }, [tasks, query, repo, showHidden])
 
   const shown = drag?.cols ?? cols
 
@@ -162,6 +166,10 @@ export function BoardView() {
           <option value="">Все репозитории</option>
           {workspaces.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
         </select>
+        <button type="button" className="btn btn-ghost" aria-pressed={showHidden} onClick={() => setShowHidden(!showHidden)} title="Скрытые с доски задачи">
+          {showHidden ? <Eye /> : <EyeOff />}
+          Показывать скрытые
+        </button>
         {syncEnabled && (
           <button type="button" className="btn" onClick={sync} disabled={syncing}>
             <RefreshCw className={syncing ? 'spinner' : undefined} />
@@ -169,6 +177,12 @@ export function BoardView() {
           </button>
         )}
       </header>
+      {trackerProblem && (
+        <div className="banner" role="status">
+          <CloudOff aria-hidden />
+          Трекер недоступен: {trackerProblem.error}. Показан снимок от {new Date(trackerProblem.at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}
+        </div>
+      )}
 
       <DndContext
         sensors={sensors}
@@ -235,6 +249,7 @@ const SortableCard = memo(function SortableCard({ task, ctx }: { task: Task; ctx
       className="card"
       data-placeholder={isDragging}
       data-status={task.status}
+      data-hidden={task.hidden}
       {...attributes}
       aria-roledescription="задача"
       aria-label={`${task.id}: ${task.title}`}

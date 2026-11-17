@@ -1,7 +1,7 @@
 import { memo, type KeyboardEvent, type MouseEvent, type PointerEvent } from 'react'
 import { ExternalLink, FolderGit2, GitMerge, Link2, ListChecks, Lock, Play } from 'lucide-react'
 import { PRIORITY } from '../../lib/format'
-import { pendingDeps, taskKey, unusualTargets } from '../../lib/tasks'
+import { pendingDeps, taskKey, trackerDiffers, unusualTargets } from '../../lib/tasks'
 import type { AgentInfo, Priority, Session, Task, Workspace } from '../../types'
 import { StatusIcon, statusText } from '../bits'
 
@@ -47,6 +47,8 @@ export const TaskCard = memo(function TaskCard({ task, ctx }: { task: Task; ctx:
             <Play />
           </button>
         )}
+        {task.hidden && <span className="chip">скрыта</span>}
+        {trackerDiffers(task) && <span className="card-ext" title="Статус в трекере">{task.externalStatus}</span>}
         {task.priority && <PriorityMark p={task.priority} />}
       </div>
       <button type="button" className="card-title" onKeyDown={stop}>{task.title}</button>

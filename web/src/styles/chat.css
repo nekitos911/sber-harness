@@ -190,3 +190,17 @@ details[open] > summary .chev { transform: rotate(90deg); }
 .md th { background: var(--deck-2); font-weight: 600; }
 .md hr { border: 0; border-top: 1px solid var(--rule); margin: 1em 0; }
 .md img { max-width: 100%; }
+
+.workers-sub { padding: 4px 12px; border-top: 1px solid var(--rule-soft); color: var(--ink-4); font-size: 11px; }
+.worker-internal .worker-title { color: var(--ink-2); cursor: default; }
+.worker-internal .worker-title:hover { text-decoration: none; }
+.worker-internal[data-state="unverifiable"] { opacity: 0.7; }
+
+input.composer-model {
+  width: 120px; height: 24px; padding: 0 6px; border: 1px solid transparent; border-radius: var(--r-1);
+  background: transparent; color: var(--ink-3); font-family: var(--font-mono); text-align: right;
+}
+input.composer-model:hover { border-color: var(--rule); }
+input.composer-model:focus { outline: none; border-color: var(--signal); color: var(--ink); text-align: left; }
+input.composer-model::placeholder { color: var(--ink-3); }
+.mode-chip.chip-access { background: var(--full-access-soft); color: var(--full-access); }

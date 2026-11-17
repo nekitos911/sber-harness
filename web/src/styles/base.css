@@ -204,3 +204,6 @@ kbd {
   .dialog[open], .toast { animation-name: fade-in; }
 }
 @keyframes fade-in { from { opacity: 0; } }
+
+/* Code is read character by character: no programming ligatures (Cascadia turns <= into ≤). */
+pre, code, .diff-table, .edit-lines, .xterm { font-variant-ligatures: none; }

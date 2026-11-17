@@ -1,9 +1,10 @@
-import { ArrowLeft, ArrowRight, Bot, Command, FileText, GitCompare, Inbox, MessageSquare, PanelLeft, PanelRight, Plus, SquareKanban, SquareTerminal, X } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Bot, Command, FileText, GitCompare, Inbox, MessageSquare, PanelLeft, PanelRight, Plus, Settings, SquareKanban, SquareTerminal, X } from 'lucide-react'
 import { activateTab, closeTab, navigate, openDialog, setState, tabKey, useStore, type Tab } from '../store'
 import { basename } from '../lib/format'
 import type { Session } from '../types'
 import { StatusIcon } from './bits'
 import { MenuButton } from './Menu'
+import { currentWhere, newChat } from '../lib/actions'
 
 export function BrandMark() {
   return (
@@ -93,7 +94,8 @@ function TabBar() {
         label="Новая вкладка"
         icon={<Plus />}
         items={[
-          { label: 'Новый чат', icon: <MessageSquare />, onSelect: () => openDialog({ kind: 'chat' }) },
+          { label: 'Новый чат', icon: <MessageSquare />, onSelect: () => void newChat(currentWhere()) },
+          { label: 'Новый чат с настройками…', icon: <MessageSquare />, onSelect: () => openDialog({ kind: 'chat' }) },
           { label: 'Новый терминал', icon: <SquareTerminal />, onSelect: () => openDialog({ kind: 'terminal' }) },
         ]}
       />
@@ -107,6 +109,7 @@ function describeTab(t: Tab, sessions: Session[]) {
     case 'board': return { icon: <SquareKanban />, title: 'Задачи', hint: 'Доска задач' }
     case 'agents': return { icon: <Bot />, title: 'Агенты', hint: 'Агенты' }
     case 'inbox': return { icon: <Inbox />, title: 'Входящие', hint: 'Входящие' }
+    case 'settings': return { icon: <Settings />, title: 'Настройки', hint: 'Настройки' }
     case 'session': {
       const s = sessions.find((x) => x.id === t.id)
       if (!s) return { icon: <MessageSquare />, title: 'Сессия', hint: t.id }

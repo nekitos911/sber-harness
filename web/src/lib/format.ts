@@ -12,6 +12,7 @@ export const statusLabel = (s: TaskStatus) => COLUMNS.find((c) => c.id === s)?.l
 export const SESSION_STATUS: Record<SessionStatus, string> = {
   idle: 'ждёт ввода',
   running: 'работает',
+  stopped: 'остановлен',
   done: 'готово',
   failed: 'провал',
   exited: 'завершён',
@@ -55,4 +56,11 @@ export function plural(n: number, one: string, few: string, many: string) {
   if (m10 === 1 && m100 !== 11) return one
   if (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) return few
   return many
+}
+
+/** 119500 -> "119.5k", 2400000 -> "2.4M" */
+export function tokens(n: number) {
+  if (n < 1000) return String(n)
+  if (n < 1_000_000) return `${+(n / 1000).toFixed(1)}k`
+  return `${+(n / 1_000_000).toFixed(1)}M`
 }

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api, errorText, qs, tryApi } from '../api'
-import { closeDialog, openSession, setState, toast, useStore, type DialogRequest } from '../store'
+import { closeDialog, setState, toast, useStore, type DialogRequest } from '../store'
+import { adoptSession } from '../lib/actions'
 import { loadWorktrees } from '../ws'
 import { basename, isAbsolutePath } from '../lib/format'
 import type { GitSuggest, Session, Workspace, Worktree } from '../types'
@@ -20,6 +21,7 @@ function DialogSwitch({ d }: { d: DialogRequest }) {
     case 'terminal': return <TerminalDialog workspaceId={d.workspaceId} cwd={d.cwd} />
     case 'worktree': return <WorktreeDialog workspaceId={d.workspaceId} />
     case 'pr': return <PrDialog cwd={d.cwd} />
+    case 'start': return <StartDialog taskId={d.taskId} />
   }
 }
 
@@ -121,7 +123,8 @@ function ChatDialog(init: Partial<Where>) {
   const agents = useStore((s) => s.agents)
   const enabled = useMemo(() => agents.filter((a) => a.enabled), [agents])
   const [where, setWhere] = useWhere(init)
-  const [agentId, setAgentId] = useState(enabled[0]?.id ?? '')
+  const defaultAgent = useStore((s) => s.defaultAgent)
+  const [agentId, setAgentId] = useState((enabled.find((a) => a.id === defaultAgent) ?? enabled[0])?.id ?? '')
   const agent = enabled.find((a) => a.id === agentId)
   const [mode, setMode] = useState(agent?.approvalMode ?? '')
   const [role, setRole] = useState<'solo' | 'coordinator'>('solo')
@@ -131,7 +134,7 @@ function ChatDialog(init: Partial<Where>) {
 
   return (
     <Modal
-      title="Новый чат с агентом"
+      title="Новый чат с настройками"
       submitLabel={prompt.trim() ? 'Начать' : 'Создать'}
       busy={busy}
       disabled={!agent || !where.cwd}
@@ -143,9 +146,8 @@ function ChatDialog(init: Partial<Where>) {
           title: title.trim() || undefined, prompt: prompt.trim() || undefined, role, approvalMode: mode || undefined,
         })
         if (!s) return
-        setState((st) => ({ sessions: st.sessions.some((x) => x.id === s.id) ? st.sessions : [...st.sessions, s] }))
         closeDialog()
-        openSession(s.id)
+        adoptSession(s)
       })}
     >
       <WhereFields value={where} onChange={setWhere} />
@@ -212,9 +214,8 @@ function TerminalDialog(init: Partial<Where>) {
           title: title.trim() || undefined, command: command.trim() || undefined,
         })
         if (!s) return
-        setState((st) => ({ sessions: st.sessions.some((x) => x.id === s.id) ? st.sessions : [...st.sessions, s] }))
         closeDialog()
-        openSession(s.id)
+        adoptSession(s)
       })}
     >
       <WhereFields value={where} onChange={setWhere} />
@@ -239,34 +240,86 @@ function TerminalDialog(init: Partial<Where>) {
 
 // ---------- worktree ----------
 
-function WorktreeDialog({ workspaceId }: { workspaceId: string }) {
-  const ws = useStore((s) => s.workspaces.find((w) => w.id === workspaceId))
+function WorktreeDialog({ workspaceId }: { workspaceId?: string }) {
+  const workspaces = useStore((s) => s.workspaces)
+  const git = useMemo(() => workspaces.filter((w) => w.isGit), [workspaces])
+  const [repo, setRepo] = useState(workspaceId ?? git[0]?.id ?? '')
   const [name, setName] = useState('')
   const [base, setBase] = useState('')
   const [busy, run] = useBusy()
   return (
     <Modal
-      title={`Новая рабочая копия${ws ? ` в ${ws.name}` : ''}`}
+      title="Новое рабочее дерево"
       submitLabel="Создать"
       busy={busy}
-      disabled={!name.trim()}
+      disabled={!name.trim() || !repo}
       onClose={closeDialog}
       onSubmit={() => run(async () => {
-        const wt = await tryApi<Worktree>('POST', `/workspaces/${encodeURIComponent(workspaceId)}/worktrees`, { name: name.trim(), base: base.trim() || undefined })
+        const wt = await tryApi<Worktree>('POST', `/workspaces/${encodeURIComponent(repo)}/worktrees`, { name: name.trim(), base: base.trim() || undefined })
         if (!wt) return
-        await loadWorktrees(workspaceId)
-        toast(`Рабочая копия ${wt.branch ?? name} создана`, 'ok')
+        await loadWorktrees(repo)
+        setState({ cwd: wt.path })
+        toast(`Рабочее дерево ${wt.branch ?? name} создано`, 'ok')
         closeDialog()
       })}
     >
       <label className="field">
+        <span>Репозиторий</span>
+        <select className="select" value={repo} onChange={(e) => setRepo(e.target.value)}>
+          {git.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
+        </select>
+        {!git.length && <span className="field-error">Нет git-репозиториев. Сначала добавьте проект.</span>}
+      </label>
+      <label className="field">
         <span>Ветка</span>
         <input className="input mono" autoFocus placeholder="feature/JIRA-1234" value={name} onChange={(e) => setName(e.target.value)} />
-        <span className="field-hint">Имя новой ветки; папка рабочей копии будет названа так же.</span>
+        <span className="field-hint">Имя новой ветки; папка рабочего дерева будет названа так же.</span>
       </label>
       <label className="field">
         <span>От ветки</span>
         <input className="input mono" placeholder="HEAD" value={base} onChange={(e) => setBase(e.target.value)} />
+      </label>
+    </Modal>
+  )
+}
+
+// ---------- take a task into work ----------
+
+function StartDialog({ taskId }: { taskId: string }) {
+  const task = useStore((s) => s.tasks.find((t) => t.id === taskId))
+  const agents = useStore((s) => s.agents)
+  const defaultAgent = useStore((s) => s.defaultAgent)
+  const enabled = useMemo(() => agents.filter((a) => a.enabled), [agents])
+  const [agent, setAgent] = useState((enabled.find((a) => a.id === defaultAgent) ?? enabled[0])?.id ?? '')
+  const [notes, setNotes] = useState('')
+  const [busy, run] = useBusy()
+  if (!task) return null
+  return (
+    <Modal
+      title={`Взять в работу ${task.externalId ?? task.id}`}
+      submitLabel="Запустить"
+      busy={busy}
+      disabled={!agent}
+      onClose={closeDialog}
+      onSubmit={() => run(async () => {
+        const s = await tryApi<Session & { jumped?: boolean }>('POST', `/tasks/${encodeURIComponent(task.id)}/start`, { agent, notes: notes.trim() || undefined })
+        if (!s) return
+        closeDialog()
+        if (s.jumped) toast('Задача уже в работе — открыл текущую сессию')
+        adoptSession(s)
+      })}
+    >
+      <p className="muted" style={{ marginTop: -6 }}>{task.title}</p>
+      <label className="field">
+        <span>Агент</span>
+        <select className="select" value={agent} onChange={(e) => setAgent(e.target.value)}>
+          {enabled.map((a) => <option key={a.id} value={a.id}>{a.label}{a.id === defaultAgent ? ' — по умолчанию' : ''}</option>)}
+        </select>
+      </label>
+      <label className="field">
+        <span>Заметки</span>
+        <textarea className="textarea" rows={3} autoFocus placeholder="Необязательно: уточнения к задаче, которые получит агент" value={notes} onChange={(e) => setNotes(e.target.value)} />
+        <span className="field-hint">Агент стартует в новом рабочем дереве задачи{task.targets[0] ? ` от ${task.targets[0]}` : ''}.</span>
       </label>
     </Modal>
   )

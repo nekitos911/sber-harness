@@ -108,3 +108,17 @@
 .palette-item[aria-selected="true"] { background: var(--deck-2); color: var(--ink); }
 .palette-item > svg { width: 14px; height: 14px; flex-shrink: 0; color: var(--ink-3); }
 .palette-item .mono { font-size: 11px; }
+
+/* ---------- settings ---------- */
+
+.settings-view { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.settings { flex: 1; min-height: 0; overflow-y: auto; display: grid; align-content: start; gap: 28px; padding: 20px 24px 40px; max-width: 880px; }
+.settings-section { display: grid; gap: 12px; }
+.settings-section h2 { font-size: 13px; font-weight: 600; }
+.settings-card { display: grid; gap: 12px; margin: 0; padding: 12px 14px 14px; border: 1px solid var(--rule); border-radius: var(--r-2); background: var(--deck); min-width: 0; }
+.settings-card legend { padding: 0 6px; font-weight: 600; }
+.settings-card legend .mono { font-weight: 400; margin-left: 4px; }
+.settings-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+.settings-grades { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); }
+.settings-actions { position: sticky; bottom: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 0; background: var(--ground); }
+.settings-actions .field-error { flex-basis: 100%; }

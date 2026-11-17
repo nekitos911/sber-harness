@@ -1,10 +1,11 @@
 import { useSyncExternalStore } from 'react'
-import type { AgentInfo, Message, Notification, Session, Task, Workspace, Worktree } from './types'
+import type { AgentInfo, Integrations, Message, Notification, Session, SubAgent, Task, Workspace, Worktree } from './types'
 
 export type Tab =
   | { kind: 'board' }
   | { kind: 'agents' }
   | { kind: 'inbox' }
+  | { kind: 'settings' }
   | { kind: 'session'; id: string }
   | { kind: 'file'; cwd: string; path: string }
   | { kind: 'diff'; cwd: string; path: string | null }
@@ -13,8 +14,9 @@ export type DialogRequest =
   | { kind: 'workspace' }
   | { kind: 'chat'; workspaceId?: string; cwd?: string }
   | { kind: 'terminal'; workspaceId?: string; cwd?: string }
-  | { kind: 'worktree'; workspaceId: string }
+  | { kind: 'worktree'; workspaceId?: string }
   | { kind: 'pr'; cwd: string }
+  | { kind: 'start'; taskId: string }
 
 export interface Toast { id: number; text: string; tone: 'info' | 'ok' | 'error'; href?: string }
 
@@ -29,6 +31,7 @@ interface Prefs {
   panelTab: 'files' | 'changes'
   theme: Theme | null // null = follow the OS
   cwd: string | null // folder picked in the sidebar; the panel falls back to it
+  drafts: Record<string, string> // unsent composer text per chat session
 }
 
 export interface State extends Prefs {
@@ -40,9 +43,11 @@ export interface State extends Prefs {
   workspaces: Workspace[]
   notifications: Notification[]
   agents: AgentInfo[]
+  defaultAgent: string | null
   shell: string
-  integrations: { tasks: boolean; pr: boolean }
+  integrations: Integrations
   messages: Record<string, Message[]>
+  subagents: Record<string, { items: SubAgent[]; problems: string[] }>
   worktrees: Record<string, Worktree[]>
   dirty: Record<string, boolean>
   toasts: Toast[]
@@ -63,7 +68,7 @@ export const tabKey = (t: Tab): string => {
 
 const PREFS_KEY = 'harness.ui.v1'
 const defaultPrefs: Prefs = {
-  tabs: [{ kind: 'board' }], active: 'board', sidebar: true, sidebarWidth: 300, panel: false, panelTab: 'changes', theme: null, cwd: null,
+  tabs: [{ kind: 'board' }], active: 'board', sidebar: true, sidebarWidth: 300, panel: false, panelTab: 'changes', theme: null, cwd: null, drafts: {},
 }
 
 function readPrefs(): Prefs {
@@ -71,7 +76,7 @@ function readPrefs(): Prefs {
     const raw = localStorage.getItem(PREFS_KEY)
     if (!raw) return defaultPrefs
     const p = JSON.parse(raw) as Partial<Prefs>
-    return { ...defaultPrefs, ...p, tabs: Array.isArray(p.tabs) ? p.tabs : defaultPrefs.tabs }
+    return { ...defaultPrefs, ...p, tabs: Array.isArray(p.tabs) && p.tabs.length ? p.tabs : defaultPrefs.tabs }
   } catch {
     return defaultPrefs
   }
@@ -84,9 +89,9 @@ const prefs = readPrefs()
 let state: State = {
   ...prefs,
   conn: 'connecting', loaded: false, scheme: resolveScheme(prefs.theme),
-  tasks: [], sessions: [], workspaces: [], notifications: [], agents: [], shell: '',
+  tasks: [], sessions: [], workspaces: [], notifications: [], agents: [], defaultAgent: null, shell: '',
   integrations: { tasks: false, pr: false },
-  messages: {}, worktrees: {}, dirty: {}, toasts: [], focusTaskId: null, dialog: null, back: [], forward: [],
+  messages: {}, subagents: {}, worktrees: {}, dirty: {}, toasts: [], focusTaskId: null, dialog: null, back: [], forward: [],
 }
 
 const listeners = new Set<() => void>()
@@ -176,10 +181,18 @@ export function closeTab(key: string) {
   const i = s.tabs.findIndex((t) => tabKey(t) === key)
   if (i < 0) return
   const tabs = s.tabs.filter((_, j) => j !== i)
-  const neighbour = tabs[i] ?? tabs[i - 1]
   const dirty = { ...s.dirty }
   delete dirty[key]
-  setState({ tabs, dirty, active: s.active === key ? (neighbour ? tabKey(neighbour) : '') : s.active })
+  if (!tabs.length) {
+    setState({ tabs: [{ kind: 'board' }], active: 'board', dirty, back: [], forward: [] })
+    return
+  }
+  if (s.active !== key) { setState({ tabs, dirty }); return }
+  // Closing the active tab returns to the one used before it (else the left neighbour).
+  const open = new Set(tabs.map(tabKey))
+  const back = s.back.filter((k) => open.has(k))
+  const next = back.pop() ?? tabKey(tabs[Math.max(0, i - 1)])
+  setState({ tabs, dirty, active: next, back })
 }
 
 export const openSession = (id: string) => openTab({ kind: 'session', id })
@@ -212,6 +225,15 @@ export function setDirty(key: string, value: boolean) {
 
 export function showPanel(tab: 'files' | 'changes') {
   setState({ panel: true, panelTab: tab })
+}
+
+export function setDraft(sessionId: string, text: string) {
+  setState((s) => {
+    const drafts = { ...s.drafts }
+    if (text) drafts[sessionId] = text
+    else delete drafts[sessionId]
+    return { drafts }
+  })
 }
 
 export const openDialog = (dialog: DialogRequest) => setState({ dialog })

@@ -2,14 +2,14 @@ import { useMemo, useState } from 'react'
 import { Bot, ListPlus, MessageSquarePlus, Send, Square, Trash2 } from 'lucide-react'
 import { tryApi } from '../api'
 import { openDialog, openSession, openTask, setState, useStore, without } from '../store'
-import { basename, relTime, ROLE } from '../lib/format'
+import { basename, relTime, ROLE, tokens } from '../lib/format'
 import { useNow } from '../lib/useNow'
 import type { Session, SessionStatus } from '../types'
 import { Branch, StatusIcon, statusText } from '../components/bits'
 
 const GROUPS: { id: string; label: string; match: SessionStatus[] }[] = [
   { id: 'run', label: 'Работают', match: ['running'] },
-  { id: 'idle', label: 'Ждут ввода', match: ['idle'] },
+  { id: 'idle', label: 'Ждут ввода', match: ['idle', 'stopped'] },
   { id: 'done', label: 'Готово', match: ['done'] },
   { id: 'fail', label: 'Ошибки', match: ['failed', 'error', 'exited'] },
 ]
@@ -112,6 +112,9 @@ function AgentCard({ s, nested, parent }: { s: Session; nested: boolean; parent?
         <span className="mono">{agents.find((a) => a.id === s.agent)?.label ?? s.agent}</span>
         <span className="muted">{statusText(s)}</span>
         {s.queued > 0 && <span className="chip chip-run">в очереди: {s.queued}</span>}
+        {s.tokensIn + s.tokensOut > 0 && (
+          <span className="mono muted num" title={`вход ${s.tokensIn}, выход ${s.tokensOut}`}>{tokens(s.tokensIn + s.tokensOut)}</span>
+        )}
       </div>
       {task && (
         <button type="button" className="agent-task" onClick={() => openTask(task.id)} title="Открыть задачу">

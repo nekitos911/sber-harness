@@ -1,6 +1,6 @@
-import { CircleCheck, CircleDot, CircleStop, GitBranch, LoaderCircle, TriangleAlert } from 'lucide-react'
+import { CircleCheck, CircleDashed, CircleDot, CirclePause, CircleSlash, CircleStop, Clock, GitBranch, Lock, LoaderCircle, RotateCw, TriangleAlert, type LucideIcon } from 'lucide-react'
 import { SESSION_STATUS } from '../lib/format'
-import type { Session } from '../types'
+import type { Session, SubAgentState } from '../types'
 
 type StatusLike = Pick<Session, 'status' | 'kind'>
 
@@ -9,6 +9,7 @@ export const statusText = (s: StatusLike) => (s.kind === 'terminal' && s.status 
 const ICONS = {
   running: LoaderCircle,
   idle: CircleDot,
+  stopped: CirclePause,
   done: CircleCheck,
   failed: TriangleAlert,
   error: TriangleAlert,
@@ -40,4 +41,26 @@ export function Loading({ label = 'Загрузка…' }: { label?: string }) {
       <p>{label}</p>
     </div>
   )
+}
+
+const SUB: Record<SubAgentState, { icon: LucideIcon; tone: string; label: string }> = {
+  queued: { icon: Clock, tone: 'off', label: 'в очереди' },
+  working: { icon: LoaderCircle, tone: 'running', label: 'работает' },
+  restarting: { icon: RotateCw, tone: 'running', label: 'перезапуск' },
+  compacting: { icon: LoaderCircle, tone: 'running', label: 'сжатие контекста' },
+  waiting: { icon: CircleDot, tone: 'idle', label: 'ждёт' },
+  blocked: { icon: Lock, tone: 'failed', label: 'заблокирован' },
+  idle: { icon: CircleDot, tone: 'idle', label: 'простаивает' },
+  done: { icon: CircleCheck, tone: 'done', label: 'готово' },
+  failed: { icon: TriangleAlert, tone: 'failed', label: 'провал' },
+  interrupted: { icon: CircleSlash, tone: 'off', label: 'прерван' },
+  unverifiable: { icon: CircleDashed, tone: 'off', label: 'нет сигнала' },
+}
+
+export const subStateLabel = (s: SubAgentState) => SUB[s]?.label ?? s
+
+/** State of an agent-internal sub-agent; "unverifiable" is a grey dashed circle. */
+export function SubStateIcon({ state }: { state: SubAgentState }) {
+  const { icon: Icon, tone } = SUB[state] ?? SUB.unverifiable
+  return <Icon className="st" data-s={tone} role="img" aria-label={subStateLabel(state)} />
 }

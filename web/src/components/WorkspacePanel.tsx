@@ -63,7 +63,7 @@ export function WorkspacePanel() {
       ) : (
         <>
           <div className="wpanel-where" title={cwd}>
-            <strong className="ellipsis">{project && normPath(project.path) !== normPath(cwd) ? `${project.name} / ${basename(cwd)}` : basename(cwd)}</strong>
+            <strong className="ellipsis">{!project ? basename(cwd) : normPath(project.path) === normPath(cwd) ? project.name : `${project.name} / ${basename(cwd)}`}</strong>
             <Branch name={git.status?.branch} />
           </div>
           <div className="wpanel-body">

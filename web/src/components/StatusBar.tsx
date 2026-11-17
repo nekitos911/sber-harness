@@ -3,7 +3,7 @@ import { api } from '../api'
 import { useStore } from '../store'
 import { plural } from '../lib/format'
 
-interface McpServer { name: string; enabled: boolean; ok: boolean; error?: string }
+interface McpServer { name: string; enabled: boolean; ok: boolean; error?: string; problem?: string }
 
 export function StatusBar() {
   const conn = useStore((s) => s.conn)
@@ -19,7 +19,7 @@ export function StatusBar() {
   const running = sessions.filter((s) => s.status === 'running').length
   const inWork = tasks.filter((t) => t.status === 'in_progress').length
   const enabled = mcp?.filter((m) => m.enabled) ?? []
-  const broken = enabled.filter((m) => !m.ok)
+  const broken = enabled.filter((m) => !m.ok || m.problem)
 
   return (
     <footer className="statusbar">
@@ -30,7 +30,7 @@ export function StatusBar() {
         <span
           className="end"
           style={broken.length ? { color: 'var(--lamp-fail)' } : undefined}
-          title={enabled.map((m) => `${m.name}: ${m.ok ? 'ok' : m.error ?? 'ошибка'}`).join('\n') || 'MCP-серверы не настроены'}
+          title={enabled.map((m) => `${m.name}: ${m.problem ?? (m.ok ? 'ok' : m.error ?? 'ошибка')}`).join('\n') || 'MCP-серверы не настроены'}
         >
           MCP: {enabled.length} {plural(enabled.length, 'сервер', 'сервера', 'серверов')}
           {broken.length > 0 && `, с ошибкой: ${broken.length}`}
