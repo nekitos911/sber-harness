@@ -63,6 +63,15 @@ protected by a token plus a Host check.
 - **Restarts.** Harness: agents keep running and are reattached. Reboot/crash: sessions are marked `interrupted` and
   the "Session recovery" window offers to continue them (or `recovery.autoResume`).
 
+### Task without a sure repository: start in the projects folder
+
+«Взять в работу» uses an explicit repository (chosen in the card) or a HIGH-confidence suggestion (the repo name in the
+task's component/service/repository field or text); otherwise the agent starts in the projects folder with the task
+prompt (e.g. `/full-task <url>`) and a note to pick the repositories from the SDD (or ask) and create worktrees by its
+own rules (`..\<repo>-worktrees\<KEY>`, `feature/<KEY>`). The harness links every worktree whose branch carries the task
+key to the task (task.worktrees, branch, repository) and logs «Агент создал рабочее дерево …»; Changes / commit / PR then
+work per worktree.
+
 ## 4. What has been checked and how
 
 | What | How it was checked |

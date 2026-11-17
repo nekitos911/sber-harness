@@ -5,7 +5,7 @@ export const STATUSES = ['backlog', 'todo', 'in_progress', 'review', 'done'];
 export const PRIORITIES = ['low', 'medium', 'high'];
 const EDITABLE = ['title', 'description', 'status', 'order', 'priority', 'deps', 'labels', 'workspaceId', 'parentId',
   'targets', 'branch', 'ports', 'assigneeSessionId', 'externalId', 'externalUrl', 'source',
-  'externalStatus', 'statusManual', 'hidden', 'takenAt', 'snapshot', 'pr', 'agentState', 'review', 'includeDirs', 'externalFields'];
+  'externalStatus', 'statusManual', 'hidden', 'takenAt', 'snapshot', 'pr', 'agentState', 'review', 'includeDirs', 'externalFields', 'worktrees', 'location'];
 const DEFAULTS = { parentId: null, targets: null, branch: null, ports: [], externalStatus: null, statusManual: false, hidden: false, takenAt: null, snapshot: null, pr: null, agentState: null, review: null };
 
 const fail = (status, message) => { throw Object.assign(new Error(message), { status }); };
@@ -13,7 +13,7 @@ const isStrArr = (v) => Array.isArray(v) && v.every((x) => typeof x === 'string'
 const defined = (f) => Object.fromEntries(Object.entries(f).filter(([, v]) => v !== undefined));
 
 const STATUS_LABEL = { backlog: 'Бэклог', todo: 'К работе', in_progress: 'В работе', review: 'На проверке', done: 'Готово' };
-export const LOG_TYPES = ['created', 'imported', 'status', 'started', 'agent_done', 'agent_failed', 'review', 'rework', 'port', 'pr_created', 'tracker_transition', 'comment'];
+export const LOG_TYPES = ['created', 'imported', 'status', 'started', 'agent_done', 'agent_failed', 'review', 'rework', 'port', 'pr_created', 'tracker_transition', 'comment', 'worktree'];
 
 export function createTasks({ store, bus, defaultBase = 'main' }) {
   const db = store.db;
@@ -29,7 +29,9 @@ export function createTasks({ store, bus, defaultBase = 'main' }) {
 
   function emit(task) {
     task.updatedAt = Date.now();
-    task.suggestedWorkspaceId = !task.workspaceId && suggest ? suggest(task) ?? null : null;
+    // { id, confidence: 'high' | 'low', reason } while workspaceId is empty; only 'high' is ever used without asking
+    task.suggestedWorkspace = !task.workspaceId && suggest ? suggest(task) ?? null : null;
+    task.suggestedWorkspaceId = task.suggestedWorkspace?.id ?? null;
     store.save();
     bus.send({ t: 'task', task });
     return task;
@@ -67,6 +69,8 @@ export function createTasks({ store, bus, defaultBase = 'main' }) {
     if ('priority' in f && f.priority !== null && f.priority !== undefined && !PRIORITIES.includes(f.priority)) fail(400, `priority — одно из: ${PRIORITIES.join(', ')} или null`);
     if ('order' in f && !Number.isFinite(f.order)) fail(400, 'order: нужно число');
     if ('labels' in f && !isStrArr(f.labels)) fail(400, 'labels: нужен массив строк');
+    if ('worktrees' in f && f.worktrees !== undefined && !Array.isArray(f.worktrees)) fail(400, 'worktrees: нужен массив');
+    if ('location' in f && f.location != null && f.location !== 'root') fail(400, 'location: "root" или null');
     if ('includeDirs' in f && f.includeDirs !== undefined && !isStrArr(f.includeDirs)) fail(400, 'includeDirs: нужен массив путей к папкам');
     if ('targets' in f && f.targets !== undefined && (!isStrArr(f.targets) || f.targets.some((t) => !t.trim()))) fail(400, 'targets: нужен массив имён веток');
     if ('ports' in f && !Array.isArray(f.ports)) fail(400, 'ports: нужен массив');

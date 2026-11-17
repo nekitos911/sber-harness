@@ -1096,6 +1096,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
         // worker_run child: its caller long-polls worker_wait until `report` is set (stateless, survives restarts)
         ...(o.ephemeral ? { ephemeral: true, waiter: true, report: null } : {}),
         ...(o.inWorktree === true ? { inWorktree: true } : {}), // a worker started inside its task's linked worktree
+        ...(o.atRoot === true ? { atRoot: true } : {}), // a task worker started in the projects folder: it picks the repos
         createdAt: now,
         lastActivityAt: now,
       };

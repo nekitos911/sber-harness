@@ -1102,7 +1102,21 @@ Durable state (all in `<dataDir>`, atomic writes):
   the title/description/cached tracker attributes (`task.externalFields` from the last `GET /api/tasks/:id/external`:
   Component/Компонент/Repository/Репозиторий/Сервис/Service), exact first, then the `-service` stem in either direction
   (`payments` ↔ `payments-service`); else `db.prefs.lastWorkspaceBySpace[<key prefix>]` (written when a task of that
-  space is taken into work). `POST /api/tasks/:id/start` uses `workspaceId ?? suggestedWorkspaceId` and records it.
+  space is taken into work). Superseded (real machine: a guess picked an unrelated repo): the task also carries
+  `suggestedWorkspace: { id, confidence: 'high' | 'low', reason }` — `high` ONLY for the repo name (or its `-service` stem)
+  as a whole token in the tracker component/service/repository field or the title/description; the only repo and the
+  last repo of the key's space are `low`. `POST /api/tasks/:id/start { agent?, notes?, workspaceId?, location? }`: an
+  explicit `workspaceId` (the request's, else the task's) → its worktree; `location: 'root'` → the projects folder; else
+  the HIGH suggestion; else the projects folder (`kind: 'root'` workspace; without one, the only repository) — never a
+  low guess, and a guess is never recorded on the task. Parent tasks are coordinated as before.
+- Start in the projects folder: no worktree, cwd = the root folder, role worker, the task prompt (slash first) + «Ты в
+  папке со всеми проектами (<root>). Определи затронутые репозитории по SDD/описанию задачи (или спроси через ask);
+  рабочие деревья создавай по правилам своей команды (<repo>-worktrees\<KEY>, ветка <branchTemplate> от <target>); после
+  финального сообщения — worker_done.» (no «stay on your branch» rule); `session.atRoot`, `task.location: 'root'`, status
+  in_progress, no branch yet. Linking: on every worktree list refresh and every 30 s while such a session runs, any
+  worktree of a registered repo whose branch contains the task key (case-insensitive, whole word) is added to
+  `task.worktrees: [{ workspaceId, path, branch }]` (+ `branch` / `workspaceId` when still empty), log type `worktree`
+  «Агент создал рабочее дерево: <repo> · <branch>»; suggest/commit/PR then work per worktree as usual.
 - Task log entries: `{ at, by, type, text, data? }`, `type` ∈ created, imported, status, started, agent_done,
   agent_failed, review, rework, port, pr_created, tracker_transition, comment; `text` is human Russian without session ids
   or paths («Взята в работу: GigaCode, ветка feature/T-10», «Агент закончил», «PR #562 в develop создан»); ids, summaries,

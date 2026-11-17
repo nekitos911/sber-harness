@@ -271,6 +271,6 @@ test('take into work on a parent task starts a coordinator with the plan of its 
 
   const loose = (await h.api('POST', '/api/tasks', { title: 'No repo yet' })).body;
   const c2 = (await h.api('POST', `/api/tasks/${loose.id}/start`, { agent: 'mock' })).body;
-  assert.equal(c2.role, 'coordinator', 'no workspace while several exist -> coordinate');
+  assert.deepEqual([c2.role, c2.atRoot], ['worker', true], 'no sure repository while several exist -> the projects folder');
   await h.api('POST', `/api/sessions/${c2.id}/stop`);
 });

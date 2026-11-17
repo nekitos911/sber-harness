@@ -166,20 +166,31 @@ export async function startServer(opts = {}) {
   const tokensOf = (text) => new Set(String(text || '').toLowerCase().split(/[^\p{L}\p{N}_-]+/u).filter(Boolean));
   tasks.setSuggester((task) => {
     const repos = db.workspaces.filter((w) => !w.kind);
-    if (repos.length <= 1) return repos[0]?.id ?? null;
+    if (!repos.length) return null;
     const f = task.externalFields || {};
     const attrs = ['Component', 'Компонент', 'Repository', 'Репозиторий', 'Сервис', 'Service'].map((k) => f[k]).filter(Boolean);
     const words = tokensOf([task.title, task.description, ...attrs].join(' '));
     const stem = (n) => n.replace(/-service$/, '');
     const names = (w) => [...new Set([w.name, path.basename(w.path)].map((n) => n.toLowerCase()))];
-    const exact = repos.find((w) => names(w).some((n) => words.has(n)));
-    // "payments" in the text <-> repo payments-service, and "ledger-service" <-> repo ledger
-    const stemmed = exact || repos.find((w) => names(w).some((n) => [...words].some((t) => stem(t) === stem(n) && (t !== n) && (t.endsWith('-service') || n.endsWith('-service')))));
-    if (stemmed) return stemmed.id;
+    // high: the repo name, or its -service stem, as a whole token in the tracker fields / title / description
+    for (const w of repos) {
+      const n = names(w).find((x) => words.has(x) || [...words].some((t) => t !== x && stem(t) === stem(x) && (t.endsWith('-service') || x.endsWith('-service'))));
+      if (n) return { id: w.id, confidence: 'high', reason: `«${n}» в задаче` };
+    }
+    // low: a guess, shown but never used without the user
     const prefix = String(task.externalId || '').match(/^([A-Z][A-Z0-9_]*)-\d+$/)?.[1];
     const last = prefix && db.prefs?.lastWorkspaceBySpace?.[prefix];
-    return last && repos.some((w) => w.id === last) ? last : null;
+    if (last && repos.some((w) => w.id === last)) return { id: last, confidence: 'low', reason: `последний репозиторий задач ${prefix}` };
+    if (repos.length === 1) return { id: repos[0].id, confidence: 'low', reason: 'единственный репозиторий' };
+    return null;
   });
+
+  // worktrees an agent creates for a task started in the projects folder are linked to the task (every 30 s while such a
+  // session runs; also on every worktree list refresh)
+  const linkTimer = setInterval(() => {
+    if (db.sessions.some((s) => s.atRoot && s.status === 'running')) orch.linkAgentWorktrees().catch(() => {});
+  }, 30000);
+  linkTimer.unref?.();
 
   // ---- tracker sync ----
   let tasksProblem = null;
@@ -680,6 +691,7 @@ export async function startServer(opts = {}) {
    */
   async function listWorktrees(ws, enrich = false) {
     const list = await git.worktrees(ws.path);
+    await orch.linkAgentWorktrees([[ws, list]]).catch(() => {});
     return Promise.all(list.map((wt) => worktreeView(ws, wt, enrich)));
   }
 
@@ -960,7 +972,9 @@ export async function startServer(opts = {}) {
     return orch.assign(params.id, body);
   });
   route('POST', '/api/tasks/:id/start', async ({ params, body }) => {
-    const s = await orch.start(params.id, check(body, { agent: 'string?', notes: 'string?' }));
+    check(body, { agent: 'string?', notes: 'string?', workspaceId: 'string?', location: 'string?' });
+    if (body.location && body.location !== 'root') fail(400, 'location: "root" или не указывать');
+    const s = await orch.start(params.id, body);
     if (!s.jumped) await trackerOnStart(tasks.get(params.id));
     return s;
   });
@@ -1331,6 +1345,7 @@ export async function startServer(opts = {}) {
       clearInterval(syncTimer);
       clearInterval(prTimer);
       clearInterval(sddTimer);
+      clearInterval(linkTimer);
       await catalog.close();
       sessions.close();
       mcp.close();

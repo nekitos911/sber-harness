@@ -237,7 +237,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
       try {
         s = await sessions.create({
           kind: 'chat', agent, cwd, workspaceId: ws?.id, title: `${key}: ${task.title}`, role: 'worker',
-          parentId: caller?.id ?? null, taskId: task.id, model: o.model, branch, inWorktree, includeDirs, autoIncludeDirs: true,
+          parentId: caller?.id ?? null, taskId: task.id, model: o.model, branch, inWorktree, includeDirs, autoIncludeDirs: true, atRoot: o.atRoot === true,
         });
       } catch (e) {
         if (made?.created) await git.removeWorktree(made.repo, made.wt.path).catch(() => {});
@@ -603,13 +603,17 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
       `[harness] You are a WORKER session in a local multi-agent harness. ${who}`,
       `Task: ${key} - ${task.title} (task id ${task.id}).`,
       `Working directory: ${s.cwd}. Branch: ${s.branch || task.branch || '(current)'}. Base branch (primary target): ${task.targets[0]}.`,
+      // started in the projects folder: the agent (/full-task) picks the repositories and makes the worktrees itself
+      ...(s.atRoot
+        ? [`Ты в папке со всеми проектами (${s.cwd}). Определи затронутые репозитории по SDD/описанию задачи (или спроси через ask); рабочие деревья создавай по правилам своей команды (<repo>-worktrees\\${key}, ветка ${git.sanitizeBranch(render(gitCfg().branchTemplate, { key, id: task.id }))} от ${task.targets[0]}); после финального сообщения — worker_done.`]
+        : []),
       // for task commands that make their own worktree (/full-task): this one is it
       ...(s.inWorktree
         ? [`Ты уже в рабочем дереве задачи \`${s.cwd}\` (ветка \`${s.branch || task.branch}\`) — это и есть worktree задачи; не создавай другой.${config.orchestration?.workerMayCommit ? '' : ' Коммиты/пуш/PR/трекер — только пользователь из UI.'} После финального сообщения твоей команды вызови worker_done с тем же текстом.`]
         : []),
       'Rules:',
       '- Do only this task and only inside the working directory.',
-      '- Stay on your branch: do not switch or create branches.',
+      ...(s.atRoot ? [] : ['- Stay on your branch: do not switch or create branches.']),
       commitRule,
       ...(config.orchestration?.reviewMode === 'harness'
         ? ['- Ревью выполняет harness другой моделью после твоего worker_done; пропусти шаги внутреннего ревью твоей команды (не запускай встроенных субагентов-ревьюеров).']
@@ -971,19 +975,62 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
       return startWorker(task, { agent: a, workspaceId: ws.id, ...(existing ? { cwd: existing.path, worktree: 'current' } : { worktree: ws.isGit ? 'new' : 'current' }), spec }, null);
     },
 
-    async start(taskId, { agent, notes } = {}) {
+    /**
+     * «Взять в работу»: an explicit workspaceId (the request's or the task's) -> its worktree; location 'root' -> the
+     * projects folder; else a HIGH-confidence suggestion; else the projects folder (never a low-confidence guess); with
+     * no projects folder the only repository. A parent of subtasks is coordinated as before.
+     */
+    async start(taskId, { agent, notes, workspaceId, location } = {}) {
       const task = tasks.get(taskId);
       const live = activeWorker(task);
       if (live) return { ...live, jumped: true };
       if (starting.has(task.id)) return { ...(await starting.get(task.id)), jumped: true };
-      // a parent of subtasks (or a task without a repo while there are several) is coordinated, not worked on
-      const hasChildren = db.tasks.some((t) => t.parentId === task.id && !t.hidden);
-      const repos = db.workspaces.filter((w) => !w.kind);
-      const chosen = findWs(task.workspaceId) || findWs(task.suggestedWorkspaceId);
-      if (hasChildren || (!chosen && repos.length >= 2)) return startCoordinator(task, { agent, notes });
-      const ws = chosen || (repos.length === 1 ? repos[0] : null);
-      if (!ws) fail(400, `у задачи ${task.id} не выбран репозиторий — сначала выберите его`);
-      return startWorker(task, { agent: agent || config.defaultAgent, workspaceId: ws.id, worktree: ws.isGit ? 'new' : 'current', notes }, null);
+      if (db.tasks.some((t) => t.parentId === task.id && !t.hidden)) return startCoordinator(task, { agent, notes });
+      if (workspaceId && !findWs(workspaceId)) fail(404, `рабочая папка ${workspaceId} не найдена`);
+      const explicit = findWs(workspaceId) || findWs(task.workspaceId);
+      const sure = task.suggestedWorkspace?.confidence === 'high' ? findWs(task.suggestedWorkspace.id) : null;
+      const ws = location === 'root' ? null : explicit || sure;
+      const a = agent || config.defaultAgent;
+      if (ws) return startWorker(task, { agent: a, workspaceId: ws.id, worktree: ws.isGit ? 'new' : 'current', notes }, null);
+      const root = db.workspaces.find((w) => w.kind === 'root');
+      if (!root) {
+        const repos = db.workspaces.filter((w) => !w.kind);
+        if (location !== 'root' && repos.length === 1) return startWorker(task, { agent: a, workspaceId: repos[0].id, worktree: repos[0].isGit ? 'new' : 'current', notes }, null);
+        fail(400, 'нет папки проектов (workspaces.root) — выберите репозиторий для задачи');
+      }
+      tasks.update(task.id, { location: 'root' }, 'harness');
+      return startWorker(task, { agent: a, cwd: root.path, worktree: 'current', atRoot: true, notes }, null);
+    },
+
+    /**
+     * Worktrees an agent created for a task started in the projects folder: a worktree of a registered repository whose
+     * branch contains the task key (case-insensitive, whole word) is linked to the task (task.worktrees, and branch /
+     * workspaceId when still empty). `lists`: [[workspace, worktrees]] already at hand, else every repository is read.
+     */
+    async linkAgentWorktrees(lists = null) {
+      const open = db.tasks.filter((t) => t.location === 'root' && t.status !== 'done');
+      if (!open.length) return 0;
+      const pairs = lists || await Promise.all(db.workspaces.filter((w) => w.isGit).map(async (w) => [w, await git.worktrees(w.path).catch(() => [])]));
+      let linked = 0;
+      for (const [ws, list] of pairs) {
+        if (!ws.isGit) continue;
+        for (const wt of list) {
+          for (const t of open) {
+            const key = tasks.key(t).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            if (!wt.branch || !new RegExp(`(^|[^A-Za-z0-9])${key}($|[^A-Za-z0-9])`, 'i').test(wt.branch)) continue;
+            const cur = tasks.find(t.id);
+            if ((cur.worktrees || []).some((x) => samePath(x.path, wt.path))) continue;
+            tasks.update(t.id, {
+              worktrees: [...(cur.worktrees || []), { workspaceId: ws.id, path: wt.path, branch: wt.branch }],
+              ...(cur.branch ? {} : { branch: wt.branch }),
+              ...(cur.workspaceId ? {} : { workspaceId: ws.id }),
+            }, 'harness');
+            tasks.addLog(t.id, 'harness', `Агент создал рабочее дерево: ${ws.name} · ${wt.branch}`, 'worktree', { workspaceId: ws.id, path: wt.path, branch: wt.branch });
+            linked++;
+          }
+        }
+      }
+      return linked;
     },
   };
 }

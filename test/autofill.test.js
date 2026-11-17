@@ -43,16 +43,16 @@ test('suggestedWorkspaceId: the only repository, then name / -service stem match
   const w = (await h.api('POST', `/api/tasks/${first.id}/start`, { agent: 'mock' })).body;
   assert.ok(w.id, JSON.stringify(w));
   const next = await tracker(await create({ title: 'Вторая' }), 'PROJ-2');
-  assert.equal(next.suggestedWorkspaceId, p.id);
+  assert.deepEqual([next.suggestedWorkspaceId, next.suggestedWorkspace.confidence], [p.id, 'low'], 'last used for the space is only a guess');
 
-  // start without a workspace takes the suggestion and records it
+  // a low-confidence guess is never used: the task starts in the projects folder, nothing recorded on it
   const s = (await h.api('POST', `/api/tasks/${next.id}/start`, { agent: 'mock' })).body;
-  assert.equal(s.role, 'worker', JSON.stringify(s));
+  assert.deepEqual([s.role, s.cwd, s.atRoot], ['worker', root, true], JSON.stringify(s));
   const after = await task(next.id);
-  assert.deepEqual([after.workspaceId, after.suggestedWorkspaceId], [p.id, null]);
+  assert.deepEqual([after.workspaceId, after.branch, after.location, after.status], [null, null, 'root', 'in_progress']);
   const started = after.log.find((x) => x.type === 'started');
-  assert.match(started.text, /^Взята в работу: Mock agent \(demo\), ветка feature\/PROJ-2$/);
-  assert.ok(!/s_[0-9a-f]{8}|[\\/]/.test(started.text.replace('feature/PROJ-2', '')), 'no session ids or paths in the text');
+  assert.equal(started.text, 'Взята в работу: Mock agent (demo)');
+  assert.ok(!/s_[0-9a-f]{8}|[\\/]/.test(started.text), 'no session ids or paths in the text');
   for (const id of [w.id, s.id]) await h.api('POST', `/api/sessions/${id}/stop`);
   await waitFor(async () => (await h.api('GET', '/api/state')).body.sessions.every((x) => !x.pid), { what: 'stopped' });
 });
