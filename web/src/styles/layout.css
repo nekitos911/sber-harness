@@ -120,7 +120,7 @@
 .sess-doing { color: var(--ink-3); }
 /* Colour only on the 14 px state icon: titles keep the text colour, the right meta stays muted. */
 .tree-sess .label { min-width: 72px; } /* the title never collapses to nothing; the meta on the right gives way */
-.sess-state { flex-shrink: 1; min-width: 0; max-width: 46%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.sess-state { flex-shrink: 1; min-width: 0; max-width: 34%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
 .sub-glyph { color: var(--ink-4); }
 .attention { margin: 2px 0 8px; padding-bottom: 6px; border-bottom: 1px solid var(--rule-soft); }
 .attention-head { padding: 4px 8px; font-size: 11.5px; font-weight: 600; color: var(--ink-3); }
@@ -214,3 +214,22 @@
 @media (prefers-reduced-motion: reduce) { .tree-sess[data-leaving] { transform: none; } }
 .sess-from { padding: 0; border: 0; background: none; color: var(--ink-3); font: inherit; text-decoration: underline dotted; cursor: pointer; }
 .sess-from:hover { color: var(--ink); }
+
+/* Orca-like worktree rows: a status mark first, the folder's name, home after the name. */
+.wt-mark { display: inline-grid; place-items: center; width: 14px; height: 14px; flex-shrink: 0; color: var(--ink-3); }
+.wt-mark svg { width: 13px; height: 13px; }
+.wt-mark[data-mark="busy"] { color: var(--lamp-run); }
+.wt-mark[data-mark="busy"] svg { animation: pulse 1.6s ease-in-out infinite; }
+.wt-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--lamp-fail); }
+.wt-house { width: 12px !important; height: 12px !important; margin-left: 5px; vertical-align: -1px; color: var(--ink-3); }
+.wt[data-sleeping] > .tree-wt { opacity: 0.55; }
+.wt-error { width: 100%; height: 22px; border: 0; background: none; color: var(--lamp-fail); font: inherit; font-size: 12px; text-align: left; gap: 6px; }
+.wt-error svg { width: 12px !important; height: 12px !important; color: var(--lamp-fail) !important; }
+.wt-error-pop { display: grid; gap: 8px; max-width: 360px; padding: 10px; }
+.wt-error-text { margin: 0; font-family: var(--font-mono); font-size: 11.5px; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink-2); }
+.agent-glyph { display: inline-grid; place-items: center; width: 14px; height: 14px; flex-shrink: 0; border-radius: 3px; background: var(--deck-3); color: var(--ink-2); font-size: 9.5px; font-weight: 700; }
+.agent-glyph[data-agent="gigacode"] { background: color-mix(in srgb, var(--signal) 22%, var(--deck-3)); color: var(--ink); }
+.agent-glyph[data-agent="claude"] { background: color-mix(in srgb, var(--lamp-run) 22%, var(--deck-3)); color: var(--ink); }
+.sess-title { font-weight: 600; }
+.tree-sess[data-nested] .sess-title { font-weight: 400; }
+@media (prefers-reduced-motion: reduce) { .wt-mark[data-mark="busy"] svg { animation: none; } }

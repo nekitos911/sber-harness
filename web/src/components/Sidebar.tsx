@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react'
-import { ArrowUp, Bot, ChevronDown, Ellipsis, Folder, GitPullRequest, Pin, ChevronRight, FolderGit2, FolderPlus, GitBranch, GitBranchPlus, House, Inbox, MessageSquarePlus, Moon, Search, Settings, SquareKanban, SquareTerminal, Sun } from 'lucide-react'
+import { Activity, ArrowUp, Bot, ChevronDown, Ellipsis, Folder, FolderTree, TriangleAlert, GitPullRequest, Pin, ChevronRight, FolderGit2, FolderPlus, GitBranch, GitBranchPlus, House, Inbox, MessageSquarePlus, Moon, Search, Settings, SquareKanban, SquareTerminal, Sun } from 'lucide-react'
 import { openDialog, openScreen, openSession, openWorktree, setState, showPanel, useActiveCwd, useStore, type Screen } from '../store'
 import { useHistory } from '../lib/history'
 import { archiveSession, renameSession, sessionMenu } from '../lib/sessionActions'
@@ -11,8 +11,7 @@ import { loadDraft, saveDraft } from '../lib/draft'
 import { newChat, newTerminal } from '../lib/actions'
 import type { Session, Workspace, Worktree } from '../types'
 import { Skeleton, StatusIcon, SubStateIcon, subStateLabel } from './bits'
-import { BranchPicker } from './pickers/BranchPicker'
-import { Menu } from './ui'
+import { Button, Menu, Popover } from './ui'
 import { ideEnabled, isUnread, onWorktreeKey, projectMenu, setUnread, worktreeMenu } from './WorktreeMenu'
 import { useNow } from '../lib/useNow'
 
@@ -387,30 +386,53 @@ function WorktreeNode({ ws, wt, sessions, terminals, dup, kids, active, fromOf }
 }) {
   const changed = useStore((s) => s.git[normPath(wt.path)]?.status?.files.length ?? wt.dirty ?? 0)
   const task = useStore((s) => (wt.taskId ? s.tasks.find((t) => t.id === wt.taskId) : s.tasks.find((t) => !!wt.branch && t.branch === wt.branch)))
+  const activeSession = useStore((s) => (s.view.kind === 'wt' ? s.wt[normPath(s.view.cwd)]?.active : null))
   const [menu, setMenu] = useState(false)
+  const [errOpen, setErrOpen] = useState(false)
   const [unread, setUnreadState] = useState(() => isUnread(wt.path))
   const row = useRef<HTMLDivElement>(null)
+  const errRow = useRef<HTMLButtonElement>(null)
   useEffect(() => {
     const on = () => setUnreadState(isUnread(wt.path))
     window.addEventListener('harness:unread', on)
     return () => window.removeEventListener('harness:unread', on)
   }, [wt.path])
   const pick = () => { openWorktree(wt.path); if (unread) setUnread(wt.path, false) }
-  const name = wt.meta?.label || wt.branch || (wt.main ? ws.name : basename(wt.path))
+  // Like Orca: the folder's name; the branch, muted, only when it says something else.
+  const name = wt.meta?.label || basename(wt.path)
+  const branchTail = wt.branch?.split('/').pop()
+  const showBranch = !!wt.branch && branchTail !== name && wt.branch !== name
   const where = { workspaceId: ws.id, cwd: wt.path }
   const sleeping = !!wt.meta?.sleeping
   const ahead = wt.ahead ?? 0
+  const states = withKids(sessions, kids).map(sessionVisualState)
+  const mark = sleeping ? 'sleep' : states.some((v) => ATTENTION.has(v)) ? 'attention' : states.some((v) => BUSY.has(v)) ? 'busy' : 'idle'
+  // Two or more agents fold into «N агента» unless one needs you or is on screen.
+  const needs = states.some((v) => ATTENTION.has(v)) || sessions.some((x) => activeSession === `s:${x.id}`)
+  const [foldChoice, setFold] = useState<boolean | null>(() => loadDraft<boolean>(`sb:fold:${normPath(wt.path)}`))
+  const folded = sessions.length >= 2 && !needs && (foldChoice ?? true)
+  const toggleFold = () => { setFold(!folded); saveDraft(`sb:fold:${normPath(wt.path)}`, !folded) }
+  const err = wt.meta?.lastError
+  const errText = typeof err === 'string' ? err : err?.message
+  const errTitle = typeof err === 'object' && err?.op === 'delete' ? 'Не удалось удалить' : 'Ошибка'
   const history = useHistory(wt.path, sessions.length === 0) // only rows without harness chats ask for it
   const ownHistory = (history ?? []).filter((h) => normPath(h.cwd) === normPath(wt.path)).length // not the main copy's, listed for every worktree
   return (
     <div className="wt" data-active={active} data-sleeping={sleeping || undefined}>
       <div ref={row} className="tree-row tree-wt" role="button" tabIndex={0} style={depth(1)}
-        data-tip={name} data-tip-trunc
+        data-tip={wt.branch ? `${name}\n${wt.branch}` : name}
         aria-current={active ? 'location' : undefined} onClick={pick}
         onKeyDown={(e) => { onWorktreeKey(e, ws, wt); activate(pick)(e) }}
         onContextMenu={(e) => { e.preventDefault(); setMenu(true) }}>
-        {sleeping ? <Moon aria-label="спит" /> : wt.main ? <House aria-label="основная копия" /> : <GitBranch aria-hidden />}
-        <span className="label">{name}{dup && <span className="tree-path"> · {basename(wt.path)}</span>}</span>
+        <span className="wt-mark" data-mark={mark} aria-label={mark === 'sleep' ? 'спит' : mark === 'attention' ? 'нужно внимание' : mark === 'busy' ? 'агенты работают' : undefined}>
+          {mark === 'sleep' ? <Moon aria-hidden /> : mark === 'busy' ? <Activity aria-hidden /> : mark === 'attention' ? <span className="wt-dot" /> : <GitBranch aria-hidden />}
+        </span>
+        <span className="label">
+          {name}
+          {wt.main && <House className="wt-house" aria-label="основная копия" />}
+          {showBranch && <span className="tree-path"> {wt.branch}</span>}
+          {dup && <span className="tree-path"> · {basename(wt.path)}</span>}
+        </span>
         {wt.meta?.pinned && <Pin className="wt-pin" aria-label="закреплено" />}
         {unread && <span className="wt-unread" aria-label="непрочитано" />}
         {sessions.length === 0 && ownHistory > 0 && (
@@ -419,24 +441,43 @@ function WorktreeNode({ ws, wt, sessions, terminals, dup, kids, active, fromOf }
           </button>
         )}
         <span className="wt-badges">
-          <RowSummary sessions={withKids(sessions, kids)} />
           {changed > 0 && <span className="wt-stat num" data-tip={`${changed} ${plural(changed, 'изменённый файл', 'изменённых файла', 'изменённых файлов')}`}>±{changed}</span>}
           {ahead > 0 && <span className="wt-stat num" data-tip={`${ahead} ${plural(ahead, 'коммит', 'коммита', 'коммитов')} не в базовой ветке`}><ArrowUp aria-hidden />{ahead}</span>}
           {terminals.length > 0 && <TerminalCount terminals={terminals} />}
         </span>
         <span className="actions">
-          <RowAction label="Новый чат в этом дереве" icon={<MessageSquarePlus />} onClick={() => void newChat(where)} />
           <RowAction label="Новый терминал в этом дереве" icon={<SquareTerminal />} onClick={() => void newTerminal(where)} />
-          {ws.isGit && (
-            <BranchPicker cwd={wt.path} branch={wt.branch} placement="bottom-start" className="icon-btn icon-btn-sm">
-              <GitBranch />
-            </BranchPicker>
-          )}
+          <RowAction label="Файлы" icon={<FolderTree />} onClick={() => { openWorktree(wt.path); showPanel('files') }} />
           <RowAction label="Действия с деревом" icon={<Ellipsis />} onClick={() => setMenu(true)} />
         </span>
       </div>
       <Menu anchor={row} open={menu} onClose={() => setMenu(false)} items={worktreeMenu(ws, wt, task, ideEnabled())} label={`Рабочее дерево ${name}`} placement="bottom-end" />
-      {sessions.map((s) => <SessionNode key={s.id} s={s} kids={kids} base={2} from={fromOf(s.id)} />)}
+      {errText && (
+        <>
+          <button ref={errRow} type="button" className="tree-row wt-error" style={depth(2)} onClick={() => setErrOpen(!errOpen)} aria-expanded={errOpen}>
+            <TriangleAlert aria-hidden />{errTitle}
+          </button>
+          <Popover anchor={errRow} open={errOpen} onClose={() => setErrOpen(false)} placement="bottom-start" label={errTitle} className="wt-error-pop">
+            <p className="wt-error-text">{errText}</p>
+            {typeof err === 'object' && err?.op === 'delete' && !wt.main && (
+              <Button size="sm" onClick={() => { setErrOpen(false); openDialog({ kind: 'wt-delete', workspaceId: ws.id, path: wt.path }) }}>Повторить</Button>
+            )}
+          </Popover>
+        </>
+      )}
+      {folded ? (
+        <button type="button" className="tree-row tree-more" style={depth(2)} onClick={toggleFold}>
+          <ChevronDown aria-hidden />
+          {sessions.length} {plural(sessions.length, 'агент', 'агента', 'агентов')}
+        </button>
+      ) : (
+        <>
+          {sessions.map((s) => <SessionNode key={s.id} s={s} kids={kids} base={2} from={fromOf(s.id)} />)}
+          {sessions.length >= 2 && !needs && (
+            <button type="button" className="tree-row tree-more" style={depth(2)} onClick={toggleFold}>Свернуть агентов</button>
+          )}
+        </>
+      )}
     </div>
   )
 }
@@ -528,8 +569,9 @@ function SessionRow({ s, nested, level = 0, caret, subs, via, from }: {
   const preview = s.preview.split('\n').map((l) => l.trim()).filter(Boolean).pop()
   // A sub-agent's title «profile: task» reads as the profile with the task muted.
   const sub = (s.role === 'subagent' || s.virtual) ? /^([\w.-]{2,40}):\s+(.+)$/.exec(s.title)?.slice(1, 3) : undefined
-  // Running: the tool in use; calm top-level rows: the last line of the answer.
-  const doing = v === 'running' ? tool : !nested && (v === 'idle' || v === 'done') ? preview : ''
+  // What it is doing: the tool in use («Выполняет: Edit»), a coordinator watching its workers, else the last line.
+  const watching = s.role === 'coordinator' && v === 'running' && !tool
+  const doing = v === 'running' ? (tool ? `Выполняет: ${tool}` : watching ? 'Наблюдает за исполнителями' : '') : !nested && (v === 'idle' || v === 'done') ? preview : ''
   return (
     <>
     <div
@@ -548,6 +590,7 @@ function SessionRow({ s, nested, level = 0, caret, subs, via, from }: {
       onContextMenu={(e) => { e.preventDefault(); setMenu(true) }}
       style={depth(level)}
     >
+      {!nested && <AgentGlyph agent={s.agent} />}
       <StatusIcon session={s} />
       {editing ? (
         <input className="input tree-rename" autoFocus defaultValue={s.title} aria-label="Название чата"
@@ -558,10 +601,10 @@ function SessionRow({ s, nested, level = 0, caret, subs, via, from }: {
         <span className="label">
           {nested && <span className="sub-glyph" aria-hidden>↳ </span>}
           {s.role === 'reviewer' && <span className="sess-doing">ревью · </span>}
-          {sub ? <>{sub[0]}<span className="sess-doing">: {sub[1]}</span></> : s.title || s.id}
+          {sub ? <>{sub[0]}<span className="sess-doing">: {sub[1]}</span></> : <span className="sess-title">{s.title || s.id}</span>}
           {via && <span className="sess-doing"> · через {via}</span>}
           {from && <span className="sess-doing"> · от: <button type="button" className="sess-from" onClick={(e) => { e.stopPropagation(); openSession(from.id) }}>{from.title}</button></span>}
-          {doing && <span className="sess-doing"> · {doing}</span>}
+          {doing && <span className="sess-doing"> - {doing}</span>}
         </span>
       )}
       {subs && (
@@ -573,7 +616,7 @@ function SessionRow({ s, nested, level = 0, caret, subs, via, from }: {
       {s.interrupted && <span className="badge-interrupted" data-tip={s.interrupted.lastActivity ? `Прервана на: ${s.interrupted.lastActivity}` : 'Перезапуск прервал ход'}>прервана</span>}
       {s.warm !== undefined && <span className="sess-warm" data-warm={s.warm || undefined} aria-label={s.warm ? 'процесс запущен' : 'процесс выгружен'}>{s.warm ? '●' : '○'}</span>}
       <span className="sess-state" data-s={v}>
-        {line || <><span className="agent">{s.kind === 'terminal' ? 'shell' : s.model ?? s.agent}</span> · {relTime(s.lastActivityAt, now)}</>}
+        {v === 'stalled' || v === 'starting' ? line : <><span className="agent">{s.kind === 'terminal' ? 'shell' : s.model ?? s.agent}</span> · {relTime(s.lastActivityAt, now)}</>}
       </span>
       {caret && (
         <button
@@ -594,6 +637,12 @@ function SessionRow({ s, nested, level = 0, caret, subs, via, from }: {
     <Menu anchor={row} open={menu} onClose={() => setMenu(false)} items={items} label={`Чат ${s.title}`} placement="bottom-end" />
     </>
   )
+}
+
+/** A small mark of the agent CLI (GigaCode, Claude, mock…): its first letter, tinted per agent. */
+function AgentGlyph({ agent }: { agent: string }) {
+  const label = useStore((s) => s.agents.find((a) => a.id === agent)?.label ?? agent)
+  return <span className="agent-glyph" data-agent={agent} aria-label={label} data-tip={label}>{label.charAt(0).toUpperCase()}</span>
 }
 
 /** A session and all its workers, for summaries. */

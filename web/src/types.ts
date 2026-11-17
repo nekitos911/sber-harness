@@ -83,7 +83,7 @@ export interface PrInfo {
 
 /** kind: 'root' = the projects folder (every project under it), 'folder' = any folder, absent/'repo' = a project. */
 export interface Workspace { id: string; name: string; path: string; isGit: boolean; kind?: 'root' | 'folder' | 'repo' }
-export interface WorktreeMeta { label?: string; note?: string; pinned?: boolean; sleeping?: boolean }
+export interface WorktreeMeta { label?: string; note?: string; pinned?: boolean; sleeping?: boolean; lastError?: { op?: string; message: string; at?: number } | string | null }
 /** Newer servers enrich the list with git/task/session facts (for the context menu and cleanup). */
 export interface Worktree {
   path: string; branch: string | null; head: string; main: boolean
