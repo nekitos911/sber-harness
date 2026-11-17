@@ -198,3 +198,5 @@ else if (done) await harness('worker_done', { summary: done[1].trim() || 'comple
 
 await say(' Done.');
 emit({ type: 'result', status: 'success', stats: { input_tokens: 10, output_tokens: 5, tool_calls: toolSeq + 1 } });
+// GigaCode lingers after result (MCP servers shutting down, chat recording, telemetry)
+if (has(/#linger\b/)) await sleep(20000);

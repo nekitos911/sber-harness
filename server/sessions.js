@@ -390,6 +390,11 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     const c = r.cur;
     s.lastActivityAt = Date.now();
     if (ev.type !== 'auth') s.lastEventAt = s.lastActivityAt;
+    const kind = { text: ev.delta ? 'text_delta' : 'assistant_final', thought: 'thought', tool_call: 'tool_running', tool_result: 'tool_done', result: 'result' }[ev.type];
+    if (kind && s.lastEventKind !== kind) {
+      s.lastEventKind = kind; // «Пишет ответ» vs «Завершает ход…» in the UI
+      emit(s);
+    }
     if (s.stalled) {
       s.stalled = false;
       emit(s);
@@ -542,8 +547,51 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
           s.preview = ev.text.slice(-200);
         }
         emit(s);
+        closeAtResult(s);
         break;
     }
+  }
+
+  function runTurnEnded(s, r, stopped) {
+    try {
+      hooks.turnEnded(s, { ...r.flags, stopped, queueEmpty: !s.queue.length });
+    } catch (e) {
+      console.error('[sessions] turnEnded hook failed:', e);
+    }
+  }
+
+  function failRunningVirtuals(s) {
+    for (const v of db.sessions.filter((x) => x.virtual && x.parentId === s.id && x.status === 'running')) {
+      Object.assign(v, { status: 'failed', lastActivityAt: Date.now() });
+      emit(v);
+    }
+  }
+
+  /**
+   * `result` arrived: the turn is over for the user now, although the CLI may linger for many seconds (MCP servers
+   * shutting down, chat recording, telemetry). The process stays tracked (turnClosing) and the next turn waits for it.
+   */
+  function closeAtResult(s) {
+    const r = runtime(s.id);
+    if (!r.running || r.closedEarly || r.stopRequested) return;
+    r.closedEarly = true;
+    r.resultAt = Date.now();
+    const status = r.flags.reported && (s.status === 'done' || s.status === 'failed') ? s.status : 'idle';
+    Object.assign(s, { status, phase: null, lastActivityAt: Date.now(), stalled: false, turnClosing: true });
+    if (s.waitingFor === 'auth') s.waitingFor = null;
+    failRunningVirtuals(s);
+    emit(s);
+    runTurnEnded(s, r, false);
+    store.flush();
+    if (s.queue.length) armLinger(s);
+  }
+
+  /** A queued message waits for the lingering process, but at most agents.<id>.exitGraceMs after result. */
+  function armLinger(s) {
+    const r = runtime(s.id);
+    if (!r.closedEarly || r.lingerTimer) return;
+    const grace = config.agents[s.agent]?.exitGraceMs ?? 8000;
+    r.lingerTimer = setTimeout(() => r.handle?.terminate?.('post_result_linger'), Math.max(0, grace - (Date.now() - r.resultAt)));
   }
 
   async function startTurn(s) {
@@ -676,6 +724,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
 
   function finishTurn(s, res) {
     const r = runtime(s.id);
+    if (r.closedEarly) return finishLingered(s, r, res);
     clearInterval(r.registryTimer);
     r.running = false;
     r.handle = null;
@@ -719,19 +768,29 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     } else if (res.stderrTail.trim()) {
       addMessage(s, { kind: 'system', text: `⚠ ${res.stderrTail.trim().slice(-2000)}` });
     }
-    Object.assign(s, { status, pid: null, pidStartedAt: null, phase: null, turnOffset: null, lastActivityAt: Date.now(), stalled: false });
+    Object.assign(s, { status, pid: null, pidStartedAt: null, phase: null, turnOffset: null, lastActivityAt: Date.now(), stalled: false, turnClosing: false });
     if (s.waitingFor === 'auth') s.waitingFor = null;
-    for (const v of db.sessions.filter((x) => x.virtual && x.parentId === s.id && x.status === 'running')) {
-      Object.assign(v, { status: 'failed', lastActivityAt: Date.now() });
-      emit(v);
-    }
+    failRunningVirtuals(s);
     emit(s);
-    try {
-      hooks.turnEnded(s, { ...r.flags, stopped, queueEmpty: !s.queue.length });
-    } catch (e) {
-      console.error('[sessions] turnEnded hook failed:', e);
-    }
+    runTurnEnded(s, r, stopped);
     store.flush(); // a finished turn is never lost to a crash right after it
+    if (s.queue.length) startTurn(s);
+  }
+
+  /** The process of a turn already closed at `result` has exited (by itself or killed after exitGraceMs). */
+  function finishLingered(s, r, res) {
+    clearTimeout(r.lingerTimer);
+    clearInterval(r.registryTimer);
+    Object.assign(r, { lingerTimer: null, closedEarly: false, running: false, handle: null, stopRequested: false, unadopted: false });
+    if (!find(s.id)) return;
+    const killed = res.killReason === 'post_result_linger';
+    try {
+      fs.appendFileSync(turnFiles(s, r.turn).logFile, `[harness] process exited ${Date.now() - r.resultAt} ms after result${killed ? ' (killed after exitGraceMs)' : ''}\n`);
+    } catch {}
+    if (res.stderrTail.trim() && !res.killReason) addMessage(s, { kind: 'system', text: `⚠ ${res.stderrTail.trim().slice(-2000)}` });
+    Object.assign(s, { pid: null, pidStartedAt: null, turnOffset: null, turnClosing: false });
+    emit(s);
+    store.flush();
     if (s.queue.length) startTurn(s);
   }
 
@@ -1064,6 +1123,7 @@ ${note.trim()}` : text });
         return { queued: false };
       }
       s.queued = s.queue.length;
+      if (r.closedEarly) armLinger(s);
       emit(s);
       return { queued: true };
     },
@@ -1078,6 +1138,10 @@ ${note.trim()}` : text });
       }
       s.queue = [];
       s.queued = 0;
+      if (r.running && r.closedEarly) {
+        r.handle?.terminate?.('post_result_linger');
+        return emit(s);
+      }
       if (r.running) {
         r.stopRequested = true;
         r.handle?.stop();

@@ -460,6 +460,11 @@ export function runTurn({ launcher, ctx, command, cwd, env, firstEventTimeoutMs,
       // not our child: kill only if the pid still is that process; otherwise just stop following
       sameProcess(pid, startedAt).then((ours) => (ours ? killTree(pid) : finish()));
     },
+    /** a harness kill with a reason (e.g. 'post_result_linger'); a re-attached process only after its identity check */
+    terminate(reason) {
+      if (!reattach) return kill(reason);
+      sameProcess(pid, startedAt).then((ours) => (ours ? killTree(pid) : finish()));
+    },
     /** stop following without touching the process (harness shutdown) */
     detach() {
       finish(true);

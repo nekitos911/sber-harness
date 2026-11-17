@@ -983,6 +983,14 @@ re-evaluated every 15 s; flips are broadcast). Derived UI state, in priority ord
 Implementation: `waitingFor` may also be `'permission'` (headless denial card); `/api/settings` exposes and accepts
 `session: { stallSec }` (integer ≥ 30); the re-check period is `session.stallCheckSec` (config only, default 15); any event
 clears `stalled`; `lastEventAt` is not broadcast on its own (it rides on the next session frame). Feature flag `activity`.
+- The turn ends for the user at `result`, not at process exit (GigaCode lingers for many seconds after `result`: MCP
+  servers shutting down, chat recording, telemetry): status → idle (or done/failed as before), phase null,
+  `turnClosing: true` while the process is still alive; the post-turn logic (auto-report escalation, review loop) runs
+  then. The process stays tracked: a queued message waits for its exit, at most `agents.<id>.exitGraceMs` (default 8000)
+  after `result`, then the tree is killed (guarded, killReason `post_result_linger`) and the next turn starts; the
+  linger duration is logged to `runs/<sid>/stderr.log`. Stop on a lingering process only ends it (no «Остановлено»).
+- `lastEventKind`: `text_delta` | `assistant_final` | `thought` | `tool_running` | `tool_done` | `result` (session frames
+  are sent when it changes) — the UI says «Завершает ход…» instead of «Пишет ответ».
 
 ## Nothing is lost on restart (harness, browser, PC)
 
