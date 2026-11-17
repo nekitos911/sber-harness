@@ -6,3 +6,4 @@ harness.config.local.json
 .env
 .env.*
 graphify-out/
+.playwright-mcp/
