@@ -10,6 +10,8 @@ import { Branch, Skeleton, StatusIcon, statusText } from '../bits'
 import { Markdown } from '../Markdown'
 import { ChipsInput } from '../ChipsInput'
 import { Checkbox, Segmented, Select, SuggestInput } from '../ui'
+import { PrChip } from '../PrChip'
+import { openPrSettings, usePr } from '../../lib/pr'
 import type { BoardCtx } from './TaskCard'
 
 async function patchTask(id: string, fields: Partial<Task> & { comment?: string }) {
@@ -150,6 +152,7 @@ export function TaskDrawer({ task, ctx, onClose }: { task: Task; ctx: BoardCtx; 
         {imported && !task.description.trim() && <ExternalCard task={task} />}
         <DescriptionField task={task} />
         {trackerOn && task.externalId && <TrackerStatus task={task} />}
+        <TaskPrs task={task} />
         {task.targets.length > 1 && <Ports task={task} />}
         <Subtasks task={task} ctx={ctx} />
         <Activity task={task} sessions={ctx.sessions} />
@@ -630,6 +633,50 @@ function SendForm({ task, onDone }: { task: Task; onDone: () => void }) {
       <button type="button" className="btn btn-primary" disabled={!target || busy} onClick={() => void submit()}>
         {busy ? 'Отправка…' : 'Отправить задачу'}
       </button>
+    </div>
+  )
+}
+
+/** «Пулл-реквесты»: one row per target branch (the task branch into targets[0], each port into its target). */
+function TaskPrs({ task }: { task: Task }) {
+  const enabled = useStore((s) => s.integrations.pr)
+  const sessions = useStore((s) => s.sessions)
+  const worktrees = useStore((s) => s.worktrees)
+  if (!task.targets.length) return null
+  // Where task.branch is checked out: the assignee's folder, else a worktree on that branch.
+  const assignee = sessions.find((x) => x.id === task.assigneeSessionId)
+  const mainCwd = assignee?.cwd ?? Object.values(worktrees).flat().find((w) => task.branch && w.branch === task.branch)?.path ?? null
+  return (
+    <section className="drawer-section">
+      <h3>Пулл-реквесты</h3>
+      {!enabled ? (
+        <div className="pr-off"><span className="muted">PR-интеграция не настроена.</span><button type="button" className="btn btn-sm" onClick={openPrSettings}>Настроить</button></div>
+      ) : (
+        <div className="ports">
+          <PrRow target={task.targets[0]} cwd={mainCwd} branch={task.branch} known={task.pr ?? null} />
+          {task.ports.map((p) => <PrRow key={p.target} target={p.target} cwd={p.cwd} branch={p.branch} known={null} />)}
+        </div>
+      )}
+    </section>
+  )
+}
+
+function PrRow({ target, cwd, branch, known }: { target: string; cwd: string | null; branch: string | null; known: Task['pr'] }) {
+  const pr = usePr(cwd)
+  const live = pr && typeof pr === 'object' && !('error' in pr) ? pr : null
+  const shown = live ?? known
+  return (
+    <div className="port-row">
+      <GitMerge aria-hidden />
+      <span className="mono ellipsis" data-tip={`${branch ?? '—'} → ${target}`}>{target}</span>
+      <span className="grow" />
+      {shown ? <PrChip pr={shown} /> : !cwd || !branch ? (
+        <span className="muted">ветки ещё нет: возьмите задачу в работу</span>
+      ) : pr === undefined ? (
+        <span className="muted">проверяем…</span>
+      ) : (
+        <button type="button" className="btn btn-sm" onClick={() => openDialog({ kind: 'pr', cwd, base: target })}>Создать PR в {target}</button>
+      )}
     </div>
   )
 }

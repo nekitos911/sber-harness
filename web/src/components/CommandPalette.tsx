@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { Bot, FileText, FolderPlus, GitBranchPlus, Inbox, MessageSquare, Moon, PanelLeft, PanelRight, Settings, SquareKanban, SquareTerminal } from 'lucide-react'
+import { Bot, FileText, GitPullRequest, FolderPlus, GitBranchPlus, Inbox, MessageSquare, Moon, PanelLeft, PanelRight, Settings, SquareKanban, SquareTerminal } from 'lucide-react'
 import { getState, openDialog, openScreen, openSession, openTask, setState, useStore } from '../store'
 import { StatusIcon } from './bits'
 import { currentWhere, newChat, newTerminal } from '../lib/actions'
@@ -34,6 +34,7 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
     { id: 'ws', label: 'Добавить проект', icon: <FolderPlus />, run: () => openDialog({ kind: 'workspace' }) },
     { id: 'board', label: 'Доска задач', icon: <SquareKanban />, run: () => openScreen('board') },
     { id: 'agents', label: 'Агенты', icon: <Bot />, run: () => openScreen('agents') },
+    { id: 'prs', label: 'Пулл-реквесты', icon: <GitPullRequest />, run: () => openScreen('prs') },
     { id: 'inbox', label: 'Входящие', icon: <Inbox />, run: () => openScreen('inbox') },
     { id: 'sidebar', label: 'Показать/скрыть боковую панель', icon: <PanelLeft />, run: () => setState((s) => ({ sidebar: !s.sidebar })) },
     { id: 'panel', label: 'Показать/скрыть панель файлов', icon: <PanelRight />, run: () => setState((s) => ({ panel: !s.panel })) },

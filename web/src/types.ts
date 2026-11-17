@@ -37,7 +37,22 @@ export interface Task {
   takenAt: number | null
   snapshot: { title: string; description: string; externalStatus: string | null; at: number } | null
   log: TaskLogEntry[]
+  pr?: TaskPr | null // newer servers: PR of task.branch, refreshed in the background
   createdAt: number
+  updatedAt: number
+}
+
+export interface TaskPr { index: number; state: 'open' | 'merged' | 'declined'; url: string; updatedAt: number }
+
+/** GET /api/git/pr-status: the PR whose head is the branch checked out in a worktree. */
+export interface PrInfo {
+  index: number
+  title: string
+  state: 'open' | 'merged' | 'declined'
+  url: string
+  mergeable: boolean | null
+  reviewers: { status: string }[]
+  base: string
   updatedAt: number
 }
 

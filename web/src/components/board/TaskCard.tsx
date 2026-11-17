@@ -4,6 +4,7 @@ import { PRIORITY } from '../../lib/format'
 import { pendingDeps, taskKey, trackerDiffers, unusualTargets } from '../../lib/tasks'
 import type { AgentInfo, Priority, Session, Task, Workspace } from '../../types'
 import { StatusIcon, statusText } from '../bits'
+import { PrGlyph } from '../PrChip'
 
 export interface BoardCtx {
   byId: Map<string, Task>
@@ -36,6 +37,7 @@ export const TaskCard = memo(function TaskCard({ task, ctx }: { task: Task; ctx:
         <span className="grow" />
         {task.hidden && <span className="chip">скрыта</span>}
         {trackerDiffers(task) && <span className="card-ext" data-tip="Статус в трекере">{task.externalStatus}</span>}
+        {task.pr && <PrGlyph pr={task.pr} />}
         {task.priority && <PriorityMark p={task.priority} />}
       </div>
       <button type="button" className="card-title" onKeyDown={stop}>{task.title}</button>

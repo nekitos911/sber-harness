@@ -8,6 +8,8 @@ import { useNow } from '../../lib/useNow'
 import type { GitCommit, GitFile, GitSuggest } from '../../types'
 import type { DiffFile } from '../../lib/diff'
 import { DiffLines } from '../DiffLines'
+import { PrCard } from '../PrChip'
+import { openPrSettings, usePr } from '../../lib/pr'
 import { Skeleton } from '../bits'
 
 const STATUS_LABEL: Record<GitFile['status'], string> = { M: 'изменён', A: 'добавлен', D: 'удалён', R: 'переименован', '?': 'новый, не в git', U: 'конфликт' }
@@ -139,15 +141,12 @@ export function ChangesTab({ cwd }: { cwd: string }) {
               <Upload />
               {busy === 'push' ? 'Push…' : 'Push'}
             </button>
-            {prEnabled && (
-              <button type="button" className="btn" onClick={() => openDialog({ kind: 'pr', cwd })}>
-                <GitPullRequest />
-                Создать PR
-              </button>
-            )}
+
           </div>
         </div>
       </section>
+
+      <PrSection cwd={cwd} enabled={prEnabled} branch={status.branch} base={suggest?.pr.base ?? null} />
 
       <section className="wpanel-section">
         <h3>Последние коммиты</h3>
@@ -193,5 +192,35 @@ function ChangeRow({ cwd, f, diff, loaded, open, onToggle }: { cwd: string; f: G
         </div>
       </div>
     </li>
+  )
+}
+
+/** Always visible: the branch's PR (open it), «Создать PR», or why PRs are unavailable and where to set them up. */
+function PrSection({ cwd, enabled, branch, base }: { cwd: string; enabled: boolean; branch: string | null; base: string | null }) {
+  const pr = usePr(enabled ? cwd : null)
+  const off = !enabled || pr === 'off'
+  return (
+    <section className="wpanel-section">
+      <h3><GitPullRequest aria-hidden />Пулл-реквест</h3>
+      {off ? (
+        <div className="pr-off">
+          <span className="muted">PR-интеграция не настроена.</span>
+          <button type="button" className="btn btn-sm" onClick={openPrSettings}>Настроить</button>
+        </div>
+      ) : pr === undefined ? (
+        <Skeleton rows={1} label="Проверяем PR…" />
+      ) : pr && typeof pr === 'object' && 'error' in pr ? (
+        <p className="field-error">Не удалось узнать статус PR: {pr.error}</p>
+      ) : pr ? (
+        <PrCard pr={pr} />
+      ) : branch && base && branch !== base ? (
+        <div className="pr-off">
+          <span className="muted">Для <span className="mono">{branch}</span> PR ещё нет.</span>
+          <button type="button" className="btn btn-sm" onClick={() => openDialog({ kind: 'pr', cwd, base })}><GitPullRequest />Создать PR</button>
+        </div>
+      ) : (
+        <p className="muted">Ветка <span className="mono">{branch ?? '—'}</span> совпадает с базовой: PR создаётся из ветки задачи.</p>
+      )}
+    </section>
   )
 }

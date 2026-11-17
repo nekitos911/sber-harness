@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react'
-import { Bot, ChevronDown, ChevronRight, FolderGit2, FolderPlus, GitBranch, GitBranchPlus, House, Inbox, MessageSquarePlus, Moon, Search, Settings, SquareKanban, SquareTerminal, Sun } from 'lucide-react'
+import { Bot, ChevronDown, GitPullRequest, ChevronRight, FolderGit2, FolderPlus, GitBranch, GitBranchPlus, House, Inbox, MessageSquarePlus, Moon, Search, Settings, SquareKanban, SquareTerminal, Sun } from 'lucide-react'
 import { openDialog, openScreen, openSession, openWorktree, setState, useActiveCwd, useStore, type Screen } from '../store'
 import { loadWorktrees } from '../ws'
 import { useCurrentTool, useStartingLabel } from '../lib/live'
@@ -27,6 +27,7 @@ export function Sidebar() {
   const [query, setQuery] = useState('')
 
   const running = sessions.filter((s) => s.kind === 'chat' && s.status === 'running').length
+  const openPrs = useStore((s) => s.tasks.filter((t) => t.pr?.state === 'open').length)
   const chats = sessions.filter((s) => s.kind === 'chat').length
   const tree = useMemo(() => buildTree(sessions, query), [sessions, query])
 
@@ -47,6 +48,7 @@ export function Sidebar() {
             ? <span className="count count-run" data-tip={`Работают: ${running} из ${chats}`}>{running}</span>
             : chats > 0 && <span className="count" data-tip={`Чатов: ${chats}`}>{chats}</span>}
         />
+        <NavItem screen="prs" icon={<GitPullRequest />} label="Пулл-реквесты" end={openPrs > 0 && <span className="count" data-tip={`Открытых PR задач: ${openPrs}`}>{openPrs}</span>} />
         <NavItem screen="inbox" icon={<Inbox />} label="Входящие" end={unread > 0 && <span className="count count-signal" aria-label={`непрочитанных: ${unread}`}>{unread}</span>} />
       </div>
 

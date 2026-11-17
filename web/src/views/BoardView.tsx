@@ -14,6 +14,7 @@ import type { Task, TaskStatus } from '../types'
 import { TaskCard, type BoardCtx } from '../components/board/TaskCard'
 import { TaskDrawer } from '../components/board/TaskDrawer'
 import { Select } from '../components/ui'
+import { useSettings } from '../lib/agents'
 
 type Cols = Record<TaskStatus, string[]>
 const COL_PREFIX = 'col:'
@@ -26,6 +27,7 @@ export function BoardView() {
   const syncEnabled = useStore((s) => s.integrations.tasks)
   const trackerProblem = useStore((s) => s.integrations.tasksProblem)
   const focusTaskId = useStore((s) => s.focusTaskId)
+  const statusMap = useSettings()?.integrations?.tasks?.statusMap
 
   const [query, setQuery] = useState('')
   const [repo, setRepo] = useState('')
@@ -199,7 +201,7 @@ export function BoardView() {
       >
         <div className="board">
           {COLUMNS.map((c) => (
-            <Column key={c.id} status={c.id} label={c.label} ids={shown[c.id]} ctx={ctx} repo={repo} dragging={!!drag} />
+            <Column key={c.id} status={c.id} label={c.label} ids={shown[c.id]} ctx={ctx} repo={repo} dragging={!!drag} tip={columnTip(c.id, statusMap)} />
           ))}
         </div>
         <DragOverlay dropAnimation={{ duration: 180, easing: 'cubic-bezier(0.23, 1, 0.32, 1)' }}>
@@ -212,7 +214,13 @@ export function BoardView() {
   )
 }
 
-function Column({ status, label, ids, ctx, repo, dragging }: { status: TaskStatus; label: string; ids: string[]; ctx: BoardCtx; repo: string; dragging: boolean }) {
+/** What a column means: which tracker statuses land in it, and that moving a card never changes the tracker. */
+function columnTip(status: TaskStatus, map: Record<string, string> | undefined) {
+  const from = Object.entries(map ?? {}).filter(([, col]) => col === status).map(([ext]) => ext)
+  return `Колонка доски.${from.length ? ` Статусы трекера: ${from.join(', ')}.` : ''}\nПеренос карточки не меняет статус в трекере.`
+}
+
+function Column({ status, label, ids, ctx, repo, dragging, tip }: { status: TaskStatus; label: string; ids: string[]; ctx: BoardCtx; repo: string; dragging: boolean; tip: string }) {
   const { setNodeRef, isOver } = useDroppable({ id: COL_PREFIX + status })
   const [adding, setAdding] = useState(false)
 
@@ -220,7 +228,7 @@ function Column({ status, label, ids, ctx, repo, dragging }: { status: TaskStatu
     <section className="col" aria-labelledby={`col-${status}`} data-over={isOver}>
       <header className="col-head">
         <span className="col-mark" data-s={status} aria-hidden />
-        <h2 id={`col-${status}`}>{label}</h2>
+        <h2 id={`col-${status}`} data-tip={tip}>{label}</h2>
         <span className="col-count num">{ids.length}</span>
         <button type="button" className="icon-btn icon-btn-sm" aria-label={`Добавить задачу в «${label}»`} data-tip="Добавить задачу" onClick={() => setAdding(true)}>
           <Plus />
@@ -233,7 +241,7 @@ function Column({ status, label, ids, ctx, repo, dragging }: { status: TaskStatu
             const t = ctx.byId.get(id)
             return t ? <SortableCard key={id} task={t} ctx={ctx} /> : null
           })}
-          {ids.length === 0 && <div className="col-empty">{dragging ? 'Перетащите сюда' : 'Пусто'}</div>}
+          {ids.length === 0 && dragging && <div className="col-empty">Перетащите сюда</div>}
         </div>
       </SortableContext>
     </section>

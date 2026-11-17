@@ -2,8 +2,9 @@ import { useSyncExternalStore } from 'react'
 import type { AgentInfo, AgentMeta, GitStatus, Settings, Integrations, Message, Notification, Session, SubAgent, Task, Workspace, Worktree } from './types'
 import type { DiffFile } from './lib/diff'
 import { normPath } from './lib/format'
+import type { PrState } from './lib/pr'
 
-export type Screen = 'board' | 'agents' | 'inbox' | 'settings'
+export type Screen = 'board' | 'agents' | 'prs' | 'inbox' | 'settings'
 
 /** A tab always lives in one worktree (cwd): chats and terminals by their session cwd, files and diffs by theirs. */
 export type Tab =
@@ -24,7 +25,7 @@ export type DialogRequest =
   | { kind: 'chat'; workspaceId?: string; cwd?: string }
   | { kind: 'terminal'; workspaceId?: string; cwd?: string }
   | { kind: 'worktree'; workspaceId?: string }
-  | { kind: 'pr'; cwd: string }
+  | { kind: 'pr'; cwd: string; base?: string }
   | { kind: 'start'; taskId: string }
 
 export interface Toast { id: number; text: string; tone: 'info' | 'ok' | 'error'; href?: string; leaving?: boolean }
@@ -64,6 +65,7 @@ export interface State extends Prefs {
   git: Record<string, GitInfo> // key = normPath(cwd)
   agentMeta: Record<string, AgentMeta | null> // null = this server has no /agents/:id/info
   settings: Settings | null // loaded on demand (pickers need grades; the settings screen edits it)
+  prs: Record<string, PrState | undefined> // key = normPath(cwd): PR of the branch checked out there
   dirty: Record<string, boolean>
   toasts: Toast[]
   focusTaskId: string | null
@@ -87,7 +89,7 @@ const defaultPrefs: Prefs = {
   view: { kind: 'screen', screen: 'board' }, wt: {}, sidebar: true, sidebarWidth: 288, panel: true, panelTab: 'changes', theme: null, drafts: {},
 }
 
-const SCREENS = new Set<Screen>(['board', 'agents', 'inbox', 'settings'])
+const SCREENS = new Set<Screen>(['board', 'agents', 'prs', 'inbox', 'settings'])
 const validView = (v: unknown): v is View => {
   const x = v as View | null
   return !!x && ((x.kind === 'screen' && SCREENS.has(x.screen)) || (x.kind === 'wt' && typeof x.cwd === 'string'))
@@ -116,7 +118,7 @@ let state: State = {
   conn: 'connecting', loaded: false, authExpired: false, scheme: resolveScheme(prefs.theme),
   tasks: [], sessions: [], workspaces: [], notifications: [], agents: [], defaultAgent: null, shell: '',
   integrations: { tasks: false, pr: false },
-  messages: {}, subagents: {}, worktrees: {}, git: {}, agentMeta: {}, settings: null, dirty: {}, toasts: [], focusTaskId: null, dialog: null, back: [], forward: [],
+  messages: {}, subagents: {}, worktrees: {}, git: {}, agentMeta: {}, settings: null, prs: {}, dirty: {}, toasts: [], focusTaskId: null, dialog: null, back: [], forward: [],
 }
 
 const listeners = new Set<() => void>()

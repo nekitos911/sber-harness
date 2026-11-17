@@ -14,6 +14,7 @@ import { TooltipLayer } from './components/ui'
 import { BoardView } from './views/BoardView'
 import { AgentsView } from './views/AgentsView'
 import { InboxView } from './views/InboxView'
+import { PrsView } from './views/PrsView'
 import { SettingsView } from './views/SettingsView'
 import { ChatView } from './views/ChatView'
 import { DiffView } from './views/DiffView'
@@ -91,6 +92,7 @@ function ScreenContent({ screen }: { screen: Screen }) {
   switch (screen) {
     case 'board': return <BoardView />
     case 'agents': return <AgentsView />
+    case 'prs': return <PrsView />
     case 'inbox': return <InboxView />
     case 'settings': return <SettingsView />
   }

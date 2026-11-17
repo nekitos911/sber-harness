@@ -8,6 +8,7 @@ import type { GitSuggest, Session, Workspace, Worktree } from '../types'
 import { Modal } from './ui/Dialog'
 import { Segmented, Select, SuggestInput } from './ui'
 import { modeShort } from '../lib/agents'
+import { loadPr } from '../lib/pr'
 import { Markdown } from './Markdown'
 
 export function Dialogs() {
@@ -22,7 +23,7 @@ function DialogSwitch({ d }: { d: DialogRequest }) {
     case 'chat': return <ChatDialog workspaceId={d.workspaceId} cwd={d.cwd} />
     case 'terminal': return <TerminalDialog workspaceId={d.workspaceId} cwd={d.cwd} />
     case 'worktree': return <WorktreeDialog workspaceId={d.workspaceId} />
-    case 'pr': return <PrDialog cwd={d.cwd} />
+    case 'pr': return <PrDialog cwd={d.cwd} base={d.base} />
     case 'start': return <StartDialog taskId={d.taskId} />
   }
 }
@@ -355,12 +356,12 @@ function ByteCount({ value, limit }: { value: string; limit: number }) {
   return <span className="byte-count num" data-over={n > limit || undefined} aria-live="polite">{n}/{limit} байт</span>
 }
 
-function PrDialog({ cwd }: { cwd: string }) {
+function PrDialog({ cwd, base: initBase }: { cwd: string; base?: string }) {
   const tasks = useStore((s) => s.tasks)
   const [suggest, setSuggest] = useState<GitSuggest | null>(null)
   const [title, setTitle] = useState('')
   const [body, setBody] = useState('')
-  const [base, setBase] = useState('')
+  const [base, setBase] = useState(initBase ?? '')
   const [preview, setPreview] = useState(false)
   const [busy, run] = useBusy()
 
@@ -389,6 +390,7 @@ function PrDialog({ cwd }: { cwd: string }) {
         const res = await tryApi<{ url: string; existing?: boolean }>('POST', '/git/pr', { cwd, title: title.trim(), body, base: base.trim() })
         if (!res) return
         toast(res.existing ? 'PR уже открыт' : 'Pull request создан', res.existing ? 'info' : 'ok', res.url)
+        loadPr(cwd, true)
         closeDialog()
       })}
     >
