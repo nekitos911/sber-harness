@@ -220,6 +220,15 @@ function apply(ev: ServerEvent) {
         subagents: { ...s.subagents, [ev.sessionId]: { items: ev.items, problems: s.subagents[ev.sessionId]?.problems ?? [] } },
       }))
       break
+    case 'worktree.meta': {
+      // label, pinned, sleeping, lastError, createdBy…: the full meta of one worktree, in place
+      const key = wtKey(ev.path)
+      setState((s) => ({
+        worktrees: Object.fromEntries(Object.entries(s.worktrees).map(([id, list]) =>
+          [id, list.some((w) => wtKey(w.path) === key) ? list.map((w) => (wtKey(w.path) === key ? { ...w, meta: ev.meta } : w)) : list])),
+      }))
+      break
+    }
     case 'sdd':
       setState((s) => ({ sdd: { ...s.sdd, [wtKey(ev.cwd)]: ev.plans } }))
       break

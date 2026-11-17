@@ -83,13 +83,18 @@ export interface PrInfo {
 
 /** kind: 'root' = the projects folder (every project under it), 'folder' = any folder, absent/'repo' = a project. */
 export interface Workspace { id: string; name: string; path: string; isGit: boolean; kind?: 'root' | 'folder' | 'repo' }
-export interface WorktreeMeta { label?: string; note?: string; pinned?: boolean; sleeping?: boolean; lastError?: { op?: string; message: string; at?: number } | string | null }
+export interface WorktreeMeta {
+  label?: string; note?: string; pinned?: boolean; sleeping?: boolean
+  lastError?: { text?: string; op?: string; message?: string; at?: number } | string | null // server: { text: «Не удалось удалить: …», at }
+  createdBy?: 'user' | 'agent' | 'external'; createdAt?: number
+}
 /** Newer servers enrich the list with git/task/session facts (for the context menu and cleanup). */
 export interface Worktree {
   path: string; branch: string | null; head: string; main: boolean
   dirty?: number; ahead?: number; taskId?: string | null; taskStatus?: TaskStatus | null
   pr?: { state: 'open' | 'merged' | 'declined'; url: string } | null
   sessions?: number; running?: number; lastActivityAt?: number | null; meta?: WorktreeMeta
+  createdBy?: 'user' | 'agent' | 'external'; detached?: boolean
 }
 
 export type SessionKind = 'chat' | 'terminal'
@@ -114,6 +119,8 @@ export interface Session {
   lastEventKind?: string | null // e.g. 'assistant_delta', 'assistant_final', 'tool', 'thought' (newer servers)
   turnClosing?: boolean // the answer is complete (result seen); the CLI is only shutting down
   warm?: boolean // ACP sessions only: the process is loaded (false = unloaded after idling)
+  mcpStatus?: { name: string; status: string }[] // MCP servers as the CLI reported them at the turn's start
+  effectiveApprovalMode?: string | null // what the CLI really runs with (e.g. auto → auto-edit)
   system?: boolean // harness-internal (login terminal, discovery…): shown only under «Служебное»
   persistent?: boolean // a child that is a full participant (e.g. an orchestrator in another worktree): never folded or auto-archived
   worktreePath?: string | null // the worktree root the session runs in (its cwd may be a subfolder)
@@ -331,6 +338,7 @@ export type ServerEvent =
   | { t: 'workspaces'; workspaces: Workspace[] }
   | { t: 'subagents'; sessionId: string; items: SubAgent[] }
   | { t: 'sdd'; cwd: string; plans: SddPlan[] }
+  | { t: 'worktree.meta'; path: string; meta: WorktreeMeta }
   | { t: 'term'; id: string; data: string }
   | { t: 'term.replay'; id: string; data: string }
   | { t: 'job'; id: string; title?: string; step?: string | null; progress?: { done: number; total: number }; done?: boolean; error?: string }

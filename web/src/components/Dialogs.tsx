@@ -18,6 +18,7 @@ import { RecoveryDialog } from './RecoveryDialog'
 import { deleteSession } from '../lib/sessionActions'
 import { endJob, startJob, useJobStep } from '../lib/jobs'
 import { Markdown } from './Markdown'
+import { useWhere as useStartWhere } from './board/Rework'
 
 export function Dialogs() {
   const d = useStore((s) => s.dialog)
@@ -387,6 +388,10 @@ function WorktreeDialog({ workspaceId }: { workspaceId?: string }) {
 
 function StartDialog({ taskId }: { taskId: string }) {
   const task = useStore((s) => s.tasks.find((t) => t.id === taskId))
+  return task ? <StartForm task={task} /> : null
+}
+
+function StartForm({ task }: { task: Task }) {
   const agents = useStore((s) => s.agents)
   const defaultAgent = useStore((s) => s.defaultAgent)
   const enabled = useMemo(() => agents.filter((a) => a.enabled), [agents])
@@ -396,22 +401,17 @@ function StartDialog({ taskId }: { taskId: string }) {
   const tasks = useStore((s) => s.tasks)
   const workspaces = useStore((s) => s.workspaces)
   const settings = useSettings()
-  if (!task) return null
+  const where = useStartWhere(task) // «Где»: the projects folder (the agent picks repositories) or one repository
 
   // What «Запустить» will do, said before the click.
   const byId = new Map(tasks.map((t) => [t.id, t]))
   const key = taskKey(task, byId)
   const kids = tasks.filter((t) => t.parentId === task.id)
   const waiting = pendingDeps(task, byId)
-  const repo = workspaces.find((w) => w.id === task.workspaceId)
-  const needsRepo = !kids.length && !repo && workspaces.length >= 2
+  const needsRepo = !kids.length && !where.body
   const branch = (settings?.git.branchTemplate || 'feature/{key}').replaceAll('{key}', key)
   const agentLabel = enabled.find((a) => a.id === agent)?.label ?? agent
   const kidRepos = [...new Set(kids.map((k) => workspaces.find((w) => w.id === k.workspaceId)?.name).filter(Boolean))]
-  const setRepo = async (id: string) => {
-    const t = await tryApi<Task>('PATCH', `/tasks/${encodeURIComponent(task.id)}`, { workspaceId: id })
-    if (t) setState((s) => ({ tasks: upsert(s.tasks, t) }))
-  }
 
   return (
     <Modal
@@ -422,7 +422,7 @@ function StartDialog({ taskId }: { taskId: string }) {
       disabled={!agent || waiting.length > 0 || needsRepo}
       onClose={closeDialog}
       onSubmit={() => run(async (jobId) => {
-        const s = await tryApi<Session & { jumped?: boolean }>('POST', `/tasks/${encodeURIComponent(task.id)}/start`, { agent, notes: notes.trim() || undefined }, { jobId })
+        const s = await tryApi<Session & { jumped?: boolean }>('POST', `/tasks/${encodeURIComponent(task.id)}/start`, { agent, notes: notes.trim() || undefined, ...(kids.length ? {} : where.body) }, { jobId })
         if (!s) return
         closeDialog()
         if (s.jumped) toast('Задача уже в работе — открыл текущую сессию')
@@ -436,17 +436,12 @@ function StartDialog({ taskId }: { taskId: string }) {
         ) : kids.length ? (
           <span>Координатор раздаст {kids.length} {kids.length === 1 ? 'подзадачу' : kids.length < 5 ? 'подзадачи' : 'подзадач'}{kidRepos.length ? <> по репозиториям: {kidRepos.join(', ')}</> : null}; каждая в своём рабочем дереве на ветке <span className="mono">{branch}</span>.</span>
         ) : needsRepo ? (
-          <span>У задачи нет репозитория, а их несколько: выберите, где работать.</span>
+          <span>Выберите, где работать.</span>
         ) : (
-          <span>Агент {agentLabel} · ветка <span className="mono">{branch}</span> от <span className="mono">{task.targets[0] ?? 'базовой'}</span> · новое дерево в <span className="mono">{repo ? `${repo.name}-worktrees/${key}` : `worktrees/${key}`}</span></span>
+          <span>Агент {agentLabel}</span>
         )}
       </div>
-      {needsRepo && (
-        <label className="field">
-          <span>Репозиторий</span>
-          <Select label="Репозиторий задачи" size="lg" value="" placeholder="Выберите репозиторий…" onChange={(id) => void setRepo(id)} options={workspaces.map((w) => ({ value: w.id, label: w.name, hint: w.path }))} />
-        </label>
-      )}
+      {!kids.length && where.field}
       <label className="field">
         <span>Заметки</span>
         <textarea className="textarea" rows={3} autoFocus placeholder="Необязательно: уточнения к задаче, которые получит агент" value={notes} onChange={(e) => setNotes(e.target.value)} />

@@ -161,8 +161,8 @@ function useLeaving(sessions: Session[]): Set<string> {
     prev.current = new Map(sessions.map((s) => [s.id, !!s.archived]))
     if (!now.size) return
     setLeaving((l) => new Set([...l, ...now]))
-    const t = window.setTimeout(() => setLeaving((l) => new Set([...l].filter((id) => !now.has(id)))), 180)
-    return () => window.clearTimeout(t)
+    // not cleared on the next run: sessions change every few ms while agents stream, and the row must still go
+    window.setTimeout(() => setLeaving((l) => new Set([...l].filter((id) => !now.has(id)))), 180)
   }, [sessions])
   return leaving
 }
@@ -413,8 +413,12 @@ function WorktreeNode({ ws, wt, sessions, terminals, dup, kids, active, fromOf }
   const folded = sessions.length >= 2 && !needs && (foldChoice ?? true)
   const toggleFold = () => { setFold(!folded); saveDraft(`sb:fold:${normPath(wt.path)}`, !folded) }
   const err = wt.meta?.lastError
-  const errText = typeof err === 'string' ? err : err?.message
-  const errTitle = typeof err === 'object' && err?.op === 'delete' ? 'Не удалось удалить' : 'Ошибка'
+  // The server writes { text: «Не удалось удалить: <git's words>», at }: the head is the row, the rest the popover.
+  const errFull = typeof err === 'string' ? err : err?.text ?? err?.message
+  const errHead = errFull ? /^(Не удалось [^:]+):\s*([\s\S]*)$/.exec(errFull) : null
+  const errDelete = (typeof err === 'object' && err?.op === 'delete') || /^Не удалось удалить/.test(errFull ?? '')
+  const errTitle = errHead?.[1] ?? (errDelete ? 'Не удалось удалить' : 'Ошибка')
+  const errText = errHead?.[2] || errFull
   const history = useHistory(wt.path, sessions.length === 0) // only rows without harness chats ask for it
   const ownHistory = (history ?? []).filter((h) => normPath(h.cwd) === normPath(wt.path)).length // not the main copy's, listed for every worktree
   return (
@@ -459,7 +463,7 @@ function WorktreeNode({ ws, wt, sessions, terminals, dup, kids, active, fromOf }
           </button>
           <Popover anchor={errRow} open={errOpen} onClose={() => setErrOpen(false)} placement="bottom-start" label={errTitle} className="wt-error-pop">
             <p className="wt-error-text">{errText}</p>
-            {typeof err === 'object' && err?.op === 'delete' && !wt.main && (
+            {errDelete && !wt.main && (
               <Button size="sm" onClick={() => { setErrOpen(false); openDialog({ kind: 'wt-delete', workspaceId: ws.id, path: wt.path }) }}>Повторить</Button>
             )}
           </Popover>

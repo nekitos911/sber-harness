@@ -115,7 +115,7 @@ export function Composer({ session, active }: { session: Session; active: boolea
             placement="top-start"
             value={mode}
             onChange={(m) => void setMode(m)}
-            display={modeShort(mode)}
+            display={session.effectiveApprovalMode && session.effectiveApprovalMode !== mode ? `${modeShort(mode)} → ${modeShort(session.effectiveApprovalMode)}` : modeShort(mode)}
             options={modes.map((m) => ({ value: m, label: modeShort(m), text: modeShort(m), hint: modeLabels[m] }))}
           />
         )}

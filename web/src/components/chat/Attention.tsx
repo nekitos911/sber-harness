@@ -125,7 +125,7 @@ const optionLabel = (o: PermissionOption) => o.label ?? o.name ?? o.id
 
 /** How a resolved request reads afterwards. */
 function resolvedText(o: PermissionOption | undefined, id: string) {
-  if (!o) return id
+  if (!o) return id === 'cancelled' ? 'Отменено' : id
   if (isReject(o)) return 'Запрещено'
   if (isOnce(o)) return 'Разрешено один раз'
   return /session|always/i.test(`${o.id} ${o.kind ?? ''}`) ? 'Разрешено в этой сессии' : optionLabel(o)
@@ -146,6 +146,7 @@ export function PermissionCard({ m }: { m: Message }) {
   const [note, setNote] = useState('')
   const rejectRef = useRef<HTMLButtonElement>(null)
   const { icon, text } = actionLine(p.tool, p.input)
+  const who = from ? `субагент ${(/^([\w.-]{2,40}):/.exec(from.title)?.[1]) ?? from.title}: ` : ''
   const options = p.options
   const primary = options.find(isOnce) ?? options.find((o) => !isReject(o))
   const choose = async (o: PermissionOption) => {
@@ -170,9 +171,11 @@ export function PermissionCard({ m }: { m: Message }) {
     return (
       <div className="perm-card perm-done" data-rejected={rejected || undefined} role="note">
         <ShieldAlert aria-hidden />
-        <span className="ellipsis">{headless
-          ? (rejected ? `Оставлено отклонённым: ${p.pattern ?? text}` : `Разрешено: ${p.pattern ?? text}${isOnce(o!) ? ' · повтор отправлен' : ' · для этого чата'}`)
-          : `${resolvedText(o, choice)}: ${text}`}</span>
+        <span className="ellipsis">{who}{!o // «cancelled» (Stop, a new turn) or an option this client does not know
+          ? `${resolvedText(o, choice)}: ${p.pattern ?? text}`
+          : headless
+            ? (rejected ? `Оставлено отклонённым: ${p.pattern ?? text}` : `Разрешено: ${p.pattern ?? text}${isOnce(o) ? ' · повтор отправлен' : ' · для этого чата'}`)
+            : `${resolvedText(o, choice)}: ${text}`}</span>
       </div>
     )
   }
@@ -184,7 +187,7 @@ export function PermissionCard({ m }: { m: Message }) {
   return (
     <section className="perm-card" aria-label="Запрос разрешения" onKeyDown={onKey}>
       <header className="perm-head"><ShieldAlert aria-hidden />
-        {from && <span className="perm-from">субагент {(/^([\w.-]{2,40}):/.exec(from.title)?.[1]) ?? from.title}:</span>}
+        {who && <span className="perm-from">{who}</span>}
         {headless ? 'CLI отклонил действие — нужно разрешение' : 'Агент ждёт разрешения'}
       </header>
       <div className="perm-action"><span className="perm-icon" aria-hidden>{icon}</span><span className="mono">{text}</span></div>

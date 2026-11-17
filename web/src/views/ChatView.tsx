@@ -310,6 +310,7 @@ function ChatHeader({ session, onLog, onReset, onDelete }: { session: Session; o
 
 /** «MCP 4/5»: the CLI's MCP servers from the latest status line; the list with ✗ reasons on click. */
 function McpChip({ sessionId }: { sessionId: string }) {
+  const status = useStore((s) => s.sessions.find((x) => x.id === sessionId)?.mcpStatus)
   const line = useStore((s) => {
     const list = s.messages[sessionId] ?? []
     for (let i = list.length - 1; i >= 0; i--) if (list[i].kind === 'system' && isMcpStatus(list[i].text)) return list[i].text
@@ -317,8 +318,8 @@ function McpChip({ sessionId }: { sessionId: string }) {
   })
   const [open, setOpen] = useState(false)
   const anchor = useRef<HTMLButtonElement>(null)
-  if (!line) return null
-  const servers = mcpServers(line)
+  // session.mcpStatus from newer servers; older ones only wrote the «MCP: …» line into the chat
+  const servers = status?.map((m) => ({ name: m.name, ok: /^connected$/i.test(m.status), reason: m.status })) ?? (line ? mcpServers(line) : [])
   if (!servers.length) return null
   const ok = servers.filter((x) => x.ok).length
   return (

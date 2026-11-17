@@ -99,7 +99,7 @@ export const confident = (c: unknown) => c === 'high' || (typeof c === 'number' 
  * «Где» for taking a task into work: the projects folder («агент выберет репозиторий по SDD») or one repository.
  * A confident suggestion is preselected with its reason; a weak one only says «возможно» in the list.
  */
-function useWhere(task: Task) {
+export function useWhere(task: Task) {
   const workspaces = useStore((s) => s.workspaces)
   const tasks = useStore((s) => s.tasks)
   const settings = useSettings()
