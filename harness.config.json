@@ -62,6 +62,7 @@
       "inheritUserMcp": false,
       "taskPromptTemplate": "/full-task {taskUrl}{notes}",
       "firstEventTimeoutMs": 120000,
+      "authTimeoutMs": 600000,
       "env": {}
     },
     "claude": {

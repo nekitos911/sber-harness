@@ -82,6 +82,10 @@ export function killTree(pid) {
 
 const shortArg = (a) => JSON.stringify(a.length > 200 ? `${a.slice(0, 200)}...` : a);
 const TAIL_POLL_MS = 200;
+// a login prompt of the CLI (first run on a machine): an URL on such a line, or an URL followed by a device code
+const AUTH_RE = /auth|login|oauth|device|verif|sign.?in|авториз|войд|вход/i;
+const URL_RE = /https?:\/\/[^\s"'<>)\]]+/;
+const CODE_RE = /\b[A-Z0-9]{4}-[A-Z0-9]{4}\b/;
 const ALIVE_POLL_MS = 1000;
 
 export function isAlive(pid) {
@@ -196,14 +200,16 @@ function tailFile(file, offset, maxLine, onLine, onOffset) {
 /**
  * Runs (or re-attaches to) ONE agent turn. The agent is spawned detached with stdout/stderr redirected to files
  * (outFile / errFile), so it keeps running when the harness stops; the harness follows outFile.
- * @param {{ launcher, ctx, command, cwd, env, firstEventTimeoutMs, logFile, outFile, errFile, onEvent, onOffset?,
- *           maxLine?, reattach?: { pid, offset } }} o
- *   Events are the launcher's NormalizedEvents plus { type: 'raw', text } for each non-JSON stdout line.
+ * @param {{ launcher, ctx, command, cwd, env, firstEventTimeoutMs, authTimeoutMs?, logFile, outFile, errFile, onEvent,
+ *           onOffset?, maxLine?, reattach?: { pid, offset } }} o
+ *   Events are the launcher's NormalizedEvents plus { type: 'raw', text } for each non-JSON stdout line and
+ *   { type: 'auth', url, code } when, before the first JSON event, stdout or stderr shows a login link: the
+ *   first-event timeout is then replaced by authTimeoutMs (the CLI waits for the browser login and continues).
  *   reattach: follow an already running turn (not our child): it ends at its `result` event or when the pid is gone;
  *   the exit code is then unknown (null).
  * @returns {{ pid, stop(), detach(), done: Promise<{code, signal, sawResult, timedOut, stopped, detached, error, stderrTail, eventCount}> }}
  */
-export function runTurn({ launcher, ctx, command, cwd, env, firstEventTimeoutMs, logFile, outFile, errFile, onEvent, onOffset, maxLine = MAX_LINE, reattach = null }) {
+export function runTurn({ launcher, ctx, command, cwd, env, firstEventTimeoutMs, authTimeoutMs = 600000, logFile, outFile, errFile, onEvent, onOffset, maxLine = MAX_LINE, reattach = null }) {
   const log = fs.createWriteStream(logFile, { flags: 'a' });
   const res = { code: null, signal: null, sawResult: false, timedOut: false, stopped: false, detached: false, error: null, stderrTail: '', eventCount: 0, priorOutput: (reattach?.offset ?? 0) > 0 };
   let child = null;
@@ -240,6 +246,32 @@ export function runTurn({ launcher, ctx, command, cwd, env, firstEventTimeoutMs,
     res.timedOut = true;
     killTree(pid);
   }, firstEventTimeoutMs);
+  let sawJson = res.priorOutput;
+  let authTimer = null;
+  let pendingUrl = null;
+
+  function scanAuth(line) {
+    if (sawJson || res.auth) return;
+    const url = line.match(URL_RE)?.[0];
+    let code = null;
+    if (url && AUTH_RE.test(line)) code = line.match(CODE_RE)?.[0] ?? null;
+    else if (url) return void (pendingUrl = url);
+    else if (pendingUrl && CODE_RE.test(line)) code = line.match(CODE_RE)[0];
+    else return void (pendingUrl = null);
+    res.auth = true;
+    clearTimeout(timer);
+    if (!reattach) {
+      authTimer = setTimeout(() => {
+        res.timedOut = true;
+        res.authTimedOut = true;
+        killTree(pid);
+      }, authTimeoutMs);
+    }
+    log.write(`[harness] login requested: ${url || pendingUrl}\n`);
+    try {
+      onEvent({ type: 'auth', url: url || pendingUrl, code }); // not counted as output: a login prompt alone is no answer
+    } catch {}
+  }
 
   const emit = (ev) => {
     res.eventCount++;
@@ -260,7 +292,12 @@ export function runTurn({ launcher, ctx, command, cwd, env, firstEventTimeoutMs,
     } catch {
       log.write(`[stdout] ${line.slice(0, 2000)}\n`);
       emit({ type: 'raw', text: line.length > 20000 ? `${line.slice(0, 20000)}...` : line });
+      scanAuth(line);
       return;
+    }
+    if (!sawJson) {
+      sawJson = true;
+      clearTimeout(authTimer); // logged in: the CLI started for real
     }
     for (const ev of launcher.parse(obj, state)) {
       if (ev.type === 'meta') {
@@ -275,6 +312,8 @@ export function runTurn({ launcher, ctx, command, cwd, env, firstEventTimeoutMs,
   }
 
   const tail = tailFile(outFile, reattach?.offset ?? 0, maxLine, handleLine, onOffset);
+  // stderr is only watched for a login prompt; its tail goes into messages when the turn ends
+  const errTail = tailFile(errFile, 0, maxLine, (line) => { if (line.trim()) scanAuth(line.trim()); });
   let alive = null;
 
   const done = new Promise((resolve) => {
@@ -285,6 +324,8 @@ export function runTurn({ launcher, ctx, command, cwd, env, firstEventTimeoutMs,
       clearInterval(alive);
       if (!detached) tail.drain();
       tail.close();
+      errTail.close();
+      clearTimeout(authTimer);
       res.detached = detached;
       res.stderrTail = readTail(errFile);
       if (res.stderrTail) log.write(`[stderr]\n${res.stderrTail}\n`);

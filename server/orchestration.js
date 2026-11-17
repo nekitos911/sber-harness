@@ -69,8 +69,8 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
     return isActive(s) ? s : null;
   }
 
-  function notify({ kind, sessionId = null, taskId = null, text, options }) {
-    const n = { id: newId('n'), at: Date.now(), read: false, kind, sessionId, taskId, text, ...(options?.length ? { options } : {}) };
+  function notify({ kind, sessionId = null, taskId = null, text, options, link }) {
+    const n = { id: newId('n'), at: Date.now(), read: false, kind, sessionId, taskId, text, ...(options?.length ? { options } : {}), ...(link ? { link } : {}) };
     db.notifications.push(n);
     if (db.notifications.length > 500) db.notifications.splice(0, db.notifications.length - 500);
     store.save();
@@ -306,6 +306,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
   }
 
   sessions.hooks.preamble = preamble;
+  sessions.hooks.notify = notify;
   sessions.hooks.turnEnded = turnEnded;
 
   // ---- tools ----

@@ -175,6 +175,7 @@ export async function startServer(opts = {}) {
         taskPromptTemplate: a.taskPromptTemplate ?? null,
         taskPromptPresets: a.taskPromptPresets || [],
         firstEventTimeoutMs: a.firstEventTimeoutMs ?? launchers[a.launcher]?.defaults.firstEventTimeoutMs ?? null,
+        authTimeoutMs: a.authTimeoutMs ?? 600000,
         inheritUserMcp: !!a.inheritUserMcp,
         enabled: a.enabled !== false,
       }])),
@@ -220,6 +221,10 @@ export async function startServer(opts = {}) {
     if ('taskPromptPresets' in a) {
       if (!isStrList(a.taskPromptPresets) || a.taskPromptPresets.some((t) => !hasTaskVar(t))) fail(400, `${where('taskPromptPresets')} must be templates containing one of ${TASK_VARS.join(' ')}`);
       p.taskPromptPresets = a.taskPromptPresets;
+    }
+    if ('authTimeoutMs' in a) {
+      if (!Number.isInteger(a.authTimeoutMs) || a.authTimeoutMs < 10000 || a.authTimeoutMs > 3600000) fail(400, `${where('authTimeoutMs')} must be an integer between 10000 and 3600000`);
+      p.authTimeoutMs = a.authTimeoutMs;
     }
     if ('firstEventTimeoutMs' in a) {
       if (!Number.isInteger(a.firstEventTimeoutMs) || a.firstEventTimeoutMs < 1000 || a.firstEventTimeoutMs > 30 * 60000) fail(400, `${where('firstEventTimeoutMs')} must be an integer between 1000 and 1800000`);
@@ -312,7 +317,8 @@ export async function startServer(opts = {}) {
   /** Launcher resolution of an agent, as --print-config shows it (no spawn; the identity value is never returned). */
   function agentInfo(id) {
     const a = config.agents[id] || fail(404, `agent ${id} not found`);
-    return { id, resolved: resolveAgentView(a), seen: db.agentMeta?.[id] ?? null };
+    const meta = db.agentMeta?.[id] ?? null;
+    return { id, resolved: resolveAgentView(a), auth: meta?.auth ?? 'unknown', seen: meta };
   }
 
   // ---- routes ----

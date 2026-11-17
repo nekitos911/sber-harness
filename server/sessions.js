@@ -179,7 +179,19 @@ export function createSessions({ config, store, bus, getUrl }) {
     const r = runtime(s.id);
     const c = r.cur;
     s.lastActivityAt = Date.now();
-    if (s.phase !== 'streaming') {
+    if (ev.type === 'auth') {
+      // the CLI waits for a browser login (first run on this machine); it continues by itself afterwards
+      const label = config.agents[s.agent]?.label || s.agent;
+      const text = `🔑 ${label} ждёт авторизацию…${ev.code ? ` Код: ${ev.code}` : ''}`;
+      s.phase = 'auth';
+      emit(s);
+      addMessage(s, { kind: 'system', text, link: ev.url });
+      hooks.notify?.({ kind: 'info', sessionId: s.id, taskId: s.taskId, text: `${s.title}: ${text}`, link: ev.url });
+      db.agentMeta[s.agent] = { ...db.agentMeta[s.agent], auth: 'required' };
+      store.save();
+      return;
+    }
+    if (s.phase !== 'streaming' && !(s.phase === 'auth' && ev.type === 'raw')) {
       s.phase = 'streaming';
       emit(s);
     }
@@ -194,6 +206,8 @@ export function createSessions({ config, store, bus, getUrl }) {
         // what the CLI reported about itself, for GET /api/agents/:id/info (models seen accumulate, newest first)
         const prev = db.agentMeta[s.agent];
         db.agentMeta[s.agent] = {
+          ...prev,
+          auth: 'ok',
           models: [...new Set([ev.model, ...(prev?.models || [])].filter(Boolean))].slice(0, 50),
           slashCommands: ev.slashCommands || [],
           mcpServers: ev.mcpServers,
@@ -308,6 +322,7 @@ export function createSessions({ config, store, bus, getUrl }) {
         cwd: s.cwd,
         env: { ...process.env, ...agentCfg.env, ...secretEnv(config), ...exe.env, ...launcher.env(ctx), ...ctx.harnessMcp.env },
         firstEventTimeoutMs: agentCfg.firstEventTimeoutMs || launcher.defaults.firstEventTimeoutMs || 30000,
+        authTimeoutMs: agentCfg.authTimeoutMs || 600000,
         ...turnFiles(s, r.turn),
         onEvent: (ev) => applyEvent(s, ev),
         onOffset: (off) => saveOffset(s, off),
@@ -385,6 +400,10 @@ export function createSessions({ config, store, bus, getUrl }) {
       addMessage(s, { kind: 'system', text: 'Stopped by user' });
     } else if (res.error) {
       addMessage(s, { kind: 'error', text: `${res.error}${tail(res.stderrTail)}` });
+      status = 'error';
+    } else if (res.authTimedOut) {
+      const min = Math.round((config.agents[s.agent]?.authTimeoutMs || 600000) / 60000);
+      addMessage(s, { kind: 'error', text: `Login was not completed within ${min} min; the process was killed. Open the link above and log in, or log in once from Settings (interactive terminal), then send the message again.${tail(res.stderrTail)}` });
       status = 'error';
     } else if (res.timedOut) {
       const ms = config.agents[s.agent]?.firstEventTimeoutMs || launchers[s.launcherId]?.defaults.firstEventTimeoutMs;
@@ -532,7 +551,7 @@ export function createSessions({ config, store, bus, getUrl }) {
       const pty = kind === 'terminal' ? await loadPty() : null;
       if (!cwd) {
         // a chat without a repository gets its own folder (survives restarts); terminals start in the harness root
-        cwd = kind === 'chat' ? path.join(store.dataDir, 'chats', id) : config.root;
+        cwd = kind === 'chat' ? path.join(store.dataDir, 'chats', id) : agentCfg ? path.join(store.dataDir, 'chats', 'login') : config.root;
         fs.mkdirSync(cwd, { recursive: true });
       }
 

@@ -6,6 +6,7 @@
 //   #ask <q> | <option> | ...   ask({ question, options })   #crash  exit 1 with stderr   #silent  sleep, no output
 //   #slow           stream slowly for ~5 s          #raw   print two non-JSON lines
 //   #nooutput       stderr only, exit 0 (silent failure)   #warn  stderr warning on a normal run
+//   #auth           login link on stderr, ~2 s wait, then a normal run
 // MOCK_AGENT_ARGV_FILE: appends { argv (incl. node flags), env (GIGACODE_*, settings path, MCP_SECRET_*) } per run.
 // Harness API from env: HARNESS_URL, HARNESS_TOKEN, HARNESS_SESSION_ID. Turn counts per session id live in
 // MOCK_AGENT_STATE_DIR (default <tmp>/harness-mock-agent), so --resume answers "resumed <id>, turn N".
@@ -48,6 +49,11 @@ if (has(/#nooutput\b/)) {
   process.exit(0);
 }
 if (has(/#warn\b/)) process.stderr.write('Warning: MCP server(s) failed to start: java-lsp. Continuing with built-in tools\n');
+if (has(/#auth\b/)) {
+  // first run on a machine: the CLI asks for a browser login, waits, then starts normally
+  process.stderr.write('Please open https://auth.example/device?code=ABCD-EFGH to sign in\n');
+  await sleep(2000);
+}
 if (has(/#silent\b/)) {
   await sleep(120000);
   process.exit(0);

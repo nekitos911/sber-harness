@@ -165,7 +165,8 @@ test('agent info: launcher resolution (identity as a boolean only) and what the 
   const info = (await h.api('GET', '/api/agents/giga/info')).body;
   assert.deepEqual(info.resolved, { ok: true, command: shim, node: process.execPath, entry, identity: true });
   assert.ok(!JSON.stringify(info).includes(IDENTITY), 'the identity value is never returned');
-  const { at, ...seen } = info.seen;
+  assert.equal(info.auth, 'ok');
+  const { at, auth, ...seen } = info.seen;
   assert.ok(at > 0);
   assert.deepEqual(seen, {
     models: ['mock-model'],
