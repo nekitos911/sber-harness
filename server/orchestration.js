@@ -55,6 +55,7 @@ export function parseProfile(text) {
   return { meta, body: m[2].trim() };
 }
 
+export const NO_SUBAGENTS = 'Субагенты не запускают своих субагентов: выполни это сам или верни запрос оркестратору';
 export const SUBAGENT_CONTEXT = 'Ты работаешь внутри harness. Субагентов запускай инструментом mcp__harness__agent с теми же аргументами, что у встроенного agent (subagent_type, prompt, model) — встроенный agent не используй: harness откроет каждого субагента отдельным чатом и вернёт тебе его результат так же. Вопросы человеку — через mcp__harness__ask (варианты в options), затем заверши ход.';
 const CONTEXT_LAUNCHERS = new Set(['gigacode', 'qwen', 'gemini', 'mock']);
 
@@ -379,7 +380,30 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
     if (!s.report) sessions.update(s.id, { report: { ...result, at: Date.now() } });
     for (const resolve of runWaiters.get(s.id) || []) resolve();
     runWaiters.delete(s.id);
+    retire(s);
   }
+
+  /**
+   * orchestration.subagentRetention "archive": a same-worktree helper is archived once its result is in (still openable
+   * by id); a persistent child (own worktree/repo) never. A running turn is archived when its process ends.
+   */
+  function retire(s) {
+    if (s.persistent || config.orchestration?.subagentRetention === 'keep') return;
+    if (sessions.isRunning(s.id)) sessions.update(s.id, { archiveOnSettle: true });
+    else sessions.archive(s.id, true);
+  }
+
+  /** Chain of same-worktree helpers above `s` (a task worker, coordinator or persistent child counts 0). */
+  function subagentDepth(s) {
+    let d = 0;
+    const seen = new Set();
+    for (let cur = s; cur && cur.ephemeral && !cur.persistent && !seen.has(cur.id); cur = cur.parentId && sessions.find(cur.parentId)) {
+      seen.add(cur.id);
+      d++;
+    }
+    return d;
+  }
+  const atDepthLimit = (s) => !!s && subagentDepth(s) >= Number(config.orchestration?.maxSubagentDepth ?? 1);
 
   async function workerRun(a, caller) {
     if (!caller) fail(400, 'worker_run вызывается только из сессии harness (заголовок x-harness-session)');
@@ -393,17 +417,23 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
     if (model && sessions.unavailableModels(agent).has(model)) model = null; // the CLI default instead of a doomed run
     let mode = a.approvalMode ?? profile?.meta.approvalMode ?? null;
     if (mode && agentCfg.approvalModes?.length && !agentCfg.approvalModes.includes(mode)) mode = null;
-    let cwd = caller.cwd;
-    let branch = caller.branch;
+    // a child in its own worktree or repository is persistent (a per-service orchestrator); a same-worktree helper is
+    // ephemeral: archived once settled and depth-limited
+    const persistent = a.worktree === 'new' || !!a.workspace;
+    if (!persistent && atDepthLimit(caller)) fail(409, NO_SUBAGENTS);
+    const base = a.workspace ? workspaceRef(a.workspace).path : caller.cwd;
+    let cwd = base;
+    let branch = a.workspace ? await git.currentBranch(base) : caller.branch;
     if (a.worktree === 'new') {
-      const wt = await git.addWorktree(caller.cwd, { branch: git.sanitizeBranch(`sub/${a.profile || 'agent'}-${newId('x').slice(2)}`), worktreeRoot: config.worktreeRoot });
+      const wt = await git.addWorktree(base, { branch: git.sanitizeBranch(`sub/${a.profile || 'agent'}-${newId('x').slice(2)}`), worktreeRoot: config.worktreeRoot });
       cwd = wt.path;
       branch = wt.branch;
     }
     const s = await sessions.create({
-      kind: 'chat', agent, cwd, role: 'worker', parentId: caller.id, model, approvalMode: mode, branch, ephemeral: true, autoReport: false,
+      kind: 'chat', agent, cwd, role: 'worker', parentId: caller.id, model, approvalMode: mode, branch, ephemeral: true, autoReport: false, persistent,
       title: a.title || [a.profile || 'agent', a.description].filter(Boolean).join(' · '),
     });
+    if (!persistent && (s.worktreePath ?? s.cwd) !== (caller.worktreePath ?? caller.cwd)) sessions.update(s.id, { persistent: true });
     sessions.deliver(s.id, { from: caller.id, text: [profile?.body, `## Задание\n${a.spec}`].filter(Boolean).join('\n\n') });
     return { sessionId: s.id };
   }
@@ -528,7 +558,8 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
   // ---- preambles ----
 
   function preamble(s) {
-    const block = config.orchestration?.subagents !== 'builtin' && CONTEXT_LAUNCHERS.has(s.launcherId) ? SUBAGENT_CONTEXT : '';
+    const context = s.ephemeral && atDepthLimit(s) ? `${NO_SUBAGENTS}.` : SUBAGENT_CONTEXT;
+    const block = config.orchestration?.subagents !== 'builtin' && CONTEXT_LAUNCHERS.has(s.launcherId) ? context : '';
     return [block, rolePreamble(s)].filter(Boolean).join('\n\n');
   }
 
@@ -748,7 +779,8 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
       inputSchema: obj({
         profile: str('agent profile name'), spec: str('the assignment'), model: str('model id or grade name'),
         approvalMode: str('approval mode'), title: str('chat title'),
-        worktree: str('current (default) or new', { enum: ['current', 'new'] }), timeoutMin: { type: 'number', description: 'minutes to wait (default 60)' },
+        worktree: str('current (default) or new', { enum: ['current', 'new'] }), workspace: str('another repository (workspace name): a persistent child there'),
+        timeoutMin: { type: 'number', description: 'minutes to wait (default 60)' },
       }, ['spec']),
       run: (a, c) => workerRun(a, c),
     },
@@ -758,7 +790,8 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
       inputSchema: obj({
         subagent_type: str('agent type / profile name'), prompt: str('the task for the sub-agent'), model: str('model id or grade name'),
         description: str('short description'), approvalMode: str('approval mode'),
-        worktree: str('current (default) or new', { enum: ['current', 'new'] }), timeoutMin: { type: 'number', description: 'minutes to wait (default 60)' },
+        worktree: str('current (default) or new', { enum: ['current', 'new'] }), workspace: str('another repository (workspace name): a persistent child there'),
+        timeoutMin: { type: 'number', description: 'minutes to wait (default 60)' },
       }, ['prompt']),
       run: (a, c) => workerRun({ ...a, profile: a.subagent_type, spec: a.prompt }, c),
     },
@@ -920,8 +953,13 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
     waitRun,
     /** MCP tool list; the built-in-compatible `agent` alias only in orchestration.subagents "harness" mode */
     get tools() {
-      const builtin = config.orchestration?.subagents === 'builtin';
-      return TOOLS.filter((t) => !(builtin && t.name === 'agent')).map(({ name, description, inputSchema }) => ({ name, description, inputSchema }));
+      return this.toolsFor(null);
+    },
+    /** tools/list for a caller session: no `agent` in builtin mode or for a sub-agent at the depth limit */
+    toolsFor(callerId) {
+      const caller = callerId ? sessions.find(callerId) : null;
+      const noAgent = config.orchestration?.subagents === 'builtin' || atDepthLimit(caller);
+      return TOOLS.filter((t) => !(noAgent && t.name === 'agent')).map(({ name, description, inputSchema }) => ({ name, description, inputSchema }));
     },
 
     async call(name, args, callerId) {

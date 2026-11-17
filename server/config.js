@@ -55,7 +55,7 @@ export function loadConfig({ root = CODE_ROOT, overrides = {}, dataDir, configFi
   cfg.sessions = { autoArchiveDays: 7, ...cfg.sessions };
   cfg.terminal = { autoRespawn: true, ...cfg.terminal };
   cfg.recovery = { autoResume: false, message: 'Был перезапуск, твой предыдущий ход прервался. Продолжи с того места, где остановился — сначала проверь текущее состояние рабочего дерева.', ...cfg.recovery };
-  cfg.orchestration = { workerMayCommit: false, reviewMode: 'builtin', subagents: 'harness', ...cfg.orchestration };
+  cfg.orchestration = { workerMayCommit: false, reviewMode: 'builtin', subagents: 'harness', subagentRetention: 'archive', maxSubagentDepth: 1, ...cfg.orchestration };
   cfg.orchestration.review = { grade: 'review', approvalMode: 'plan', maxRounds: 2, agent: null, ...cfg.orchestration.review };
   cfg.board = {
     columns: [

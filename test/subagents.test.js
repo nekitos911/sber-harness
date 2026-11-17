@@ -7,7 +7,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { CODE_ROOT } from '../server/config.js';
 import { parseProfile, SUBAGENT_CONTEXT } from '../server/orchestration.js';
-import { startTestServer, tmpDir, rmrf, waitFor } from './helpers.js';
+import { startTestServer, tmpDir, rmrf, waitFor, makeRepo } from './helpers.js';
 
 const root = tmpDir();
 const agentsDir = path.join(root, 'agents');
@@ -138,4 +138,35 @@ test('shipped command and skill install only on request; a different file is not
   assert.equal(fs.readFileSync(target, 'utf8'), 'my own version');
   assert.equal((await h.api('POST', '/api/agents/mock/commands/install', { name: 'full-task-harness', force: true })).body.status, 'installed');
   assert.equal((await h.api('POST', '/api/agents/mock/commands/install', { name: 'nope' })).status, 404);
+});
+
+test('a same-worktree helper is archived once its result is in; a helper may not start its own helper', async () => {
+  const caller = await chat('#run java-reviewer #run java-reviewer #done внучка');
+  await waitFor(async () => (await messages(caller.id)).some((m) => m.kind === 'assistant' && m.text.includes('worker_run result:')), { timeout: 20000, what: 'result' });
+  const child = (await state()).sessions.find((s) => s.parentId === caller.id && s.ephemeral);
+  assert.ok(!child.persistent);
+  const said = (await messages(child.id)).filter((m) => m.kind === 'assistant').map((m) => m.text).join(' ');
+  assert.match(said, /worker_run failed: Субагенты не запускают своих субагентов/);
+  assert.ok(!(await state()).sessions.some((s) => s.parentId === child.id && !s.virtual), 'no grandchild session');
+  await waitFor(async () => (await state()).sessions.find((s) => s.id === child.id).archived, { what: 'child archived' });
+
+  const toolsOf = async (sid) => (await h.api('GET', '/api/agent/tools', undefined, { 'x-harness-session': sid })).body.map((x) => x.name);
+  assert.ok((await toolsOf(caller.id)).includes('agent'));
+  assert.ok(!(await toolsOf(child.id)).includes('agent'), 'a helper at the depth limit has no agent tool');
+});
+
+test('a child in a new worktree is persistent: never archived, may start its own helper (archived after settling)', async () => {
+  const repo = path.join(root, 'репо');
+  makeRepo(repo);
+  const caller = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', cwd: repo, prompt: '#runwt java-reviewer #run java-reviewer #done помощник' })).body;
+  await waitFor(async () => (await messages(caller.id)).some((m) => m.kind === 'assistant' && m.text.includes('worker_run result:')), { timeout: 30000, what: 'result' });
+  const child = (await state()).sessions.find((s) => s.parentId === caller.id && s.ephemeral);
+  assert.equal(child.persistent, true);
+  assert.notEqual(child.cwd, repo, 'its own worktree');
+  const helper = await waitFor(async () => (await state()).sessions.find((s) => s.parentId === child.id && s.ephemeral), { what: 'helper' });
+  assert.ok(!helper.persistent);
+  await waitFor(async () => (await state()).sessions.find((s) => s.id === helper.id).archived, { what: 'helper archived' });
+  await waitFor(async () => (await state()).sessions.find((s) => s.id === child.id).report, { what: 'child settled' });
+  assert.ok(!(await state()).sessions.find((s) => s.id === child.id).archived, 'the persistent child stays');
+  for (const s of (await state()).sessions) if (s.pid) await h.api('POST', `/api/sessions/${s.id}/stop`);
 });

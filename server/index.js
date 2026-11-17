@@ -312,7 +312,10 @@ export async function startServer(opts = {}) {
       sessions: { autoArchiveDays: config.sessions.autoArchiveDays },
       recovery: { autoResume: !!config.recovery.autoResume, message: config.recovery.message },
       ide: config.ide ?? null,
-      orchestration: { reviewMode: config.orchestration.reviewMode, subagents: config.orchestration.subagents, workerMayCommit: !!config.orchestration.workerMayCommit, review: config.orchestration.review },
+      orchestration: {
+        reviewMode: config.orchestration.reviewMode, subagents: config.orchestration.subagents, workerMayCommit: !!config.orchestration.workerMayCommit, review: config.orchestration.review,
+        subagentRetention: config.orchestration.subagentRetention, maxSubagentDepth: config.orchestration.maxSubagentDepth,
+      },
       integrations: {
         tasks: { enabled: !!t.enabled, space: t.space ?? null, urlTemplate: t.urlTemplate ?? '', statusMap: t.statusMap || {}, closedStatuses: t.closedStatuses || [], onStartTransition: t.onStartTransition ?? null },
         pr: { enabled: !!pr.enabled, limits: pr.limits || null },
@@ -523,6 +526,14 @@ export async function startServer(opts = {}) {
     if ('workerMayCommit' in o) {
       if (typeof o.workerMayCommit !== 'boolean') fail(400, 'orchestration.workerMayCommit: нужно true или false');
       p.workerMayCommit = o.workerMayCommit;
+    }
+    if ('subagentRetention' in o) {
+      if (!['archive', 'keep'].includes(o.subagentRetention)) fail(400, 'orchestration.subagentRetention: "archive" или "keep"');
+      p.subagentRetention = o.subagentRetention;
+    }
+    if ('maxSubagentDepth' in o) {
+      if (!Number.isInteger(o.maxSubagentDepth) || o.maxSubagentDepth < 0 || o.maxSubagentDepth > 5) fail(400, 'orchestration.maxSubagentDepth: целое число 0..5');
+      p.maxSubagentDepth = o.maxSubagentDepth;
     }
     if ('review' in o) {
       const r = o.review;
@@ -1165,7 +1176,7 @@ export async function startServer(opts = {}) {
   });
 
   // agent-facing orchestration API
-  route('GET', '/api/agent/tools', () => orch.tools);
+  route('GET', '/api/agent/tools', ({ req }) => orch.toolsFor(req.headers['x-harness-session'])); // per caller: a depth-limited sub-agent has no `agent`
   route('GET', '/api/agent/worker_wait', ({ query }) => orch.waitRun(check(query, { sessionId: 'string' }).sessionId, query.timeoutMs));
   route('POST', '/api/agent/:tool', ({ params, body, req }) => orch.call(params.tool, body, req.headers['x-harness-session'] || null));
 

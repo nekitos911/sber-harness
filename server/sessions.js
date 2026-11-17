@@ -390,6 +390,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     addMessage(v, { kind: ev.isError ? 'error' : 'assistant', text: ev.output || '(no output)' });
     Object.assign(v, { status: ev.isError ? 'failed' : 'done', preview: (ev.output || '').slice(-200), lastActivityAt: Date.now() });
     emit(v);
+    retireVirtual(v);
   }
 
   /** A headless permission card (in the PARENT for a sub-agent's denial: it is the parent's next turn that retries). */
@@ -616,7 +617,31 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     for (const v of db.sessions.filter((x) => x.virtual && x.parentId === s.id && x.status === 'running')) {
       Object.assign(v, { status: 'failed', lastActivityAt: Date.now() });
       emit(v);
+      retireVirtual(v);
     }
+  }
+
+  /** Questions / permission requests of a session that is archived (and its cards in the parent) never stay open. */
+  function cancelPending(x) {
+    const parent = x.parentId && find(x.parentId);
+    for (const [owner, own] of [[x, true], [parent, false]]) {
+      if (!owner) continue;
+      for (const m of store.messages(owner.id)) {
+        const open = (m.kind === 'permission' && !m.permission?.resolved && (own || m.permission?.fromSubSessionId === x.id))
+          || (own && m.kind === 'question' && !m.question?.answered);
+        if (!open) continue;
+        if (m.kind === 'permission') m.permission = { ...m.permission, resolved: 'cancelled', resolvedAt: Date.now(), answered: true };
+        else m.question = { ...m.question, answered: true, resolved: 'cancelled' };
+        updateMessage(owner, m);
+      }
+      if (own && x.waitingFor) x.waitingFor = null;
+      if (!own && owner.waitingFor === 'permission' && !store.messages(owner.id).some((m) => m.kind === 'permission' && !m.permission?.resolved)) setWaiting(owner, null);
+    }
+  }
+
+  /** A built-in sub-agent's chat is archived once it settles (orchestration.subagentRetention "archive"). */
+  function retireVirtual(v) {
+    if (config.orchestration?.subagentRetention !== 'keep' && !v.archived) api.archive(v.id, true);
   }
 
   /**
@@ -831,6 +856,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     emit(s);
     runTurnEnded(s, r, stopped);
     store.flush(); // a finished turn is never lost to a crash right after it
+    if (s.archiveOnSettle && !s.archived) return api.archive(s.id, true); // a settled helper (subagentRetention)
     if (s.queue.length) startTurn(s);
   }
 
@@ -848,6 +874,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     Object.assign(s, { pid: null, pidStartedAt: null, turnOffset: null, turnClosing: false });
     emit(s);
     store.flush();
+    if (s.archiveOnSettle && !s.archived) return api.archive(s.id, true);
     if (s.queue.length) startTurn(s);
   }
 
@@ -1108,6 +1135,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
         ...(o.ephemeral ? { ephemeral: true, waiter: true, report: null } : {}),
         ...(o.inWorktree === true ? { inWorktree: true } : {}), // a worker started inside its task's linked worktree
         ...(o.atRoot === true ? { atRoot: true } : {}), // a task worker started in the projects folder: it picks the repos
+        ...(o.persistent === true ? { persistent: true } : {}), // a child in its own worktree/repo: kept, own depth
         createdAt: now,
         lastActivityAt: now,
       };
@@ -1260,6 +1288,7 @@ ${note.trim()}` : text });
       for (const x of [s, ...db.sessions.filter((v) => v.virtual && v.parentId === sid)]) {
         if (!!x.archived === archived) continue;
         Object.assign(x, { archived, archivedAt: archived ? Date.now() : null });
+        if (archived) cancelPending(x);
         emit(x);
       }
       return s;

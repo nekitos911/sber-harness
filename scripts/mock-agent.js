@@ -8,6 +8,7 @@
 //   #nooutput       stderr only, exit 0 (silent failure)   #warn  stderr warning on a normal run
 //   #auth           login link on stderr, ~2 s wait, then a normal run
 //   #run <profile> <spec>   worker_run (a sub-agent in its own chat); waits, then says "worker_run result: <summary>"
+//   #runwt <profile> <spec> the same in a new worktree (a persistent child)
 //   #deny <tool>    a tool call the CLI denies in headless mode   #question <q> | <option> | ...   its own question tool
 // "/models" answers with test/fixtures/gigacode.models.txt; --model outside that list fails like GigaCode (stderr, exit 1).
 // MOCK_AGENT_ARGV_FILE: appends { argv (incl. node flags), env (GIGACODE_*, settings path, MCP_SECRET_*) } per run.
@@ -165,12 +166,12 @@ if (has(/#raw\b/)) process.stdout.write('plain line 1\nplain line 2\n');
 if (has(/#slow\b/)) await say('slow '.repeat(20), 250);
 
 const rest = [];
-async function runSubagent(profile, spec) {
+async function runSubagent(profile, spec, extra = {}) {
   // exactly what the harness MCP bridge does for worker_run: start, then long-poll (across harness restarts)
   const id = `run_${++toolSeq}`;
-  emit({ type: 'tool_use', tool_name: 'harness.worker_run', tool_id: id, parameters: { profile, spec } });
+  emit({ type: 'tool_use', tool_name: 'harness.worker_run', tool_id: id, parameters: { profile, spec, ...extra } });
   try {
-    const r = await runAndWait('worker_run', { profile, spec });
+    const r = await runAndWait('worker_run', { profile, spec, ...extra });
     emit({ type: 'tool_result', tool_id: id, status: 'success', output: JSON.stringify(r) });
     return say(` worker_run result: ${r.summary}`);
   } catch (e) {
@@ -182,7 +183,9 @@ async function runSubagent(profile, spec) {
 for (const l of lines) {
   const m = l.match(/#spawn\s+(.+)/);
   const run = l.match(/#run\s+(\S+)\s+(.+)/);
+  const runwt = l.match(/#runwt\s+(\S+)\s+(.+)/); // a sub-agent in a new worktree (persistent)
   if (m) await harness('worker_start', { spec: m[1].trim() });
+  else if (runwt) await runSubagent(runwt[1], runwt[2].trim(), { worktree: 'new' });
   else if (run) await runSubagent(run[1], run[2].trim());
   else rest.push(l);
 }

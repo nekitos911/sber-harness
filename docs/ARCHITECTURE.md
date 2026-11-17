@@ -646,6 +646,19 @@ explicit request (refuses to overwrite a different existing file without `force`
 `commands: { 'full-task-harness': 'installed' | 'missing' | 'different' }`. Preset `/full-task-harness {taskUrl}{notes}`
 is added to `taskPromptPresets`.
 
+### Sub-agent cleanup and depth
+
+- `orchestration.subagentRetention`: `"archive"` (default) | `"keep"`; `orchestration.maxSubagentDepth` (default 1); both in
+  /api/settings. A same-worktree helper (worker_run / harness `agent` in the caller's worktree) is ephemeral: once
+  settled (done/failed/stopped/no_report) and its result delivered, it is archived (`archived`, `archivedAt`; still
+  openable by id) — a running turn when its process ends; built-in (virtual) sub-agent chats likewise. Its open
+  questions/permission cards (and its cards re-emitted in the parent) are resolved «отменено». A helper at the depth limit
+  cannot start helpers: worker_run/agent → 409 «Субагенты не запускают своих субагентов: выполни это сам или верни запрос
+  оркестратору», its context block says the same and its tools/list has no `agent` (tools/list is per caller session).
+- A child in ANOTHER worktree or repository (`worktree: "new"`, a `workspace` argument, or a different worktree root) is
+  `persistent: true`: never auto-archived, its depth resets to 0 (it may start its own same-worktree helpers), it reports
+  via worker_done as usual. Task workers, coordinators and reviewers are not affected.
+
 ## Review loop run by the harness (`orchestration.reviewMode: "harness"`)
 
 Does not depend on what the task command (`/full-task`) says. Config:
