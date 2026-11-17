@@ -189,6 +189,9 @@ others work. Transport per call. GigaCode's own encrypted store (`~/.gigacode/mc
    (→ `denialPattern`).
 10. The built-in structured question tool (asking the human with options): exact name and inputSchema; what headless
     returns for it (→ `questionTools`).
+12. Where `chatRecording` stores sessions (path pattern, e.g. `~/.gigacode/tmp/<hash>/chats/`), the file format (one
+    sample, secrets masked), how `<hash>` is derived from the project path, and `gigacode sessions --help` (list/show
+    subcommands, JSON output?) (→ `agents.gigacode.history`, the "GigaCode history" panel).
 11. `--acp` mode: does it work with the identity env + per-session settings; `initialize` capabilities (loadSession?),
     `session/request_permission` for tool confirmations, MCP servers passed in `session/new`, auth behaviour
     (→ `transport: "acp"` for real interactive permissions).

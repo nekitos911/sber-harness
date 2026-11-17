@@ -937,6 +937,23 @@ starts the process again with `session/load`. Notes: the question card's answer 
 409; `note` is appended to the delivered message. allow_once sets `session.approvalOnce` (consumed by the next turn).
 The mock agent has `#deny <tool>` and `#question <q> | <option> | …`.
 
+## CLI session history (sessions started outside the harness)
+
+GigaCode records chats (`chatRecording: true`) — VERIFY location/format; expected Gemini/Qwen-style
+`~/.gigacode/tmp/<projectHash>/chats/*.json` (`{ sessionId, projectHash, startTime, lastUpdated, messages: [{ id,
+timestamp, type: 'user'|'gemini'|'assistant'|…, content, toolCalls?, thoughts?, model?, tokens? }] }`, projectHash = sha256
+of the project root path), or via `gigacode sessions …` (VERIFY subcommands, e.g. a JSON list).
+- Config `agents.<id>.history: { dirs: ["~/.gigacode/tmp/*/chats"], command: null }` (glob of chat dirs; or a CLI command
+  returning JSON); tolerant reader: any JSON/JSONL file with a session id + messages array; unknown shapes are listed with
+  `raw: true` (title from the file name) instead of failing.
+- `GET /api/history?cwd=` → `[{ id, agent, cwd, title (first user message, 80 chars), startedAt, updatedAt, messages,
+  model, file, linkedSessionId }]` for sessions whose project path (from the record, or projectHash = sha256(path) of the
+  cwd and its worktree root) matches; cached by file mtime; `GET /api/history/:agent/:id/messages` → Messages (same
+  shapes as transcripts; user/assistant/thought/tool, read-only).
+- `POST /api/history/:agent/:id/continue { cwd }` → creates (or returns the existing linked) harness chat session with
+  `externalSessionId = id`, that cwd and agent, transcript pre-filled from the history (marked imported), so the next
+  message runs `--resume <id>`; `linkedSessionId` is set. Feature flag `cli-history`.
+
 ## Session activity states (what the UI shows)
 
 Session gains `lastEventAt: number | null` (last stdout event of the current turn), `waitingFor: 'answer' | 'auth' | null`
