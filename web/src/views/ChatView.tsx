@@ -8,6 +8,7 @@ import { fileEdit } from '../lib/toolcall'
 import { useGit } from '../lib/git'
 import { useElapsed, useStartingLabel } from '../lib/live'
 import { useSdd } from '../lib/sdd'
+import { loadDraft, saveDraft } from '../lib/draft'
 import { VerdictChip } from '../components/panel/VerdictsTab'
 import type { Message, Session } from '../types'
 import { Branch, Loading, Skeleton, StatusIcon, statusText } from '../components/bits'
@@ -36,6 +37,14 @@ export function ChatView({ id, active }: { id: string; active: boolean }) {
   const scroller = useRef<HTMLDivElement>(null)
   const stick = useRef(true)
   const [atBottom, setAtBottom] = useState(true)
+  // Reading position survives a reload: distance from the bottom, saved when the page goes away.
+  const fromBottom = useRef(0)
+  const restored = useRef(false)
+  useEffect(() => {
+    const save = () => saveDraft(`scroll:${id}`, fromBottom.current > 48 ? Math.round(fromBottom.current) : null)
+    window.addEventListener('pagehide', save)
+    return () => window.removeEventListener('pagehide', save)
+  }, [id])
 
   const subagentsOn = useFeature('subagents')
   useEffect(() => { if (subagentsOn) void loadSubagents(id) }, [id, subagentsOn])
@@ -54,15 +63,28 @@ export function ChatView({ id, active }: { id: string; active: boolean }) {
   // Follow new output unless the user scrolled up to read.
   useLayoutEffect(() => {
     const el = scroller.current
-    if (el && active && stick.current) el.scrollTop = el.scrollHeight
-  }, [list.length, lastText, active, running])
+    if (!el || !active) return
+    if (!restored.current && list.length) {
+      restored.current = true
+      const saved = loadDraft<number>(`scroll:${id}`)
+      if (saved) {
+        el.scrollTop = el.scrollHeight - el.clientHeight - saved
+        fromBottom.current = saved
+        stick.current = false
+        setAtBottom(false)
+        return
+      }
+    }
+    if (stick.current) el.scrollTop = el.scrollHeight
+  }, [list.length, lastText, active, running, id])
 
   if (!session) return <Loading label="Загрузка сессии…" />
 
   const onScroll = () => {
     const el = scroller.current
     if (!el) return
-    const bottom = el.scrollHeight - el.scrollTop - el.clientHeight < 48
+    fromBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight
+    const bottom = fromBottom.current < 48
     stick.current = bottom
     if (bottom !== atBottom) setAtBottom(bottom)
   }

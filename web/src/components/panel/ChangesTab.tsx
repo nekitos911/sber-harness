@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { ArrowDown, ArrowUp, ChevronRight, GitPullRequest, RotateCcw, Upload } from 'lucide-react'
 import { api, qs, tryApi } from '../../api'
 import { openDialog, openTab, openTask, toast, useFeature, useStore } from '../../store'
-import { relTime, shortHash } from '../../lib/format'
+import { normPath, relTime, shortHash } from '../../lib/format'
+import { loadDraft, saveDraft } from '../../lib/draft'
 import { diffOf, gsLetter, refreshGit, splitPath, useGit } from '../../lib/git'
 import { useNow } from '../../lib/useNow'
 import type { GitCommit, GitFile, GitSuggest } from '../../types'
@@ -21,9 +22,11 @@ export function ChangesTab({ cwd }: { cwd: string }) {
   const now = useNow()
   const [suggest, setSuggest] = useState<GitSuggest | null>(null)
   const [log, setLog] = useState<GitCommit[] | null>(null)
-  const [title, setTitle] = useState('')
-  const [body, setBody] = useState('')
-  const touched = useRef(false) // once the user edits, prefill never overwrites their text
+  const draftKey = `commit:${normPath(cwd)}`
+  const [saved] = useState(() => loadDraft<{ title: string; body: string }>(draftKey)) // typed before a reload
+  const [title, setTitle] = useState(saved?.title ?? '')
+  const [body, setBody] = useState(saved?.body ?? '')
+  const touched = useRef(!!saved) // once the user edits, prefill never overwrites their text
   const [busy, setBusy] = useState<'commit' | 'push' | null>(null)
   const [open, setOpen] = useState<Set<string>>(() => new Set())
 
@@ -50,10 +53,17 @@ export function ChangesTab({ cwd }: { cwd: string }) {
   }
   if (!status) return <div className="wpanel-section"><Skeleton rows={4} /></div>
 
-  const edit = (fn: (v: string) => void) => (v: string) => { touched.current = true; fn(v) }
+  const edit = (next: { title?: string; body?: string }) => {
+    touched.current = true
+    const d = { title, body, ...next }
+    setTitle(d.title)
+    setBody(d.body)
+    saveDraft(draftKey, d)
+  }
   const reapply = () => {
     if (!suggest) return
     touched.current = false
+    saveDraft(draftKey, null)
     setTitle(suggest.commit.title)
     setBody(suggest.commit.body)
   }
@@ -66,6 +76,7 @@ export function ChangesTab({ cwd }: { cwd: string }) {
     if (!res) return
     toast(`Закоммичено ${shortHash(res.hash)}`, 'ok')
     touched.current = false
+    saveDraft(draftKey, null)
     refreshGit(cwd)
   }
 
@@ -142,8 +153,8 @@ export function ChangesTab({ cwd }: { cwd: string }) {
           )}
         </h3>
         <div className="commit-box">
-          <input className="input" aria-label="Заголовок коммита" placeholder="Заголовок коммита" value={title} onChange={(e) => edit(setTitle)(e.target.value)} />
-          <textarea className="textarea" aria-label="Описание коммита" placeholder="Описание (необязательно)" rows={4} value={body} onChange={(e) => edit(setBody)(e.target.value)} />
+          <input className="input" aria-label="Заголовок коммита" placeholder="Заголовок коммита" value={title} onChange={(e) => edit({ title: e.target.value })} />
+          <textarea className="textarea" aria-label="Описание коммита" placeholder="Описание (необязательно)" rows={4} value={body} onChange={(e) => edit({ body: e.target.value })} />
           <div className="actions">
             <button type="button" className="btn btn-primary" disabled={!title.trim() || !files.length || !!busy} onClick={commit}>
               {busy === 'commit' ? 'Коммит…' : `Закоммитить ${files.length ? files.length : ''}`.trim()}

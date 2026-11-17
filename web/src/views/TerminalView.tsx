@@ -41,9 +41,35 @@ export default function TerminalView({ id, active }: { id: string; active: boole
     term.current = t
     fit.current = f
 
+    // A replay after a reconnect or respawn repeats the server's whole log: when it continues what is on screen,
+    // write only the new tail (no flicker, scroll position kept); otherwise (log trimmed, other history) redraw.
+    let shown: string | null = '' // what the screen holds since the last replay; null = too long to compare
+    let printed = false
+    // A respawned process (ConPTY) starts with "erase display", which in xterm.js wipes the old output for good:
+    // scroll the screen into the scrollback first, so the previous run stays one scroll away.
+    const write = (d: string): void => {
+      const i = d.indexOf('\x1b[2J')
+      if (i < 0) { if (d) { printed = true; t.write(d) } return }
+      const keep = printed || i > 0 // the first erase of a fresh screen has nothing to keep
+      t.write(keep ? `${d.slice(0, i)}\x1b[${t.rows};1H${'\n'.repeat(t.rows)}\x1b[2J` : d.slice(0, i + 4))
+      printed = true
+      write(d.slice(i + 4))
+    }
     const detach = attachTerm(id, (data, replay) => {
-      if (replay) t.reset()
-      t.write(data)
+      if (replay && shown && data.startsWith(shown)) {
+        const tail = data.slice(shown.length)
+        shown = data
+        if (tail) write(tail)
+        return
+      }
+      if (replay) {
+        t.reset()
+        printed = false
+        shown = data
+      } else if (shown !== null) {
+        shown = shown.length > 4 * 1024 * 1024 ? null : shown + data // past the server's 2 MB ring a match is impossible anyway
+      }
+      write(data)
     })
     const input = t.onData((data) => send({ t: 'term.in', id, data }))
 

@@ -5,6 +5,7 @@ import { openDialog, openSession, setState, toast, upsert, useFeature, useStore,
 import { COLUMNS, fullTime, PRIORITY, relTime } from '../../lib/format'
 import { isImported, pendingDeps, taskKey } from '../../lib/tasks'
 import { useNow } from '../../lib/useNow'
+import { loadDraft, saveDraft } from '../../lib/draft'
 import type { Session, Task, TaskPort, TaskStatus } from '../../types'
 import { Branch, Skeleton, StatusIcon, statusText } from '../bits'
 import { Markdown } from '../Markdown'
@@ -21,11 +22,24 @@ async function patchTask(id: string, fields: Partial<Task> & { comment?: string 
   return t
 }
 
-/** Local edit buffer that follows the server value until the user starts typing. */
-function useDraft(value: string) {
-  const [draft, setDraft] = useState(value)
-  useEffect(() => setDraft(value), [value])
-  return [draft, setDraft] as const
+/**
+ * Local edit buffer that follows the server value until the user starts typing. Typed text is also kept in
+ * localStorage under `key` until it is saved (the server value changes) or typed back, so a reload loses nothing.
+ */
+function useDraft(value: string, key: string) {
+  const [draft, setDraftState] = useState(() => loadDraft<string>(key) ?? value)
+  const prev = useRef(value)
+  useEffect(() => {
+    if (prev.current === value) return
+    prev.current = value
+    setDraftState(value)
+    saveDraft(key, null)
+  }, [value, key])
+  const set = (v: string) => {
+    setDraftState(v)
+    saveDraft(key, v === value ? null : v)
+  }
+  return [draft, set] as const
 }
 
 export function TaskDrawer({ task, ctx, onClose }: { task: Task; ctx: BoardCtx; onClose: () => void }) {
@@ -162,7 +176,7 @@ function Prop({ label, children }: { label: string; children: ReactNode }) {
 }
 
 function TitleField({ id, task }: { id: string; task: Task }) {
-  const [v, setV] = useDraft(task.title)
+  const [v, setV] = useDraft(task.title, `task:${task.id}:title`)
   const save = () => { if (v.trim() && v !== task.title) void patchTask(task.id, { title: v.trim() }) }
   return (
     <textarea
@@ -180,7 +194,7 @@ function TitleField({ id, task }: { id: string; task: Task }) {
 }
 
 function BranchField({ task }: { task: Task }) {
-  const [v, setV] = useDraft(task.branch ?? '')
+  const [v, setV] = useDraft(task.branch ?? '', `task:${task.id}:branch`)
   return (
     <input
       className="input mono"
@@ -197,13 +211,14 @@ function BranchField({ task }: { task: Task }) {
 
 /** Local task description: rendered; a click turns it into the editor, leaving it saves. */
 function DescriptionField({ task }: { task: Task }) {
-  const [v, setV] = useDraft(task.description)
-  const [edit, setEdit] = useState(false)
+  const [v, setV] = useDraft(task.description, `task:${task.id}:description`)
+  const [edit, setEdit] = useState(v !== task.description) // an unsaved draft reopens in the editor (unfocused: no blur-save)
+  const [focus, setFocus] = useState(false)
   return edit ? (
     <textarea
       className="textarea"
       rows={8}
-      autoFocus
+      autoFocus={focus}
       aria-label="Описание задачи (markdown)"
       placeholder="Что сделать, критерии готовности, ссылки. Поддерживается markdown."
       value={v}
@@ -211,7 +226,7 @@ function DescriptionField({ task }: { task: Task }) {
       onBlur={() => { setEdit(false); if (v !== task.description) void patchTask(task.id, { description: v }) }}
     />
   ) : (
-    <button type="button" className="md-preview drawer-desc drawer-desc-edit" onClick={() => setEdit(true)} data-tip="Нажмите, чтобы изменить">
+    <button type="button" className="md-preview drawer-desc drawer-desc-edit" onClick={() => { setEdit(true); setFocus(true) }} data-tip="Нажмите, чтобы изменить">
       {v.trim() ? <Markdown text={v} /> : <span className="muted">Добавить описание…</span>}
     </button>
   )

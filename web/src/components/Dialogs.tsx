@@ -3,7 +3,8 @@ import { api, errorText, qs, tryApi } from '../api'
 import { closeDialog, openWorktree, setState, toast, upsert, useStore, type DialogRequest } from '../store'
 import { adoptSession } from '../lib/actions'
 import { loadWorktrees } from '../ws'
-import { basename, isAbsolutePath } from '../lib/format'
+import { basename, isAbsolutePath, normPath } from '../lib/format'
+import { loadDraft, saveDraft } from '../lib/draft'
 import type { GitSuggest, Session, Task, Workspace, Worktree } from '../types'
 import { Modal } from './ui/Dialog'
 import { CleanupDialog, DeleteWorktreeDialog, WorktreeInfoDialog } from './WorktreeMenu'
@@ -408,10 +409,20 @@ function ByteCount({ value, limit }: { value: string; limit: number }) {
 
 function PrDialog({ cwd, base: initBase }: { cwd: string; base?: string }) {
   const tasks = useStore((s) => s.tasks)
+  const draftKey = `pr:${normPath(cwd)}|${initBase ?? ''}`
+  const [saved] = useState(() => loadDraft<{ title: string; body: string; base: string }>(draftKey)) // typed before closing or a reload
   const [suggest, setSuggest] = useState<GitSuggest | null>(null)
-  const [title, setTitle] = useState('')
-  const [body, setBody] = useState('')
-  const [base, setBase] = useState(initBase ?? '')
+  const [title, setTitle] = useState(saved?.title ?? '')
+  const [body, setBody] = useState(saved?.body ?? '')
+  const [base, setBase] = useState(saved?.base || initBase || '')
+  // Only typed text is a draft; the prefill is fetched again next time.
+  const edit = (next: { title?: string; body?: string; base?: string }) => {
+    const d = { title, body, base, ...next }
+    setTitle(d.title)
+    setBody(d.body)
+    setBase(d.base)
+    saveDraft(draftKey, d)
+  }
   const [preview, setPreview] = useState(false)
   const [busy, run] = useBusy()
 
@@ -440,6 +451,7 @@ function PrDialog({ cwd, base: initBase }: { cwd: string; base?: string }) {
         const res = await tryApi<{ url: string; existing?: boolean }>('POST', '/git/pr', { cwd, title: title.trim(), body, base: base.trim() })
         if (!res) return
         toast(res.existing ? 'PR уже открыт' : 'Pull request создан', res.existing ? 'info' : 'ok', res.url)
+        saveDraft(draftKey, null)
         loadPr(cwd, true)
         closeDialog()
       })}
@@ -449,7 +461,7 @@ function PrDialog({ cwd, base: initBase }: { cwd: string; base?: string }) {
       </p>
       <label className="field">
         <span className="row" style={{ justifyContent: 'space-between' }}>Заголовок <ByteCount value={title.trim()} limit={PR_TITLE_BYTES} /></span>
-        <input className="input" aria-invalid={bytes(title.trim()) > PR_TITLE_BYTES} value={title} onChange={(e) => setTitle(e.target.value)} placeholder={suggest ? '' : 'Загрузка…'} />
+        <input className="input" aria-invalid={bytes(title.trim()) > PR_TITLE_BYTES} value={title} onChange={(e) => edit({ title: e.target.value })} placeholder={suggest ? '' : 'Загрузка…'} />
       </label>
       <div className="field">
         <span className="row" style={{ justifyContent: 'space-between' }}>
@@ -458,12 +470,12 @@ function PrDialog({ cwd, base: initBase }: { cwd: string; base?: string }) {
         </span>
         {preview
           ? <div className="md-preview">{body.trim() ? <Markdown text={body} /> : <p className="muted">Пусто</p>}</div>
-          : <textarea className="textarea" rows={10} aria-labelledby="pr-body-label" aria-invalid={bytes(body) > PR_BODY_BYTES} value={body} onChange={(e) => setBody(e.target.value)} />}
+          : <textarea className="textarea" rows={10} aria-labelledby="pr-body-label" aria-invalid={bytes(body) > PR_BODY_BYTES} value={body} onChange={(e) => edit({ body: e.target.value })} />}
       </div>
       <Disclosure className="dialog-more" summary={<span>Ещё: в ветку <span className="mono">{base || '…'}</span></span>}>
         <label className="field">
           <span>В ветку</span>
-          <SuggestInput mono label="Целевая ветка PR" value={base} onChange={setBase} suggestions={[...new Set([suggest?.pr.base, ...targets].filter((t): t is string => !!t))]} />
+          <SuggestInput mono label="Целевая ветка PR" value={base} onChange={(v) => edit({ base: v })} suggestions={[...new Set([suggest?.pr.base, ...targets].filter((t): t is string => !!t))]} />
         </label>
       </Disclosure>
     </Modal>

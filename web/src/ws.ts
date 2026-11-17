@@ -1,6 +1,7 @@
 import { api, ApiError, errorText, wsUrl } from './api'
 import { closeSessionTab, getState, hasFeature, setState, tabKey, toast, upsert, without, wtKey, type WtTabs } from './store'
 import { desktopNotify } from './lib/notify'
+import { saveDraft } from './lib/draft'
 import type { AppState, ClientEvent, Message, ServerEvent, SubAgent, Worktree } from './types'
 
 type TermListener = (data: string, replay: boolean) => void
@@ -11,6 +12,8 @@ const arr = <T,>(v: T[] | null | undefined): T[] => (Array.isArray(v) ? v : [])
 let socket: WebSocket | null = null
 let retry = 0
 let retryTimer = 0
+let wasOpen = false // a socket has been open before: the next open is a reconnect
+let failed = 0 // connection attempts that never opened since the last open (the server was down, not a dropped socket)
 const terms = new Map<string, TermListener>()
 
 export function connect() {
@@ -19,10 +22,15 @@ export function connect() {
   setState({ conn: 'connecting' })
   const ws = new WebSocket(wsUrl())
   socket = ws
+  let opened = false
   ws.onopen = () => {
+    opened = true
+    const restarted = wasOpen && failed > 0
+    wasOpen = true
     retry = 0
+    failed = 0
     setState({ conn: 'open' })
-    void refreshState()
+    void refreshState().then((ok) => { if (ok && restarted) toast('Сервер перезапущен — всё восстановлено', 'ok') })
     for (const id of terms.keys()) send({ t: 'term.attach', id })
   }
   ws.onmessage = (e) => {
@@ -33,6 +41,7 @@ export function connect() {
   ws.onclose = () => {
     if (socket !== ws) return
     socket = null
+    if (!opened) failed++
     setState({ conn: 'closed' })
     if (getState().authExpired) return
     // A restarted server rejects our old token: the probe flips authExpired and reconnecting stops making sense.
@@ -62,7 +71,8 @@ export function attachTerm(id: string, listener: TermListener) {
   }
 }
 
-async function refreshState() {
+/** Reload everything the UI holds (state, open transcripts, running sub-agents); false when it failed. */
+async function refreshState(): Promise<boolean> {
   try {
     const st = await api<AppState>('GET', '/state')
     setState((s) => {
@@ -88,8 +98,10 @@ async function refreshState() {
       loadMessages(id).catch(() => undefined)
     }
     for (const s of arr(st.sessions)) if (s.kind === 'chat' && s.status === 'running') void loadSubagents(s.id)
+    return true
   } catch (e) {
     toast(`Не удалось загрузить состояние: ${errorText(e)}`, 'error')
+    return false
   }
 }
 
@@ -136,6 +148,7 @@ function apply(ev: ServerEvent) {
       setState((s) => ({ tasks: upsert(s.tasks, ev.task) }))
       break
     case 'task.del':
+      for (const f of ['title', 'branch', 'description']) saveDraft(`task:${ev.id}:${f}`, null)
       setState((s) => ({ tasks: without(s.tasks, ev.id), focusTaskId: s.focusTaskId === ev.id ? null : s.focusTaskId }))
       break
     case 'session':
@@ -143,6 +156,7 @@ function apply(ev: ServerEvent) {
       break
     case 'session.del':
       closeSessionTab(ev.id)
+      saveDraft(`scroll:${ev.id}`, null)
       setState((s) => {
         const messages = { ...s.messages }
         const subagents = { ...s.subagents }
