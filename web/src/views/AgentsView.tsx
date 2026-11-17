@@ -1,0 +1,161 @@
+import { useMemo, useState } from 'react'
+import { Bot, ListPlus, MessageSquarePlus, Send, Square, Trash2 } from 'lucide-react'
+import { tryApi } from '../api'
+import { openDialog, openSession, openTask, setState, useStore, without } from '../store'
+import { basename, relTime, ROLE } from '../lib/format'
+import { useNow } from '../lib/useNow'
+import type { Session, SessionStatus } from '../types'
+import { Branch, StatusIcon, statusText } from '../components/bits'
+
+const GROUPS: { id: string; label: string; match: SessionStatus[] }[] = [
+  { id: 'run', label: 'Работают', match: ['running'] },
+  { id: 'idle', label: 'Ждут ввода', match: ['idle'] },
+  { id: 'done', label: 'Готово', match: ['done'] },
+  { id: 'fail', label: 'Ошибки', match: ['failed', 'error', 'exited'] },
+]
+
+/** Coordinator first, then its workers from the same group right under it. */
+function ordered(list: Session[]) {
+  const ids = new Set(list.map((s) => s.id))
+  const out: { s: Session; nested: boolean }[] = []
+  const visit = (s: Session, nested: boolean) => {
+    out.push({ s, nested })
+    for (const k of list) if (k.parentId === s.id) visit(k, true)
+  }
+  for (const s of list) if (!s.parentId || !ids.has(s.parentId)) visit(s, false)
+  return out
+}
+
+export function AgentsView() {
+  const sessions = useStore((s) => s.sessions)
+  const chats = useMemo(() => sessions.filter((s) => s.kind === 'chat').sort((a, b) => b.lastActivityAt - a.lastActivityAt), [sessions])
+  const byId = useMemo(() => new Map(sessions.map((s) => [s.id, s])), [sessions])
+
+  return (
+    <div className="agents-view">
+      <header className="view-head">
+        <h1>Агенты</h1>
+        <span className="count">{chats.length}</span>
+        <span className="grow" />
+        <button type="button" className="btn" onClick={() => openDialog({ kind: 'chat' })}>
+          <MessageSquarePlus />
+          Новый чат
+        </button>
+      </header>
+      {chats.length === 0 ? (
+        <div className="empty">
+          <Bot className="empty-icon" aria-hidden />
+          <h2>Агентов пока нет</h2>
+          <p>Они появляются, когда вы начинаете чат, берёте задачу в работу или координатор запускает исполнителей.</p>
+          <button type="button" className="btn btn-primary" onClick={() => openDialog({ kind: 'chat' })}>Новый чат</button>
+        </div>
+      ) : (
+        <div className="lanes">
+          {GROUPS.map((g) => {
+            const list = chats.filter((s) => g.match.includes(s.status))
+            return (
+              <section key={g.id} className="lane" aria-labelledby={`lane-${g.id}`}>
+                <header className="col-head">
+                  <span className="lane-mark" data-g={g.id} aria-hidden />
+                  <h2 id={`lane-${g.id}`}>{g.label}</h2>
+                  <span className="col-count num">{list.length}</span>
+                </header>
+                <div className="col-body">
+                  {ordered(list).map(({ s, nested }) => (
+                    <AgentCard key={s.id} s={s} nested={nested} parent={s.parentId ? byId.get(s.parentId) : undefined} />
+                  ))}
+                  {list.length === 0 && <div className="col-empty">Пусто</div>}
+                </div>
+              </section>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function AgentCard({ s, nested, parent }: { s: Session; nested: boolean; parent?: Session }) {
+  const agents = useStore((st) => st.agents)
+  const tasks = useStore((st) => st.tasks)
+  const now = useNow()
+  const [mode, setMode] = useState<'message' | 'assign' | 'delete' | null>(null)
+  const [text, setText] = useState('')
+  const task = s.taskId ? tasks.find((t) => t.id === s.taskId) : undefined
+  const free = tasks.filter((t) => t.status === 'todo' || t.status === 'backlog')
+
+  const send = async () => {
+    if (!text.trim()) return
+    const res = await tryApi<{ queued: boolean }>('POST', `/sessions/${s.id}/messages`, { text: text.trim() })
+    if (!res) return
+    setText('')
+    setMode(null)
+  }
+  const assign = async (taskId: string) => {
+    const res = await tryApi<Session>('POST', `/tasks/${encodeURIComponent(taskId)}/assign`, { sessionId: s.id })
+    if (res) setMode(null)
+  }
+  const stop = () => void tryApi('POST', `/sessions/${s.id}/stop`)
+  const remove = async () => {
+    if ((await tryApi<unknown>('DELETE', `/sessions/${s.id}`)) === undefined) return
+    setState((st) => ({ sessions: without(st.sessions, s.id) }))
+  }
+
+  return (
+    <article className="agent-card" data-nested={nested} data-s={s.status}>
+      <div className="agent-top">
+        <StatusIcon session={s} />
+        <button type="button" className="agent-title ellipsis" onClick={() => openSession(s.id)} title="Открыть чат">{s.title || s.id}</button>
+        <span className="role" data-role={s.role}>{ROLE[s.role]}</span>
+      </div>
+      <div className="agent-meta">
+        <span className="mono">{agents.find((a) => a.id === s.agent)?.label ?? s.agent}</span>
+        <span className="muted">{statusText(s)}</span>
+        {s.queued > 0 && <span className="chip chip-run">в очереди: {s.queued}</span>}
+      </div>
+      {task && (
+        <button type="button" className="agent-task" onClick={() => openTask(task.id)} title="Открыть задачу">
+          <span className="mono">{task.externalId ?? task.id}</span>
+          <span className="ellipsis">{task.title}</span>
+        </button>
+      )}
+      {!nested && parent && (
+        <button type="button" className="agent-parent" onClick={() => openSession(parent.id)}>↳ от {parent.title}</button>
+      )}
+      <div className="agent-where" title={s.cwd}>
+        <span className="ellipsis">{basename(s.cwd)}</span>
+        <Branch name={s.branch} />
+      </div>
+      {s.preview && <p className="agent-preview">{s.preview}</p>}
+      <div className="agent-foot">
+        <span className="muted num">{relTime(s.lastActivityAt, now)}</span>
+        <span className="grow" />
+        <button type="button" className="icon-btn icon-btn-sm" aria-label="Написать агенту" title="Написать" aria-pressed={mode === 'message'} onClick={() => setMode(mode === 'message' ? null : 'message')}><Send /></button>
+        <button type="button" className="icon-btn icon-btn-sm" aria-label="Дать задачу" title="Дать задачу" aria-pressed={mode === 'assign'} onClick={() => setMode(mode === 'assign' ? null : 'assign')}><ListPlus /></button>
+        {s.status === 'running' && <button type="button" className="icon-btn icon-btn-sm" aria-label="Остановить" title="Остановить" onClick={stop}><Square /></button>}
+        <button type="button" className="icon-btn icon-btn-sm" aria-label="Удалить сессию" title="Удалить" onClick={() => setMode('delete')}><Trash2 /></button>
+      </div>
+      {mode === 'message' && (
+        <form className="agent-inline" onSubmit={(e) => { e.preventDefault(); void send() }}>
+          <input className="input" autoFocus placeholder={s.status === 'running' ? 'Встанет в очередь' : 'Сообщение агенту'} aria-label="Сообщение агенту" value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => e.key === 'Escape' && setMode(null)} />
+          <button type="submit" className="btn btn-sm" disabled={!text.trim()}>Отправить</button>
+        </form>
+      )}
+      {mode === 'assign' && (
+        <div className="agent-inline">
+          <select className="select" autoFocus aria-label="Задача для агента" defaultValue="" onChange={(e) => e.target.value && void assign(e.target.value)}>
+            <option value="" disabled>{free.length ? 'Выберите задачу…' : 'Нет задач в «Бэклог» и «К работе»'}</option>
+            {free.map((t) => <option key={t.id} value={t.id}>{t.externalId ?? t.id} — {t.title}</option>)}
+          </select>
+        </div>
+      )}
+      {mode === 'delete' && (
+        <div className="agent-inline">
+          <span className="grow">Остановить и удалить вместе с историей?</span>
+          <button type="button" className="btn btn-sm btn-danger" onClick={() => void remove()}>Удалить</button>
+          <button type="button" className="btn btn-sm" onClick={() => setMode(null)}>Отмена</button>
+        </div>
+      )}
+    </article>
+  )
+}
