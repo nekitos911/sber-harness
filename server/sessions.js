@@ -94,6 +94,18 @@ export function interruptReason({ startedAt, bootTime, crashed }) {
 /** POSIX terminals: a UTF-8 locale when the harness itself runs without one (Cyrillic output). */
 const utf8Locale = () => (process.platform !== 'win32' && !process.env.LANG && !process.env.LC_ALL ? { LANG: 'C.UTF-8', LC_ALL: 'C.UTF-8' } : {});
 
+/**
+ * node-pty's Windows kill() asks a forked helper for the console's processes and, when that fails because the shell is
+ * already gone, process.kill()s the shell's pid ~5 s later - a pid Windows may have given to another process by then
+ * (it killed agents and git runs of other sessions). Closing the pseudoconsole ends the attached processes anyway.
+ */
+function killPty(p) {
+  if (!p) return;
+  // shortcut: patches a private node-pty field (WindowsPtyAgent._getConsoleProcessList); re-check on a node-pty upgrade
+  if (process.platform === 'win32' && p._agent) p._agent._getConsoleProcessList = () => Promise.resolve([]);
+  try { p.kill(); } catch {}
+}
+
 const brief = (input) => {
   if (input == null) return '';
   const text = String(typeof input === 'string' ? input : input.command ?? input.file_path ?? input.path ?? JSON.stringify(input));
@@ -1038,7 +1050,7 @@ ${note.trim()}` : text });
       if (s.virtual) fail(409, 'внутренний субагент останавливается вместе с родительским чатом');
       const r = runtime(sid);
       if (s.kind === 'terminal') {
-        r.pty?.kill();
+        killPty(r.pty);
         return s;
       }
       s.queue = [];
@@ -1058,7 +1070,7 @@ ${note.trim()}` : text });
         const pty = await loadPty();
         const old = r.pty;
         r.pty = null; // detach the old onExit handler before killing
-        old?.kill();
+        killPty(old);
         spawnPty(s, pty);
       } else if (!r.running) {
         s.status = 'idle';
@@ -1075,7 +1087,7 @@ ${note.trim()}` : text });
       r.handle?.stop();
       const p = r.pty;
       r.pty = null;
-      p?.kill();
+      killPty(p);
       acp.drop(sid);
       db.sessions = db.sessions.filter((x) => x.id !== sid);
       rt.delete(sid);
@@ -1184,7 +1196,7 @@ ${note.trim()}` : text });
         r.handle?.detach();
         const p = r.pty;
         r.pty = null;
-        try { p?.kill(); } catch {}
+        killPty(p);
       }
     },
   };

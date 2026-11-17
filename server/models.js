@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { CODE_ROOT, expandHome } from './config.js';
 import { launchers } from './launchers.js';
-import { runTurn, killTree } from './runner.js';
+import { runTurn } from './runner.js';
 import { secretEnv } from './mcp-client.js';
 
 const fail = (status, message) => { throw Object.assign(new Error(message), { status }); };
@@ -188,7 +188,7 @@ export function createModelCatalog({ config, store, getUrl }) {
     /** Stops discovery runs (they are ours, not user turns) and waits for them, so the data dir is released. */
     async close() {
       const runs = [...inflight.values()];
-      for (const { handle } of runs) if (handle?.pid) killTree(handle.pid);
+      for (const { handle } of runs) handle?.stop(); // the runner never signals an exited child (reused pid)
       if (!runs.length) return;
       let timer;
       await Promise.race([Promise.all(runs.map((r) => r.promise.catch(() => {}))), new Promise((r) => { timer = setTimeout(r, 5000); })]);

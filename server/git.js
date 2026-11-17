@@ -64,7 +64,7 @@ function gitNetwork(cwd, args, ok, timeoutSec) {
     };
     const timer = setTimeout(() => {
       timedOut = true;
-      killTree(child.pid);
+      if (child.exitCode === null && child.signalCode === null) killTree(child.pid); // never a reused pid
       hard = setTimeout(() => finish(null), 5000);
     }, timeoutSec * 1000);
     child.on('error', (e) => finish(null, e));

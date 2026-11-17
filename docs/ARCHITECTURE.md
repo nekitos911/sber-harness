@@ -1069,6 +1069,14 @@ A server adds a flag in the same commit that adds the route; a test asserts ever
   is used only when the direct spawn is not possible. VERIFY the real Linux install layout on a Linux machine.
 - Process control: Windows `taskkill /PID <pid> /T /F`; POSIX `process.kill(-pid, SIGTERM)` then `SIGKILL` after 3 s
   (agent turns are spawned `detached` = own process group). Open folder: `explorer.exe` / `open` / `xdg-open`.
+- Never signal a pid that may have been reused (Windows hands pids out again within milliseconds; a stray
+  `taskkill /T` or `process.kill` killed agents and git runs of other sessions): a turn kill records `res.killReason`
+  ('stop' | 'first_event_timeout' | 'auth_timeout') BEFORE signalling and skips a child that already exited, so the
+  turn reports that reason, not the exit code; the first-event timer re-reads the output files before deciding;
+  children that exit on stdin EOF (MCP stdio servers, ACP agents) are only tree-killed if still running 2 s later
+  (`endChild`); node-pty's Windows `kill()` delayed `process.kill(shellPid)` fallback is disabled (`killPty`,
+  patches the private `_getConsoleProcessList`; re-check on a node-pty upgrade) — closing the pseudoconsole ends the
+  attached processes.
 - Paths always via `path`; `~` expanded; worktree/stale cleanup identical; tests run on Windows and Linux (Node ≥ 22).
 - UI: shortcuts use Ctrl on Windows/Linux and ⌘ on macOS (labels adapt); font stacks include Linux fallbacks
   (`"Inter","Ubuntu","Cantarell","Noto Sans"` / `"JetBrains Mono","DejaVu Sans Mono","Noto Sans Mono"`).

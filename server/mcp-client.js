@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { deepMerge, expandHome } from './config.js';
-import { resolveCommand, killTree } from './runner.js';
+import { resolveCommand, endChild } from './runner.js';
 
 const PROTOCOL = '2025-06-18';
 const CLIENT_INFO = { name: 'sber-harness', version: '0.1.0' };
@@ -178,9 +178,7 @@ function stdioTransport(name, cfg, root) {
     notify: (method, params) => send({ jsonrpc: '2.0', method, ...(params ? { params } : {}) }),
     close() {
       dead = true;
-      child.stdin.end();
-      // only a live child: Windows reuses pids fast, a late taskkill /T could hit the next server we just spawned
-      if (child.exitCode === null && child.signalCode === null) killTree(child.pid);
+      endChild(child); // a late taskkill /T on a reused pid killed the next server we had just spawned
     },
   };
 }

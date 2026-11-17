@@ -67,6 +67,18 @@ export function resolveCommand(command, env = process.env) {
   throw new Error(`«${found}» нельзя запустить без оболочки. Укажите "command" в harness.config.json массивом argv, например ["node", "C:/path/to/cli.js"].`);
 }
 
+/**
+ * Ends a child that should exit by itself on stdin EOF (MCP stdio servers, ACP agents): the tree is killed only if it is
+ * still running after `graceMs`. An immediate taskkill would usually land after the child's own exit, on a pid Windows
+ * may already have given to another process.
+ */
+export function endChild(child, graceMs = 2000) {
+  try { child.stdin?.end(); } catch {}
+  const gone = () => child.exitCode !== null || child.signalCode !== null;
+  if (gone()) return;
+  setTimeout(() => { if (!gone()) killTree(child.pid); }, graceMs).unref();
+}
+
 export function killTree(pid) {
   if (!pid) return;
   if (isWin) {
@@ -276,7 +288,7 @@ function tailFile(file, offset, maxLine, onLine, onOffset) {
  */
 export function runTurn({ launcher, ctx, command, cwd, env, firstEventTimeoutMs, authTimeoutMs = 600000, logFile, outFile, errFile, onEvent, onOffset, maxLine = MAX_LINE, reattach = null }) {
   const log = fs.createWriteStream(logFile, { flags: 'a' });
-  const res = { code: null, signal: null, sawResult: false, timedOut: false, stopped: false, detached: false, error: null, stderrTail: '', eventCount: 0, priorOutput: (reattach?.offset ?? 0) > 0 };
+  const res = { code: null, signal: null, sawResult: false, timedOut: false, stopped: false, killReason: null, detached: false, error: null, stderrTail: '', eventCount: 0, priorOutput: (reattach?.offset ?? 0) > 0 };
   let child = null;
   let pid = reattach?.pid ?? null;
   let startedAt = reattach?.startedAt ?? null;
@@ -309,9 +321,25 @@ export function runTurn({ launcher, ctx, command, cwd, env, firstEventTimeoutMs,
   const state = {};
   let settled = false;
   let finish = () => {};
-  const timer = reattach ? null : setTimeout(() => {
-    res.timedOut = true;
+  /**
+   * Every harness-initiated kill goes through here: the reason is recorded BEFORE the signal, so the exit path reports
+   * it (not the exit code the kill produces), and a child that already exited is never signalled (its pid may belong to
+   * another process by now: taskkill /T on a reused Windows pid killed unrelated agents).
+   */
+  const kill = (reason) => {
+    res.killReason ??= reason;
+    if (reason === 'stop') res.stopped = true;
+    else res.timedOut = true;
+    if (reason === 'auth_timeout') res.authTimedOut = true;
+    if (child && (child.exitCode !== null || child.signalCode !== null)) return;
     killTree(pid);
+  };
+  const timer = reattach ? null : setTimeout(() => {
+    // under load the polled files may lag: a login prompt or the first event may already be there
+    tail.read();
+    errTail.read();
+    if (res.auth || sawJson || settled) return;
+    kill('first_event_timeout');
   }, firstEventTimeoutMs);
   let sawJson = res.priorOutput;
   let authTimer = null;
@@ -328,11 +356,7 @@ export function runTurn({ launcher, ctx, command, cwd, env, firstEventTimeoutMs,
     res.auth = true;
     clearTimeout(timer);
     if (!reattach) {
-      authTimer = setTimeout(() => {
-        res.timedOut = true;
-        res.authTimedOut = true;
-        killTree(pid);
-      }, authTimeoutMs);
+      authTimer = setTimeout(() => kill('auth_timeout'), authTimeoutMs);
     }
     log.write(`[harness] login requested: ${url || pendingUrl}\n`);
     try {
@@ -419,8 +443,8 @@ export function runTurn({ launcher, ctx, command, cwd, env, firstEventTimeoutMs,
     pid,
     startedAt,
     stop() {
+      if (!reattach) return kill('stop');
       res.stopped = true;
-      if (!reattach) return killTree(pid);
       // not our child: kill only if the pid still is that process; otherwise just stop following
       sameProcess(pid, startedAt).then((ours) => (ours ? killTree(pid) : finish()));
     },

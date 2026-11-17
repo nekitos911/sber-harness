@@ -42,7 +42,7 @@ async function interruptedPair(dataDir, { leaveServerJson = false, count = 2 } =
   const db = JSON.parse(fs.readFileSync(path.join(dataDir, 'db.json'), 'utf8'));
   for (const id of ids) {
     const { pid } = db.sessions.find((s) => s.id === id);
-    killTree(pid);
+    if (isAlive(pid)) killTree(pid);
     await waitFor(() => !isAlive(pid), { what: 'agent killed' });
   }
   if (leaveServerJson) fs.writeFileSync(path.join(dataDir, 'server.json'), JSON.stringify({ url: 'http://127.0.0.1:1', pid: 999999 }));

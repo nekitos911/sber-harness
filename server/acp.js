@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { killTree, readTail } from './runner.js';
+import { endChild, readTail } from './runner.js';
 import { resolveInside } from './fs.js';
 
 const PROTOCOL_VERSION = 1;
@@ -112,8 +112,7 @@ export function createAcp() {
     c.dead = true;
     for (const resolve of c.held.values()) resolve({ outcome: { outcome: 'cancelled' } });
     c.held.clear();
-    try { c.child.stdin.end(); } catch {}
-    if (c.child.exitCode === null && c.child.signalCode === null) killTree(c.child.pid); // never a reused pid
+    endChild(c.child);
   }
 
   /** Starts (or reuses) the agent process + ACP session. `externalSessionId` -> session/load when supported. */
