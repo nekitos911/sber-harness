@@ -341,8 +341,20 @@ test('built-in sub-agent activity lands on the parent tool call, not in the main
 test('ops: one harness per data dir, a clear message for a busy port; models in state', async () => {
   const busy = fs.mkdtempSync(path.join(os.tmpdir(), 'harness-lock-'));
   try {
+    // a live harness answers /api/health as the pid in server.json: the data dir is taken
+    const other = spawn(process.execPath, ['-e', "require('http').createServer((q, r) => r.end(JSON.stringify({ ok: true, pid: process.pid }))).listen(0, '127.0.0.1', function () { console.log(this.address().port) })"]);
+    try {
+      const port = await new Promise((resolve) => other.stdout.once('data', (d) => resolve(Number(String(d).trim()))));
+      fs.writeFileSync(path.join(busy, 'server.json'), JSON.stringify({ url: `http://127.0.0.1:${port}`, pid: other.pid }));
+      await assert.rejects(startServer({ dataDir: busy, port: 0, configOverrides: { mcpServersFrom: null } }), /already running on/);
+    } finally {
+      other.kill();
+    }
+    // a live pid that is no harness (reused pid, crashed harness): the stale lock is taken over
     fs.writeFileSync(path.join(busy, 'server.json'), JSON.stringify({ url: 'http://127.0.0.1:1', pid: process.ppid }));
-    await assert.rejects(startServer({ dataDir: busy, port: 0, configOverrides: { mcpServersFrom: null } }), /already running on/);
+    const taken = await startServer({ dataDir: busy, port: 0, configOverrides: { mcpServersFrom: null, agents: { mock: { modelsDiscovery: null } } } });
+    assert.equal(JSON.parse(fs.readFileSync(path.join(busy, 'server.json'), 'utf8')).pid, process.pid);
+    await taken.close();
     fs.writeFileSync(path.join(busy, 'server.json'), JSON.stringify({ url: 'http://127.0.0.1:1', pid: 999999 }));
     await assert.rejects(startServer({ dataDir: busy, port: h.srv.port, configOverrides: { mcpServersFrom: null } }), (e) => e.code === 'EADDRINUSE' && new RegExp(`${h.srv.port}[\\s\\S]*(netstat|lsof)`).test(e.message));
   } finally {

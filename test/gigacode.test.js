@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { CODE_ROOT } from '../server/config.js';
 import { shimIdentity, resolveGigacode, parseShim } from '../server/launchers.js';
 import { SUBAGENT_CONTEXT } from '../server/orchestration.js';
@@ -47,7 +48,9 @@ before(async () => {
     fs.writeFileSync(p, 'placeholder');
   }
   fs.mkdirSync(path.dirname(entry), { recursive: true });
-  fs.copyFileSync(path.join(CODE_ROOT, 'scripts', 'mock-agent.js'), entry);
+  // the fake cli-entry.js runs the real mock (which imports ../mcp/harness-mcp.js relative to itself)
+  fs.writeFileSync(entry, `import ${JSON.stringify(pathToFileURL(path.join(CODE_ROOT, 'scripts', 'mock-agent.js')).href)};
+`);
   fs.mkdirSync(bin, { recursive: true });
   fs.writeFileSync(shim, shimText(IDENTITY));
   fs.writeFileSync(badShim, shimText(null));
@@ -122,7 +125,7 @@ test('exact argv on new and resumed turns; settings.json without permissions; id
       harness: {
         command: process.execPath,
         args: [path.join(CODE_ROOT, 'mcp', 'harness-mcp.js')],
-        env: { HARNESS_URL: h.srv.url, HARNESS_TOKEN: h.srv.token, HARNESS_SESSION_ID: s.id },
+        env: { HARNESS_URL: h.srv.url, HARNESS_TOKEN: h.srv.token, HARNESS_SESSION_ID: s.id, HARNESS_SERVER_JSON: path.join(h.dataDir, 'server.json') },
         trust: true,
         timeout: 3600000,
       },
@@ -172,7 +175,7 @@ test('agent info: launcher resolution (identity as a boolean only) and what the 
   const { at, auth, ...seen } = info.seen;
   assert.ok(at > 0);
   assert.deepEqual(seen, {
-    models: ['Mock-Model-1-128k'], // the copied mock has no fixture next to it: its built-in catalogue
+    models: ['Qwen3.8-Flash-Next-262k'], // the mock reports the first id of its fixture catalogue
     slashCommands: ['clear', 'full-task'],
     mcpServers: [{ name: 'harness', status: 'connected' }],
     agents: ['general-purpose'],

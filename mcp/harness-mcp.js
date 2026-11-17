@@ -3,6 +3,9 @@
 //   stdio MCP server (default):  node mcp/harness-mcp.js
 //   CLI:                          node mcp/harness-mcp.js call <tool> '<json-args>'
 // Connection: HARNESS_URL, HARNESS_TOKEN, HARNESS_SESSION_ID from env; falls back to <repo>/data/server.json + data/token.
+// HARNESS_SERVER_JSON (set by the harness): the current URL is read from there on every call, so calls survive a harness
+// restart - while it is down (no file, connection refused) calls are retried with backoff (HARNESS_RETRY_MS, default 2 min;
+// worker_wait until the run's own timeout).
 import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
@@ -15,10 +18,15 @@ function readFile(p) {
   try { return fs.readFileSync(p, 'utf8').trim(); } catch { return ''; }
 }
 
+const DOWN = 'harness is not running (restarting?)';
+
 function connection() {
   const dataDir = path.join(repo, 'data');
   let url = process.env.HARNESS_URL;
-  if (!url) {
+  if (process.env.HARNESS_SERVER_JSON) {
+    // no file = the harness is down: never guess an old port (another process may own it by now)
+    try { url = JSON.parse(readFile(process.env.HARNESS_SERVER_JSON)).url; } catch { throw Object.assign(new Error(DOWN), { down: true }); }
+  } else if (!url) {
     try { url = JSON.parse(readFile(path.join(dataDir, 'server.json'))).url; } catch {}
   }
   const token = process.env.HARNESS_TOKEN || readFile(path.join(dataDir, 'token'));
@@ -26,14 +34,32 @@ function connection() {
   return { url: url.replace(/\/$/, ''), token, session: process.env.HARNESS_SESSION_ID || '' };
 }
 
-async function api(method, route, body) {
-  const c = connection();
-  const headers = { 'x-harness-token': c.token, 'content-type': 'application/json' };
-  if (c.session) headers['x-harness-session'] = c.session;
-  const res = await fetch(`${c.url}${route}`, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
-  const data = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
-  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-  return data;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * One harness API call. Retried while the harness is down: always when the request never reached it (no server.json,
+ * connection refused); with `idempotent`, also when the connection broke mid-request.
+ */
+export async function api(method, route, body, { idempotent = false, until = Date.now() + (Number(process.env.HARNESS_RETRY_MS) || 120000) } = {}) {
+  for (let delay = 250; ; delay = Math.min(delay * 2, 4000)) {
+    let res;
+    try {
+      const c = connection();
+      const headers = { 'x-harness-token': c.token, 'content-type': 'application/json' };
+      if (c.session) headers['x-harness-session'] = c.session;
+      res = await fetch(`${c.url}${route}`, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
+    } catch (e) {
+      const unsent = e.down || e.cause?.code === 'ECONNREFUSED';
+      if ((unsent || idempotent) && Date.now() + delay < until) {
+        await sleep(delay);
+        continue;
+      }
+      throw e.down ? e : new Error(`harness is not reachable: ${e.cause?.code || e.message}`);
+    }
+    const data = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    return data;
+  }
 }
 
 const SYNC_RUN_TOOLS = new Set(['worker_run', 'agent']);
@@ -44,13 +70,14 @@ const WAIT_SLICE_MS = 25000;
  * sending notifications/progress so the caller's tool call does not time out, and return its result like the
  * built-in agent tool would.
  */
-async function runAndWait(name, args, progressToken, notify) {
+export async function runAndWait(name, args, progressToken, notify = () => {}) {
   const { sessionId } = await api('POST', `/api/agent/${encodeURIComponent(name)}`, args);
   const deadline = Date.now() + Math.max(Number(args.timeoutMin) || 60, 0) * 60000;
   for (let tick = 1; ; tick++) {
     const left = deadline - Date.now();
     if (left <= 0) return { status: 'timeout', sessionId };
-    const r = await api('GET', `/api/agent/worker_wait?sessionId=${encodeURIComponent(sessionId)}&timeoutMs=${Math.min(WAIT_SLICE_MS, left)}`);
+    // stateless on the server: after a harness restart the same poll simply continues
+    const r = await api('GET', `/api/agent/worker_wait?sessionId=${encodeURIComponent(sessionId)}&timeoutMs=${Math.min(WAIT_SLICE_MS, left)}`, undefined, { idempotent: true, until: deadline });
     if (r.done) return { status: r.status, summary: r.summary, sessionId };
     if (progressToken !== undefined) notify({ method: 'notifications/progress', params: { progressToken, progress: tick, message: `sub-agent ${sessionId}: ${r.status ?? 'running'}` } });
   }
@@ -100,8 +127,12 @@ function serveStdio() {
   });
 }
 
+const real = (p) => { try { return fs.realpathSync(p); } catch { return path.resolve(p); } };
+const isMain = !!process.argv[1] && real(process.argv[1]) === real(fileURLToPath(import.meta.url));
 const [cmd, tool, json] = process.argv.slice(2);
-if (cmd === 'call') {
+if (!isMain) {
+  // imported as a module (the mock agent uses api/runAndWait): no CLI, no stdio server
+} else if (cmd === 'call') {
   try {
     if (!tool) throw new Error("usage: harness-mcp.js call <tool> '<json-args>'");
     const args = json ? JSON.parse(json) : {};

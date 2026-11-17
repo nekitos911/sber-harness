@@ -334,8 +334,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
 
   /** Result of an ephemeral run: worker_done, or its turn ended without one (no_report). Wakes worker_wait callers. */
   function settleRun(s, result) {
-    if (s.runResult) return;
-    sessions.update(s.id, { runResult: result });
+    if (!s.report) sessions.update(s.id, { report: { ...result, at: Date.now() } });
     for (const resolve of runWaiters.get(s.id) || []) resolve();
     runWaiters.delete(s.id);
   }
@@ -368,15 +367,17 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
   }
 
   async function waitRun(sessionId, timeoutMs = 25000) {
+    // stateless: the answer comes from the persisted report, so a caller that keeps polling survives a restart
     const s = sessions.get(sessionId);
-    if (!s.runResult) {
+    if (!s.report) {
       await new Promise((resolve) => {
         const timer = setTimeout(resolve, Math.min(Math.max(Number(timeoutMs) || 0, 0), 60000));
+        timer.unref?.(); // a long-poll cut by a harness shutdown must not keep the process alive
         runWaiters.set(sessionId, [...(runWaiters.get(sessionId) || []), () => { clearTimeout(timer); resolve(); }]);
       });
     }
     const now = sessions.find(sessionId);
-    return now?.runResult ? { done: true, sessionId, ...now.runResult } : { done: false, sessionId, status: now?.status ?? null };
+    return now?.report ? { done: true, sessionId, status: now.report.status, summary: now.report.summary } : { done: false, sessionId, status: now?.status ?? null };
   }
 
   // ---- harness review loop (orchestration.reviewMode "harness") ----
@@ -409,7 +410,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
       key, id: task.id, title: task.title, description: task.description, branch: worker.branch || task.branch || '', base: task.targets[0],
       cwd: worker.cwd, round, previous: prev?.findings ? `\nПредыдущие замечания (раунд ${round - 1}):\n${prev.findings}\n` : '',
     });
-    setReview(task, { round, workerSessionId: worker.id, reviewerSessionId: prev?.reviewerSessionId ?? null, state: 'reviewing', report, findings: prev?.findings ?? null });
+    setReview(task, { round, workerSessionId: worker.id, reviewerSessionId: prev?.reviewerSessionId ?? null, state: 'reviewing', report, findings: prev?.findings ?? null, startedAt: Date.now() });
     let reviewer = prev?.reviewerSessionId && sessions.find(prev.reviewerSessionId);
     if (reviewer) {
       sessions.deliver(reviewer.id, { from: 'harness', text: `Повторное ревью после исправлений (раунд ${round}).\n\n${text}` });
@@ -452,6 +453,23 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
     // the coordinator must not wait forever: it gets the report with the open findings
     if (coordinator) sessions.deliver(coordinator.id, { from: worker.id, text: fromSession(worker, `${rv.report}\nревью не сошлось за ${rv.round} раунд(а):\n${summary}`) });
     return { ok: true, verdict };
+  }
+
+  /**
+   * After a restart (re-attached turns already decided): a review whose reviewer is no longer running and never reached
+   * reviewerDone continues from its persisted report or verdict text, else the reviewer is asked to finish.
+   */
+  function resumeReviews() {
+    for (const task of db.tasks) {
+      const rv = task.review;
+      const reviewer = rv?.state === 'reviewing' && rv.reviewerSessionId && sessions.find(rv.reviewerSessionId);
+      if (!reviewer || reviewer.status === 'running' || sessions.isRunning(reviewer.id) || reviewer.queue?.length) continue;
+      const since = rv.startedAt || 0;
+      const last = sessions.messages(reviewer.id).filter((m) => m.kind === 'assistant' && m.at >= since).at(-1);
+      if (reviewer.report && reviewer.report.at >= since) reviewerDone(reviewer.report.summary, reviewer);
+      else if (last && /VERDICT:/i.test(last.text)) reviewerDone(last.text, reviewer);
+      else sessions.deliver(reviewer.id, { from: 'harness', text: 'harness был перезапущен во время ревью. Продолжи ревью и вызови worker_done; summary должен заканчиваться строкой VERDICT: APPROVED или VERDICT: CHANGES_REQUESTED.' });
+    }
   }
 
   /** task.agentState: what the assignee session (and the harness review) is doing, for the board badge. */
@@ -744,13 +762,14 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
       inputSchema: obj({ summary: str('what changed, evidence, open blockers'), status: str('done | failed', { enum: ['done', 'failed'] }) }, ['summary', 'status']),
       run: (a, c) => {
         if (!c) fail(400, 'worker_done must be called from a harness session (x-harness-session header)');
-        if (c.role === 'reviewer') return reviewerDone(a.summary, c);
         if (c.ephemeral) {
           sessions.flag(c.id, 'reported');
           sessions.setStatus(c.id, a.status);
           settleRun(sessions.get(c.id), { status: a.status, summary: a.summary });
           return { ok: true };
         }
+        sessions.update(c.id, { report: { status: a.status, summary: a.summary, at: Date.now() } }); // picked up after a restart
+        if (c.role === 'reviewer') return reviewerDone(a.summary, c);
         const status = a.status;
         sessions.flag(c.id, 'reported');
         sessions.setStatus(c.id, status);
@@ -846,6 +865,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
   return {
     notify,
     preamble,
+    resumeReviews,
     gitSuggest,
     promptTemplate,
     port: (taskId, target, o) => port(tasks.get(taskId), target, o, null),

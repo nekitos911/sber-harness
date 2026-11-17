@@ -913,20 +913,28 @@ Durable state (all in `<dataDir>`, atomic writes):
   queued deliveries of idle sessions are sent, those of re-attached running sessions wait for the turn end as before.
 - Re-attach identity: at spawn the harness records `pidStartedAt` (Windows: process creation time via
   `Get-CimInstance Win32_Process` / `wmic` fallback; Linux: `/proc/<pid>/stat` starttime + boot time; macOS: `ps -o lstart=`);
+  implementation: the stamp at spawn is `Date.now()` on Windows/macOS (equal to the creation time within the tolerance, no
+  PowerShell per turn) and the `/proc` value on Linux (same clock on both sides); the OS query runs only on startup and
+  before a Stop of a re-attached turn (cached 10 s);
   on startup a `running` session is re-attached only if the pid exists AND its start time matches (±2 s); otherwise the turn
   is finalized from the remaining output file (or marked interrupted with a system note) — a reused pid is never adopted
-  and never killed. Stop on a re-attached session re-checks identity before killing.
+  and never killed. Stop on a re-attached session re-checks identity before killing. What orchestration already handled in
+  the turn (`worker_done` → `session.turnFlags`) is persisted, so a re-attached turn is never reported twice.
 - Single-instance lock: a live pid in `server.json` is a conflict only if `GET <url>/api/health` (new, unauthenticated,
   returns `{ ok, pid, dataDir }`) answers from that pid within 1 s; otherwise the lock is stale and taken over.
 - Orchestration waits: `worker_run`/`agent` waits are stateless on the server (the worker session persists `parentId`,
   `waiter: true`, and its `report: { status, summary, at }`); `mcp/harness-mcp.js` keeps long-polling `worker_wait` with
   backoff across server restarts until the overall timeout, so the orchestrator's tool call survives a harness restart.
+  Every `worker_done` stores `session.report` (it replaced `runResult`). Agent runs get `HARNESS_SERVER_JSON`: harness-mcp
+  reads the current URL from it on every call (a restarted harness may listen elsewhere); no file = harness down → retry
+  (`HARNESS_RETRY_MS`, default 2 min; only requests that never reached the server are repeated, worker_wait always).
 - Review loop / ports state (`task.review: { round, reviewerSessionId, verdicts[] }`, `task.ports[]`) persisted; a reviewer
   that finished while the harness was down is picked up on startup (its report is in the transcript/report field).
 - Terminals: history persists (`terms/<sid>.log`); PTY processes cannot outlive the server, so on startup every terminal
   that was alive is respawned automatically in the same cwd (system line «— перезапуск harness: новая сессия терминала —»
   appended to its log); a terminal whose initial command was an agent CLI with a continue flag is respawned with it
-  (`agents.<id>.continueArgs`, gigacode default `["-c"]`). `terminal.autoRespawn` (default true).
+  (`agents.<id>.continueArgs`, gigacode default `["-c"]`). `terminal.autoRespawn` (default true). A plain shell's own
+  initial `command` is not re-run (it may have side effects). Feature flag `health`.
 - UI: drafts (composer per session, commit title/body per cwd, PR dialog per cwd+base, task drawer edits) persist in
   localStorage (try/catch, cleared on send/commit); open screens/tabs/panels/scroll per worktree persist as now.
 
@@ -934,7 +942,7 @@ Durable state (all in `<dataDir>`, atomic writes):
 
 `GET /api/state` returns `features: string[]` — the optional API groups this server implements, e.g. `sdd`, `subagents`,
 `virtual-sessions`, `worker-run`, `pr-status`, `branches`, `fs-search`, `agent-info`, `models-refresh`, `tracker-links`,
-`worktree-meta`, `open`, `board-columns`, `review-loop`, `skills-install`, `demo`. The UI calls an optional endpoint only
+`worktree-meta`, `open`, `board-columns`, `review-loop`, `skills-install`, `demo`, `health`. The UI calls an optional endpoint only
 when its flag is present (otherwise the feature is hidden or shows «недоступно в этой версии сервера») — no 404 noise.
 A server adds a flag in the same commit that adds the route; a test asserts every flag has a route.
 

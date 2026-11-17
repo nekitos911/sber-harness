@@ -10,12 +10,13 @@
 //   #run <profile> <spec>   worker_run (a sub-agent in its own chat); waits, then says "worker_run result: <summary>"
 // "/models" answers with test/fixtures/gigacode.models.txt; --model outside that list fails like GigaCode (stderr, exit 1).
 // MOCK_AGENT_ARGV_FILE: appends { argv (incl. node flags), env (GIGACODE_*, settings path, MCP_SECRET_*) } per run.
-// Harness API from env: HARNESS_URL, HARNESS_TOKEN, HARNESS_SESSION_ID. Turn counts per session id live in
+// Harness API through mcp/harness-mcp.js (env HARNESS_*; retries while the harness restarts). Turn counts per session id live in
 // MOCK_AGENT_STATE_DIR (default <tmp>/harness-mock-agent), so --resume answers "resumed <id>, turn N".
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { api, runAndWait } from '../mcp/harness-mcp.js';
 
 const argv = process.argv.slice(2);
 const opt = (...names) => {
@@ -109,14 +110,9 @@ async function harness(tool, args) {
   const id = `call_${++toolSeq}`;
   emit({ type: 'tool_use', tool_name: `harness.${tool}`, tool_id: id, parameters: args });
   try {
-    const res = await fetch(`${process.env.HARNESS_URL}/api/agent/${tool}`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-harness-token': process.env.HARNESS_TOKEN || '', 'x-harness-session': process.env.HARNESS_SESSION_ID || '' },
-      body: JSON.stringify(args),
-    });
-    const text = await res.text();
-    emit({ type: 'tool_result', tool_id: id, status: res.ok ? 'success' : 'error', output: text });
-    return res.ok;
+    const data = await api('POST', `/api/agent/${tool}`, args);
+    emit({ type: 'tool_result', tool_id: id, status: 'success', output: JSON.stringify(data) });
+    return true;
   } catch (e) {
     emit({ type: 'tool_result', tool_id: id, status: 'error', output: e.message });
     return false;
@@ -141,17 +137,16 @@ if (has(/#slow\b/)) await say('slow '.repeat(20), 250);
 
 const rest = [];
 async function runSubagent(profile, spec) {
-  // what harness-mcp does for worker_run: start, then long-poll until the sub-agent reports
-  const headers = { 'content-type': 'application/json', 'x-harness-token': process.env.HARNESS_TOKEN || '', 'x-harness-session': process.env.HARNESS_SESSION_ID || '' };
-  const start = await fetch(`${process.env.HARNESS_URL}/api/agent/worker_run`, { method: 'POST', headers, body: JSON.stringify({ profile, spec }) }).then((r) => r.json());
-  if (!start.sessionId) return say(` worker_run failed: ${start.error}`);
-  emit({ type: 'tool_use', tool_name: 'harness.worker_run', tool_id: `run_${start.sessionId}`, parameters: { profile, spec } });
-  for (;;) {
-    const r = await fetch(`${process.env.HARNESS_URL}/api/agent/worker_wait?sessionId=${start.sessionId}&timeoutMs=5000`, { headers }).then((x) => x.json());
-    if (r.done) {
-      emit({ type: 'tool_result', tool_id: `run_${start.sessionId}`, status: 'success', output: JSON.stringify(r) });
-      return say(` worker_run result: ${r.summary}`);
-    }
+  // exactly what the harness MCP bridge does for worker_run: start, then long-poll (across harness restarts)
+  const id = `run_${++toolSeq}`;
+  emit({ type: 'tool_use', tool_name: 'harness.worker_run', tool_id: id, parameters: { profile, spec } });
+  try {
+    const r = await runAndWait('worker_run', { profile, spec });
+    emit({ type: 'tool_result', tool_id: id, status: 'success', output: JSON.stringify(r) });
+    return say(` worker_run result: ${r.summary}`);
+  } catch (e) {
+    emit({ type: 'tool_result', tool_id: id, status: 'error', output: e.message });
+    return say(` worker_run failed: ${e.message}`);
   }
 }
 

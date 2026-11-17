@@ -48,7 +48,7 @@ test('worker_run: a nested ephemeral chat with the profile, the caller gets the 
   assert.match(said.text, /worker_run result: всё чисто/);
   const child = (await state()).sessions.find((s) => s.parentId === caller.id && s.ephemeral);
   assert.deepEqual([child.role, child.model, child.approvalMode, child.title, child.taskId], ['worker', 'GLM-5.3-Flash-262k', 'plan', 'java-reviewer', null]);
-  assert.deepEqual(child.runResult, { status: 'done', summary: 'всё чисто' });
+  assert.deepEqual([child.report.status, child.report.summary, child.waiter], ['done', 'всё чисто', true]);
   const first = (await messages(child.id)).find((m) => m.kind === 'user');
   assert.match(first.text, /^Ты ревьюер Java-кода\.\n\n## Задание\nПроверь diff #done всё чисто$/);
   assert.ok(!(await state()).tasks.some((t) => /Проверь diff/.test(t.title)), 'no board task for a sub-agent');
@@ -56,8 +56,8 @@ test('worker_run: a nested ephemeral chat with the profile, the caller gets the 
   const quiet = await chat('#run java-reviewer просто посмотри');
   await waitFor(async () => (await messages(quiet.id)).some((m) => m.kind === 'assistant' && m.text.includes('worker_run result:')), { timeout: 20000 });
   const child2 = (await state()).sessions.find((s) => s.parentId === quiet.id && s.ephemeral);
-  assert.equal(child2.runResult.status, 'no_report');
-  assert.match(child2.runResult.summary, /Done\./, 'its last answer comes back');
+  assert.equal(child2.report.status, 'no_report');
+  assert.match(child2.report.summary, /Done\./, 'its last answer comes back');
 });
 
 test('harness `agent` alias: listed only in harness mode; builtin mode drops it and the context block', async () => {

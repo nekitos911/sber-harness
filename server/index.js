@@ -18,6 +18,7 @@ import * as git from './git.js';
 import * as wfs from './fs.js';
 import { createMcpManager, loadSecrets, secretsFile, serverDefs } from './mcp-client.js';
 import { launchers } from './launchers.js';
+import { isAlive } from './runner.js';
 import { createModelCatalog, scanModelRefs } from './models.js';
 import { readSdd } from './sdd.js';
 import { DEMO_PORT, demoOverrides, seedDemoRepos, seedDemoTasks } from './demo.js';
@@ -35,7 +36,7 @@ const NO_BUILD_HTML = '<!doctype html><meta charset="utf-8"><title>Harness</titl
 const GRADES = ['default', 'fast', 'review', 'explore'];
 // optional API groups this server implements (docs/ARCHITECTURE.md "Feature flags"); a flag ships with its route
 export const FEATURES = ['branches', 'fs-search', 'pr-status', 'agent-info', 'models-refresh', 'tracker-links', 'board-columns', 'review-loop',
-  'subagents', 'virtual-sessions', 'worker-run', 'skills-install', 'demo', 'worktree-meta', 'open', 'sdd'];
+  'subagents', 'virtual-sessions', 'worker-run', 'skills-install', 'demo', 'worktree-meta', 'open', 'sdd', 'health'];
 const GIT_KEYS = ['defaultBase', 'branchTemplate', 'portBranchTemplate', 'commitTitleTemplate', 'prTitleTemplate'];
 const TASK_VARS = ['{taskUrl}', '{key}', '{id}', '{description}'];
 const hasTaskVar = (tpl) => TASK_VARS.some((v) => tpl.includes(v));
@@ -111,10 +112,11 @@ export async function startServer(opts = {}) {
     console.warn(`\n!!! WARNING: config values look like literal credentials: ${literal.join(', ')}\n!!! Move them to the secrets file (${secretsFile(config)}) and reference them as $secret:<scope>/<name>.\n`);
   }
   const serverJson = path.join(config.dataDir, 'server.json');
-  assertSingleInstance(serverJson, config.dataDir);
+  await assertSingleInstance(serverJson, config.dataDir);
   const store = createStore(config.dataDir);
   const db = store.db;
   const bus = createBus();
+  store.onNotice = (n) => bus.send({ t: 'notify', n }); // e.g. a transcript restored from its .bak
   let url = '';
   const tasks = createTasks({ store, bus, defaultBase: config.git.defaultBase });
   const catalog = createModelCatalog({ config, store, getUrl: () => url });
@@ -874,6 +876,8 @@ export async function startServer(opts = {}) {
       return sendJson(res, 400, { error: 'bad url' });
     }
     try {
+      // liveness for the single-instance lock: no token (it proves nothing secret), still behind the Host guard
+      if (u.pathname === '/api/health') return sendJson(res, 200, { ok: true, pid: process.pid, dataDir: config.dataDir });
       if (u.pathname === '/api' || u.pathname.startsWith('/api/')) {
         if (!tokenOk(req.headers['x-harness-token'])) return sendJson(res, 401, { error: 'missing or invalid x-harness-token' });
         const candidates = routes.map((r) => ({ r, m: u.pathname.match(r.re) })).filter((x) => x.m);
@@ -980,7 +984,9 @@ export async function startServer(opts = {}) {
   url = `http://${config.host.includes(':') ? `[${config.host}]` : config.host}:${actualPort}`;
   writeAtomic(serverJson, JSON.stringify({ url, pid: process.pid }));
   schedulePrs();
-  sessions.resumeRuns(); // turns that kept running while the harness was down (needs the URL for follow-up turns)
+  // turns that kept running while the harness was down (needs the URL for follow-up turns), queues, terminals, reviews
+  await sessions.resumeRuns();
+  orch.resumeReviews();
   scheduleSync();
   // best-effort: folders renamed to *.stale-<ts> by earlier deletions (files held by antivirus/indexer)
   for (const dir of [config.dataDir, path.join(config.dataDir, 'runs'), ...db.workspaces.map((w) => git.worktreeRootFor(w.path, config.worktreeRoot))]) {
@@ -992,6 +998,8 @@ export async function startServer(opts = {}) {
     url,
     port: actualPort,
     token: store.token,
+    /** synchronous write of everything pending (signal handlers) */
+    flush: () => store.flush(),
     config,
     async close() {
       if (closed) return;
@@ -1015,20 +1023,23 @@ export async function startServer(opts = {}) {
   };
 }
 
-/** One harness per data dir: a live pid in <dataDir>/server.json (not ours) means another instance owns it. */
-function assertSingleInstance(serverJson, dataDir) {
+/**
+ * One harness per data dir. A live pid in <dataDir>/server.json is a conflict only if that harness answers
+ * /api/health as that pid within 1 s; otherwise the lock is stale (crash, reused pid) and is taken over.
+ */
+async function assertSingleInstance(serverJson, dataDir) {
   let other;
   try {
     other = JSON.parse(fs.readFileSync(serverJson, 'utf8'));
   } catch {
     return;
   }
-  if (!other?.pid || other.pid === process.pid) return;
+  if (!other?.pid || other.pid === process.pid || !isAlive(other.pid) || typeof other.url !== 'string') return;
+  let health = null;
   try {
-    process.kill(other.pid, 0);
-  } catch (e) {
-    if (e.code === 'ESRCH') return; // stale file from a crashed run
-  }
+    health = await (await fetch(`${other.url}/api/health`, { signal: AbortSignal.timeout(1000) })).json();
+  } catch {}
+  if (health?.ok !== true || health.pid !== other.pid) return;
   throw Object.assign(new Error(`Another harness (pid ${other.pid}, ${other.url}) is already running on ${dataDir}. Stop it first or use another dataDir.`), { code: 'ELOCKED' });
 }
 
@@ -1087,7 +1098,10 @@ if (isMain && process.argv.includes('--print-config')) {
   const demo = process.argv.includes('--demo');
   startServer({ dev, demo }).then((srv) => {
     console.log(`Harness running at ${srv.url}${dev ? ' (dev, Vite middleware)' : ''}${demo ? ' (offline demo: mock agent, fixture tracker and PR service)' : ''}`);
-    const shutdown = () => srv.close().finally(() => process.exit(0));
+    const shutdown = () => {
+      srv.flush(); // synchronously first: the async close below may not finish before a second signal
+      srv.close().finally(() => process.exit(0));
+    };
     process.on('SIGINT', shutdown);
     process.on('SIGTERM', shutdown);
   }, (e) => {

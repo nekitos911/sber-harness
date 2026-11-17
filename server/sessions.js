@@ -5,7 +5,7 @@ import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { CODE_ROOT } from './config.js';
 import { launchers } from './launchers.js';
-import { runTurn, isAlive } from './runner.js';
+import { runTurn, isAlive, sameProcess } from './runner.js';
 import { secretEnv } from './mcp-client.js';
 import { readRegistry } from './registry.js';
 import * as git from './git.js';
@@ -84,7 +84,8 @@ export function createSessions({ config, store, bus, getUrl, catalog = null }) {
     bus.send({ t: 'msg', sessionId: s.id, msg });
   }
 
-  const harnessEnv = (s) => ({ HARNESS_URL: getUrl(), HARNESS_TOKEN: store.token, HARNESS_SESSION_ID: s.id });
+  // HARNESS_SERVER_JSON: harness-mcp finds a restarted harness there (its URL may change) and retries meanwhile
+  const harnessEnv = (s) => ({ HARNESS_URL: getUrl(), HARNESS_TOKEN: store.token, HARNESS_SESSION_ID: s.id, HARNESS_SERVER_JSON: path.join(store.dataDir, 'server.json') });
 
   /** Agent config + launcher + executable for an agent id; throws 400 with a clear message (fail fast). */
   function resolveAgent(agent, launcherId) {
@@ -171,23 +172,36 @@ export function createSessions({ config, store, bus, getUrl, catalog = null }) {
 
   // ---- startup recovery ----
   const toReattach = []; // turns that kept running (or finished) while the harness was down
+  const toRespawn = []; // terminals that were alive: PTYs cannot outlive the server
+  const INTERRUPTED = 'harness restarted, the turn was interrupted; send a message to continue (context is kept by --resume)';
   for (const s of db.sessions) {
-    s.queued = 0;
+    if (s.kind === 'chat') {
+      s.queue = Array.isArray(s.queue) ? s.queue : []; // persisted deliveries survive a restart
+      if ('runResult' in s) { // db from before `report`
+        s.report ??= s.runResult && { ...s.runResult, at: s.lastActivityAt };
+        delete s.runResult;
+      }
+    }
+    s.queued = s.queue?.length ?? 0;
     s.tokensIn ??= 0;
     s.tokensOut ??= 0;
     s.phase = null;
     if (s.virtual) continue; // settled below, once we know which parents are re-attached
     if (s.kind === 'chat' && s.status === 'running' && s.pid && latestTurnFile(s.id)) {
       toReattach.push(s);
+      runtime(s.id).running = true; // no new turn until resumeRuns() has decided about this one
       continue;
     }
     s.pid = null;
     if (s.kind === 'chat' && s.status === 'running') {
       s.status = 'idle';
-      addMessage(s, { kind: 'system', text: 'harness restarted, the turn was interrupted; send a message to continue (context is kept by --resume)' });
+      addMessage(s, { kind: 'system', text: INTERRUPTED });
     } else if (s.kind === 'terminal' && s.status !== 'exited') {
-      s.status = 'exited';
-      store.appendTermLog(s.id, '\r\n[harness restarted]\r\n');
+      if (config.terminal?.autoRespawn !== false) toRespawn.push(s);
+      else {
+        s.status = 'exited';
+        store.appendTermLog(s.id, '\r\n[harness restarted]\r\n');
+      }
     }
   }
   // a built-in sub-agent chat whose parent turn did not survive the restart will never get its result
@@ -403,11 +417,12 @@ export function createSessions({ config, store, bus, getUrl, catalog = null }) {
 
   async function startTurn(s) {
     const r = runtime(s.id);
-    if (r.running || !r.queue.length) return;
-    const items = r.queue.splice(0);
+    if (r.running || !s.queue?.length) return;
+    const items = s.queue.splice(0);
     r.running = true;
     r.turn += 1;
     r.flags = {};
+    s.turnFlags = {};
     r.cur = { assistant: null, thought: null, raw: null, tools: new Map(), subTools: new Map(), gotText: false };
     for (const it of items) addMessage(s, { kind: 'user', text: it.text, from: it.from, ...(it.options ? { options: it.options } : {}) });
     Object.assign(s, { status: 'running', queued: 0, lastActivityAt: Date.now() });
@@ -450,6 +465,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null }) {
       r.handle = handle;
       if (r.stopRequested) handle.stop();
       s.pid = handle.pid;
+      s.pidStartedAt = handle.startedAt; // identity check before a re-attach after a restart
       s.turnOffset = 0;
       s.phase = 'starting'; // spawned, no output yet (GigaCode may need a minute to start its MCP servers)
       emit(s);
@@ -470,18 +486,25 @@ export function createSessions({ config, store, bus, getUrl, catalog = null }) {
     store.save(); // debounced; no WS frame for this
   }
 
-  /** Follows a turn that kept running while the harness was down (or drains the output of one that ended). */
-  function reattach(s) {
+  /**
+   * Follows a turn that kept running while the harness was down (or drains the output of one that ended).
+   * `ours` = the saved pid still is that process (pid + start time); otherwise only the file is read, the pid is
+   * neither followed nor ever killed.
+   */
+  function reattach(s, ours) {
     const r = runtime(s.id);
     const launcher = launchers[s.launcherId];
     const outFile = latestTurnFile(s.id);
     if (!launcher || !outFile) {
+      r.running = false;
       Object.assign(s, { status: 'idle', pid: null });
-      addMessage(s, { kind: 'system', text: 'harness restarted, the turn was interrupted; send a message to continue (context is kept by --resume)' });
-      return emit(s);
+      addMessage(s, { kind: 'system', text: INTERRUPTED });
+      emit(s);
+      return startTurn(s);
     }
     r.running = true;
-    r.flags = {};
+    r.unadopted = !ours;
+    r.flags = { ...s.turnFlags }; // what orchestration already handled in this turn (e.g. worker_done)
     r.cur = { assistant: null, thought: null, raw: null, tools: new Map(), subTools: new Map(), gotText: false };
     for (const m of store.messages(s.id)) if (m.turn === r.turn && m.kind === 'tool' && m.tool) r.cur.tools.set(m.tool.id, m);
     const last = store.messages(s.id).at(-1);
@@ -489,7 +512,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null }) {
       r.cur.assistant = last; // keep streaming into the same message
       r.cur.gotText = true;
     }
-    if (isAlive(s.pid)) addMessage(s, { kind: 'system', text: 'переподключено после перезапуска' });
+    if (ours) addMessage(s, { kind: 'system', text: 'переподключено после перезапуска' });
     s.phase = s.turnOffset ? 'streaming' : 'starting';
     emit(s);
     const n = Number(outFile.match(/turn-(\d+)\.out\.ndjson$/)[1]);
@@ -497,11 +520,12 @@ export function createSessions({ config, store, bus, getUrl, catalog = null }) {
     const handle = runTurn({
       launcher,
       ...turnFiles(s, n),
-      reattach: { pid: s.pid, offset: s.turnOffset || 0 },
+      reattach: { pid: ours ? s.pid : null, offset: s.turnOffset || 0, startedAt: s.pidStartedAt ?? null },
       onEvent: (ev) => applyEvent(s, ev),
       onOffset: (off) => saveOffset(s, off),
     });
     r.handle = handle;
+    if (r.stopRequested) handle.stop();
     handle.done.then((res) => { if (!res.detached) finishTurn(s, res); });
   }
 
@@ -511,13 +535,18 @@ export function createSessions({ config, store, bus, getUrl, catalog = null }) {
     r.running = false;
     r.handle = null;
     const stopped = res.stopped || r.stopRequested;
+    const unadopted = r.unadopted;
     r.stopRequested = false;
+    r.unadopted = false;
     if (!find(s.id)) return; // deleted while running
     pollRegistry(s);
     let status = r.flags.reported && (s.status === 'done' || s.status === 'failed') ? s.status : 'idle';
     if (stopped) {
       status = 'stopped'; // already set by stop(); a late exit never overwrites it
       addMessage(s, { kind: 'system', text: 'Stopped by user' });
+    } else if (unadopted && !res.sawResult) {
+      // the saved pid is gone or now belongs to another process: what the file had is shown, the rest is lost
+      addMessage(s, { kind: 'system', text: INTERRUPTED });
     } else if (res.error) {
       addMessage(s, { kind: 'error', text: `${res.error}${tail(res.stderrTail)}`, ...(res.action ? { action: res.action } : {}) });
       status = 'error';
@@ -545,18 +574,19 @@ export function createSessions({ config, store, bus, getUrl, catalog = null }) {
     } else if (res.stderrTail.trim()) {
       addMessage(s, { kind: 'system', text: `⚠ ${res.stderrTail.trim().slice(-2000)}` });
     }
-    Object.assign(s, { status, pid: null, phase: null, turnOffset: null, lastActivityAt: Date.now() });
+    Object.assign(s, { status, pid: null, pidStartedAt: null, phase: null, turnOffset: null, lastActivityAt: Date.now() });
     for (const v of db.sessions.filter((x) => x.virtual && x.parentId === s.id && x.status === 'running')) {
       Object.assign(v, { status: 'failed', lastActivityAt: Date.now() });
       emit(v);
     }
     emit(s);
     try {
-      hooks.turnEnded(s, { ...r.flags, stopped, queueEmpty: r.queue.length === 0 });
+      hooks.turnEnded(s, { ...r.flags, stopped, queueEmpty: !s.queue.length });
     } catch (e) {
       console.error('[sessions] turnEnded hook failed:', e);
     }
-    if (r.queue.length) startTurn(s);
+    store.flush(); // a finished turn is never lost to a crash right after it
+    if (s.queue.length) startTurn(s);
   }
 
   // ---- terminals ----
@@ -572,7 +602,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null }) {
     }
   }
 
-  function spawnPty(s, pty) {
+  function spawnPty(s, pty, command = s.command) {
     const r = runtime(s.id);
     const p = pty.spawn(config.shell.command, config.shell.args, {
       name: 'xterm-256color',
@@ -600,7 +630,27 @@ export function createSessions({ config, store, bus, getUrl, catalog = null }) {
     });
     Object.assign(s, { status: 'idle', pid: p.pid, lastActivityAt: Date.now() });
     emit(s);
-    if (s.command) p.write(`${s.command}\r`);
+    if (command) p.write(`${command}\r`);
+  }
+
+  /** After a restart: a fresh shell in the same cwd; an agent CLI terminal resumes its conversation (continueArgs). */
+  async function respawnTerminal(s) {
+    try {
+      const pty = await loadPty();
+      const agentCfg = s.agent !== 'shell' && config.agents[s.agent];
+      const cont = agentCfg && (agentCfg.continueArgs ?? launchers[agentCfg.launcher]?.defaults.continueArgs);
+      let command = null; // a plain shell's initial command is not re-run (it may have side effects)
+      if (agentCfg) {
+        const exe = launchers[agentCfg.launcher]?.resolve(agentCfg);
+        command = exe ? shellLine([exe.file, ...exe.args, ...(cont || [])]) : null;
+      }
+      store.appendTermLog(s.id, '\r\n— перезапуск harness: новая сессия терминала —\r\n');
+      spawnPty(s, pty, command);
+    } catch (e) {
+      Object.assign(s, { status: 'exited', pid: null });
+      store.appendTermLog(s.id, `\r\n[harness restarted; the terminal could not be restarted: ${e.message}]\r\n`);
+      emit(s);
+    }
   }
 
   /** argv -> a command line for the configured shell (PowerShell needs `&` before a quoted path). */
@@ -645,6 +695,9 @@ export function createSessions({ config, store, bus, getUrl, catalog = null }) {
     /** orchestration marks what happened during the current turn: 'reported' | 'communicated' */
     flag(sid, name) {
       runtime(sid).flags[name] = true;
+      const s = get(sid);
+      s.turnFlags = { ...s.turnFlags, [name]: true }; // persisted: a turn re-attached after a restart is not reported twice
+      store.save();
     },
     setStatus(sid, status) {
       const s = get(sid);
@@ -715,7 +768,9 @@ export function createSessions({ config, store, bus, getUrl, catalog = null }) {
         tokensOut: 0,
         phase: null,
         turnOffset: null,
-        ...(o.ephemeral ? { ephemeral: true, runResult: null } : {}),
+        ...(kind === 'chat' ? { queue: [] } : {}),
+        // worker_run child: its caller long-polls worker_wait until `report` is set (stateless, survives restarts)
+        ...(o.ephemeral ? { ephemeral: true, waiter: true, report: null } : {}),
         ...(o.inWorktree === true ? { inWorktree: true } : {}), // a worker started inside its task's linked worktree
         createdAt: now,
         lastActivityAt: now,
@@ -765,12 +820,12 @@ export function createSessions({ config, store, bus, getUrl, catalog = null }) {
         r.pty.write(`${text}\r`);
         return { queued: false };
       }
-      r.queue.push({ from, text, options });
+      s.queue.push({ id: newId('q'), from, text, at: Date.now(), ...(options ? { options } : {}) });
       if (!r.running) {
         startTurn(s);
         return { queued: false };
       }
-      s.queued = r.queue.length;
+      s.queued = s.queue.length;
       emit(s);
       return { queued: true };
     },
@@ -783,7 +838,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null }) {
         r.pty?.kill();
         return s;
       }
-      r.queue = [];
+      s.queue = [];
       s.queued = 0;
       if (r.running) {
         r.stopRequested = true;
@@ -813,7 +868,6 @@ export function createSessions({ config, store, bus, getUrl, catalog = null }) {
       const s = get(sid);
       for (const v of db.sessions.filter((x) => x.virtual && x.parentId === sid)) api.remove(v.id);
       const r = runtime(sid);
-      r.queue = [];
       clearInterval(r.registryTimer);
       r.handle?.stop();
       const p = r.pty;
@@ -870,15 +924,21 @@ export function createSessions({ config, store, bus, getUrl, catalog = null }) {
     },
     termReplay: (sid) => store.termLog(sid),
 
-    /** Re-attach turns that outlived the previous harness process (called once hooks are installed). */
-    resumeRuns() {
-      for (const s of toReattach.splice(0)) reattach(s);
+    /**
+     * After a restart (once hooks are installed): re-attach turns whose pid is still the same process, drain the
+     * others from their files, send persisted deliveries of idle chats, respawn terminals.
+     */
+    async resumeRuns() {
+      const runs = toReattach.splice(0);
+      const ours = await Promise.all(runs.map((s) => sameProcess(s.pid, s.pidStartedAt).catch(() => false)));
+      runs.forEach((s, i) => { if (find(s.id)) reattach(s, ours[i]); });
+      for (const s of db.sessions) if (s.kind === 'chat' && !s.virtual && s.queue?.length && !runtime(s.id).running) startTurn(s);
+      await Promise.all(toRespawn.splice(0).filter((s) => find(s.id)).map(respawnTerminal));
     },
 
     /** Harness shutdown: agent turns keep running (re-attached on the next start); terminals are closed. */
     close() {
       for (const r of rt.values()) {
-        r.queue = [];
         clearInterval(r.registryTimer);
         r.handle?.detach();
         const p = r.pty;

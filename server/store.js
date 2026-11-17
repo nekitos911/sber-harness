@@ -1,15 +1,19 @@
 // JSON persistence under <dataDir>: db.json, transcripts/<sid>.json, terms/<sid>.log, runs/<sid>/, token.
-// Writes are debounced and atomic (tmp + rename); flush() writes everything synchronously (exit, SIGINT).
+// Writes are debounced and atomic (tmp + rename); flush() writes everything synchronously (turn end, exit, signals).
+// db.json and transcripts keep the previous good copy in <file>.bak; an unreadable file is restored from it on load.
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 
-const DEBOUNCE_MS = 200;
+const DEBOUNCE_MS = 200; // contract: <= 250 ms
 export const TERM_LOG_MAX = 2 * 1024 * 1024;
 
-export function writeAtomic(file, data) {
+export function writeAtomic(file, data, backup = false) {
   const tmp = `${file}.${process.pid}.tmp`;
   fs.writeFileSync(tmp, data);
+  if (backup) {
+    try { fs.copyFileSync(file, `${file}.bak`); } catch {}
+  }
   try {
     fs.renameSync(tmp, file);
   } catch {
@@ -19,19 +23,37 @@ export function writeAtomic(file, data) {
   }
 }
 
-function readJson(file, fallback) {
+/** JSON of a file; a corrupt one (not a missing one) is set aside as .corrupt-<ts> and its .bak used, reported via onRestore. */
+function readJson(file, fallback, onRestore = () => {}) {
   try {
     return JSON.parse(fs.readFileSync(file, 'utf8'));
   } catch (e) {
-    if (e.code !== 'ENOENT') console.error(`[store] cannot read ${file}: ${e.message}`);
-    return fallback;
+    if (e.code === 'ENOENT') return fallback;
+    console.error(`[store] cannot read ${file}: ${e.message}`);
+    try {
+      const data = JSON.parse(fs.readFileSync(`${file}.bak`, 'utf8'));
+      try { fs.renameSync(file, `${file}.corrupt-${Date.now()}`); } catch {}
+      onRestore(file);
+      return data;
+    } catch {
+      return fallback;
+    }
   }
 }
 
 export function createStore(dataDir) {
   for (const d of ['transcripts', 'terms', 'runs']) fs.mkdirSync(path.join(dataDir, d), { recursive: true });
   const dbFile = path.join(dataDir, 'db.json');
-  const db = { seq: { task: 0 }, tasks: [], workspaces: [], sessions: [], notifications: [], agentMeta: {}, ...readJson(dbFile, {}) };
+  const restored = [];
+  const db = { seq: { task: 0 }, tasks: [], workspaces: [], sessions: [], notifications: [], agentMeta: {}, ...readJson(dbFile, {}, (f) => restored.push(f)) };
+  let onNotice = null;
+  /** A notification about a restored file (db.notifications + the live channel once index.js connects it). */
+  function restoredNotice(file) {
+    const n = { id: `n_${randomBytes(4).toString('hex')}`, at: Date.now(), read: false, kind: 'error', sessionId: null, taskId: null, text: `${path.basename(file)} был повреждён — восстановлено из резервной копии` };
+    db.notifications.push(n);
+    mark('db');
+    onNotice?.(n);
+  }
 
   const tokenFile = path.join(dataDir, 'token');
   let token = fs.existsSync(tokenFile) ? fs.readFileSync(tokenFile, 'utf8').trim() : '';
@@ -59,7 +81,7 @@ export function createStore(dataDir) {
     for (const key of dirty) {
       const [file, data] = fileFor(key);
       try {
-        writeAtomic(file, data());
+        writeAtomic(file, data(), !key.startsWith('term:'));
       } catch (e) {
         console.error(`[store] write ${file} failed: ${e.message}`);
       }
@@ -74,18 +96,20 @@ export function createStore(dataDir) {
   }
 
   function messages(sid) {
-    if (!transcripts.has(sid)) transcripts.set(sid, readJson(path.join(dataDir, 'transcripts', `${sid}.json`), []));
+    if (!transcripts.has(sid)) transcripts.set(sid, readJson(path.join(dataDir, 'transcripts', `${sid}.json`), [], restoredNotice));
     return transcripts.get(sid);
   }
 
   const onExit = () => flush();
   process.on('exit', onExit);
+  for (const f of restored) restoredNotice(f);
 
   return {
     db,
     token,
     dataDir,
     save: () => mark('db'),
+    set onNotice(fn) { onNotice = fn; },
     flush,
     messages,
     putMessage(sid, msg) {
@@ -121,6 +145,7 @@ export function createStore(dataDir) {
       dirty.delete(`t:${sid}`);
       dirty.delete(`term:${sid}`);
       fs.rmSync(path.join(dataDir, 'transcripts', `${sid}.json`), { force: true });
+      fs.rmSync(path.join(dataDir, 'transcripts', `${sid}.json.bak`), { force: true });
       fs.rmSync(path.join(dataDir, 'terms', `${sid}.log`), { force: true });
     },
     close() {

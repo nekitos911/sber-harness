@@ -98,6 +98,58 @@ export function isAlive(pid) {
   }
 }
 
+// ---- process identity: a pid saved before a restart may belong to another process by now ----
+const run = (file, args) => new Promise((resolve) => {
+  execFile(file, args, { windowsHide: true, timeout: 10000, encoding: 'utf8' }, (e, out) => resolve(e ? '' : String(out).trim()));
+});
+
+/** Linux start time from /proc (boot time + start ticks): the same number every time for the same process. */
+function procStart(pid) {
+  try {
+    const stat = fs.readFileSync(`/proc/${pid}/stat`, 'utf8');
+    const ticks = Number(stat.slice(stat.lastIndexOf(')') + 2).split(' ')[19]);
+    const btime = Number(fs.readFileSync('/proc/stat', 'utf8').match(/^btime (\d+)/m)[1]);
+    return Number.isFinite(ticks) ? btime * 1000 + ticks * 10 : null; // shortcut: USER_HZ assumed 100 (all mainstream Linux builds)
+  } catch {
+    return null;
+  }
+}
+
+/** wmic CreationDate "20261117224144.123456+180" (local time, offset in minutes) -> ms since epoch. */
+export function parseWmicDate(text) {
+  const m = String(text).match(/(\d{4})(\d\d)(\d\d)(\d\d)(\d\d)(\d\d)\.(\d{3})\d*([+-]\d+)/);
+  return m ? Date.UTC(+m[1], m[2] - 1, +m[3], +m[4], +m[5], +m[6], +m[7]) - Number(m[8]) * 60000 : null;
+}
+
+const startCache = new Map(); // pid -> { at, value }: a PowerShell query costs about a second on Windows
+
+/** Start time (ms since epoch) of a live process, or null when unknown. */
+export async function processStartTime(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return null;
+  const hit = startCache.get(pid);
+  if (hit && Date.now() - hit.at < 10000) return hit.value;
+  let value = null;
+  if (process.platform === 'linux') value = procStart(pid);
+  else if (isWin) {
+    const ps = await run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', `$p = Get-CimInstance Win32_Process -Filter 'ProcessId=${pid}'; if ($p) { ([DateTimeOffset]$p.CreationDate).ToUnixTimeMilliseconds() }`]);
+    value = Number(ps) || parseWmicDate(await run('wmic', ['process', 'where', `ProcessId=${pid}`, 'get', 'CreationDate', '/value'])) || null;
+  } else {
+    value = Date.parse(await run('ps', ['-o', 'lstart=', '-p', String(pid)])) || null;
+  }
+  startCache.set(pid, { at: Date.now(), value });
+  return value;
+}
+
+/** Stamp recorded at spawn, comparable with processStartTime (Linux reads /proc so both sides use the same clock). */
+export const startStamp = (pid) => (process.platform === 'linux' && procStart(pid)) || Date.now();
+
+/** True only when `pid` is alive AND started at `startedAt` (±2 s): a reused pid is never adopted or killed. */
+export async function sameProcess(pid, startedAt) {
+  if (!pid || !startedAt || !isAlive(pid)) return false;
+  const t = await processStartTime(pid);
+  return t != null && Math.abs(t - startedAt) <= 2000;
+}
+
 /** Last `bytes` of a file as text ('' when missing). */
 export function readTail(file, bytes = STDERR_TAIL) {
   let fd;
@@ -201,19 +253,21 @@ function tailFile(file, offset, maxLine, onLine, onOffset) {
  * Runs (or re-attaches to) ONE agent turn. The agent is spawned detached with stdout/stderr redirected to files
  * (outFile / errFile), so it keeps running when the harness stops; the harness follows outFile.
  * @param {{ launcher, ctx, command, cwd, env, firstEventTimeoutMs, authTimeoutMs?, logFile, outFile, errFile, onEvent,
- *           onOffset?, maxLine?, reattach?: { pid, offset } }} o
+ *           onOffset?, maxLine?, reattach?: { pid, offset, startedAt } }} o
  *   Events are the launcher's NormalizedEvents plus { type: 'raw', text } for each non-JSON stdout line and
  *   { type: 'auth', url, code } when, before the first JSON event, stdout or stderr shows a login link: the
  *   first-event timeout is then replaced by authTimeoutMs (the CLI waits for the browser login and continues).
  *   reattach: follow an already running turn (not our child): it ends at its `result` event or when the pid is gone;
- *   the exit code is then unknown (null).
- * @returns {{ pid, stop(), detach(), done: Promise<{code, signal, sawResult, timedOut, stopped, detached, error, stderrTail, eventCount}> }}
+ *   the exit code is then unknown (null); stop() kills it only after re-checking its identity (sameProcess).
+ *   pid null = not adopted (unknown or reused pid): only the output already in the file is read.
+ * @returns {{ pid, startedAt, stop(), detach(), done: Promise<{code, signal, sawResult, timedOut, stopped, detached, error, stderrTail, eventCount}> }}
  */
 export function runTurn({ launcher, ctx, command, cwd, env, firstEventTimeoutMs, authTimeoutMs = 600000, logFile, outFile, errFile, onEvent, onOffset, maxLine = MAX_LINE, reattach = null }) {
   const log = fs.createWriteStream(logFile, { flags: 'a' });
   const res = { code: null, signal: null, sawResult: false, timedOut: false, stopped: false, detached: false, error: null, stderrTail: '', eventCount: 0, priorOutput: (reattach?.offset ?? 0) > 0 };
   let child = null;
   let pid = reattach?.pid ?? null;
+  let startedAt = reattach?.startedAt ?? null;
   if (!reattach) {
     try {
       if (!fs.existsSync(cwd)) throw new Error(`Working directory does not exist: ${cwd}`);
@@ -231,9 +285,10 @@ export function runTurn({ launcher, ctx, command, cwd, env, firstEventTimeoutMs,
       }
       child.unref();
       pid = child.pid ?? null;
+      startedAt = pid ? startStamp(pid) : null;
     } catch (e) {
       log.end(`[harness] ${e.message}\n`);
-      return { pid: null, stop() {}, detach() {}, done: Promise.resolve({ ...res, error: e.message }) };
+      return { pid: null, startedAt: null, stop() {}, detach() {}, done: Promise.resolve({ ...res, error: e.message }) };
     }
   } else {
     log.write(`\n=== ${new Date().toISOString()} re-attached to pid ${pid} at offset ${reattach.offset}\n`);
@@ -350,9 +405,12 @@ export function runTurn({ launcher, ctx, command, cwd, env, firstEventTimeoutMs,
 
   return {
     pid,
+    startedAt,
     stop() {
       res.stopped = true;
-      killTree(pid);
+      if (!reattach) return killTree(pid);
+      // not our child: kill only if the pid still is that process; otherwise just stop following
+      sameProcess(pid, startedAt).then((ours) => (ours ? killTree(pid) : finish()));
     },
     /** stop following without touching the process (harness shutdown) */
     detach() {

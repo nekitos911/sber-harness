@@ -34,6 +34,7 @@ test('each feature flag has a working route (not 404/405)', async () => {
       demo: ['GET', '/api/state', (b) => typeof b.demo === 'boolean'],
       'worktree-meta': ['PATCH', '/api/worktrees/meta', null, { path: repo, label: 'x' }],
       open: ['POST', '/api/open', null, { cwd: repo, target: 'nope' }],
+      health: ['GET', '/api/health', (b) => b.ok === true && b.pid === process.pid],
       sdd: ['GET', `/api/sdd?cwd=${q}`, (b) => Array.isArray(b.plans)],
     };
     for (const flag of FEATURES) {
