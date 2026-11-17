@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useState, type CSSProperties } from 'react'
 import { RotateCw, WifiOff } from 'lucide-react'
-import { tabKey, useStore, wtKey, type Screen, type Tab } from './store'
+import { closeTab, getState, tabKey, useStore, wtKey, type Screen, type Tab } from './store'
 import { reconnectNow } from './ws'
 import { TopBar } from './components/TopBar'
 import { Sidebar } from './components/Sidebar'
@@ -56,6 +56,15 @@ export function App() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (modKey(e) && e.key.toLowerCase() === 'k') { e.preventDefault(); setPalette(true) }
+      // Close the active tab: Ctrl/⌘+W where the browser lets it through, Alt+W always (e.code: any keyboard layout).
+      if (e.code === 'KeyW' && !e.shiftKey && ((modKey(e) && !e.altKey) || (e.altKey && !e.ctrlKey && !e.metaKey))) {
+        const st = getState()
+        if (st.view.kind !== 'wt' || document.querySelector('dialog[open]')) return
+        const active = st.wt[wtKey(st.view.cwd)]?.active
+        if (!active) return
+        e.preventDefault()
+        closeTab(st.view.cwd, active)
+      }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)

@@ -1,11 +1,12 @@
 import { useLayoutEffect, useRef, useState } from 'react'
-import { ArrowLeft, ArrowRight, Command, FileText, FolderOpen, History, GitCompare, MessageSquare, MessageSquarePlus, PanelLeft, PanelRight, Plus, SquareTerminal, X } from 'lucide-react'
-import { activateTab, closeTab, dirtyKey, hasFeature, navigate, openDialog, setState, tabKey, useStore, wtKey, type Tab } from '../store'
+import { ArrowLeft, ArrowRight, ClipboardCopy, Command, FileText, FolderOpen, History, GitCompare, MessageSquare, MessageSquarePlus, PanelLeft, PanelRight, Plus, SquareTerminal, X } from 'lucide-react'
+import { activateTab, closeTab, dirtyKey, hasFeature, navigate, openDialog, setState, tabKey, toast, useStore, wtKey, type Tab } from '../store'
+import { loadDraft, saveDraft } from '../lib/draft'
 import { basename } from '../lib/format'
 import { useGit } from '../lib/git'
 import type { GitStatus, Session } from '../types'
 import { StatusIcon } from './bits'
-import { MenuButton } from './ui/Menu'
+import { Menu, MenuButton, type MenuItem } from './ui/Menu'
 import { newChat, newTerminal, workspaceFor } from '../lib/actions'
 import { shortcut } from '../lib/keys'
 
@@ -55,6 +56,8 @@ export function TopBar({ onCommand }: { onCommand: () => void }) {
 }
 
 const reduceMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches
+/** Browsers may keep Ctrl/⌘+W for themselves; Alt+W always reaches the app. */
+const CLOSE_KEYS = `${shortcut('W')} · Alt+W`
 
 /** The tab strip of one worktree: its chats, terminals, files and diffs. */
 function TabBar({ cwd }: { cwd: string }) {
@@ -73,9 +76,34 @@ function TabBar({ cwd }: { cwd: string }) {
   useLayoutEffect(() => { for (const t of tabs) seen.current!.add(`${k}|${tabKey(t)}`) })
 
   const close = (key: string, animate: boolean) => {
+    hintRunning(key)
     if (!animate || dirty[dirtyKey(cwd, key)] || reduceMotion()) { closeTab(cwd, key); return }
     setClosing(key)
     window.setTimeout(() => { setClosing(null); closeTab(cwd, key) }, 120)
+  }
+  const closeMany = (keys: string[]) => { keys.forEach(hintRunning); for (const key of keys) closeTab(cwd, key) }
+  // Closing a working chat only closes the view: say so once.
+  const hintRunning = (key: string) => {
+    const t = tabs.find((x) => tabKey(x) === key)
+    if (t?.kind !== 'session' || sessions.find((x) => x.id === t.id)?.status !== 'running' || loadDraft<boolean>('hint:close-running')) return
+    saveDraft('hint:close-running', true)
+    toast('Агент продолжает работать — сессия в боковой панели')
+  }
+  const [menu, setMenu] = useState<{ key: string; el: HTMLElement } | null>(null)
+  const menuAnchor = useRef<HTMLElement | null>(null)
+  menuAnchor.current = menu?.el ?? null
+  const menuItems = (key: string): MenuItem[] => {
+    const i = tabs.findIndex((t) => tabKey(t) === key)
+    const t = tabs[i]
+    const keys = tabs.map(tabKey)
+    const path = t && (t.kind === 'file' || t.kind === 'diff') ? t.path : null
+    return [
+      { label: 'Закрыть', icon: <X />, hint: CLOSE_KEYS, onSelect: () => close(key, true) },
+      { label: 'Закрыть другие', disabled: keys.length < 2, onSelect: () => closeMany(keys.filter((x) => x !== key)) },
+      { label: 'Закрыть справа', disabled: i === keys.length - 1, onSelect: () => closeMany(keys.slice(i + 1)) },
+      { label: 'Закрыть все', onSelect: () => closeMany(keys) },
+      ...(path ? [{ label: 'Копировать путь', icon: <ClipboardCopy />, divider: true, onSelect: () => void navigator.clipboard.writeText(path).then(() => toast(`Скопировано: ${path}`, 'ok'), () => toast('Буфер обмена недоступен', 'error')) }] : []),
+    ]
   }
 
   const where = () => ({ cwd, workspaceId: workspaceFor(cwd) })
@@ -98,7 +126,9 @@ function TabBar({ cwd }: { cwd: string }) {
               data-file={file || undefined}
               data-tip={title} data-tip-trunc
               onClick={() => activateTab(cwd, key)}
+              onMouseDown={(e) => { if (e.button === 1) e.preventDefault() /* no autoscroll: middle click closes */ }}
               onAuxClick={(e) => { if (e.button === 1) close(key, true) }}
+              onContextMenu={(e) => { e.preventDefault(); setMenu({ key, el: e.currentTarget }) }}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); activateTab(cwd, key) }
                 if (e.key === 'Delete') close(key, false)
@@ -112,6 +142,7 @@ function TabBar({ cwd }: { cwd: string }) {
                 type="button"
                 className="icon-btn icon-btn-sm tab-close"
                 aria-label={`Закрыть «${title}»`}
+                data-tip={`Закрыть (${CLOSE_KEYS})`}
                 onClick={(e) => { e.stopPropagation(); close(key, true) }}
               >
                 <X />
@@ -120,6 +151,7 @@ function TabBar({ cwd }: { cwd: string }) {
           )
         })}
       </div>
+      {menu && <Menu anchor={menuAnchor} open onClose={() => setMenu(null)} items={menuItems(menu.key)} label="Вкладка" placement="bottom-start" />}
       <MenuButton
         label="Новая вкладка в этом дереве"
         icon={<Plus />}

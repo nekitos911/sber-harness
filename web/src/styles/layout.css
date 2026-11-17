@@ -166,8 +166,10 @@
 .tab-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tab[data-file] .tab-title { font-style: italic; }
 .tab .gs { width: auto; margin-left: -3px; }
-.tab-close { opacity: 0; }
-.tab:hover .tab-close, .tab[aria-selected="true"] .tab-close, .tab-close:focus-visible { opacity: 1; }
+/* × like VS Code: always on the active tab, on hover or keyboard focus for the others; a 22 px hit area. */
+.tab-close { opacity: 0; flex-shrink: 0; min-width: 22px; }
+.tab:hover .tab-close, .tab[aria-selected="true"] .tab-close, .tab:focus-within .tab-close, .tab-close:focus-visible { opacity: 1; }
+.tab-close:hover { background: var(--deck-3); color: var(--ink); }
 .tab-dirty { width: 7px; height: 7px; border-radius: 50%; background: var(--ink-2); flex-shrink: 0; margin: 0 8px; }
 .tab:hover .tab-dirty { display: none; }
 .tab:not(:hover) .tab-dirty + .tab-close { display: none; }
