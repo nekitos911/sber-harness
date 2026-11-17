@@ -39,6 +39,7 @@ function DialogSwitch({ d }: { d: DialogRequest }) {
     case 'wt-cleanup': return <CleanupDialog workspaceId={d.workspaceId} />
     case 'recovery': return <RecoveryDialog />
     case 'session-delete': return <SessionDeleteDialog id={d.id} />
+    case 'confirm': return <Modal title={d.title} submitLabel={d.ok} danger={d.danger} onClose={closeDialog} onSubmit={() => { closeDialog(); d.onConfirm() }}><p>{d.text}</p></Modal>
     case 'session-archive': return <SessionArchiveDialog id={d.id} />
     case 'session-perms': return <SessionPermsDialog id={d.id} />
     case 'folder-chat': return <FolderPicker title="Новый чат в папке" submitLabel="Начать чат здесь" onClose={closeDialog} onPick={(p) => { closeDialog(); void newChatInFolder(p) }} />

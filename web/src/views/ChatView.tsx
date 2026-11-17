@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { ArrowDown, Check, Copy, Ellipsis, ExternalLink, FolderPlus, KeyRound, ShieldCheck, Wrench, X, GitCompareArrows, MessageSquare, RotateCcw, ScrollText, Square, Trash2 } from 'lucide-react'
 import { api, errorText, tryApi } from '../api'
-import { openDialog, openScreen, openSession, openTask, setState, showPanel, useFeature, useStore, without, upsertSession } from '../store'
+import { openDialog, openScreen, openSession, openTask, setState, showPanel, useFeature, useStore, upsertSession } from '../store'
 import { loadMessages, loadSubagents } from '../ws'
 import { basename, normPath, ROLE } from '../lib/format'
 import { useGit } from '../lib/git'
@@ -141,10 +141,6 @@ export function ChatView({ id, active }: { id: string; active: boolean }) {
     }
   }
   const reset = () => void tryApi('POST', `/sessions/${id}/restart`)
-  const remove = async () => {
-    if (!window.confirm(`Удалить сессию «${session.title}» вместе с историей?`)) return
-    if ((await tryApi<unknown>('DELETE', `/sessions/${id}`)) !== undefined) setState((s) => ({ sessions: without(s.sessions, id) }))
-  }
 
   const showOlder = () => {
     const el = scroller.current
@@ -154,7 +150,7 @@ export function ChatView({ id, active }: { id: string; active: boolean }) {
 
   return (
     <div className="chat">
-      <ChatHeader session={session} onLog={showLog} onReset={reset} onDelete={() => void remove()} />
+      <ChatHeader session={session} onLog={showLog} onReset={reset} onDelete={() => openDialog({ kind: 'session-delete', id })} />
       <SddStrip cwd={session.cwd} />
       {log !== null && (
         <div className="chat-log">

@@ -4,6 +4,22 @@ import { RotateCcw, TriangleAlert } from 'lucide-react'
 interface Props { area?: string; children: ReactNode; full?: boolean }
 interface State { error: Error | null; stack: string; key: number }
 
+const RELOADED = 'harness.reloadedForBuild'
+/** A lazy chunk of the build this page came from is gone (the UI was rebuilt while open). */
+const isStaleBuild = (e: unknown) => /dynamically imported module|Importing a module script failed|Unable to preload CSS/i.test(String((e as Error)?.message ?? e))
+
+/** Reload once for a new build; false when this tab already did it a moment ago (then the user is asked). */
+export function reloadForNewBuild(): boolean {
+  try {
+    if (sessionStorage.getItem(RELOADED)) return false
+    sessionStorage.setItem(RELOADED, '1')
+  } catch { return false }
+  window.location.reload()
+  return true
+}
+// A page that stayed up is a good build: a later rebuild may reload again.
+window.setTimeout(() => { try { sessionStorage.removeItem(RELOADED) } catch { /* storage off */ } }, 15000)
+
 const details = (s: State) => `${s.error?.name}: ${s.error?.message}\n${s.error?.stack ?? ''}\n\nКомпоненты:${s.stack}`
 
 /**
@@ -18,6 +34,7 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: Error, info: ErrorInfo) {
+    if (isStaleBuild(error) && reloadForNewBuild()) return
     this.setState({ stack: info.componentStack ?? '' })
     console.error(`[harness] ошибка в области «${this.props.area ?? 'приложение'}»:`, error, info.componentStack)
   }
@@ -29,6 +46,20 @@ export class ErrorBoundary extends Component<Props, State> {
   render() {
     const { error, key } = this.state
     if (!error) return <ErrorKey key={key}>{this.props.children}</ErrorKey>
+    if (isStaleBuild(error)) {
+      // «Повторить» cannot help: React.lazy keeps the failed import
+      return (
+        <div className={this.props.full ? 'crash-full' : 'crash-region'} role="alert">
+          <div className={this.props.full ? 'crash-card' : 'crash-head'}>
+            <RotateCcw aria-hidden />
+            <strong>Интерфейс обновлён</strong>
+          </div>
+          <div className="row">
+            <button type="button" className="btn btn-sm btn-primary" onClick={() => window.location.reload()}><RotateCcw />Перезагрузить</button>
+          </div>
+        </div>
+      )
+    }
     if (this.props.full) {
       return (
         <div className="crash-full" role="alert">

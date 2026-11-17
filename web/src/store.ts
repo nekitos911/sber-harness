@@ -34,6 +34,7 @@ export type DialogRequest =
   | { kind: 'folder-chat' }
   | { kind: 'recovery' }
   | { kind: 'session-delete'; id: string }
+  | { kind: 'confirm'; title: string; text: string; ok: string; danger?: boolean; onConfirm: () => void }
   | { kind: 'session-archive'; id: string } // still working: confirm stopping it
   | { kind: 'session-perms'; id: string }
 
@@ -280,14 +281,17 @@ export function navigate(dir: 'back' | 'forward') {
 export const dirtyKey = (cwd: string, key: string) => `${wtKey(cwd)}|${key}`
 
 /** Close a tab of a worktree; if it was active, the tab used before it there (else its left neighbour) takes over. */
-export function closeTab(cwd: string, key: string) {
+export function closeTab(cwd: string, key: string, force = false) {
   const s = state
   const k = wtKey(cwd)
   const entry = s.wt[k]
   const i = entry ? entry.tabs.findIndex((t) => tabKey(t) === key) : -1
   if (!entry || i < 0) return
   const dk = dirtyKey(cwd, key)
-  if (s.dirty[dk] && !window.confirm('В файле есть несохранённые изменения. Закрыть без сохранения?')) return
+  if (s.dirty[dk] && !force) {
+    openDialog({ kind: 'confirm', title: 'Закрыть без сохранения?', text: 'В файле есть несохранённые изменения — они пропадут.', ok: 'Закрыть без сохранения', danger: true, onConfirm: () => closeTab(cwd, key, true) })
+    return
+  }
   const tabs = entry.tabs.filter((_, j) => j !== i)
   const dirty = { ...s.dirty }
   delete dirty[dk]
