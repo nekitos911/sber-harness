@@ -311,7 +311,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     const kind = input.subagent_type || (ev.name.toLowerCase() === 'fork' ? 'fork' : 'agent');
     const v = find(id) || {
       id, kind: 'chat', virtual: true, title: [kind, input.model].filter(Boolean).join(' · '), agent: s.agent, launcherId: null,
-      cwd: s.cwd, workspaceId: s.workspaceId, branch: s.branch, role: 'subagent', parentId: s.id, taskId: s.taskId, status: 'running',
+      cwd: s.cwd, workspaceId: s.workspaceId, worktreePath: s.worktreePath ?? null, system: !!s.system, branch: s.branch, role: 'subagent', parentId: s.id, taskId: s.taskId, status: 'running',
       externalSessionId: null, settingsPath: null, model: typeof input.model === 'string' ? input.model : null, approvalMode: null,
       autoReport: false, queued: 0, preview: '', command: null, pid: null, tokensIn: 0, tokensOut: 0, phase: null, turnOffset: null,
       createdAt: now, lastActivityAt: now,
@@ -922,14 +922,27 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
    * outside the repo folder), else the deepest registered folder containing it (a projects folder is the last resort).
    */
   async function workspaceFor(cwd, fresh = false, retry = true) {
+    return (await placeFor(cwd, fresh, retry)).workspaceId;
+  }
+
+  /**
+   * Where a session lives for grouping: { workspaceId, worktreePath, system }. Anything under the harness's own data
+   * folder (login terminal, model discovery, default chat folders) is `system` and belongs to no project; otherwise the
+   * worktree whose root contains the cwd (longest prefix, a sub-folder included) and its repository; otherwise the
+   * deepest registered folder.
+   */
+  async function placeFor(cwd, fresh = false, retry = true) {
+    if (insideDir(store.dataDir, cwd)) return { workspaceId: null, worktreePath: null, system: true };
     let best = null;
     for (const w of db.workspaces.filter((x) => x.isGit)) {
       for (const t of await worktreesOf(w.path, fresh)) {
-        if (insideDir(t.path, cwd) && (!best || t.path.length > best.len)) best = { id: w.id, len: t.path.length };
+        if (insideDir(t.path, cwd) && (!best || t.path.length > best.path.length)) best = { id: w.id, path: t.path };
       }
     }
-    if (!best && !fresh && retry) return workspaceFor(cwd, true); // a worktree created in the last 30 s
-    return best?.id ?? db.workspaces.filter((w) => insideDir(w.path, cwd)).sort((a, b) => b.path.length - a.path.length)[0]?.id ?? null;
+    if (!best && !fresh && retry) return placeFor(cwd, true); // a worktree created in the last 30 s
+    if (best) return { workspaceId: best.id, worktreePath: best.path, system: false };
+    const folder = db.workspaces.filter((w) => insideDir(w.path, cwd)).sort((a, b) => b.path.length - a.path.length)[0];
+    return { workspaceId: folder?.id ?? null, worktreePath: null, system: false };
   }
 
   // ---- public API ----
@@ -1009,7 +1022,10 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
         agent: kind === 'chat' ? agent : agent || 'shell',
         launcherId: kind === 'chat' ? agentCfg.launcher : null,
         cwd,
-        workspaceId: ws?.id ?? (await workspaceFor(cwd)),
+        ...(await (async () => {
+          const place = await placeFor(cwd);
+          return { workspaceId: place.system ? null : ws?.id ?? place.workspaceId, worktreePath: place.worktreePath, system: place.system };
+        })()),
         branch: o.branch ?? null,
         role,
         parentId: o.parentId ?? null,
@@ -1260,18 +1276,23 @@ ${note.trim()}` : text });
      */
     async reresolveWorkspaces() {
       let moved = 0;
-      for (const s of db.sessions.filter((x) => !x.archived && !x.virtual && x.cwd)) {
+      for (const s of db.sessions.filter((x) => !x.virtual && x.cwd)) {
+        const place = await placeFor(s.cwd, false, false);
         const cur = db.workspaces.find((w) => w.id === s.workspaceId);
-        if (cur?.isGit) continue;
-        const id = await workspaceFor(s.cwd, false, false);
-        if (id && id !== s.workspaceId && db.workspaces.find((w) => w.id === id)?.isGit) {
-          s.workspaceId = id;
+        // a repository found for the worktree wins; a session outside any worktree keeps the folder it had
+        const workspaceId = place.system ? null : place.worktreePath ? place.workspaceId : cur ? s.workspaceId : place.workspaceId;
+        if (s.workspaceId !== workspaceId || (s.worktreePath ?? null) !== place.worktreePath || !!s.system !== place.system) {
+          Object.assign(s, { workspaceId, worktreePath: place.worktreePath, system: place.system });
           moved++;
         }
       }
+      for (const v of db.sessions.filter((x) => x.virtual)) {
+        const p = find(v.parentId);
+        if (p) Object.assign(v, { workspaceId: p.workspaceId, worktreePath: p.worktreePath ?? null, system: !!p.system });
+      }
       if (moved) {
         store.save();
-        console.log(`[harness] ${moved} session(s) re-attached to the repository that owns their worktree`);
+        console.log(`[harness] ${moved} session(s) re-grouped (worktree / repository / harness system folder)`);
       }
       return moved;
     },

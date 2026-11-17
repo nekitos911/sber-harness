@@ -115,3 +115,17 @@ test('settings: workspaces { root, repos } with the resolved projects folder; sa
   assert.deepEqual([auto.root, auto.rootResolved, auto.rootAuto], [null, root, true]);
   assert.equal((await state()).workspaces[0].path, root);
 });
+
+test('grouping: a chat in a sub-folder of a worktree belongs to that worktree; chats in the harness data folder are system', async () => {
+  const wa = (await state()).workspaces.find((w) => w.path === repoA);
+  const wt = (await h.api('POST', `/api/workspaces/${wa.id}/worktrees`, { name: 'feature/sub-dir' })).body;
+  const sub = path.join(wt.path, 'sub', 'dir');
+  fs.mkdirSync(sub, { recursive: true });
+  const s = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', cwd: sub })).body;
+  assert.deepEqual([s.worktreePath, s.workspaceId, s.system], [wt.path, wa.id, false]);
+  const main = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', cwd: path.join(repoA) })).body;
+  assert.deepEqual([main.worktreePath, main.workspaceId], [repoA, wa.id], 'the main worktree too');
+  const own = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock' })).body; // <dataDir>/chats/<sid>
+  assert.deepEqual([own.system, own.workspaceId, own.worktreePath], [true, null, null]);
+  assert.ok((await state()).sessions.find((x) => x.id === own.id).system);
+});

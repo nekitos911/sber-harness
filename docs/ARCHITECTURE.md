@@ -744,6 +744,10 @@ NOT confirmed (it may print a URL / device code and wait for the browser callbac
   `workspaceId` = the git repository whose worktree list contains its cwd (worktrees usually live outside the repo
   folder), else the deepest registered folder; on startup one pass (cached worktree lists) moves existing
   non-archived sessions attached to a folder workspace to the repository that owns their worktree (count logged).
+  Every session also has `worktreePath` (the worktree root containing its cwd — a sub-folder included — by longest prefix
+  over the registered repositories' worktree lists, case-insensitive on Windows; null at a projects folder or a plain
+  folder) and `system: true` for anything under the harness data folder (login terminal, model discovery, default chat
+  folders): no workspace, no worktree, never grouped under a project. The startup pass recomputes all three.
   Feature flag `worktree-lazy`.
 - `PATCH /api/worktrees/meta { path, label?, note?, pinned?, sleeping? }` → meta. `sleeping: true` stops terminal PTYs
   in that cwd (chat sessions are idle between turns anyway; a running turn is NOT killed — 409 unless `force`).
