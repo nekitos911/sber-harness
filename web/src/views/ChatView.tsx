@@ -43,22 +43,28 @@ export function ChatView({ id, active }: { id: string; active: boolean }) {
   const scroller = useRef<HTMLDivElement>(null)
   const stick = useRef(true)
   const [atBottom, setAtBottom] = useState(true)
-  // Reading position survives a reload: distance from the bottom, saved when the page goes away.
-  const fromBottom = useRef(0)
+  // Opening (or coming back to) a chat starts at «Новое» when something unread is there, else at the bottom.
   const restored = useRef(false)
   const anchor = useRef<number | null>(null) // distance from the bottom kept while older messages are added on top
   const seenKey = `seen:${id}`
   // «НОВОЕ» marks what arrived while the chat was not on screen: last read time, taken when it is shown.
   const [mark, setMark] = useState(() => ({ since: loadDraft<number>(seenKey), at: Date.now() }))
-  const wasActive = useRef(active)
+  const [wasActive, setWasActive] = useState(active)
+  if (active !== wasActive) { // re-shown: a fresh mark, set during render so the first frame already has it
+    setWasActive(active)
+    if (active) { setMark({ since: loadDraft<number>(seenKey), at: Date.now() }); restored.current = false }
+  }
+  // Sending always goes to the bottom, wherever the user had scrolled.
   useEffect(() => {
-    if (active && !wasActive.current) setMark({ since: loadDraft<number>(seenKey), at: Date.now() }) // re-shown: a fresh mark
-    wasActive.current = active
-  }, [active, seenKey])
-  useEffect(() => {
-    const save = () => saveDraft(`scroll:${id}`, fromBottom.current > 48 ? Math.round(fromBottom.current) : null)
-    window.addEventListener('pagehide', save)
-    return () => window.removeEventListener('pagehide', save)
+    const on = (e: Event) => {
+      if ((e as CustomEvent<string>).detail !== id) return
+      const el = scroller.current
+      stick.current = true
+      setAtBottom(true)
+      if (el) el.scrollTop = el.scrollHeight
+    }
+    window.addEventListener('harness:sent', on)
+    return () => window.removeEventListener('harness:sent', on)
   }, [id])
 
   const subagentsOn = useFeature('subagents')
@@ -104,25 +110,17 @@ export function ChatView({ id, active }: { id: string; active: boolean }) {
         setAtBottom(false)
         return
       }
-      const saved = loadDraft<number>(`scroll:${id}`)
-      if (saved) {
-        el.scrollTop = el.scrollHeight - el.clientHeight - saved
-        fromBottom.current = saved
-        stick.current = false
-        setAtBottom(false)
-        return
-      }
+      stick.current = true
     }
     if (stick.current) el.scrollTop = el.scrollHeight
-  }, [list.length, lastText, active, running, id])
+  }, [list.length, lastText, active, running, id, newSince])
 
   if (!session) return <Loading label="Загрузка сессии…" />
 
   const onScroll = () => {
     const el = scroller.current
     if (!el) return
-    fromBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight
-    const bottom = fromBottom.current < 48
+    const bottom = el.scrollHeight - el.scrollTop - el.clientHeight < 48
     stick.current = bottom
     if (bottom !== atBottom) setAtBottom(bottom)
   }

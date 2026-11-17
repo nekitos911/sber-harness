@@ -59,6 +59,7 @@ export function Composer({ session, active }: { session: Session; active: boolea
     setSending(false)
     if (!res) return
     update('')
+    window.dispatchEvent(new CustomEvent('harness:sent', { detail: session.id })) // the chat scrolls to the bottom
     if (res.queued) toast('Сообщение в очереди — агент получит его после текущего шага')
   }
 

@@ -33,9 +33,19 @@ export function buildItems(list: Message[], runningTurn: number | null, newSince
   const out: Item[] = []
   let newDone = newSince === null
   const warnings = new Map<string, Extract<Item, { kind: 'msg' }>>() // the same ⚠ again: one line with ×N
+  let asked = false // an ask card waits for its answer: the next message of the person is that answer
+  let questions = false
   for (let i = 0; i < list.length; i++) {
     const m = list[i]
     if (m.kind === 'system' && isMcpStatus(m.text)) continue // the header chip «MCP 4/5» shows it
+    if (m.kind === 'tool' && m.tool && isAskTool(m.tool.name)) asked = true
+    if (m.kind === 'question') questions = true
+    // The answer given in a question card is shown there («Вы ответили: …»), not again as a bubble.
+    if (m.kind === 'user' && (!m.from || m.from === 'user')) {
+      const answer = asked || (questions && m.text.startsWith('Ответ на вопрос «'))
+      asked = false
+      if (answer) continue
+    }
     if (m.kind === 'system' && m.text.trim().startsWith('⚠')) {
       const seen = warnings.get(m.text.trim())
       if (seen) { seen.count = (seen.count ?? 1) + 1; continue }
