@@ -1,6 +1,7 @@
 // Workspace file browser: list/read/write; every path is resolved against cwd and must stay inside it.
 import fs from 'node:fs';
 import path from 'node:path';
+import { git } from './git.js';
 
 const MAX_TEXT = 2 * 1024 * 1024;
 const SKIP = new Set(['.git', 'node_modules']);
@@ -77,4 +78,85 @@ export function writeFile(cwd, rel, content) {
   fs.mkdirSync(path.dirname(abs), { recursive: true });
   fs.writeFileSync(abs, content);
   return { ok: true };
+}
+
+// ---- @-mention search ----
+
+const SEARCH_TTL_MS = 10000;
+const WALK_CAP = 50000;
+const fileCache = new Map(); // cwd -> { at, files }
+
+function walk(root) {
+  const files = [];
+  const stack = [''];
+  while (stack.length && files.length < WALK_CAP) {
+    const rel = stack.pop();
+    let entries = [];
+    try { entries = fs.readdirSync(path.join(root, rel), { withFileTypes: true }); } catch { continue; }
+    for (const e of entries) {
+      if (SKIP.has(e.name)) continue;
+      const p = rel ? `${rel}/${e.name}` : e.name;
+      if (e.isDirectory()) stack.push(p);
+      else files.push(p);
+    }
+  }
+  return files;
+}
+
+/** Workspace files (git ls-files incl. untracked, not ignored; else a walk), cached per cwd for ~10 s. */
+async function workspaceFiles(cwd) {
+  const hit = fileCache.get(cwd);
+  if (hit && Date.now() - hit.at < SEARCH_TTL_MS) return hit.files;
+  let files;
+  try {
+    files = (await git(cwd, ['ls-files', '--cached', '--others', '--exclude-standard', '-z'])).stdout.split('\0').filter(Boolean);
+  } catch {
+    files = walk(cwd);
+  }
+  files = [...new Set(files)];
+  fileCache.set(cwd, { at: Date.now(), files });
+  return files;
+}
+
+/** Subsequence match of q in text (both lower case): null or a score favouring consecutive and word-start hits. */
+function subsequence(text, q) {
+  let score = 0;
+  let from = 0;
+  let prev = -2;
+  for (const ch of q) {
+    const i = text.indexOf(ch, from);
+    if (i < 0) return null;
+    score += 1;
+    if (i === prev + 1) score += 5;
+    if (i === 0 || '/_-. '.includes(text[i - 1])) score += 3;
+    prev = i;
+    from = i + 1;
+  }
+  return score;
+}
+
+/** Fuzzy score of `query` in a path (null = no match): the better of a whole-path match and a file-name-only match. */
+export function fuzzyScore(file, query) {
+  const p = file.toLowerCase();
+  const q = query.toLowerCase().replace(/\s+/g, '');
+  if (!q) return 0;
+  const base = p.slice(p.lastIndexOf('/') + 1);
+  const whole = subsequence(p, q);
+  if (whole === null) return null;
+  const inBase = subsequence(base, q);
+  const best = Math.max(whole, inBase === null ? -Infinity : inBase + 10 + (base.includes(q) ? 20 : 0));
+  return Math.round((best - p.length * 0.01) * 100) / 100;
+}
+
+export async function searchFiles(cwd, query = '', limit = 30) {
+  resolveInside(cwd, '');
+  const n = Math.min(Math.max(Number(limit) || 30, 1), 100);
+  const files = await workspaceFiles(path.resolve(cwd));
+  if (!query.trim()) return files.slice().sort().slice(0, n).map((p) => ({ path: p, score: 0 }));
+  const hits = [];
+  for (const p of files) {
+    const score = fuzzyScore(p, query);
+    if (score !== null) hits.push({ path: p, score });
+  }
+  return hits.sort((a, b) => b.score - a.score || a.path.length - b.path.length || a.path.localeCompare(b.path)).slice(0, n);
 }

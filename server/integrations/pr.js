@@ -9,6 +9,10 @@
  *      branch   current branch of cwd (already pushed by the user via "Push"); base: target branch
  *      project, repository: last two path segments of `git remote get-url origin` (git.remoteInfo); repo = "project/repository"
  *    Throws status 501 when integrations.pr.enabled is not true, 400 when title/body exceed integrations.pr.limits.
+ *    prStatus({ config, mcp, branch, project, repository, repo }) -> { pr: { index, title, state, url, mergeable,
+ *      reviewers: [{ status }], base, updatedAt } | null }   observe-only, via listTool: OPEN first, else the newest
+ *      MERGED/DECLINED pull request whose head is `branch` (501 when disabled or no listTool).
+ *    refreshTaskPr({ config, mcp, tasks, task, cwd }) -> boolean   keeps task.pr = { index, state, url, updatedAt } | null.
  *
  *  Default implementation is config-driven (harness.config.json, override in harness.config.local.json):
  *    "integrations": { "pr": {
@@ -25,6 +29,7 @@
  * ============================================================================================
  */
 import { toolResultValue } from '../mcp-client.js';
+import { remoteInfo } from '../git.js';
 import { getPath } from './tasks.js';
 
 export function fillTemplate(tpl, vars) {
@@ -68,4 +73,45 @@ export async function createPullRequest({ config, mcp, cwd, branch, base, title,
     throw Object.assign(new Error(`integrations.pr.urlPath "${cfg.urlPath}" not found in the tool result: ${JSON.stringify(value).slice(0, 300)}`), { status: 502 });
   }
   return { url, existing: false };
+}
+
+const disabled = (what) => Object.assign(new Error(what), { status: 501 });
+
+/** sourcecontrol pull request -> the harness shape (state lower-case, html_url as url, base name, epoch ms). */
+function mapPull(p, cfg) {
+  return {
+    index: p.index ?? null,
+    title: p.title ?? '',
+    state: String(p.state ?? '').toLowerCase(),
+    url: getPath(p, cfg.urlPath ?? 'html_url') ?? null,
+    mergeable: typeof p.mergeable === 'boolean' ? p.mergeable : null,
+    reviewers: Array.isArray(p.reviewers) ? p.reviewers.map((r) => ({ status: r?.status ?? null })) : [],
+    base: p.base?.name ?? null,
+    updatedAt: Date.parse(p.updated_at) || null,
+  };
+}
+
+export async function prStatus({ config, mcp, branch, project = null, repository = null, repo = null }) {
+  const cfg = config.integrations?.pr;
+  if (!cfg?.enabled) throw disabled('PR integration is disabled (integrations.pr.enabled)');
+  if (!cfg.listTool) throw disabled('integrations.pr.listTool is not configured');
+  const args = fillTemplate(cfg.listArgs || LIST_ARGS, { repo, project, repository, branch, head: branch });
+  const list = async (state) => {
+    const pulls = getPath(toolResultValue(await mcp.callTool(cfg.server, cfg.listTool, { ...args, state })), cfg.listItemsPath ?? 'pulls');
+    return Array.isArray(pulls) ? pulls.filter((p) => p?.head?.name === branch) : [];
+  };
+  const open = await list('OPEN');
+  if (open.length) return { pr: mapPull(open[0], cfg) };
+  const closed = [...(await list('MERGED')), ...(await list('DECLINED'))]
+    .sort((a, b) => (Date.parse(b.updated_at) || 0) - (Date.parse(a.updated_at) || 0));
+  return { pr: closed.length ? mapPull(closed[0], cfg) : null };
+}
+
+/** Refreshes task.pr from the code host; true when it changed (only then the task is saved and broadcast). */
+export async function refreshTaskPr({ config, mcp, tasks, task, cwd }) {
+  const { pr } = await prStatus({ config, mcp, branch: task.branch, ...(await remoteInfo(cwd)) });
+  const next = pr && { index: pr.index, state: pr.state, url: pr.url, updatedAt: pr.updatedAt };
+  if (JSON.stringify(next ?? null) === JSON.stringify(task.pr ?? null)) return false;
+  tasks.update(task.id, { pr: next ?? null }, 'harness');
+  return true;
 }

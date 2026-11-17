@@ -5,8 +5,8 @@ export const STATUSES = ['backlog', 'todo', 'in_progress', 'review', 'done'];
 export const PRIORITIES = ['low', 'medium', 'high'];
 const EDITABLE = ['title', 'description', 'status', 'order', 'priority', 'deps', 'labels', 'workspaceId', 'parentId',
   'targets', 'branch', 'ports', 'assigneeSessionId', 'externalId', 'externalUrl', 'source',
-  'externalStatus', 'statusManual', 'hidden', 'takenAt', 'snapshot'];
-const DEFAULTS = { parentId: null, targets: null, branch: null, ports: [], externalStatus: null, statusManual: false, hidden: false, takenAt: null, snapshot: null };
+  'externalStatus', 'statusManual', 'hidden', 'takenAt', 'snapshot', 'pr'];
+const DEFAULTS = { parentId: null, targets: null, branch: null, ports: [], externalStatus: null, statusManual: false, hidden: false, takenAt: null, snapshot: null, pr: null };
 
 const fail = (status, message) => { throw Object.assign(new Error(message), { status }); };
 const isStrArr = (v) => Array.isArray(v) && v.every((x) => typeof x === 'string');
@@ -66,7 +66,7 @@ export function createTasks({ store, bus, defaultBase = 'main' }) {
     if ('ports' in f && !Array.isArray(f.ports)) fail(400, 'ports must be an array');
     for (const k of ['statusManual', 'hidden']) if (k in f && typeof f[k] !== 'boolean') fail(400, `${k} must be a boolean`);
     if ('takenAt' in f && f.takenAt !== null && !Number.isFinite(f.takenAt)) fail(400, 'takenAt must be a number or null');
-    if ('snapshot' in f && f.snapshot !== null && (typeof f.snapshot !== 'object' || Array.isArray(f.snapshot))) fail(400, 'snapshot must be an object or null');
+    for (const k of ['snapshot', 'pr']) if (k in f && f[k] !== null && (typeof f[k] !== 'object' || Array.isArray(f[k]))) fail(400, `${k} must be an object or null`);
     if ('deps' in f && f.deps !== undefined) {
       if (!isStrArr(f.deps)) fail(400, 'deps must be an array of task ids');
       for (const d of f.deps) {
@@ -127,6 +127,7 @@ export function createTasks({ store, bus, defaultBase = 'main' }) {
         hidden: false,
         takenAt: null,
         snapshot: null,
+        pr: null,
         log: [{ at: now, by, text: 'created' }],
         createdAt: now,
         updatedAt: now,

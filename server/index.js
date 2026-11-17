@@ -17,8 +17,8 @@ import * as git from './git.js';
 import * as wfs from './fs.js';
 import { createMcpManager, loadSecrets, secretsFile, serverDefs } from './mcp-client.js';
 import { launchers } from './launchers.js';
-import { importTasks, transitionTask, getExternal, getTransitions } from './integrations/tasks.js';
-import { createPullRequest } from './integrations/pr.js';
+import { importTasks, transitionTask, getExternal, getTransitions, importChildren } from './integrations/tasks.js';
+import { createPullRequest, prStatus, refreshTaskPr } from './integrations/pr.js';
 
 const MAX_BODY = 1024 * 1024;
 const MIME = {
@@ -133,6 +133,30 @@ export async function startServer(opts = {}) {
     // only while a UI is connected; importTasks updates (and so broadcasts) changed tasks only
     syncTimer = setInterval(() => { if (wss.clients.size > 0) runSync().catch(() => {}); }, Math.max(sec, 10) * 1000);
     syncTimer.unref?.();
+  }
+
+  // ---- PR status of tasks (observe-only) ----
+  let prTimer = null;
+  let prRefreshing = false;
+  async function refreshPrs() {
+    if (prRefreshing) return;
+    prRefreshing = true;
+    try {
+      for (const t of db.tasks) {
+        const ws = t.branch && db.workspaces.find((w) => w.id === t.workspaceId);
+        if (ws) await refreshTaskPr({ config, mcp, tasks, task: t, cwd: ws.path }).catch(() => {});
+      }
+    } finally {
+      prRefreshing = false;
+    }
+  }
+  function schedulePrs() {
+    clearInterval(prTimer);
+    const cfg = config.integrations.pr;
+    const sec = Number(cfg?.refreshSec) || 0;
+    if (!cfg?.enabled || !cfg.listTool || sec <= 0) return;
+    prTimer = setInterval(() => { if (wss.clients.size > 0) refreshPrs(); }, Math.max(sec, 30) * 1000);
+    prTimer.unref?.();
   }
 
   // ---- settings: GET/PUT /api/settings, saved into harness.config.local.json (never secrets) ----
@@ -281,6 +305,7 @@ export async function startServer(opts = {}) {
     writeAtomic(config.localConfigFile, `${JSON.stringify(deepMerge(readJsonFile(config.localConfigFile), patch), null, 2)}\n`);
     Object.assign(config, next);
     scheduleSync();
+    schedulePrs();
     return settingsView();
   }
 
@@ -386,6 +411,7 @@ export async function startServer(opts = {}) {
   });
   route('GET', '/api/tasks/:id/external', ({ params }) => getExternal({ config, mcp, tasks, task: tasks.get(params.id) }));
   route('GET', '/api/tasks/:id/transitions', ({ params }) => getTransitions({ config, mcp, tasks, task: tasks.get(params.id) }));
+  route('POST', '/api/tasks/:id/import-children', ({ params }) => importChildren({ config, mcp, tasks, task: tasks.get(params.id) }));
   route('POST', '/api/tasks/:id/tracker-status', ({ params, body }) => {
     check(body, { transition: 'string?', status: 'string?', comment: 'string?' });
     return transitionTask({ config, mcp, tasks, task: tasks.get(params.id), transition: body.transition, status: body.status, comment: body.comment || '' });
@@ -412,6 +438,18 @@ export async function startServer(opts = {}) {
   route('GET', '/api/git/log', ({ query }) => git.log(cwdOf(query), Math.min(Math.max(Number(query.n) || 50, 1), 1000)));
   route('GET', '/api/git/suggest', ({ query }) => orch.gitSuggest(cwdOf(query)));
   route('GET', '/api/git/branches', ({ query }) => git.branches(cwdOf(query)));
+  route('GET', '/api/git/pr-status', async ({ query }) => {
+    const cwd = cwdOf(query);
+    if (!config.integrations.pr?.enabled) fail(501, 'PR integration is disabled (integrations.pr.enabled)');
+    const branch = await git.currentBranch(cwd);
+    if (!branch) return { pr: null };
+    try {
+      return await prStatus({ config, mcp, branch, ...(await git.remoteInfo(cwd)) });
+    } catch (e) {
+      if (e.status === 501) throw e;
+      return { pr: null, error: e.message }; // observe-only: the code host being down is not an API error
+    }
+  });
   route('POST', '/api/git/checkout', async ({ body }) => {
     check(body, { cwd: 'string', branch: 'string', create: 'boolean?', from: 'string?' });
     const busy = db.sessions.find((s) => s.kind === 'chat' && s.status === 'running' && samePath(s.cwd, body.cwd));
@@ -437,6 +475,7 @@ export async function startServer(opts = {}) {
 
   // files
   route('GET', '/api/fs/list', ({ query }) => wfs.list(cwdOf(query), query.path || ''));
+  route('GET', '/api/fs/search', ({ query }) => wfs.searchFiles(cwdOf(query), query.q || '', query.limit));
   route('GET', '/api/fs/file', ({ query }) => wfs.readFile(cwdOf(query), check(query, { path: 'string' }).path));
   route('PUT', '/api/fs/file', ({ body }) => {
     check(body, { cwd: 'string', path: 'string', content: 'string' });
@@ -617,6 +656,7 @@ export async function startServer(opts = {}) {
   const actualPort = server.address().port;
   url = `http://${config.host.includes(':') ? `[${config.host}]` : config.host}:${actualPort}`;
   writeAtomic(serverJson, JSON.stringify({ url, pid: process.pid }));
+  schedulePrs();
   sessions.resumeRuns(); // turns that kept running while the harness was down (needs the URL for follow-up turns)
   scheduleSync();
   // best-effort: folders renamed to *.stale-<ts> by earlier deletions (files held by antivirus/indexer)
@@ -634,6 +674,7 @@ export async function startServer(opts = {}) {
       if (closed) return;
       closed = true;
       clearInterval(syncTimer);
+      clearInterval(prTimer);
       sessions.close();
       mcp.close();
       for (const c of wss.clients) c.terminate();

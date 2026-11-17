@@ -23,7 +23,7 @@ function fixtureTools() {
 }
 
 function fixtureCall(name, args = {}) {
-  const variant = args.page_number ?? args.key;
+  const variant = args.page_number ?? args.key ?? args.state;
   const file = [variant != null && `${serverName}.${name}.${variant}.json`, `${serverName}.${name}.json`]
     .filter(Boolean).map((n) => path.join(fixtures, n)).find((p) => fs.existsSync(p));
   if (!file) throw new Error(`no fixture for ${name}`);
