@@ -274,9 +274,10 @@ export function createAcp({ onWarm = () => {} } = {}) {
         const r = await c.rpc.request('session/prompt', { sessionId: c.sessionId, prompt: [{ type: 'text', text: o.prompt }] });
         res.code = 0;
         res.sawResult = true;
-        emit({ type: 'result', tokensIn: r?.usage?.inputTokens || 0, tokensOut: r?.usage?.outputTokens || 0 });
+        // before the result event: the turn closes at result, an error stop reason must already be known then
         if (r?.stopReason === 'cancelled') res.stopped = true;
         else if (r?.stopReason && !['end_turn', 'max_turn_requests'].includes(r.stopReason)) res.error = `Агент остановился: ${r.stopReason}`;
+        emit({ type: 'result', tokensIn: r?.usage?.inputTokens || 0, tokensOut: r?.usage?.outputTokens || 0 });
       } catch (e) {
         if (stop || e.stopped) res.stopped = true;
         else {

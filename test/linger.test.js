@@ -42,3 +42,24 @@ test('result ends the turn for the user although the process lingers; a queued m
   assert.match(log, /process exited \d+ ms after result \(killed after exitGraceMs\)/);
   assert.ok(!(await messages(s.id)).some((m) => m.kind === 'error' || m.text === 'Остановлено пользователем'));
 });
+
+test('nothing queued: a process lingering after result is still killed after exitGraceMs; archive/delete do not refuse it', async () => {
+  const a = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', cwd: root, prompt: '#linger' })).body;
+  const ca = await waitFor(async () => { const x = await session(a.id); return x.turnClosing && x.pid ? x : null; }, { what: 'lingering a' });
+  await waitPidGone(ca.pid, 1500 + 8000);
+  assert.ok(!isAlive(ca.pid), 'killed by the linger timer, not after its own 20 s');
+  await waitFor(async () => { const x = await session(a.id); return !x.turnClosing && !x.pid; }, { what: 'settled a' });
+
+  const b = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', cwd: root, prompt: '#linger' })).body;
+  const cb = await waitFor(async () => { const x = await session(b.id); return x.turnClosing && x.pid ? x : null; }, { what: 'lingering b' });
+  const arch = await h.api('PATCH', `/api/sessions/${b.id}`, { archived: true });
+  assert.equal(arch.status, 200, arch.body?.error);
+  await waitPidGone(cb.pid, 10000);
+  assert.ok(!isAlive(cb.pid));
+
+  const c = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', cwd: root, prompt: '#linger' })).body;
+  const cc = await waitFor(async () => { const x = await session(c.id); return x.turnClosing && x.pid ? x : null; }, { what: 'lingering c' });
+  assert.equal((await h.api('DELETE', `/api/sessions/${c.id}`)).status, 200);
+  await waitPidGone(cc.pid, 10000);
+  assert.ok(!isAlive(cc.pid));
+});

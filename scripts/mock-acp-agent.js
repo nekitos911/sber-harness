@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Fake ACP agent (Agent Client Protocol over ndjson stdio) for tests: `mock-acp-agent.js --acp [...]`.
 // Prompt directives: #perm (tool call that asks for permission, then writes out.txt via fs/write_text_file),
-// #read <path> (fs/read_text_file), #slow (streams ~4 s, honours session/cancel), #die (exits mid-turn).
+// #read <path> (fs/read_text_file), #slow (streams ~4 s, honours session/cancel), #die (exits mid-turn), #maxtokens (ends with stopReason max_tokens).
 // loadSession: true; sessions live in MOCK_AGENT_STATE_DIR (acp-<id>.json), a load replays the history.
 // MOCK_AGENT_ARGV_FILE: appends { acp: true, argv, mcpServers } on session/new|load.
 import fs from 'node:fs';
@@ -81,7 +81,7 @@ async function prompt({ sessionId, prompt: parts }) {
     }
   }
   say(sessionId, ' Done.');
-  return { stopReason: 'end_turn' };
+  return { stopReason: /#maxtokens\b/.test(text) ? 'max_tokens' : 'end_turn' };
 }
 
 const handlers = {

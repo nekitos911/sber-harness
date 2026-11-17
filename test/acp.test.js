@@ -86,6 +86,13 @@ test('a prompt streams text, thought and plan; the next message reuses the same 
   assert.equal(records().length, 1, 'one process, one session/new');
 });
 
+test('an error stop reason (max_tokens) is shown although the turn closes at its result', async () => {
+  await send(chat.id, '#maxtokens');
+  const err = await waitFor(async () => (await messages(chat.id)).find((m) => m.kind === 'error' && /max_tokens/.test(m.text)), { what: 'stop reason error' });
+  assert.equal(err.text, 'Агент остановился: max_tokens');
+  await waitFor(async () => { const s = await session(chat.id); return s.status === 'error' && !s.turnClosing; }, { what: 'error status' });
+});
+
 test('permission request: held until answered (allow writes the file, reject is reported), the card shows the answer', async () => {
   await send(chat.id, '#perm');
   const card = await waitFor(async () => (await messages(chat.id)).find((m) => m.kind === 'permission' && !m.permission.resolved), { what: 'permission card' });

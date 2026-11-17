@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { startServer } from '../server/index.js';
 import { CODE_ROOT } from '../server/config.js';
-import { isAlive } from '../server/runner.js';
+import { isAlive, killTree } from '../server/runner.js';
 import { tmpDir, rmrf, waitFor, makeRepo } from './helpers.js';
 
 const root = tmpDir();
@@ -101,6 +101,27 @@ test('on start, sessions saved under a containing folder move to the repository 
   try {
     assert.equal((await h.session(chat.id)).workspaceId, wsRepo.id);
   } finally {
+    await h.srv.close();
+  }
+});
+
+test('turnClosing never survives a restart; the next turn does not start out "closing"', async () => {
+  let h = await harness('d');
+  const s = await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', cwd, prompt: '#linger' });
+  const closing = await waitFor(async () => { const x = await h.session(s.id); return x.turnClosing && x.pid ? x : null; }, { what: 'lingering' });
+  await h.srv.close();
+  assert.equal(JSON.parse(fs.readFileSync(path.join(h.dataDir, 'db.json'), 'utf8')).sessions.find((x) => x.id === s.id).turnClosing, true);
+  h = await harness('d');
+  try {
+    const after1 = await h.session(s.id);
+    assert.deepEqual([after1.status, after1.turnClosing, after1.pid], ['idle', false, null]);
+    await h.api('POST', `/api/sessions/${s.id}/messages`, { text: '#slow' });
+    const during = await waitFor(async () => { const x = await h.session(s.id); return x.status === 'running' ? x : null; }, { what: 'running' });
+    assert.equal(during.turnClosing, false);
+    await h.api('POST', `/api/sessions/${s.id}/stop`);
+    await waitFor(async () => !(await h.session(s.id)).pid, { what: 'stopped' });
+  } finally {
+    killTree(closing.pid); // the lingering process of the first harness (not followed after the restart)
     await h.srv.close();
   }
 });

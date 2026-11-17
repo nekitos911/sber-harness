@@ -13,6 +13,8 @@ import { createAcp } from './acp.js';
 import * as git from './git.js';
 
 const fail = (status, message) => { throw Object.assign(new Error(message), { status }); };
+// Windows caps a whole command line at 32767 UTF-16 units (Linux one argument at 128 KiB): a longer prompt goes in a file
+const ARGV_PROMPT_MAX = 24000;
 export const newId = (prefix, bytes = 4) => `${prefix}_${randomBytes(bytes).toString('hex')}`;
 const isDir = (p) => { try { return fs.statSync(p).isDirectory(); } catch { return false; } };
 const insideDir = (dir, p) => { const r = path.relative(dir, p); return !r.startsWith('..') && !path.isAbsolute(r); };
@@ -317,6 +319,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     if (s.kind === 'chat' && s.status === 'running' && s.pid && latestTurnFile(s.id)) {
       toReattach.push(s);
       runtime(s.id).running = true; // no new turn until resumeRuns() has decided about this one
+    s.turnClosing = false; // a lingering process is not followed across a restart (re-attach sets it again at result)
       continue;
     }
     s.pid = null;
@@ -672,10 +675,10 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     emit(s);
     runTurnEnded(s, r, false);
     store.flush();
-    if (s.queue.length) armLinger(s);
+    armLinger(s);
   }
 
-  /** A queued message waits for the lingering process, but at most agents.<id>.exitGraceMs after result. */
+  /** The process may linger after result (a queued message waits for it) at most agents.<id>.exitGraceMs. */
   function armLinger(s) {
     const r = runtime(s.id);
     if (!r.closedEarly || r.lingerTimer) return;
@@ -696,8 +699,9 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     r.flags = {};
     s.turnFlags = {};
     r.cur = { assistant: null, thought: null, raw: null, tools: new Map(), subTools: new Map(), gotText: false };
-    const userMsgs = retry ? [] : items.map((it) => addMessage(s, { kind: 'user', text: it.text, from: it.from, ...(it.options ? { options: it.options } : {}) }));
-    Object.assign(s, { status: 'running', queued: 0, lastActivityAt: Date.now(), lastEventAt: null, stalled: false });
+    // re-queued items (their process never started) are in the transcript already
+    const userMsgs = retry ? [] : items.filter((it) => !it.recorded).map((it) => addMessage(s, { kind: 'user', text: it.text, from: it.from, ...(it.options ? { options: it.options } : {}) }));
+    Object.assign(s, { status: 'running', queued: 0, lastActivityAt: Date.now(), lastEventAt: null, stalled: false, turnClosing: false });
     const approvalOnce = s.approvalOnce; // an edit tool allowed once in plan/default mode: this turn only
     delete s.approvalOnce;
     const grantsOnce = s.grantsOnce || []; // «Разрешить один раз»: allow-list entries for this turn only
@@ -706,12 +710,13 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
 
     let res;
     try {
+    let handle;
       const { agentCfg, launcher, exe } = resolveAgent(s.agent, s.launcherId);
       checkMode(agentCfg, s.approvalMode || agentCfg.approvalMode);
       const model = s.model || agentCfg.model;
       if (model && catalog?.unavailable(s.agent).has(model)) {
         // only when a fresh discovery says so; with a stale catalogue the run is attempted
-        throw Object.assign(new Error(`Модели «${model}» нет в каталоге сервера (проверено ${new Date(catalog.info(s.agent).at).toLocaleString('ru-RU')}). Выберите другую модель и отправьте снова.`), { action: 'pick-model' });
+        throw Object.assign(new Error(`Модели «${model}» нет в каталоге сервера (проверено ${new Date(catalog.info(s.agent).at).toLocaleString('ru-RU')}). Выберите другую модель — сообщение уйдёт с ней.`), { action: 'pick-model' });
       }
       const dropped = droppedGrades(s);
       const note = dropped.length && `⚠ Недоступные модели убраны из грейдов, CLI возьмёт модель по умолчанию: ${dropped.map(([g, id]) => `${g} → ${id}`).join(', ')}`;
@@ -722,7 +727,19 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
         // a slash command only works as the first word of the prompt; the rest becomes its $ARGUMENTS
         if (pre) prompt = prompt.startsWith('/') ? `${prompt}\n\n${pre}` : `${pre}\n\n${prompt}`;
       }
-      const ctx = turnCtx({ ...s, ...(approvalOnce ? { approvalMode: approvalOnce } : {}), grantsOnce }, agentCfg, prompt);
+      const turnSession = { ...s, ...(approvalOnce ? { approvalMode: approvalOnce } : {}), grantsOnce };
+      if (agentCfg.transport !== 'acp' && prompt.length + (prompt.match(/["\\]/g)?.length ?? 0) > ARGV_PROMPT_MAX) {
+        // the CLI reads files only inside its workspace dirs: the prompt's own folder joins them for this turn
+        const dir = path.join(runDir(s.id), 'prompts');
+        const file = path.join(dir, `prompt-${r.turn}.md`);
+        fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(file, prompt);
+        // a slash command only works as the first word of the prompt: its line stays in argv
+        const slash = prompt.startsWith('/') ? `${prompt.split('\n', 1)[0].slice(0, 2000)}\n\n` : '';
+        prompt = `${slash}Полный текст сообщения: ${file}\n(${prompt.length} символов — прочитай файл целиком и выполни его как сообщение пользователя)`;
+        turnSession.includeDirs = [...(s.includeDirs || []), dir];
+      }
+      const ctx = turnCtx(turnSession, agentCfg, prompt);
       // the session keeps its chosen mode; the UI shows what the CLI really got (e.g. auto -> auto-edit)
       s.effectiveApprovalMode = launcher.effectiveMode?.(ctx) ?? (ctx.session.approvalMode || agentCfg.approvalMode || null);
       // «Как запущен агент»: what this turn really ran with, on its user message
@@ -737,7 +754,6 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
       r.registryTimer = setInterval(() => pollRegistry(s), REGISTRY_POLL_MS);
       const env = { ...process.env, ...agentCfg.env, ...secretEnv(config), ...exe.env, ...launcher.env(ctx), ...ctx.harnessMcp.env };
       const firstEventTimeoutMs = agentCfg.firstEventTimeoutMs || launcher.defaults.firstEventTimeoutMs || 30000;
-      let handle;
       if (agentCfg.transport === 'acp') {
         if (!launcher.acpArgs) throw new Error(`у лаунчера «${launcher.id}» нет режима ACP; укажите agents.${s.agent}.transport = "headless"`);
         handle = acp.turn({
@@ -771,6 +787,13 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
       res = { error: e.message, action: e.action };
     }
     if (!res.detached) finishTurn(s, res);
+    if (res.error && !res.eventCount && !res.sawResult && !handle?.pid && !r.stopRequested && find(s.id)) {
+      // the process never started (spawn error, config, unknown model): the messages wait in the queue, not lost
+      s.queue.unshift(...items.map((it) => ({ ...it, recorded: true })));
+      s.queued = s.queue.length;
+      r.requeued = true;
+      res.error += `\nСообщений в очереди: ${s.queue.length} — уйдут со следующим сообщением или после смены модели.`;
+    }
   }
 
   function turnFiles(s, n) {
@@ -888,7 +911,8 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     runTurnEnded(s, r, stopped);
     store.flush(); // a finished turn is never lost to a crash right after it
     if (s.archiveOnSettle && !s.archived) return api.archive(s.id, true); // a settled helper (subagentRetention)
-    if (r.retryItems || s.queue.length) startTurn(s);
+    if (r.requeued) r.requeued = false; // no retry loop: the next message (or a model change) sends them
+    else if (r.retryItems || s.queue.length) startTurn(s);
   }
 
   /** The process of a turn already closed at `result` has exited (by itself or killed after exitGraceMs). */
@@ -901,7 +925,11 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     try {
       fs.appendFileSync(turnFiles(s, r.turn).logFile, `[harness] process exited ${Date.now() - r.resultAt} ms after result${killed ? ' (killed after exitGraceMs)' : ''}\n`);
     } catch {}
-    if (res.stderrTail.trim() && !res.killReason) warnOnce(s, res.stderrTail);
+    if (res.stderrTail.trim() && !res.killReason && !res.error) warnOnce(s, res.stderrTail);
+    if (res.error && !res.stopped) {
+      addMessage(s, { kind: 'error', text: `${res.error}${tail(res.stderrTail)}` });
+      s.status = 'error';
+    }
     Object.assign(s, { pid: null, pidStartedAt: null, turnOffset: null, turnClosing: false });
     emit(s);
     store.flush();
@@ -1313,9 +1341,9 @@ ${note.trim()}` : text });
     archive(sid, archived = true, { stop = false } = {}) {
       const s = get(sid);
       const r = runtime(sid);
-      const live = r.running || !!r.pty;
+      const live = (r.running && !r.closedEarly) || !!r.pty;
       if (archived && live && !stop) fail(409, 'сессия работает — остановите её или передайте stop: true');
-      if (archived && live) api.stop(sid);
+      if (archived && (live || r.closedEarly)) api.stop(sid); // a process lingering after result is ended
       for (const x of [s, ...db.sessions.filter((v) => v.virtual && v.parentId === sid)]) {
         if (!!x.archived === archived) continue;
         Object.assign(x, { archived, archivedAt: archived ? Date.now() : null });
@@ -1349,7 +1377,8 @@ ${note.trim()}` : text });
 
     remove(sid, { force = false } = {}) {
       const s = get(sid);
-      if (!force && (runtime(sid).running || runtime(sid).pty)) fail(409, 'сессия работает — остановите её или удалите с ?force=1');
+      const r0 = runtime(sid);
+      if (!force && ((r0.running && !r0.closedEarly) || r0.pty)) fail(409, 'сессия работает — остановите её или удалите с ?force=1');
       for (const v of db.sessions.filter((x) => x.virtual && x.parentId === sid)) api.remove(v.id, { force: true });
       const r = runtime(sid);
       clearInterval(r.registryTimer);
@@ -1383,7 +1412,10 @@ ${note.trim()}` : text });
         if (!Array.isArray(p.allowedTools) || p.allowedTools.some((x) => typeof x !== 'string' || !x.trim())) fail(400, 'allowedTools: нужен массив непустых строк');
         s.allowedTools = [...new Set(p.allowedTools.map((x) => x.trim()))];
       }
-      return emit(s);
+      emit(s);
+      // messages left queued by a turn that could not start (e.g. unknown model) go once another model is picked
+      if ('model' in p && s.kind === 'chat' && s.queue?.length && !runtime(sid).running) startTurn(s);
+      return s;
     },
 
     logTail(sid) {

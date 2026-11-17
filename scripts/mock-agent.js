@@ -28,7 +28,18 @@ const opt = (...names) => {
   }
   return undefined;
 };
-const prompt = (opt('-p', '--prompt') ?? '').trim();
+let prompt = (opt('-p', '--prompt') ?? '').trim();
+const fileRef = prompt.match(/^Полный текст сообщения: (.+)$/m);
+if (fileRef) {
+  // a long message comes as a file; like GigaCode's read_file, only the workspace dirs (cwd + --include-directories) are readable
+  const dirs = [process.cwd(), ...argv.flatMap((a, i) => (a === '--include-directories' ? [argv[i + 1]] : []))];
+  const rel = (d) => path.relative(path.resolve(d), path.resolve(fileRef[1].trim()));
+  if (!dirs.some((d) => !rel(d).startsWith('..') && !path.isAbsolute(rel(d)))) {
+    process.stderr.write(`Error: File path must be within one of the workspace directories: ${fileRef[1]}\n`);
+    process.exit(1);
+  }
+  prompt = fs.readFileSync(fileRef[1].trim(), 'utf8').trim();
+}
 const resume = opt('--resume');
 // the backend catalogue, as GigaCode's /models prints it (shared with the parser test)
 const MODELS_FILE = process.env.MOCK_AGENT_MODELS_FILE || new URL('../test/fixtures/gigacode.models.txt', import.meta.url);
