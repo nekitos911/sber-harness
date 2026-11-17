@@ -7,6 +7,7 @@ import type { GitStatus, Session } from '../types'
 import { StatusIcon } from './bits'
 import { MenuButton } from './ui/Menu'
 import { newChat, newTerminal, workspaceFor } from '../lib/actions'
+import { shortcut } from '../lib/keys'
 
 export function BrandMark() {
   return (
@@ -39,7 +40,7 @@ export function TopBar({ onCommand }: { onCommand: () => void }) {
       </div>
       {cwd ? <TabBar key={wtKey(cwd)} cwd={cwd} /> : <div className="grow" />}
       <div className="topbar-right">
-        <button type="button" className="btn btn-ghost" onClick={onCommand} data-tip="Команды (Ctrl+K)">
+        <button type="button" className="btn btn-ghost" onClick={onCommand} data-tip={`Команды (${shortcut('K')})`}>
           <Command />
           Команда
         </button>

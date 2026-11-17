@@ -49,7 +49,7 @@ export function WorkspacePanel() {
           </button>
         )}
         <span className="grow" />
-        <button type="button" className="icon-btn" data-tip="Открыть папку" aria-label="Открыть папку в проводнике" onClick={() => openFolder(cwd)}>
+        <button type="button" className="icon-btn" data-tip="Открыть папку" aria-label="Открыть папку в файловом менеджере" onClick={() => openFolder(cwd)}>
           <FolderOpen />
         </button>
         <button type="button" className="icon-btn" data-tip="Обновить" aria-label="Обновить git-статус" onClick={() => refreshGit(cwd)}>

@@ -4,6 +4,7 @@ import { api, ApiError, errorText, tryApi } from '../api'
 import { closeDialog, getState, openDialog, setState, toast, upsert, useStore } from '../store'
 import { basename, COLUMNS, normPath, relTime } from '../lib/format'
 import { newTerminal } from '../lib/actions'
+import { modKey, shortcut } from '../lib/keys'
 import { loadWorktrees } from '../ws'
 import type { Task, TaskStatus, Workspace, Worktree } from '../types'
 import { Checkbox, Dialog, Input, Segmented, Textarea, type MenuItem } from './ui'
@@ -55,7 +56,7 @@ export function worktreeMenu(ws: Workspace, wt: Worktree, task: Task | undefined
       : { label: 'Перевести в сон', icon: <Moon />, onSelect: () => void patchMeta(ws.id, wt.path, { sleeping: true }) },
     { label: 'Отметить непрочитанным', icon: <Mail />, onSelect: () => setUnread(wt.path, true) },
   ]
-  if (!wt.main) items.push({ label: 'Удалить', icon: <Trash2 />, danger: true, hint: 'Ctrl+⇧+⌫', onSelect: () => openDialog({ kind: 'wt-delete', workspaceId: ws.id, path: wt.path }) })
+  if (!wt.main) items.push({ label: 'Удалить', icon: <Trash2 />, danger: true, hint: shortcut('⌫', true), onSelect: () => openDialog({ kind: 'wt-delete', workspaceId: ws.id, path: wt.path }) })
   items.push(
     { label: 'Изменить сведения…', icon: <Info />, divider: true, onSelect: () => openDialog({ kind: 'wt-info', workspaceId: ws.id, path: wt.path }) },
     meta.pinned
@@ -72,7 +73,7 @@ export function worktreeMenu(ws: Workspace, wt: Worktree, task: Task | undefined
     {
       label: 'Открыть в', icon: <FolderOpen />, divider: true,
       children: [
-        { label: 'Проводнике', onSelect: () => openFolder(wt.path) },
+        { label: 'Файловом менеджере', onSelect: () => openFolder(wt.path) },
         { label: 'Новом терминале', icon: <SquareTerminal />, onSelect: () => void newTerminal({ cwd: wt.path, workspaceId: ws.id }) },
         ...(ide ? [{ label: 'IDE', icon: <Code />, onSelect: () => void tryApi('POST', '/open', { cwd: wt.path, target: 'ide' }) }] : []),
       ],
@@ -253,9 +254,9 @@ export function CleanupDialog({ workspaceId }: { workspaceId: string }) {
   )
 }
 
-/** Ctrl+Shift+Backspace on a focused worktree card asks to delete it. */
+/** Ctrl+Shift+Backspace (⇧⌘⌫ on macOS) on a focused worktree card asks to delete it. */
 export function onWorktreeKey(e: KeyboardEvent, ws: Workspace, wt: Worktree) {
-  if (e.ctrlKey && e.shiftKey && e.key === 'Backspace' && !wt.main && e.target === e.currentTarget) {
+  if (modKey(e) && e.shiftKey && e.key === 'Backspace' && !wt.main && e.target === e.currentTarget) {
     e.preventDefault()
     openDialog({ kind: 'wt-delete', workspaceId: ws.id, path: wt.path })
   }

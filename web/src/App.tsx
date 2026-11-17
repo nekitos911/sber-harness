@@ -21,6 +21,7 @@ import { DiffView } from './views/DiffView'
 import { WorktreeHome } from './views/WorktreeHome'
 import { useGitWatch } from './lib/git'
 import { useUnreadTitle } from './lib/notify'
+import { modKey } from './lib/keys'
 
 // Heavy editors load on first use.
 const TerminalView = lazy(() => import('./views/TerminalView'))
@@ -36,7 +37,7 @@ export function App() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); setPalette(true) }
+      if (modKey(e) && e.key.toLowerCase() === 'k') { e.preventDefault(); setPalette(true) }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)

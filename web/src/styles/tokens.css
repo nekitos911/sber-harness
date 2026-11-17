@@ -66,8 +66,8 @@
   --shadow-lift: 0 0 0 1px #3a3a3a, 0 10px 24px rgba(0, 0, 0, 0.45);
   --scrim: rgba(0, 0, 0, 0.55);
 
-  --font-ui: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
-  --font-mono: "Cascadia Code", "Cascadia Mono", Consolas, monospace;
+  --font-ui: "Segoe UI Variable Text", "Segoe UI", "Inter", "Ubuntu", "Cantarell", "Noto Sans", system-ui, sans-serif;
+  --font-mono: "Cascadia Code", "Cascadia Mono", "JetBrains Mono", "DejaVu Sans Mono", "Noto Sans Mono", Consolas, monospace;
 
   --r-1: 4px;
   --r-2: 6px;

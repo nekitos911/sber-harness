@@ -18,6 +18,7 @@ import { api, errorText, qs, tryApi } from '../api'
 import { dirtyKey, setDirty, tabKey, toast } from '../store'
 import type { FsFile } from '../types'
 import { Loading } from '../components/bits'
+import { shortcut } from '../lib/keys'
 
 function language(path: string): Extension {
   const ext = path.split('.').pop()?.toLowerCase() ?? ''
@@ -140,7 +141,7 @@ export default function FileView({ cwd, path }: { cwd: string; path: string }) {
         <span className="mono ellipsis" data-tip={`${cwd} / ${path}`}>{path}</span>
         {dirty && <span className="muted">· изменён</span>}
         <span className="grow" />
-        <kbd>Ctrl</kbd>+<kbd>S</kbd>
+        <kbd>{shortcut('S')}</kbd>
         <button type="button" className="btn btn-sm" disabled={!dirty || saving} onClick={() => saveRef.current()}>
           <Save />
           {saving ? 'Сохраняем…' : 'Сохранить'}
