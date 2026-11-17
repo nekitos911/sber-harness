@@ -11,6 +11,8 @@ let h;
 before(async () => {
   // a 1 s first-event timeout would kill the run during the 2 s login wait unless it is suspended
   h = await startTestServer({
+    // no real PTY here: its host keeps the terminal cwd (inside dataDir) locked, so the folder could not be removed
+    shell: { command: 'definitely-missing-shell-for-tests', args: [] },
     agents: {
       mock: { firstEventTimeoutMs: 1000 },
       mockauth: { launcher: 'mock', label: 'GigaCode (mock)', approvalMode: 'auto', approvalModes: ['auto'], firstEventTimeoutMs: 1000, authTimeoutMs: 1200 },
@@ -54,9 +56,11 @@ test('agent terminal without cwd runs the interactive CLI in data/chats/login; s
   assert.equal((await h.api('PUT', '/api/settings', { agents: { mock: { authTimeoutMs: 5 } } })).status, 400);
   const res = await h.api('POST', '/api/sessions', { kind: 'terminal', agent: 'mock', title: 'Вход в GigaCode' });
   if (res.status === 501) return t.skip(res.body.error);
-  assert.equal(res.body.cwd, path.join(h.dataDir, 'chats', 'login'));
-  assert.ok(fs.statSync(res.body.cwd).isDirectory());
-  assert.ok(res.body.command.includes('mock-agent.js') && !res.body.command.includes(' -p'));
-  await h.api('DELETE', `/api/sessions/${res.body.id}`);
-  await waitPidGone(res.body.pid);
+  // the shell itself cannot start here (see before()); cwd and command are decided before that
+  const s = (await state()).sessions.find((x) => x.kind === 'terminal' && x.title === 'Вход в GigaCode');
+  assert.equal(s.cwd, path.join(h.dataDir, 'chats', 'login'));
+  assert.ok(fs.statSync(s.cwd).isDirectory());
+  assert.ok(s.command.includes('mock-agent.js') && !s.command.includes(' -p'), s.command);
+  await h.api('DELETE', `/api/sessions/${s.id}`);
+  await waitPidGone(s.pid);
 });

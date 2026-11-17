@@ -78,6 +78,15 @@ export async function startTestServer(configOverrides = {}) {
     dataDir,
     configFile,
     async close() {
+      // srv.close() leaves agent turns running (they survive restarts): stop them like a user would, so temp dirs can go
+      for (let round = 0; round < 3; round++) {
+        const sessions = (await api('GET', '/api/state').catch(() => null))?.body?.sessions || [];
+        const running = sessions.filter((s) => s.kind === 'chat' && s.pid);
+        if (!running.length) break;
+        for (const s of running) await api('POST', `/api/sessions/${s.id}/stop`).catch(() => {});
+        for (const s of running) await waitPidGone(s.pid, 5000);
+        await new Promise((r) => setTimeout(r, 100));
+      }
       await srv.close();
       rmrf(dataDir);
       rmrf(cfgDir);
