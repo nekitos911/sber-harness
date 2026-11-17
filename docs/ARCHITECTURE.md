@@ -267,13 +267,22 @@ anything else fails with a clear message telling the user to set `command` as an
    line (partial lines buffered, 8 MB cap), `phase: 'streaming'` on the first output, apply events to the transcript.
    First prompt of a CLI session = preamble + text; if the text starts with `/` (slash command, e.g. `/full-task <url>`)
    it is text + "\n\n" + preamble instead, because a slash command only works as the first word.
-3. No stdout line within `firstEventTimeoutMs` → kill process tree, `error` message with stderr tail, status `error`.
+3. No stdout line within `firstEventTimeoutMs` → kill process tree, `error` message «Нет вывода за N с — ход остановлен.»
+   with stderr tail, status `error`. `session.errorKind` (with status `error`): `'not_started'` while no turn of the
+   session ever produced an event (`session.everStarted`; the UI says «Агент не запустился. Проверьте команду…» only
+   then), else `'turn'`; null otherwise. Exit codes are read signed: 4294967295 / -1 → «Процесс агента завершён
+   принудительно (код -1)».
 4. Exit (`phase` back to null): exit != 0 without a `result` → `error` message leading with stderr (a fatal CLI error leaves
    stdout empty); exit 0 without a single event → `error` "exited without any output" + stderr, status `error` (e.g. the
    GigaCode identity check); stderr text after a successful run → `system` message prefixed `⚠` (warning).
    Status back to `idle` unless the worker already set `done`/`failed` (or the user stopped it: `stopped`).
 5. Post-turn: if worker with `autoReport` and no `worker_done` during this turn and queue empty →
-   escalation delivered to parent (or notification to user if no parent). Then if queue non-empty → next turn.
+   escalation delivered to the parent agent (with the agent-oriented hint: send_message / worker_inspect / worker_retry),
+   or, without a parent, to the user — never for the user's own follow-up (a turn after the first whose messages all
+   came from the user). At most one open (unread) escalation notification per session: a repeat updates its `text`,
+   `at` and `count`; plain text «Агент <KEY> закончил ход без отчёта — откройте чат, чтобы продолжить или принять
+   результат» (or «…остановился с ошибкой…»), `actions: ['open', 'rework', 'accept']` (`['open']` without a task).
+   Then if queue non-empty → next turn.
 6. `stop` kills the process tree (`taskkill /T /F` on Windows) and clears the queue.
 7. Delivered text from another session is prefixed: `[harness] Message from <title> (<id>):\n<text>`.
 
@@ -296,7 +305,7 @@ HTTP: `POST /api/agent/<tool>` with headers `x-harness-token`, `x-harness-sessio
 | `task_create` | `title`, `description?`, `deps?`, `status?`, `priority?`, `labels?`, `parent_id?`, `workspace?` (id or name), `targets?` | new task (subtask inherits parent's targets/workspace when omitted) |
 | `task_port` | `task_id`, `target`, `agent?` | cherry-pick the task branch into another target branch (see "Multiple target branches") |
 | `task_update` | `id`, `title?`, `description?`, `status?`, `priority?`, `comment?` | updated task (`comment` appends to log) |
-| `worker_start` | `task_id?` or `spec` (+`title?`), `agent?`, `workspace?`, `worktree?: 'current' \| 'new'`, `branch?`, `model?` | creates worker chat session (child of caller), task → `in_progress`, starts first turn with worker preamble + spec. 409 if the task already has an active worker or deps not done |
+| `worker_start` | `task_id?` or `spec` (+`title?`, `task?: true`), `agent?`, `workspace?`, `worktree?: 'current' \| 'new'`, `branch?`, `model?` | creates worker chat session (child of caller), task → `in_progress`, starts first turn with worker preamble + spec. 409 if the task already has an active worker or deps not done. A `spec` without `task_id` makes NO board task (unless `task: true`, or there is no caller session): a persistent child (`taskId: null`) that reports to its caller; title = `title` or the spec's first line; worker_retry works for it too |
 | `worker_list` | – | caller's child sessions with status/task/preview |
 | `send_message` | `to: <sessionId> \| 'parent' \| 'user'`, `body` | delivers (wakes target) |
 | `ask` | `question`, `options?: string[]` | like send_message to parent (or user notification `question`); options go on the delivered message / notification; answer arrives as the next message |
@@ -581,6 +590,10 @@ runs implementer/reviewer sub-agents with cross-model review and writes a ledger
   `agents.<id>.modelRefsScan` (gigacode default `["~/.gigacode/agents/*.md", "~/.gigacode/commands/*.md"]`; frontmatter
   `model:` and model-id-looking tokens that match the catalogue naming), `available` against the discovered catalogue
   (prefix match tolerates the `-262k` suffix). Read-only; the harness never edits these files.
+- Chat titles: a chat created without `title` (`session.autoTitle`) takes the first line of its first user message
+  (≤ 60 chars, a leading `/` dropped: «/full-task PROJ-1» → «full-task PROJ-1»); a PATCH title ends that.
+- `GET /api/tasks/:id/rework-preview?notes=&agent=` → `{ text, agent, sessionId }`: exactly the message the rework would
+  send now (its worker, or the worker it would start), so the UI preview equals the sent text.
 - Rework (the user's FOLLOW_UP form `/full-task <url> Задача готова, но нужны правки: <text>`):
   `POST /api/tasks/:id/rework { notes, agent? }` (flag `rework`). Prompt = `agents.<id>.reworkPromptTemplate` (gigacode
   `"/full-task {taskUrl} Задача готова, но нужны правки: {notes}"`, generic default `"{key} {title}: нужны правки: {notes}"`;
@@ -996,7 +1009,10 @@ summary>»; allow_session → PATCH session.approvalMode to that mode + same mes
 has nowhere to go) — headless permissions are an allow-list now:** the denial text `requires permission to use "<tool>"`
 gives the tool; the card carries `permission.pattern` (shell → `run_shell_command(<first non-cd command word>)`, e.g.
 `cd /d X && git status` → `run_shell_command(git)`; other tools → the tool name), `answered`/`resolved`/`resolvedAt`.
-allow_once → a one-turn grant (`session.grantsOnce`, consumed by the next turn); allow_session → `session.allowedTools`
+allow_once → a one-turn grant (`session.grantsOnce`, consumed by the next turn); allow_project («Разрешать всегда в этом
+проекте», offered only for a session with a `workspaceId`) → `db.prefs.allowedToolsByWorkspace[workspaceId]`, merged into
+every turn of every session of that project; `/api/settings` returns and PUT replaces `permissions: {
+allowedToolsByWorkspace: { <workspaceId>: string[] } }` (unknown workspace ids → 400); allow_session → `session.allowedTools`
 (PATCH `/api/sessions/:id { allowedTools }` edits it); both deliver «Разрешено: повтори <tool> <input summary>» (queued if
 the turn still runs). Every headless turn passes `agents.<id>.allowedTools` (Settings «Разрешённые команды») ∪
 `session.allowedTools` ∪ the one-turn grants as `agents.<id>.allowedToolsFlag` (gigacode/qwen default `--allowed-tools`,

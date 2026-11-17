@@ -317,6 +317,8 @@ export async function startServer(opts = {}) {
       },
       session: { stallSec: config.session.stallSec },
       sessions: { autoArchiveDays: config.sessions.autoArchiveDays },
+      // «Разрешать всегда в этом проекте»: allow-list patterns per workspace id (stored in the db, not the config)
+      permissions: { allowedToolsByWorkspace: db.prefs?.allowedToolsByWorkspace || {} },
       recovery: { autoResume: !!config.recovery.autoResume, message: config.recovery.message },
       ide: config.ide ?? null,
       orchestration: {
@@ -601,6 +603,15 @@ export async function startServer(opts = {}) {
       const d = body.sessions?.autoArchiveDays ?? 0; // null = off, stored as 0
       if (!isObj(body.sessions) || Object.keys(body.sessions).some((k) => k !== 'autoArchiveDays') || !Number.isInteger(d) || d < 0) fail(400, 'sessions: { autoArchiveDays: целое число ≥ 0 или null (0/null — выключено) }');
       patch.sessions = { autoArchiveDays: d };
+    }
+    if (body.permissions !== undefined) {
+      const byWs = body.permissions?.allowedToolsByWorkspace;
+      const ok = isObj(body.permissions) && Object.keys(body.permissions).every((k) => k === 'allowedToolsByWorkspace') && isObj(byWs)
+        && Object.entries(byWs).every(([id, list]) => db.workspaces.some((w) => w.id === id) && isStrList(list) && list.every((x) => x.trim()));
+      if (!ok) fail(400, 'permissions: { allowedToolsByWorkspace: { <id рабочей папки>: string[] } }');
+      db.prefs ||= {};
+      db.prefs.allowedToolsByWorkspace = Object.fromEntries(Object.entries(byWs).map(([id, list]) => [id, [...new Set(list.map((x) => x.trim()))]]).filter(([, list]) => list.length));
+      store.save();
     }
     if (body.ide !== undefined) {
       const ide = body.ide;
@@ -1111,6 +1122,7 @@ export async function startServer(opts = {}) {
     if (!s.jumped) await trackerOnStart(tasks.get(params.id));
     return s;
   });
+  route('GET', '/api/tasks/:id/rework-preview', ({ params, query }) => orch.reworkPreview(params.id, { notes: query.notes || '', agent: query.agent || undefined }));
   route('POST', '/api/tasks/:id/rework', async ({ params, body }) => {
     check(body, { notes: 'string', agent: 'string?' });
     const before = tasks.get(params.id).status;

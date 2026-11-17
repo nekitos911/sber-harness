@@ -117,8 +117,8 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
     return isActive(s) ? s : null;
   }
 
-  function notify({ kind, sessionId = null, taskId = null, text, options, link }) {
-    const n = { id: newId('n'), at: Date.now(), read: false, kind, sessionId, taskId, text, ...(options?.length ? { options } : {}), ...(link ? { link } : {}) };
+  function notify({ kind, sessionId = null, taskId = null, text, options, link, actions }) {
+    const n = { id: newId('n'), at: Date.now(), read: false, kind, sessionId, taskId, text, ...(options?.length ? { options } : {}), ...(link ? { link } : {}), ...(actions?.length ? { actions } : {}) };
     db.notifications.push(n);
     if (db.notifications.length > 500) db.notifications.splice(0, db.notifications.length - 500);
     store.save();
@@ -230,13 +230,18 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
     return [...dirs, ...(parent.includeDirs || [])];
   }
 
-  /** Creates a worker chat session for `task` and sends it the first prompt. Used by worker_start, assign, start. */
+  /**
+   * Creates a worker chat session for `task` and sends it the first prompt. Used by worker_start, assign, start.
+   * task null: an agent's ad-hoc spec (worker_start without task_id) — no board task, a persistent child of the caller.
+   */
   async function startWorker(task, o, caller) {
-    const busy = activeWorker(task);
-    if (busy) fail(409, `у задачи ${task.id} уже есть активный агент (${busy.id})`);
-    if (starting.has(task.id)) fail(409, `задача ${task.id} запускается прямо сейчас`);
-    const pending = task.deps.filter((d) => tasks.find(d)?.status !== 'done');
-    if (pending.length) fail(409, `у задачи ${task.id} есть незавершённые зависимости: ${pending.join(', ')}`);
+    if (task) {
+      const busy = activeWorker(task);
+      if (busy) fail(409, `у задачи ${task.id} уже есть активный агент (${busy.id})`);
+      if (starting.has(task.id)) fail(409, `задача ${task.id} запускается прямо сейчас`);
+      const pending = task.deps.filter((d) => tasks.find(d)?.status !== 'done');
+      if (pending.length) fail(409, `у задачи ${task.id} есть незавершённые зависимости: ${pending.join(', ')}`);
+    } else if (!o.spec) fail(400, 'нужен task_id или spec');
     if (o.worktree && !PLACEMENTS[o.worktree]) fail(400, 'worktree: "current", "new-child" (или "new") или "new-top-level"');
     const placement = PLACEMENTS[o.worktree || 'current'];
     if (placement === 'new-top-level' && !o.workspace) fail(400, 'для new-top-level нужен workspace — репозиторий из workspace_list');
@@ -246,7 +251,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
     jobStep('Проверка агента');
     sessions.resolveAgent(agent);
     if (!o.spec) promptTemplate(agent);
-    const ws = o.workspace ? workspaceRef(o.workspace) : o.workspaceId ? findWs(o.workspaceId) || fail(404, `рабочая папка ${o.workspaceId} не найдена`) : findWs(task.workspaceId);
+    const ws = o.workspace ? workspaceRef(o.workspace) : o.workspaceId ? findWs(o.workspaceId) || fail(404, `рабочая папка ${o.workspaceId} не найдена`) : task ? findWs(task.workspaceId) : null;
 
     const run = (async () => {
       let cwd = o.cwd ? path.resolve(o.cwd) : ws ? ws.path : caller?.cwd || config.root;
@@ -256,7 +261,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
       let made = null;
       if (placement !== 'current') {
         jobStep('Создание worktree');
-        made = await taskWorktree(task, cwd, o.branch, name);
+        made = task ? await taskWorktree(task, cwd, o.branch, name) : await specWorktree(cwd, o.branch, name);
         cwd = made.wt.path;
         branch = made.wt.branch;
         if (made.created) {
@@ -266,15 +271,15 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
         branch = await git.currentBranch(cwd);
       }
       const inWorktree = !!made || (await git.worktrees(cwd).catch(() => [])).some((w) => !w.main && samePath(w.path, cwd));
-      const includeDirs = await siblingDirs(task);
-      const key = tasks.key(task);
+      const includeDirs = task ? await siblingDirs(task) : [];
+      const title = task ? `${tasks.key(task)}: ${task.title}` : (o.title || o.spec.split('\n').find((l) => l.trim()) || 'агент').trim().slice(0, 80);
       let s;
       jobStep('Запуск сессии');
       try {
         s = await sessions.create({
-          kind: 'chat', agent, cwd, workspaceId: ws?.id, title: `${key}: ${task.title}`, role: 'worker',
-          parentId: caller?.id ?? null, taskId: task.id, model: o.model, branch, inWorktree, includeDirs, autoIncludeDirs: true, atRoot: o.atRoot === true,
-          persistent: !!caller && placement !== 'current',
+          kind: 'chat', agent, cwd, workspaceId: ws?.id, title, role: 'worker',
+          parentId: caller?.id ?? null, taskId: task?.id ?? null, model: o.model, branch, inWorktree, includeDirs, autoIncludeDirs: true, atRoot: o.atRoot === true,
+          persistent: !!caller && (placement !== 'current' || !task),
         });
         sessions.update(s.id, { placement, ...(name ? { worktreeName: name } : {}), ...(o.workspace ? { placementWorkspace: o.workspace } : {}), ...(o.retryOf ? { retryOf: o.retryOf } : {}) });
       } catch (e) {
@@ -283,9 +288,9 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
       }
       const by = caller?.id || 'user';
       const patch = { status: 'in_progress', assigneeSessionId: s.id };
-      if (!task.workspaceId && ws) patch.workspaceId = ws.id;
-      if (placement !== 'current' || (!task.branch && branch && !task.targets.includes(branch))) patch.branch = branch;
-      if (!task.takenAt) {
+      if (task && !task.workspaceId && ws) patch.workspaceId = ws.id;
+      if (task && (placement !== 'current' || (!task.branch && branch && !task.targets.includes(branch)))) patch.branch = branch;
+      if (task && !task.takenAt) {
         patch.takenAt = Date.now();
         patch.snapshot = { title: task.title, description: task.description, externalStatus: task.externalStatus ?? null, at: patch.takenAt };
       }
@@ -296,6 +301,10 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
         sessions.remove(s.id, { force: true });
         if (made?.created) await git.removeWorktree(made.repo, made.wt.path).catch(() => {});
         throw e;
+      }
+      if (!task) {
+        if (caller && made) sessions.patch(caller.id, { includeDirs: [...(caller.includeDirs || []), cwd] }, { strict: false });
+        return s;
       }
       tasks.update(task.id, patch, by);
       tasks.addLog(task.id, by, `Взята в работу: ${config.agents[agent]?.label || agent}${branch ? `, ветка ${branch}` : ''}`, 'started', { sessionId: s.id, agent, branch: branch ?? null });
@@ -308,12 +317,23 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
       if (caller && made) sessions.patch(caller.id, { includeDirs: [...(caller.includeDirs || []), cwd] }, { strict: false });
       return s;
     })();
+    if (!task) return run;
     starting.set(task.id, run);
     try {
       return await run;
     } finally {
       starting.delete(task.id);
     }
+  }
+
+  /** A new worktree for an ad-hoc spec worker: branch = the explicit one, else the name, else sub/agent-<id>. */
+  async function specWorktree(cwd, explicitBranch, name) {
+    if (!(await git.isRepo(cwd))) fail(400, `нельзя создать рабочее дерево: ${cwd} — не git-репозиторий`);
+    const want = git.sanitizeBranch(explicitBranch || name || `sub/agent-${newId('x').slice(2)}`);
+    const branch = explicitBranch ? want : await git.uniqueBranch(cwd, want);
+    const existed = (await git.worktrees(cwd)).some((w) => w.branch === branch);
+    const wt = await git.addWorktree(cwd, { branch, worktreeRoot: config.worktreeRoot, dirName: name });
+    return { wt, created: !existed, repo: cwd };
   }
 
   /** Cherry-picks the task's commits into another target branch in a new worktree (see ARCHITECTURE.md). */
@@ -714,7 +734,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
 
   // ---- post-turn: escalation and error notifications ----
 
-  function turnEnded(s, { reported, communicated, stopped, queueEmpty }) {
+  function turnEnded(s, { reported, communicated, stopped, queueEmpty, userFollowUp }) {
     if (s.ephemeral && !reported && queueEmpty) {
       const last = sessions.messages(s.id).filter((m) => m.kind === 'assistant').at(-1);
       settleRun(s, { status: stopped ? 'stopped' : 'no_report', summary: last?.text ?? '' });
@@ -730,11 +750,31 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
       notify({ kind: 'error', sessionId: s.id, taskId: s.taskId, text: `${s.title}: агент не смог выполнить ход (подробности в чате)` });
     }
     if (s.role !== 'worker' || !s.autoReport || reported || communicated || !queueEmpty) return;
-    const lastError = sessions.messages(s.id).filter((m) => m.kind === 'error').at(-1)?.text.split('\n')[0];
-    const text = `Агент ${label(s)} закончил ход, не вызвав worker_done (статус: ${s.status}${lastError ? `; причина: ${lastError}` : ''}).\nПоследний вывод: ${s.preview || '(нет)'}\nЧто можно: send_message(to: "${s.id}") — уточнить и продолжить; worker_inspect — посмотреть состояние; worker_stop + worker_retry — перезапустить; или сообщить пользователю (send_message to "user").`;
     const parent = s.parentId && sessions.find(s.parentId);
-    if (parent) sessions.deliver(parent.id, { from: s.id, text: fromSession(s, text) });
-    else notify({ kind: 'escalation', sessionId: s.id, taskId: s.taskId, text });
+    if (parent) {
+      // the agent-oriented hint goes only to a coordinator agent
+      const lastError = sessions.messages(s.id).filter((m) => m.kind === 'error').at(-1)?.text.split('\n')[0];
+      const text = `Агент ${label(s)} закончил ход, не вызвав worker_done (статус: ${s.status}${lastError ? `; причина: ${lastError}` : ''}).\nПоследний вывод: ${s.preview || '(нет)'}\nЧто можно: send_message(to: "${s.id}") — уточнить и продолжить; worker_inspect — посмотреть состояние; worker_stop + worker_retry — перезапустить; или сообщить пользователю (send_message to "user").`;
+      sessions.deliver(parent.id, { from: s.id, text: fromSession(s, text) });
+      return;
+    }
+    if (userFollowUp) return; // the user's own follow-up: they are in the chat already
+    escalateToUser(s);
+  }
+
+  /** The user's Inbox: at most one open escalation per session (a repeat updates its count and time). */
+  function escalateToUser(s) {
+    const task = s.taskId && tasks.find(s.taskId);
+    const who = task ? tasks.key(task) : `«${s.title}»`;
+    const text = s.status === 'error'
+      ? `Агент ${who} остановился с ошибкой — откройте чат, чтобы продолжить или принять результат`
+      : `Агент ${who} закончил ход без отчёта — откройте чат, чтобы продолжить или принять результат`;
+    const open = db.notifications.find((n) => n.kind === 'escalation' && n.sessionId === s.id && !n.read);
+    if (!open) return notify({ kind: 'escalation', sessionId: s.id, taskId: s.taskId, text, actions: task ? ['open', 'rework', 'accept'] : ['open'] });
+    Object.assign(open, { text, at: Date.now(), count: (open.count || 1) + 1 });
+    store.save();
+    bus.send({ t: 'notify', n: open });
+    return open;
   }
 
   sessions.hooks.preamble = preamble;
@@ -801,22 +841,22 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
 
   /** worker_retry: the same task in the same placement; a chain with 3 failed starts is circuit-broken. */
   async function retryWorker(w, worktree, c) {
-    if (!w.taskId) fail(400, 'повторить можно только агента задачи (worker_start)');
+    if (w.role !== 'worker' || w.ephemeral) fail(400, 'повторить можно только агента из worker_start');
     if (sessions.isRunning(w.id)) fail(409, `${w.id} ещё работает — сначала worker_stop`);
-    const task = tasks.get(w.taskId);
+    const task = w.taskId ? tasks.get(w.taskId) : null;
     const chain = [];
     for (let s = w; s && !chain.includes(s); s = s.retryOf && sessions.find(s.retryOf)) chain.push(s);
     const failed = chain.filter((s) => ['error', 'failed', 'stopped'].includes(s.status) || s.report?.status === 'failed' || s.interrupted).length;
     if (failed >= 3) {
-      const text = `Задача ${tasks.key(task)}: 3 неудачных запуска — сообщи пользователю`;
-      notify({ kind: 'error', sessionId: w.id, taskId: task.id, text });
+      const text = `${task ? `Задача ${tasks.key(task)}` : `Агент «${w.title}»`}: 3 неудачных запуска — сообщи пользователю`;
+      notify({ kind: 'error', sessionId: w.id, taskId: task?.id ?? null, text });
       fail(409, text);
     }
-    if (task.assigneeSessionId === w.id) tasks.update(task.id, { assigneeSessionId: null }, c?.id || 'user');
+    if (task?.assigneeSessionId === w.id) tasks.update(task.id, { assigneeSessionId: null }, c?.id || 'user');
     const first = sessions.messages(w.id).find((m) => m.kind === 'user');
     const s = await startWorker(task, {
-      agent: w.agent, worktree: worktree || w.placement || 'current', workspace: w.placementWorkspace, name: w.worktreeName, retryOf: w.id,
-      ...(first && !task.externalId ? { spec: first.text } : {}),
+      agent: w.agent, worktree: worktree || w.placement || 'current', workspace: w.placementWorkspace, name: w.worktreeName, retryOf: w.id, title: task ? undefined : w.title,
+      ...(first && !task?.externalId ? { spec: first.text } : {}),
     }, c || (w.parentId && sessions.find(w.parentId)) || null);
     return sessionInfo(s);
   }
@@ -893,19 +933,22 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
       name: 'worker_start',
       description: 'Start a worker (its own chat) for a task (task_id) or an ad-hoc spec, in this worktree or a new one (worktree + name, workspace for another repository). Returns at once; then END YOUR TURN: the harness wakes you with its report, question or escalation.',
       inputSchema: obj({
-        task_id: str('existing task id'), spec: str('ad-hoc task spec (creates a task)'), title: str('title for an ad-hoc spec'),
+        task_id: str('existing task id'), spec: str('ad-hoc assignment (no board task unless task: true)'), title: str('title for an ad-hoc spec'),
+        task: { type: 'boolean', description: 'with spec: also create a board task for it' },
         agent: str('agent id from the config'), workspace: str('workspace id or name to run in'),
         worktree: str('placement: current (this worktree, default) | new-child (a new worktree of your repository, nested under yours) | new-top-level (a new worktree in another repository: needs workspace); new = new-child', { enum: ['current', 'new', 'new-child', 'new-top-level'] }),
         name: str('short worktree name for a new worktree (e.g. ft-core); its folder is <repo>-worktrees/<name>'),
         branch: str('branch for a new worktree (default from the task key)'), model: str('model id'),
       }),
       run: async (a, c) => {
-        let task;
+        let task = null;
         if (a.task_id) task = tasks.get(a.task_id);
-        else if (a.spec) {
+        else if (!a.spec) fail(400, 'нужен task_id или spec');
+        else if (a.task === true || !c) {
+          // a board task only on request (or for a call without a caller session: nothing else would track it)
           const title = (a.title || a.spec.split('\n').find((l) => l.trim()) || 'task').trim().slice(0, 80);
           task = tasks.create({ title, description: a.spec, workspaceId: a.workspace ? workspaceRef(a.workspace).id : c?.workspaceId ?? null }, c?.id || 'user');
-        } else fail(400, 'нужен task_id или spec');
+        }
         return sessionInfo(await startWorker(task, { ...a, spec: a.task_id ? undefined : a.spec }, c));
       },
     },
@@ -1159,6 +1202,16 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
      * «Доработка»: the fix request goes to the task's worker (the same CLI session, queued if it runs) or, without one,
      * to a new worker in the task's existing worktree/branch. The card goes back to in_progress.
      */
+    /** GET /api/tasks/:id/rework-preview: exactly the text rework() would send now (no side effects). */
+    reworkPreview(taskId, { notes = '', agent } = {}) {
+      const task = tasks.get(taskId);
+      const prev = task.assigneeSessionId && sessions.find(task.assigneeSessionId);
+      const worker = prev && prev.kind === 'chat' && prev.role === 'worker' && !prev.archived && !prev.ephemeral ? prev : null;
+      const ws = findWs(task.workspaceId);
+      const target = worker || { agent: agent || config.defaultAgent, workspaceId: ws?.id, branch: task.branch, cwd: ws?.path || config.root, id: '' };
+      return { text: reworkPrompt(task, target, String(notes)), agent: target.agent, sessionId: worker?.id ?? null };
+    },
+
     async rework(taskId, { notes, agent } = {}) {
       const task = tasks.get(taskId);
       if (typeof notes !== 'string' || !notes.trim()) fail(400, 'нужен текст доработки (notes)');

@@ -66,8 +66,13 @@ function denialOf(agentCfg, ev, fallbackTool) {
 export const PERMISSION_OPTIONS = [
   { id: 'allow_once', label: 'Разрешить один раз' },
   { id: 'allow_session', label: 'Разрешать в этой сессии' },
+  { id: 'allow_project', label: 'Разрешать всегда в этом проекте' }, // only for a session in a project (workspaceId)
   { id: 'reject', label: 'Запретить' },
 ];
+/** First line of the first message as a chat title: ≤ 60 chars, a leading slash dropped («/full-task PROJ-1» → «full-task PROJ-1»). */
+export const titleFrom = (text) => String(text).split('\n').map((l) => l.trim()).find(Boolean)?.replace(/^\//, '').replace(/\s+/g, ' ').slice(0, 60) || null;
+/** Exit codes as signed numbers: Windows reports a forced end as 4294967295 (= -1). */
+export const signedCode = (code) => (Number.isInteger(code) && code > 0x7fffffff ? code - 0x100000000 : code);
 
 /** A structured question tool call -> { text, options: [{label, description?}], multiSelect } (tolerant of shapes). */
 export function parseQuestion(input = {}) {
@@ -319,6 +324,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     s.tokensIn ??= 0;
     s.tokensOut ??= 0;
     s.phase = null;
+    if (s.kind === 'chat' && s.everStarted === undefined && (s.externalSessionId || s.tokensIn)) s.everStarted = true; // db from before the flag
     s.turnClosing = false; // a lingering process is not followed across a restart (re-attach sets it again at result)
     if (s.virtual) continue; // settled below, once we know which parents are re-attached
     if (s.kind === 'chat' && s.status === 'running' && s.pid && latestTurnFile(s.id)) {
@@ -416,7 +422,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
   function permissionCard(s, { toolId, tool, input, reason, sub = null }) {
     addMessage(s, {
       kind: 'permission', text: sub ? `субагент ${sub.type}: ${tool}` : '', ...(sub ? { from: sub.id } : {}),
-      permission: { id: newId('p'), toolId, tool, input, reason, pattern: permissionPattern(tool, input), transport: 'headless', options: PERMISSION_OPTIONS, resolved: null, answered: false, ...(sub ? { fromSubSessionId: sub.id } : {}) },
+      permission: { id: newId('p'), toolId, tool, input, reason, pattern: permissionPattern(tool, input), transport: 'headless', options: PERMISSION_OPTIONS.filter((o) => o.id !== 'allow_project' || s.workspaceId), resolved: null, answered: false, ...(sub ? { fromSubSessionId: sub.id } : {}) },
     });
     setWaiting(s, 'permission');
   }
@@ -452,7 +458,10 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     const r = runtime(s.id);
     const c = r.cur;
     s.lastActivityAt = Date.now();
-    if (ev.type !== 'auth') s.lastEventAt = s.lastActivityAt;
+    if (ev.type !== 'auth') {
+      s.lastEventAt = s.lastActivityAt;
+      s.everStarted ||= true; // some turn of this session produced output: an error later is not «не запустился»
+    }
     const kind = { text: ev.delta ? 'text_delta' : 'assistant_final', thought: 'thought', tool_call: 'tool_running', tool_result: 'tool_done', result: 'result' }[ev.type];
     if (kind && s.lastEventKind !== kind) {
       s.lastEventKind = kind; // «Пишет ответ» vs «Завершает ход…» in the UI
@@ -626,7 +635,9 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
 
   function runTurnEnded(s, r, stopped) {
     try {
-      hooks.turnEnded(s, { ...r.flags, stopped, queueEmpty: !s.queue.length });
+      // the user's own follow-up (not the first turn, every message from the user): no escalation to the user
+      const userFollowUp = r.turn > 1 && !!r.lastItems?.length && r.lastItems.every((it) => it.from === 'user');
+      hooks.turnEnded(s, { ...r.flags, stopped, queueEmpty: !s.queue.length, userFollowUp });
     } catch (e) {
       console.error('[sessions] turnEnded hook failed:', e);
     }
@@ -702,7 +713,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     r.cur = { assistant: null, thought: null, raw: null, tools: new Map(), subTools: new Map(), gotText: false };
     // re-queued items (their process never started) are in the transcript already
     const userMsgs = retry ? [] : items.filter((it) => !it.recorded).map((it) => addMessage(s, { kind: 'user', text: it.text, from: it.from, ...(it.options ? { options: it.options } : {}) }));
-    Object.assign(s, { status: 'running', queued: 0, lastActivityAt: Date.now(), lastEventAt: null, stalled: false, turnClosing: false });
+    Object.assign(s, { status: 'running', errorKind: null, queued: 0, lastActivityAt: Date.now(), lastEventAt: null, stalled: false, turnClosing: false });
     const approvalOnce = s.approvalOnce; // an edit tool allowed once in plan/default mode: this turn only
     delete s.approvalOnce;
     const grantsOnce = s.grantsOnce || []; // «Разрешить один раз»: allow-list entries for this turn only
@@ -728,7 +739,9 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
         // a slash command only works as the first word of the prompt; the rest becomes its $ARGUMENTS
         if (pre) prompt = prompt.startsWith('/') ? `${prompt}\n\n${pre}` : `${pre}\n\n${prompt}`;
       }
-      const turnSession = { ...s, ...(approvalOnce ? { approvalMode: approvalOnce } : {}), grantsOnce };
+      // the project's allow rules (allow_project) join the session's own on every turn
+      const projectTools = (s.workspaceId && db.prefs?.allowedToolsByWorkspace?.[s.workspaceId]) || [];
+      const turnSession = { ...s, ...(approvalOnce ? { approvalMode: approvalOnce } : {}), grantsOnce, ...(projectTools.length ? { allowedTools: [...new Set([...(s.allowedTools || []), ...projectTools])] } : {}) };
       if (agentCfg.transport !== 'acp' && prompt.length + (prompt.match(/["\\]/g)?.length ?? 0) > ARGV_PROMPT_MAX) {
         // the CLI reads files only inside its workspace dirs: the prompt's own folder joins them for this turn
         const dir = path.join(runDir(s.id), 'prompts');
@@ -883,7 +896,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
       status = 'error';
     } else if (res.timedOut) {
       const ms = config.agents[s.agent]?.firstEventTimeoutMs || launchers[s.launcherId]?.defaults.firstEventTimeoutMs;
-      addMessage(s, { kind: 'error', text: `Агент ничего не вывел за ${Math.round(ms / 1000)} с — процесс остановлен.${tail(res.stderrTail)}` });
+      addMessage(s, { kind: 'error', text: `Нет вывода за ${Math.round(ms / 1000)} с — ход остановлен.${tail(res.stderrTail)}` });
       status = 'error';
     } else if (!res.sawResult && res.code !== 0 && !res.eventCount && /sandbox/i.test(res.stderrTail) && sandboxed(s, config.agents[s.agent] || {}).autoSandbox && r.lastItems) {
       const why = res.stderrTail.trim().split('\n').find((l) => /sandbox/i.test(l)) || res.stderrTail.trim().split('\n')[0];
@@ -896,7 +909,10 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     } else if (!res.sawResult && res.code !== 0) {
       // a fatal CLI error leaves stdout empty and the whole story in stderr: lead with it
       const why = res.stderrTail.trim();
-      const how = res.code == null ? 'Процесс агента завершился без результата' : `Агент завершился с ошибкой (код ${res.code}${res.signal ? `, ${res.signal}` : ''})`;
+      const code = signedCode(res.code);
+      const how = code == null ? 'Процесс агента завершился без результата'
+        : code === -1 ? 'Процесс агента завершён принудительно (код -1)'
+          : `Агент завершился с ошибкой (код ${code}${res.signal ? `, ${res.signal}` : ''})`;
       const md = config.agents[s.agent]?.modelsDiscovery;
       const modelGone = /not present in the current backend catalogue/i.test(why) || (!!md?.missingPattern && new RegExp(md.missingPattern, 'i').test(why));
       addMessage(s, { kind: 'error', text: `${how}${why ? `:\n${why.slice(-2000)}` : '.'}`, ...(modelGone ? { action: 'pick-model' } : {}) });
@@ -909,7 +925,9 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     } else if (res.stderrTail.trim()) {
       warnOnce(s, res.stderrTail);
     }
-    Object.assign(s, { status, pid: null, pidStartedAt: null, phase: null, turnOffset: null, lastActivityAt: Date.now(), stalled: false, turnClosing: false });
+    // errorKind: 'not_started' = no turn of this session ever produced output (check the command); 'turn' = this turn failed
+    const errorKind = status === 'error' ? (s.everStarted ? 'turn' : 'not_started') : null;
+    Object.assign(s, { status, errorKind, pid: null, pidStartedAt: null, phase: null, turnOffset: null, lastActivityAt: Date.now(), stalled: false, turnClosing: false });
     if (s.waitingFor === 'auth') s.waitingFor = null;
     failRunningVirtuals(s);
     emit(s);
@@ -933,7 +951,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     if (res.stderrTail.trim() && !res.killReason && !res.error) warnOnce(s, res.stderrTail);
     if (res.error && !res.stopped) {
       addMessage(s, { kind: 'error', text: `${res.error}${tail(res.stderrTail)}` });
-      s.status = 'error';
+      Object.assign(s, { status: 'error', errorKind: 'turn' });
     }
     Object.assign(s, { pid: null, pidStartedAt: null, turnOffset: null, turnClosing: false });
     emit(s);
@@ -1202,6 +1220,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
         ...(o.inWorktree === true ? { inWorktree: true } : {}), // a worker started inside its task's linked worktree
         ...(o.atRoot === true ? { atRoot: true } : {}), // a task worker started in the projects folder: it picks the repos
         ...(o.persistent === true ? { persistent: true } : {}), // a child in its own worktree/repo: kept, own depth
+        ...(kind === 'chat' && !o.title ? { autoTitle: true } : {}), // the first user message names the chat
         createdAt: now,
         lastActivityAt: now,
       };
@@ -1268,11 +1287,17 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
         // the denied call goes on the allow-list (--allowed-tools): once = the next turn only, session = this chat
         const pattern = p.pattern || permissionPattern(p.tool, p.input);
         if (optionId === 'allow_session') s.allowedTools = [...new Set([...(s.allowedTools || []), pattern])];
-        else s.grantsOnce = [...new Set([...(s.grantsOnce || []), pattern])];
+        else if (optionId === 'allow_project') {
+          // every turn of every session in this project (db.prefs.allowedToolsByWorkspace)
+          db.prefs ||= {};
+          const all = db.prefs.allowedToolsByWorkspace ||= {};
+          all[s.workspaceId] = [...new Set([...(all[s.workspaceId] || []), pattern])];
+          store.save();
+        } else s.grantsOnce = [...new Set([...(s.grantsOnce || []), pattern])];
         // an edit tool in plan/default mode also needs a more permissive mode (auto-edit allows edits, never shell)
         const cur = s.approvalMode || config.agents[s.agent]?.approvalMode;
         if (EDIT_TOOLS.test(p.tool) && ['plan', 'default'].includes(cur)) {
-          if (optionId === 'allow_session') s.approvalMode = nextMode(s);
+          if (optionId !== 'allow_once') s.approvalMode = nextMode(s);
           else s.approvalOnce = nextMode(s);
         }
         text = `Разрешено: повтори ${what}`;
@@ -1303,6 +1328,10 @@ ${note.trim()}` : text });
       }
       if (q || asked) hooks.questionAnswered?.(s); // its notification is answered (and read) too
       if (s.interrupted) s.interrupted = null; // continued
+      if (s.autoTitle && from === 'user') {
+        s.title = titleFrom(text) || s.title;
+        delete s.autoTitle;
+      }
       s.queue.push({ id: newId('q'), from, text, at: Date.now(), ...(options ? { options } : {}) });
       if (!r.running) {
         startTurn(s);
@@ -1419,7 +1448,10 @@ ${note.trim()}` : text });
       for (const k of ['autoReport', 'archived', 'stop']) if (k in p && typeof p[k] !== 'boolean') fail(400, `${k}: нужно true или false`);
       if ('archived' in p) api.archive(sid, p.archived, { stop: p.stop === true });
       if (p.approvalMode && config.agents[s.agent]) checkMode(config.agents[s.agent], p.approvalMode);
-      if (p.title?.trim()) s.title = p.title.trim();
+      if (p.title?.trim()) {
+        s.title = p.title.trim();
+        delete s.autoTitle;
+      }
       if ('approvalMode' in p) s.approvalMode = p.approvalMode || null;
       if ('model' in p) s.model = p.model || null;
       if ('autoReport' in p) s.autoReport = p.autoReport;

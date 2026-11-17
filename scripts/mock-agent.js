@@ -2,7 +2,7 @@
 // Fake GigaCode-like CLI for tests and demos. Emits Gemini-style stream-json on stdout.
 //   mock-agent.js [--resume <id>] -p <prompt> --approval-mode <m> --output-format stream-json [--model <id>]  (GigaCode argv)
 // Prompt directives (ignored in messages delivered from other sessions, i.e. prompts starting "[harness] Message from"):
-//   #spawn <spec>   worker_start({ spec })          #done <summary>  worker_done(done)   #fail  worker_done(failed)
+//   #spawn <spec>   worker_start({ spec, task: true })          #done <summary>  worker_done(done)   #fail  worker_done(failed)
 //   #ask <q> | <option> | ...   ask({ question, options })   #crash  exit 1 with stderr   #silent  sleep, no output
 //   #slow           stream slowly for ~5 s          #raw   print two non-JSON lines
 //   #nooutput       stderr only, exit 0 (silent failure)   #warn  stderr warning on a normal run
@@ -57,7 +57,8 @@ if (process.env.MOCK_AGENT_ARGV_FILE) {
 }
 
 const delivered = prompt.startsWith('[harness] Message from');
-const lines = delivered ? [] : prompt.split(/\r?\n/);
+// harness preamble lines (they may quote chat titles, i.e. other prompts) are not directives
+const lines = delivered ? [] : prompt.split(/\r?\n/).filter((l) => !l.startsWith('[harness]'));
 const has = (re) => lines.some((l) => re.test(l));
 
 if (opt('--model') && catalogue.length && !catalogue.includes(model)) {
@@ -203,7 +204,7 @@ for (const l of lines) {
   const m = l.match(/#spawn\s+(.+)/);
   const run = l.match(/#run\s+(\S+)\s+(.+)/);
   const runwt = l.match(/#runwt\s+(\S+)\s+(.+)/); // a sub-agent in a new worktree (persistent)
-  if (m) await harness('worker_start', { spec: m[1].trim() });
+  if (m) await harness('worker_start', { spec: m[1].trim(), task: true });
   else if (runwt) await runSubagent(runwt[1], runwt[2].trim(), { worktree: 'new' });
   else if (run) await runSubagent(run[1], run[2].trim());
   else rest.push(l);
