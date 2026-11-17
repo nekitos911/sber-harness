@@ -3,6 +3,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { SUBAGENT_CONTEXT } from '../server/orchestration.js';
 import { startTestServer, makeRepo, tmpDir, rmrf, gitIn, waitFor } from './helpers.js';
 
 let h;
@@ -184,7 +185,7 @@ test('concurrent starts give one worker; a live task jumps to it; port needs com
   }, { what: 'worker argv' });
   const prompt = run.argv[run.argv.indexOf('-p') + 1];
   // a slash command must be the first word: the rendered task prompt goes first, the preamble after it
-  assert.ok(prompt.startsWith(`/full-task ${t.id} on feature/${t.id} -> develop, release-1\n\n[harness] You are a WORKER`), prompt.slice(0, 120));
+  assert.ok(prompt.startsWith(`/full-task ${t.id} on feature/${t.id} -> develop, release-1\n\n${SUBAGENT_CONTEXT}\n\n[harness] You are a WORKER`), prompt.slice(0, 120));
   assert.match(prompt, /Do NOT commit, push, merge/);
   assert.match(prompt, /commit message format: "T-\d+ <summary>"/);
   assert.match(prompt, /Registry dir: .*registry/);

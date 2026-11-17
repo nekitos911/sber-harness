@@ -7,6 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { CODE_ROOT } from '../server/config.js';
 import { shimIdentity, resolveGigacode, parseShim } from '../server/launchers.js';
+import { SUBAGENT_CONTEXT } from '../server/orchestration.js';
 import { startTestServer, makeRepo, tmpDir, rmrf, gitIn, waitFor, waitPidGone } from './helpers.js';
 
 const IDENTITY = 'ab'.repeat(32);
@@ -102,7 +103,8 @@ test('exact argv on new and resumed turns; settings.json without permissions; id
 
   const [first, second] = runs().filter((r) => r.env.HARNESS_SESSION_ID === s.id);
   const tail = ['--approval-mode', 'auto', '--output-format', 'stream-json'];
-  assert.deepEqual(first.argv, ['--max-old-space-size=6144', entry, '-p', 'hello', ...tail]);
+  // orchestration.subagents "harness" (default): the sub-agent context block leads the first prompt of a CLI session
+  assert.deepEqual(first.argv, ['--max-old-space-size=6144', entry, '-p', `${SUBAGENT_CONTEXT}\n\nhello`, ...tail]);
   assert.deepEqual(second.argv, ['--max-old-space-size=6144', entry, '--resume', ext, '-p', 'again', ...tail]);
   assert.deepEqual(first.env, {
     GIGACODE_PACKAGE_IDENTITY: IDENTITY,
@@ -122,6 +124,7 @@ test('exact argv on new and resumed turns; settings.json without permissions; id
         args: [path.join(CODE_ROOT, 'mcp', 'harness-mcp.js')],
         env: { HARNESS_URL: h.srv.url, HARNESS_TOKEN: h.srv.token, HARNESS_SESSION_ID: s.id },
         trust: true,
+        timeout: 3600000,
       },
     },
   });

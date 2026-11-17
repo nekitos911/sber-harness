@@ -7,6 +7,7 @@
 //   #slow           stream slowly for ~5 s          #raw   print two non-JSON lines
 //   #nooutput       stderr only, exit 0 (silent failure)   #warn  stderr warning on a normal run
 //   #auth           login link on stderr, ~2 s wait, then a normal run
+//   #run <profile> <spec>   worker_run (a sub-agent in its own chat); waits, then says "worker_run result: <summary>"
 // "/models" answers with test/fixtures/gigacode.models.txt; --model outside that list fails like GigaCode (stderr, exit 1).
 // MOCK_AGENT_ARGV_FILE: appends { argv (incl. node flags), env (GIGACODE_*, settings path, MCP_SECRET_*) } per run.
 // Harness API from env: HARNESS_URL, HARNESS_TOKEN, HARNESS_SESSION_ID. Turn counts per session id live in
@@ -126,12 +127,12 @@ await say(resume ? `resumed ${sessionId}, turn ${turn}. ` : `Hello from mock age
 emit({ type: 'tool_use', tool_name: 'read_file', tool_id: 'fake_1', parameters: { path: 'README.md' } });
 emit({ type: 'tool_result', tool_id: 'fake_1', status: 'success', output: '# fake file content' });
 if (has(/#subagent\b/)) {
-  // a built-in sub-agent (GigaCode `agent` tool), Claude/Qwen-style events tagged with parent_tool_use_id
-  const p = 'call_agent_1';
-  emit({ type: 'assistant', parent_tool_use_id: null, message: { content: [{ type: 'tool_use', id: p, name: 'agent', input: { subagent_type: 'java-reviewer' } }] } });
-  emit({ type: 'assistant', parent_tool_use_id: p, message: { content: [{ type: 'text', text: 'Reviewing…' }, { type: 'tool_use', id: 'sub_grep', name: 'grep_search', input: { pattern: 'TODO' } }] } });
-  emit({ type: 'user', parent_tool_use_id: p, message: { content: [{ type: 'tool_result', tool_use_id: 'sub_grep', is_error: false, content: 'no matches' }] } });
-  emit({ type: 'user', parent_tool_use_id: null, message: { content: [{ type: 'tool_result', tool_use_id: p, is_error: false, content: 'APPROVED' }] } });
+  // a built-in sub-agent (GigaCode `agent` tool): replay the reconstructed capture (its own session id and result dropped)
+  const capture = new URL('../test/fixtures/gigacode.subagent.ndjson', import.meta.url);
+  for (const line of fs.readFileSync(capture, 'utf8').split('\n').filter(Boolean)) {
+    const { session_id, uuid, ...ev } = JSON.parse(line);
+    if (ev.type !== 'result') emit(ev);
+  }
 }
 
 if (delivered) await say(`Received: ${prompt.split('\n')[1]?.slice(0, 120) || ''}`);
@@ -139,9 +140,26 @@ if (has(/#raw\b/)) process.stdout.write('plain line 1\nplain line 2\n');
 if (has(/#slow\b/)) await say('slow '.repeat(20), 250);
 
 const rest = [];
+async function runSubagent(profile, spec) {
+  // what harness-mcp does for worker_run: start, then long-poll until the sub-agent reports
+  const headers = { 'content-type': 'application/json', 'x-harness-token': process.env.HARNESS_TOKEN || '', 'x-harness-session': process.env.HARNESS_SESSION_ID || '' };
+  const start = await fetch(`${process.env.HARNESS_URL}/api/agent/worker_run`, { method: 'POST', headers, body: JSON.stringify({ profile, spec }) }).then((r) => r.json());
+  if (!start.sessionId) return say(` worker_run failed: ${start.error}`);
+  emit({ type: 'tool_use', tool_name: 'harness.worker_run', tool_id: `run_${start.sessionId}`, parameters: { profile, spec } });
+  for (;;) {
+    const r = await fetch(`${process.env.HARNESS_URL}/api/agent/worker_wait?sessionId=${start.sessionId}&timeoutMs=5000`, { headers }).then((x) => x.json());
+    if (r.done) {
+      emit({ type: 'tool_result', tool_id: `run_${start.sessionId}`, status: 'success', output: JSON.stringify(r) });
+      return say(` worker_run result: ${r.summary}`);
+    }
+  }
+}
+
 for (const l of lines) {
   const m = l.match(/#spawn\s+(.+)/);
+  const run = l.match(/#run\s+(\S+)\s+(.+)/);
   if (m) await harness('worker_start', { spec: m[1].trim() });
+  else if (run) await runSubagent(run[1], run[2].trim());
   else rest.push(l);
 }
 const restText = rest.join('\n');

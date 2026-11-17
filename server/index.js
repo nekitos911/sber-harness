@@ -30,6 +30,9 @@ const MIME = {
 };
 const NO_BUILD_HTML = '<!doctype html><meta charset="utf-8"><title>Harness</title><body style="font-family:sans-serif;padding:2rem"><h1>UI is not built</h1><p>Run <code>npm run build</code> (or start with <code>npm run dev</code>) and reload.</p></body>';
 const GRADES = ['default', 'fast', 'review', 'explore'];
+// optional API groups this server implements (docs/ARCHITECTURE.md "Feature flags"); a flag ships with its route
+export const FEATURES = ['branches', 'fs-search', 'pr-status', 'agent-info', 'models-refresh', 'tracker-links', 'board-columns', 'review-loop',
+  'subagents', 'virtual-sessions', 'worker-run', 'skills-install'];
 const GIT_KEYS = ['defaultBase', 'branchTemplate', 'portBranchTemplate', 'commitTitleTemplate', 'prTitleTemplate'];
 const TASK_VARS = ['{taskUrl}', '{key}', '{id}', '{description}'];
 const hasTaskVar = (tpl) => TASK_VARS.some((v) => tpl.includes(v));
@@ -207,7 +210,7 @@ export async function startServer(opts = {}) {
       git: pick(config.git, GIT_KEYS),
       tasks: { refreshSec: t.refreshSec ?? 0 },
       board: config.board,
-      orchestration: { reviewMode: config.orchestration.reviewMode, workerMayCommit: !!config.orchestration.workerMayCommit, review: config.orchestration.review },
+      orchestration: { reviewMode: config.orchestration.reviewMode, subagents: config.orchestration.subagents, workerMayCommit: !!config.orchestration.workerMayCommit, review: config.orchestration.review },
       integrations: {
         tasks: { enabled: !!t.enabled, space: t.space ?? null, urlTemplate: t.urlTemplate ?? '', statusMap: t.statusMap || {}, closedStatuses: t.closedStatuses || [], onStartTransition: t.onStartTransition ?? null },
         pr: { enabled: !!pr.enabled, limits: pr.limits || null },
@@ -356,6 +359,10 @@ export async function startServer(opts = {}) {
       if (!['builtin', 'harness'].includes(o.reviewMode)) fail(400, 'orchestration.reviewMode must be "builtin" or "harness"');
       p.reviewMode = o.reviewMode;
     }
+    if ('subagents' in o) {
+      if (!['harness', 'builtin'].includes(o.subagents)) fail(400, 'orchestration.subagents must be "harness" or "builtin"');
+      p.subagents = o.subagents;
+    }
     if ('workerMayCommit' in o) {
       if (typeof o.workerMayCommit !== 'boolean') fail(400, 'orchestration.workerMayCommit must be a boolean');
       p.workerMayCommit = o.workerMayCommit;
@@ -410,13 +417,42 @@ export async function startServer(opts = {}) {
     return settingsView();
   }
 
+  // ---- shipped files the user may install into the agent's own folders (only on an explicit request) ----
+  const SHIPPED = {
+    commands: { 'full-task-harness': { from: path.join(CODE_ROOT, 'commands', 'full-task-harness.md'), dirKey: 'commandsDir', dir: '~/.gigacode/commands', to: (n) => `${n}.md` } },
+    skills: { 'harness-orchestration': { from: path.join(CODE_ROOT, 'skills', 'harness-orchestration', 'SKILL.md'), dirKey: 'skillsDir', dir: '~/.gigacode/skills', to: (n) => path.join(n, 'SKILL.md') } },
+  };
+  function shippedTarget(agentCfg, kind, name) {
+    const item = SHIPPED[kind][name] || fail(404, `unknown ${kind.slice(0, -1)} "${name}"`);
+    return { item, target: path.join(expandHome(agentCfg[item.dirKey] || item.dir), item.to(name)) };
+  }
+  function shippedStatus(agentCfg, kind) {
+    return Object.fromEntries(Object.keys(SHIPPED[kind]).map((name) => {
+      const { item, target } = shippedTarget(agentCfg, kind, name);
+      if (!fs.existsSync(target)) return [name, 'missing'];
+      return [name, fs.readFileSync(target, 'utf8') === fs.readFileSync(item.from, 'utf8') ? 'installed' : 'different'];
+    }));
+  }
+  function installShipped(id, kind, name, force) {
+    const agentCfg = config.agents[id] || fail(404, `agent ${id} not found`);
+    const { item, target } = shippedTarget(agentCfg, kind, name);
+    const status = shippedStatus(agentCfg, kind)[name];
+    if (status === 'different' && !force) fail(409, `${target} exists and differs from the harness version; pass force: true to overwrite`);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.copyFileSync(item.from, target);
+    return { name, path: target, status: 'installed' };
+  }
+
   /** Launcher resolution of an agent, as --print-config shows it (no spawn; the identity value is never returned). */
   function agentInfo(id) {
     const a = config.agents[id] || fail(404, `agent ${id} not found`);
     const meta = db.agentMeta?.[id] ?? null;
     catalog.ensureFresh(id);
     const { catalog: cat, ...seen } = meta || {};
-    return { id, resolved: resolveAgentView(a), auth: meta?.auth ?? 'unknown', seen: meta ? seen : null, catalog: catalog.info(id), models: catalog.merged(id) };
+    return {
+      id, resolved: resolveAgentView(a), auth: meta?.auth ?? 'unknown', seen: meta ? seen : null, catalog: catalog.info(id), models: catalog.merged(id),
+      commands: shippedStatus(a, 'commands'), skills: shippedStatus(a, 'skills'),
+    };
   }
 
   // ---- routes ----
@@ -449,10 +485,13 @@ export async function startServer(opts = {}) {
       ? config.defaultAgent
       : Object.keys(config.agents).find((id) => config.agents[id].enabled !== false) ?? null,
     shell: { command: config.shell.command },
+    features: FEATURES,
     integrations: { tasks: !!config.integrations.tasks?.enabled, pr: !!config.integrations.pr?.enabled, tasksProblem },
   }));
   route('GET', '/api/settings', () => settingsView());
   route('GET', '/api/agents/:id/info', ({ params }) => agentInfo(params.id));
+  route('POST', '/api/agents/:id/commands/install', ({ params, body }) => installShipped(params.id, 'commands', check(body, { name: 'string', force: 'boolean?' }).name, body.force));
+  route('POST', '/api/agents/:id/skills/install', ({ params, body }) => installShipped(params.id, 'skills', body.name || 'harness-orchestration', check(body, { force: 'boolean?' }).force));
   route('POST', '/api/agents/:id/models/refresh', async ({ params }) => {
     if (!config.agents[params.id]) fail(404, `agent ${params.id} not found`);
     if (!config.agents[params.id].modelsDiscovery?.prompt) fail(400, `agents.${params.id}.modelsDiscovery.prompt is not configured`);
@@ -625,6 +664,7 @@ export async function startServer(opts = {}) {
 
   // agent-facing orchestration API
   route('GET', '/api/agent/tools', () => orch.tools);
+  route('GET', '/api/agent/worker_wait', ({ query }) => orch.waitRun(check(query, { sessionId: 'string' }).sessionId, query.timeoutMs));
   route('POST', '/api/agent/:tool', ({ params, body, req }) => orch.call(params.tool, body, req.headers['x-harness-session'] || null));
 
   // ---- http ----

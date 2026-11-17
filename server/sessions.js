@@ -176,6 +176,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null }) {
     s.tokensIn ??= 0;
     s.tokensOut ??= 0;
     s.phase = null;
+    if (s.virtual) continue; // settled below, once we know which parents are re-attached
     if (s.kind === 'chat' && s.status === 'running' && s.pid && latestTurnFile(s.id)) {
       toReattach.push(s);
       continue;
@@ -189,12 +190,81 @@ export function createSessions({ config, store, bus, getUrl, catalog = null }) {
       store.appendTermLog(s.id, '\r\n[harness restarted]\r\n');
     }
   }
+  // a built-in sub-agent chat whose parent turn did not survive the restart will never get its result
+  for (const v of db.sessions.filter((x) => x.virtual && x.status === 'running')) {
+    if (!toReattach.some((p) => p.id === v.parentId)) v.status = 'failed';
+  }
   store.save();
 
   // ---- chat turns ----
 
   /** Built-in sub-agent activity (parent_tool_use_id) -> compact lines on the parent tool call, not the main chat. */
+  const SUBAGENT_TOOLS = /^(agent|fork)$/i;
+  const virtualId = (sid, toolId) => `${sid}~${toolId}`;
+
+  /** Level 1: a built-in sub-agent call (agent/fork tool) becomes a read-only chat nested under its parent. */
+  function openVirtual(s, ev) {
+    const input = ev.input && typeof ev.input === 'object' ? ev.input : {};
+    const id = virtualId(s.id, ev.id);
+    const now = Date.now();
+    const kind = input.subagent_type || (ev.name.toLowerCase() === 'fork' ? 'fork' : 'agent');
+    const v = find(id) || {
+      id, kind: 'chat', virtual: true, title: [kind, input.model].filter(Boolean).join(' · '), agent: s.agent, launcherId: null,
+      cwd: s.cwd, workspaceId: s.workspaceId, branch: s.branch, role: 'subagent', parentId: s.id, taskId: s.taskId, status: 'running',
+      externalSessionId: null, settingsPath: null, model: typeof input.model === 'string' ? input.model : null, approvalMode: null,
+      autoReport: false, queued: 0, preview: '', command: null, pid: null, tokensIn: 0, tokensOut: 0, phase: null, turnOffset: null,
+      createdAt: now, lastActivityAt: now,
+    };
+    if (!find(id)) db.sessions.push(v);
+    Object.assign(v, { status: 'running', lastActivityAt: now });
+    emit(v);
+    const prompt = typeof input.prompt === 'string' ? input.prompt : JSON.stringify(input);
+    addMessage(v, { kind: 'user', text: prompt, from: s.id });
+    return id;
+  }
+
+  /** Events of a built-in sub-agent (parentToolId) go into its virtual chat with the usual message shapes. */
+  function applyVirtual(s, c, ev) {
+    const v = find(virtualId(s.id, ev.parentToolId));
+    if (!v) return;
+    const vc = (c.virtual ||= new Map()).get(v.id) || { assistant: null, thought: null, tools: new Map() };
+    c.virtual.set(v.id, vc);
+    v.lastActivityAt = Date.now();
+    if (ev.type === 'text' || ev.type === 'thought') {
+      const kind = ev.type === 'text' ? 'assistant' : 'thought';
+      vc[kind === 'assistant' ? 'thought' : 'assistant'] = null;
+      if (ev.delta && vc[kind]) {
+        vc[kind].text += ev.text;
+        updateMessage(v, vc[kind]);
+      } else {
+        const m = addMessage(v, { kind, text: ev.text });
+        vc[kind] = ev.delta ? m : null;
+      }
+      if (kind === 'assistant') v.preview = (vc.assistant?.text ?? ev.text).slice(-200);
+    } else if (ev.type === 'tool_call') {
+      vc.assistant = vc.thought = null;
+      vc.tools.set(ev.id, addMessage(v, { kind: 'tool', text: ev.name, tool: { id: ev.id, name: ev.name, input: ev.input, output: null, status: 'running' } }));
+    } else if (ev.type === 'tool_result') {
+      vc.assistant = vc.thought = null;
+      const m = vc.tools.get(ev.id);
+      if (m) {
+        m.tool = { ...m.tool, output: ev.output, status: ev.isError ? 'error' : 'ok' };
+        updateMessage(v, m);
+      }
+    } else if (ev.type === 'error') addMessage(v, { kind: 'error', text: ev.text });
+  }
+
+  /** The parent's tool_result of the sub-agent call: its final answer and status. */
+  function closeVirtual(s, ev) {
+    const v = find(virtualId(s.id, ev.id));
+    if (!v?.virtual) return;
+    addMessage(v, { kind: ev.isError ? 'error' : 'assistant', text: ev.output || '(no output)' });
+    Object.assign(v, { status: ev.isError ? 'failed' : 'done', preview: (ev.output || '').slice(-200), lastActivityAt: Date.now() });
+    emit(v);
+  }
+
   function subagentProgress(s, c, ev) {
+    applyVirtual(s, c, ev);
     const parent = c.tools.get(ev.parentToolId);
     if (!parent) return;
     const short = (v, n = 160) => {
@@ -295,10 +365,12 @@ export function createSessions({ config, store, bus, getUrl, catalog = null }) {
         }
         break;
       }
-      case 'tool_call':
+      case 'tool_call': {
         c.assistant = c.thought = null;
-        c.tools.set(ev.id, addMessage(s, { kind: 'tool', text: ev.name, tool: { id: ev.id, name: ev.name, input: ev.input, output: null, status: 'running' } }));
+        const sub = SUBAGENT_TOOLS.test(ev.name) ? openVirtual(s, ev) : null;
+        c.tools.set(ev.id, addMessage(s, { kind: 'tool', text: ev.name, tool: { id: ev.id, name: ev.name, input: ev.input, output: null, status: 'running', ...(sub ? { subSessionId: sub } : {}) } }));
         break;
+      }
       case 'tool_result': {
         c.assistant = c.thought = null;
         const m = c.tools.get(ev.id);
@@ -306,6 +378,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null }) {
         if (m) {
           m.tool = { ...m.tool, output: ev.output, status };
           updateMessage(s, m);
+          if (m.tool.subSessionId) closeVirtual(s, ev);
         } else {
           addMessage(s, { kind: 'tool', text: 'tool', tool: { id: ev.id, name: 'tool', input: null, output: ev.output, status } });
         }
@@ -473,6 +546,10 @@ export function createSessions({ config, store, bus, getUrl, catalog = null }) {
       addMessage(s, { kind: 'system', text: `⚠ ${res.stderrTail.trim().slice(-2000)}` });
     }
     Object.assign(s, { status, pid: null, phase: null, turnOffset: null, lastActivityAt: Date.now() });
+    for (const v of db.sessions.filter((x) => x.virtual && x.parentId === s.id && x.status === 'running')) {
+      Object.assign(v, { status: 'failed', lastActivityAt: Date.now() });
+      emit(v);
+    }
     emit(s);
     try {
       hooks.turnEnded(s, { ...r.flags, stopped, queueEmpty: r.queue.length === 0 });
@@ -638,6 +715,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null }) {
         tokensOut: 0,
         phase: null,
         turnOffset: null,
+        ...(o.ephemeral ? { ephemeral: true, runResult: null } : {}),
         createdAt: now,
         lastActivityAt: now,
       };
@@ -678,6 +756,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null }) {
     /** Queue a message for a chat session (starts a turn if idle) or type it into a terminal. */
     deliver(sid, { from = 'user', text, options }) {
       const s = get(sid);
+      if (s.virtual) fail(409, 'внутренний субагент — писать можно только в родительский чат');
       if (typeof text !== 'string' || !text.trim()) fail(400, 'text is required');
       const r = runtime(sid);
       if (s.kind === 'terminal') {
@@ -697,6 +776,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null }) {
 
     stop(sid) {
       const s = get(sid);
+      if (s.virtual) fail(409, 'внутренний субагент останавливается вместе с родительским чатом');
       const r = runtime(sid);
       if (s.kind === 'terminal') {
         r.pty?.kill();
@@ -730,6 +810,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null }) {
 
     remove(sid) {
       const s = get(sid);
+      for (const v of db.sessions.filter((x) => x.virtual && x.parentId === sid)) api.remove(v.id);
       const r = runtime(sid);
       r.queue = [];
       clearInterval(r.registryTimer);

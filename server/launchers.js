@@ -194,7 +194,7 @@ export function sessionSettings({ agentCfg, harnessMcp, agentMcpServers }) {
     mcpServers: {
       ...(agentCfg.inheritUserMcp ? userMcpServers(agentCfg.userSettingsPath) : {}),
       ...agentMcpServers,
-      harness: { ...harnessMcp, trust: true },
+      harness: { ...harnessMcp, trust: true, timeout: 3600000 }, // worker_run waits for a whole sub-agent run
     },
   };
 }

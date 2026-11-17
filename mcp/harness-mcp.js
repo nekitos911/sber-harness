@@ -36,7 +36,27 @@ async function api(method, route, body) {
   return data;
 }
 
-async function handle(msg) {
+const SYNC_RUN_TOOLS = new Set(['worker_run', 'agent']);
+const WAIT_SLICE_MS = 25000;
+
+/**
+ * worker_run / agent: the server answers { sessionId } at once; we wait here (long-poll) until the sub-agent reports,
+ * sending notifications/progress so the caller's tool call does not time out, and return its result like the
+ * built-in agent tool would.
+ */
+async function runAndWait(name, args, progressToken, notify) {
+  const { sessionId } = await api('POST', `/api/agent/${encodeURIComponent(name)}`, args);
+  const deadline = Date.now() + Math.max(Number(args.timeoutMin) || 60, 0) * 60000;
+  for (let tick = 1; ; tick++) {
+    const left = deadline - Date.now();
+    if (left <= 0) return { status: 'timeout', sessionId };
+    const r = await api('GET', `/api/agent/worker_wait?sessionId=${encodeURIComponent(sessionId)}&timeoutMs=${Math.min(WAIT_SLICE_MS, left)}`);
+    if (r.done) return { status: r.status, summary: r.summary, sessionId };
+    if (progressToken !== undefined) notify({ method: 'notifications/progress', params: { progressToken, progress: tick, message: `sub-agent ${sessionId}: ${r.status ?? 'running'}` } });
+  }
+}
+
+async function handle(msg, notify = () => {}) {
   switch (msg.method) {
     case 'initialize':
       return { protocolVersion: PROTOCOL, capabilities: { tools: {} }, serverInfo: { name: 'harness', version: '0.1.0' } };
@@ -47,7 +67,10 @@ async function handle(msg) {
     case 'tools/call': {
       const name = msg.params?.name;
       try {
-        const result = await api('POST', `/api/agent/${encodeURIComponent(name)}`, msg.params?.arguments ?? {});
+        const args = msg.params?.arguments ?? {};
+        const result = SYNC_RUN_TOOLS.has(name)
+          ? await runAndWait(name, args, msg.params?._meta?.progressToken, notify)
+          : await api('POST', `/api/agent/${encodeURIComponent(name)}`, args);
         return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }], isError: false };
       } catch (e) {
         return { content: [{ type: 'text', text: JSON.stringify({ error: e.message }) }], isError: true };
@@ -70,7 +93,7 @@ function serveStdio() {
     }
     if (msg.id === undefined || msg.id === null) return; // notification (e.g. notifications/initialized)
     try {
-      write({ jsonrpc: '2.0', id: msg.id, result: await handle(msg) });
+      write({ jsonrpc: '2.0', id: msg.id, result: await handle(msg, (n) => write({ jsonrpc: '2.0', ...n })) });
     } catch (e) {
       write({ jsonrpc: '2.0', id: msg.id, error: { code: e.code || -32603, message: e.message } });
     }
@@ -81,7 +104,8 @@ const [cmd, tool, json] = process.argv.slice(2);
 if (cmd === 'call') {
   try {
     if (!tool) throw new Error("usage: harness-mcp.js call <tool> '<json-args>'");
-    const result = await api('POST', `/api/agent/${encodeURIComponent(tool)}`, json ? JSON.parse(json) : {});
+    const args = json ? JSON.parse(json) : {};
+    const result = SYNC_RUN_TOOLS.has(tool) ? await runAndWait(tool, args, undefined, () => {}) : await api('POST', `/api/agent/${encodeURIComponent(tool)}`, args);
     console.log(JSON.stringify(result, null, 2));
   } catch (e) {
     console.error(`error: ${e.message}`);

@@ -52,7 +52,7 @@ export function loadConfig({ root = CODE_ROOT, overrides = {}, dataDir, configFi
   cfg.integrations ||= {};
   cfg.git = { defaultBase: 'main', ...cfg.git };
   cfg.session = { idleWindowSec: 90, ...cfg.session };
-  cfg.orchestration = { workerMayCommit: false, reviewMode: 'builtin', ...cfg.orchestration };
+  cfg.orchestration = { workerMayCommit: false, reviewMode: 'builtin', subagents: 'harness', ...cfg.orchestration };
   cfg.orchestration.review = { grade: 'review', approvalMode: 'plan', maxRounds: 2, agent: null, ...cfg.orchestration.review };
   cfg.board = {
     columns: [

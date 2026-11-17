@@ -2,7 +2,7 @@
 // assign/start), ports into extra target branches, preambles, escalation, notifications, commit/PR prefill.
 import fs from 'node:fs';
 import path from 'node:path';
-import { CODE_ROOT } from './config.js';
+import { CODE_ROOT, expandHome } from './config.js';
 import * as git from './git.js';
 import { newId } from './sessions.js';
 
@@ -29,6 +29,34 @@ export function truncateBytes(text, max) {
  * Single pass with a replacer function: values are inserted literally ($&, $' stay as typed) and never
  * expanded again; unknown {placeholders} are left as they are.
  */
+/** Agent profile (~/.gigacode/agents/<name>.md): YAML frontmatter with scalar keys and a `tools` list, then the role prompt. */
+export function parseProfile(text) {
+  const m = String(text).replace(/^\uFEFF/, '').match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
+  if (!m) return { meta: {}, body: String(text).trim() };
+  const meta = {};
+  let list = null;
+  for (const line of m[1].split(/\r?\n/)) {
+    const item = line.match(/^\s+-\s+(.*)$/);
+    if (item && list) {
+      meta[list].push(item[1].trim().replace(/^["']|["']$/g, ''));
+      continue;
+    }
+    const kv = line.match(/^([A-Za-z_][\w-]*):\s*(.*)$/);
+    if (!kv) continue;
+    const [, key, raw] = kv;
+    list = null;
+    if (raw === '') {
+      meta[key] = [];
+      list = key;
+    } else if (/^\[.*\]$/.test(raw)) meta[key] = raw.slice(1, -1).split(',').map((x) => x.trim().replace(/^["']|["']$/g, '')).filter(Boolean);
+    else meta[key] = raw.trim().replace(/^["']|["']$/g, '');
+  }
+  return { meta, body: m[2].trim() };
+}
+
+export const SUBAGENT_CONTEXT = 'Ты работаешь внутри harness. Субагентов запускай инструментом mcp__harness__agent с теми же аргументами, что у встроенного agent (subagent_type, prompt, model) — встроенный agent не используй: harness откроет каждого субагента отдельным чатом и вернёт тебе его результат так же.';
+const CONTEXT_LAUNCHERS = new Set(['gigacode', 'qwen', 'gemini', 'mock']);
+
 export const render = (tpl, vars) => String(tpl).replace(/\{(\w+)\}/g, (m, k) => (Object.hasOwn(vars, k) ? String(vars[k] ?? '') : m));
 
 const obj = (properties, required = []) => ({ type: 'object', properties, required });
@@ -289,6 +317,67 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
     }
   }
 
+  // ---- sub-agents as real chats: worker_run / harness `agent` (Level 2) ----
+
+  const runWaiters = new Map(); // sessionId -> [resolve]
+
+  function loadProfile(agentCfg, name) {
+    if (!name || !/^[\w.-]+$/.test(name)) return null;
+    const file = path.join(expandHome(agentCfg?.agentsDir || '~/.gigacode/agents'), `${name}.md`);
+    try {
+      return parseProfile(fs.readFileSync(file, 'utf8'));
+    } catch {
+      return null; // a built-in type without a profile file: the spec alone
+    }
+  }
+
+  /** Result of an ephemeral run: worker_done, or its turn ended without one (no_report). Wakes worker_wait callers. */
+  function settleRun(s, result) {
+    if (s.runResult) return;
+    sessions.update(s.id, { runResult: result });
+    for (const resolve of runWaiters.get(s.id) || []) resolve();
+    runWaiters.delete(s.id);
+  }
+
+  async function workerRun(a, caller) {
+    if (!caller) fail(400, 'worker_run must be called from a harness session (x-harness-session header)');
+    if (typeof a.spec !== 'string' || !a.spec.trim()) fail(400, 'spec is required');
+    const agent = caller.kind === 'chat' && config.agents[caller.agent] ? caller.agent : config.defaultAgent;
+    const agentCfg = config.agents[agent] || {};
+    const profile = a.profile ? loadProfile(agentCfg, a.profile) : null;
+    let model = a.model ?? profile?.meta.model ?? null;
+    const grades = agentCfg.settings?.agents?.modelGrades || {};
+    if (model && grades[model]) model = grades[model]; // a grade name ("review") -> its model id
+    if (model && sessions.unavailableModels(agent).has(model)) model = null; // the CLI default instead of a doomed run
+    let mode = a.approvalMode ?? profile?.meta.approvalMode ?? null;
+    if (mode && agentCfg.approvalModes?.length && !agentCfg.approvalModes.includes(mode)) mode = null;
+    let cwd = caller.cwd;
+    let branch = caller.branch;
+    if (a.worktree === 'new') {
+      const wt = await git.addWorktree(caller.cwd, { branch: git.sanitizeBranch(`sub/${a.profile || 'agent'}-${newId('x').slice(2)}`), worktreeRoot: config.worktreeRoot });
+      cwd = wt.path;
+      branch = wt.branch;
+    }
+    const s = await sessions.create({
+      kind: 'chat', agent, cwd, role: 'worker', parentId: caller.id, model, approvalMode: mode, branch, ephemeral: true, autoReport: false,
+      title: a.title || [a.profile || 'agent', a.description].filter(Boolean).join(' · '),
+    });
+    sessions.deliver(s.id, { from: caller.id, text: [profile?.body, `## Задание\n${a.spec}`].filter(Boolean).join('\n\n') });
+    return { sessionId: s.id };
+  }
+
+  async function waitRun(sessionId, timeoutMs = 25000) {
+    const s = sessions.get(sessionId);
+    if (!s.runResult) {
+      await new Promise((resolve) => {
+        const timer = setTimeout(resolve, Math.min(Math.max(Number(timeoutMs) || 0, 0), 60000));
+        runWaiters.set(sessionId, [...(runWaiters.get(sessionId) || []), () => { clearTimeout(timer); resolve(); }]);
+      });
+    }
+    const now = sessions.find(sessionId);
+    return now?.runResult ? { done: true, sessionId, ...now.runResult } : { done: false, sessionId, status: now?.status ?? null };
+  }
+
   // ---- harness review loop (orchestration.reviewMode "harness") ----
 
   const reviewCfg = () => ({ grade: 'review', approvalMode: 'plan', maxRounds: 2, agent: null, ...config.orchestration?.review });
@@ -378,6 +467,11 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
   // ---- preambles ----
 
   function preamble(s) {
+    const block = config.orchestration?.subagents !== 'builtin' && CONTEXT_LAUNCHERS.has(s.launcherId) ? SUBAGENT_CONTEXT : '';
+    return [block, rolePreamble(s)].filter(Boolean).join('\n\n');
+  }
+
+  function rolePreamble(s) {
     const tools = `Harness tools are in the MCP server "harness" (fallback from a shell: node "${HARNESS_CLI}" call <tool> '<json>').`;
     const registry = `Registry dir: ${sessions.registryDir(s.id)} - if you start built-in helper sub-agents (agent tool), record them there per your orchestration skill (<id>/agent.json + log.jsonl).`;
     const helpers = '- The built-in agent tool is fine for internal helpers (review, exploration); parallel task work the user should see goes through worker_start (each worker gets its own chat).';
@@ -408,6 +502,14 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
       ].join('\n');
     }
     if (s.role !== 'worker') return '';
+    if (s.ephemeral) {
+      const parent = s.parentId && sessions.find(s.parentId);
+      return [
+        `[harness] Ты — субагент (сессия ${s.id}), запущенный ${parent ? label(parent) : 'harness'}. Рабочая папка: ${s.cwd}.`,
+        'Выполни задание ниже. В конце вызови worker_done(summary, status: "done" | "failed") — summary вернётся вызвавшему агенту как результат.',
+        tools,
+      ].join('\n');
+    }
     const task = s.taskId && tasks.find(s.taskId);
     const parent = s.parentId && sessions.find(s.parentId);
     const who = `Session: ${s.id}; parent: ${parent ? label(parent) : 'none (your reports go to the user)'}.`;
@@ -454,6 +556,11 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
   // ---- post-turn: escalation and error notifications ----
 
   function turnEnded(s, { reported, communicated, stopped, queueEmpty }) {
+    if (s.ephemeral && !reported && queueEmpty) {
+      const last = sessions.messages(s.id).filter((m) => m.kind === 'assistant').at(-1);
+      settleRun(s, { status: stopped ? 'stopped' : 'no_report', summary: last?.text ?? '' });
+      return;
+    }
     if (stopped) return;
     if (s.role === 'reviewer' && !reported && s.status !== 'error') {
       const last = sessions.messages(s.id).filter((m) => m.kind === 'assistant').at(-1);
@@ -567,6 +674,26 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
       },
     },
     {
+      name: 'worker_run',
+      description: 'Run a sub-agent in its own harness chat and wait for its result (synchronous, like the built-in agent tool). profile = an agent profile name (~/.gigacode/agents/<profile>.md).',
+      inputSchema: obj({
+        profile: str('agent profile name'), spec: str('the assignment'), model: str('model id or grade name'),
+        approvalMode: str('approval mode'), title: str('chat title'),
+        worktree: str('current (default) or new', { enum: ['current', 'new'] }), timeoutMin: { type: 'number', description: 'minutes to wait (default 60)' },
+      }, ['spec']),
+      run: (a, c) => workerRun(a, c),
+    },
+    {
+      name: 'agent',
+      description: 'Start a sub-agent (same arguments as the built-in agent tool). The harness opens it as a separate chat and returns its result.',
+      inputSchema: obj({
+        subagent_type: str('agent type / profile name'), prompt: str('the task for the sub-agent'), model: str('model id or grade name'),
+        description: str('short description'), approvalMode: str('approval mode'),
+        worktree: str('current (default) or new', { enum: ['current', 'new'] }), timeoutMin: { type: 'number', description: 'minutes to wait (default 60)' },
+      }, ['prompt']),
+      run: (a, c) => workerRun({ ...a, profile: a.subagent_type, spec: a.prompt }, c),
+    },
+    {
       name: 'worker_list',
       description: 'Your worker sessions with status, task and last output.',
       inputSchema: obj({}),
@@ -613,6 +740,12 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
       run: (a, c) => {
         if (!c) fail(400, 'worker_done must be called from a harness session (x-harness-session header)');
         if (c.role === 'reviewer') return reviewerDone(a.summary, c);
+        if (c.ephemeral) {
+          sessions.flag(c.id, 'reported');
+          sessions.setStatus(c.id, a.status);
+          settleRun(sessions.get(c.id), { status: a.status, summary: a.summary });
+          return { ok: true };
+        }
         const status = a.status;
         sessions.flag(c.id, 'reported');
         sessions.setStatus(c.id, status);
@@ -710,7 +843,12 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
     gitSuggest,
     promptTemplate,
     port: (taskId, target, o) => port(tasks.get(taskId), target, o, null),
-    tools: TOOLS.map(({ name, description, inputSchema }) => ({ name, description, inputSchema })),
+    waitRun,
+    /** MCP tool list; the built-in-compatible `agent` alias only in orchestration.subagents "harness" mode */
+    get tools() {
+      const builtin = config.orchestration?.subagents === 'builtin';
+      return TOOLS.filter((t) => !(builtin && t.name === 'agent')).map(({ name, description, inputSchema }) => ({ name, description, inputSchema }));
+    },
 
     async call(name, args, callerId) {
       const tool = TOOLS.find((t) => t.name === name) || fail(404, `unknown tool "${name}"`);
