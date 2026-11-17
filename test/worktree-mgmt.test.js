@@ -22,7 +22,7 @@ after(async () => {
   rmrf(root);
 });
 
-const list = async () => (await h.api('GET', `/api/workspaces/${ws.id}/worktrees`)).body;
+const list = async (enrich = true) => (await h.api('GET', `/api/workspaces/${ws.id}/worktrees${enrich ? '?enrich=1' : ''}`)).body;
 const addWt = async (name) => (await h.api('POST', `/api/workspaces/${ws.id}/worktrees`, { name })).body;
 const commit = (cwd, file) => {
   fs.writeFileSync(path.join(cwd, file), `${file}\n`);
@@ -40,7 +40,7 @@ test('enriched worktree list: dirty, ahead, task, sessions, meta', async () => {
   await h.api('PATCH', '/api/worktrees/meta', { path: wt.path, label: 'Лимиты', pinned: true });
   const item = await waitFor(async () => (await list()).find((w) => w.path === wt.path && w.dirty === 1));
   assert.deepEqual([item.ahead, item.taskId, item.taskStatus, item.sessions, item.running, item.meta], [1, t.id, 'todo', 1, 0, { label: 'Лимиты', pinned: true }]);
-  assert.equal(item.lastActivityAt, chat.lastActivityAt);
+  assert.ok(item.lastActivityAt >= chat.lastActivityAt, 'newest of session activity and the git dir mtime');
   const main = (await list()).find((w) => w.main);
   assert.deepEqual([main.dirty, main.ahead], [0, 0]);
   assert.equal((await h.api('PATCH', '/api/worktrees/meta', { path: path.join(root, 'elsewhere'), label: 'x' })).status, 400);
@@ -90,4 +90,23 @@ test('open in the file manager or the configured IDE, only for registered folder
   assert.equal((await h.api('POST', '/api/open', { cwd: repo, target: 'ide' })).status, 200);
   assert.deepEqual([spawned.at(-1).command, spawned.at(-1).args], ['code', ['--goto', path.resolve(repo)]]);
   assert.equal((await h.api('PUT', '/api/settings', { ide: { command: '' } })).status, 400);
+});
+
+test('listing scales: 20 worktrees list without git per worktree; enrich and per-path info on demand', async () => {
+  for (let i = 0; i < 20; i++) gitIn(repo, 'worktree', 'add', '-q', '-b', `bulk/w${i}`, path.join(root, 'много', `w${i}`));
+  const t0 = performance.now();
+  const cheap = await list(false);
+  const ms = performance.now() - t0;
+  console.log(`worktree list (${cheap.length} worktrees, no enrich): ${ms.toFixed(0)} ms`);
+  assert.ok(ms < 300, `took ${ms} ms`);
+  const bulk = cheap.filter((w) => w.branch?.startsWith('bulk/'));
+  assert.equal(bulk.length, 20);
+  assert.ok(bulk.every((w) => w.enriched === false && w.dirty === null && w.ahead === null && w.lastActivityAt > 0), 'no git status per worktree; activity from the git dir mtime');
+  fs.writeFileSync(path.join(bulk[0].path, 'new.txt'), 'x');
+  const info = (await h.api('GET', `/api/worktrees/info?path=${encodeURIComponent(bulk[0].path)}`)).body;
+  assert.deepEqual([info.enriched, info.dirty, info.ahead], [true, 1, 0]);
+  assert.equal((await list(false)).find((w) => w.path === bulk[0].path).dirty, 1, 'a fresh cache entry is reused by the cheap list');
+  const rich = await list(true);
+  assert.ok(rich.every((w) => w.enriched && Number.isInteger(w.dirty)));
+  assert.equal((await h.api('GET', `/api/worktrees/info?path=${encodeURIComponent(path.join(root, 'нет'))}`)).status, 400);
 });

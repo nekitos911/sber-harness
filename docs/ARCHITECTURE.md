@@ -721,6 +721,12 @@ NOT confirmed (it may print a URL / device code and wait for the browser callbac
   ahead: number (commits not in git.defaultBase / the task's targets[0]), taskId: string|null, taskStatus, pr: {state,url}|null,
   sessions: number, running: number, lastActivityAt: number|null, meta: { label?, note?, pinned?: boolean,
   sleeping?: boolean } }` (git data computed in parallel with a short cache; meta from `db.worktreeMeta[path]`).
+- Scale (≈10 repos × 10–20 worktrees): the list is cheap by default — one `git worktree list` + meta + session counts +
+  task/PR from the db; `dirty`/`ahead` are `null` and `enriched: false` unless `?enrich=1` (or a fresh cache entry
+  exists). `GET /api/worktrees/info?path=` enriches one registered worktree. Enrichment: per-path cache 30 s, at most 4
+  computations (git processes) at a time; nothing is enriched at startup; the PR refresh walks tasks one at a time.
+  `lastActivityAt` = newest of the worktree's sessions' activity and the mtime of its git `HEAD`/`index` (one stat
+  each). Feature flag `worktree-lazy`.
 - `PATCH /api/worktrees/meta { path, label?, note?, pinned?, sleeping? }` → meta. `sleeping: true` stops terminal PTYs
   in that cwd (chat sessions are idle between turns anyway; a running turn is NOT killed — 409 unless `force`).
 - `DELETE /api/workspaces/:id/worktrees { path, force?, deleteBranch?: 'no'|'safe'|'force' }`: refuses the main worktree

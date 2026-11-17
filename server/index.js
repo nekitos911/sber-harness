@@ -37,7 +37,7 @@ const NO_BUILD_HTML = '<!doctype html><meta charset="utf-8"><title>Harness</titl
 const GRADES = ['default', 'fast', 'review', 'explore'];
 // optional API groups this server implements (docs/ARCHITECTURE.md "Feature flags"); a flag ships with its route
 export const FEATURES = ['branches', 'fs-search', 'pr-status', 'agent-info', 'models-refresh', 'tracker-links', 'board-columns', 'review-loop',
-  'subagents', 'virtual-sessions', 'worker-run', 'skills-install', 'demo', 'worktree-meta', 'open', 'sdd', 'health', 'folders', 'include-dirs', 'questions', 'permissions', 'activity', 'rework', 'fs-raw', 'tracker-import', 'pr-decline', 'task-suggest', 'recovery', 'acp'];
+  'subagents', 'virtual-sessions', 'worker-run', 'skills-install', 'demo', 'worktree-meta', 'open', 'sdd', 'health', 'folders', 'include-dirs', 'questions', 'permissions', 'activity', 'rework', 'fs-raw', 'tracker-import', 'pr-decline', 'task-suggest', 'recovery', 'acp', 'worktree-lazy'];
 // titles of operations the UI may follow by sending x-job-id (WS { t: 'job' } frames)
 const JOB_TITLES = {
   'POST /api/tasks/sync': 'Синхронизация с трекером',
@@ -56,6 +56,25 @@ const TASK_VARS = ['{taskUrl}', '{key}', '{id}', '{description}'];
 const hasTaskVar = (tpl) => TASK_VARS.some((v) => tpl.includes(v));
 
 const fail = (status, message) => { throw Object.assign(new Error(message), { status }); };
+
+/** At most n async jobs at a time (git processes for many worktrees). */
+function limiter(n) {
+  let active = 0;
+  const queue = [];
+  const next = () => {
+    if (active >= n || !queue.length) return;
+    active++;
+    const { fn, resolve, reject } = queue.shift();
+    Promise.resolve().then(fn).then(resolve, reject).finally(() => {
+      active--;
+      next();
+    });
+  };
+  return (fn) => new Promise((resolve, reject) => {
+    queue.push({ fn, resolve, reject });
+    next();
+  });
+}
 const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const samePath = (a, b) => (process.platform === 'win32' ? path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase() : path.resolve(a) === path.resolve(b));
 
@@ -577,8 +596,9 @@ export async function startServer(opts = {}) {
 
   // ---- worktree management ----
   const openSpawner = opts.openSpawner || spawnProcess; // tests inject a stub instead of launching a file manager
-  const wtCache = new Map(); // path -> { at, data } (git data, a few seconds)
-  const WT_CACHE_MS = 3000;
+  const wtCache = new Map(); // path -> { at, data: Promise } — the git-heavy fields (dirty, ahead)
+  const WT_CACHE_MS = 30000;
+  const gitSlots = limiter(4); // ~10 repos x 10-20 worktrees: at most 4 enrichment git runs at a time
   const metaKey = (p) => (process.platform === 'win32' ? path.resolve(p).toLowerCase() : path.resolve(p));
   const sessionsIn = (p) => db.sessions.filter((s) => !s.virtual && samePath(s.cwd, p));
   const waitGone = async (pid) => {
@@ -593,38 +613,65 @@ export async function startServer(opts = {}) {
       || sessionsIn(wt.path).map((s) => s.taskId && tasks.find(s.taskId)).find(Boolean) || null;
   }
 
-  async function worktreeGit(ws, wt, fresh = false) {
+  /** git-heavy fields of one worktree (status + ahead of its base), cached 30 s, at most 4 computations at a time. */
+  function worktreeGit(ws, wt, fresh = false) {
     const hit = wtCache.get(wt.path);
     if (!fresh && hit && Date.now() - hit.at < WT_CACHE_MS) return hit.data;
-    const task = taskOf(ws, wt);
-    const base = task?.targets?.[0] || config.git.defaultBase;
-    const [st, baseRef] = await Promise.all([git.status(wt.path).catch(() => null), git.startPoint(ws.path, base).catch(() => null)]);
-    const ahead = baseRef && wt.head ? ((await git.revList(wt.path, `${baseRef}..HEAD`).catch(() => null)) || []).length : 0;
-    const data = { dirty: st ? st.files.length : 0, ahead, base };
+    const data = gitSlots(async () => {
+      const task = taskOf(ws, wt);
+      const base = task?.targets?.[0] || config.git.defaultBase;
+      const [st, baseRef] = await Promise.all([git.status(wt.path).catch(() => null), git.startPoint(ws.path, base).catch(() => null)]);
+      const ahead = baseRef && wt.head ? ((await git.revList(wt.path, `${baseRef}..HEAD`).catch(() => null)) || []).length : 0;
+      return { dirty: st ? st.files.length : 0, ahead, base };
+    });
     wtCache.set(wt.path, { at: Date.now(), data });
+    data.catch(() => wtCache.delete(wt.path));
     return data;
   }
 
-  async function enrichedWorktrees(ws) {
-    const list = await git.worktrees(ws.path);
-    return Promise.all(list.map(async (wt) => {
-      const info = await worktreeGit(ws, wt);
-      const task = taskOf(ws, wt);
-      const here = sessionsIn(wt.path).filter((s) => !s.archived);
-      const last = Math.max(0, ...here.map((s) => s.lastActivityAt || 0));
-      return {
-        ...wt,
-        dirty: info.dirty,
-        ahead: info.ahead,
-        taskId: task?.id ?? null,
-        taskStatus: task?.status ?? null,
-        pr: task?.pr ? { state: task.pr.state, url: task.pr.url } : null,
-        sessions: here.length,
-        running: here.filter((s) => s.status === 'running').length,
-        lastActivityAt: last || null,
-        meta: db.worktreeMeta?.[metaKey(wt.path)] || {},
-      };
+  /** Newest mtime of the worktree's git HEAD / index (checkout, commit, staging touch them): one cheap stat each. */
+  function gitTouchedAt(wtPath) {
+    let gitDir = path.join(wtPath, '.git');
+    try {
+      // a linked worktree has a .git FILE: "gitdir: <repo>/.git/worktrees/<name>"
+      if (fs.statSync(gitDir).isFile()) gitDir = path.resolve(wtPath, fs.readFileSync(gitDir, 'utf8').match(/^gitdir:\s*(.+)$/m)[1].trim());
+    } catch {
+      return 0;
+    }
+    return Math.max(0, ...['HEAD', 'index'].map((f) => {
+      try { return Math.floor(fs.statSync(path.join(gitDir, f)).mtimeMs); } catch { return 0; }
     }));
+  }
+
+  /**
+   * One `git worktree list` + meta + sessions + stats by default; dirty/ahead (git per worktree) only with `enrich`
+   * (or from a fresh cache entry), so a repository with 20 worktrees lists instantly.
+   */
+  async function listWorktrees(ws, enrich = false) {
+    const list = await git.worktrees(ws.path);
+    return Promise.all(list.map((wt) => worktreeView(ws, wt, enrich)));
+  }
+
+  async function worktreeView(ws, wt, enrich) {
+    const hit = wtCache.get(wt.path);
+    const cached = hit && Date.now() - hit.at < WT_CACHE_MS ? hit.data : null;
+    const info = enrich ? await worktreeGit(ws, wt) : cached ? await cached.catch(() => null) : null;
+    const task = taskOf(ws, wt);
+    const here = sessionsIn(wt.path).filter((s) => !s.archived);
+    const last = Math.max(0, gitTouchedAt(wt.path), ...here.map((s) => s.lastActivityAt || 0));
+    return {
+      ...wt,
+      enriched: !!info,
+      dirty: info?.dirty ?? null,
+      ahead: info?.ahead ?? null,
+      taskId: task?.id ?? null,
+      taskStatus: task?.status ?? null,
+      pr: task?.pr ? { state: task.pr.state, url: task.pr.url } : null,
+      sessions: here.length,
+      running: here.filter((s) => s.status === 'running').length,
+      lastActivityAt: last || null,
+      meta: db.worktreeMeta?.[metaKey(wt.path)] || {},
+    };
   }
 
   /** A registered workspace or one of its worktrees (the only folders /api/open and worktree meta accept). */
@@ -774,7 +821,13 @@ export async function startServer(opts = {}) {
     emitWorkspaces();
     syncRootWorkspace();
   });
-  route('GET', '/api/workspaces/:id/worktrees', ({ params }) => enrichedWorktrees(getWs(params.id)));
+  route('GET', '/api/workspaces/:id/worktrees', ({ params, query }) => listWorktrees(getWs(params.id), query.enrich === '1'));
+  route('GET', '/api/worktrees/info', async ({ query }) => {
+    const p = check(query, { path: 'string' }).path;
+    const ws = (await registeredFolder(p)) || fail(400, `не зарегистрированная рабочая папка и не её рабочее дерево: ${p}`);
+    const wt = ws.isGit && (await git.worktrees(ws.path)).find((w) => samePath(w.path, p)) || fail(404, `не рабочее дерево ${ws.name}: ${p}`);
+    return worktreeView(ws, wt, true);
+  });
   route('POST', '/api/workspaces/:id/worktrees', async ({ params, body }) => {
     const ws = getWs(params.id);
     check(body, { name: 'string', base: 'string?' });
