@@ -383,6 +383,13 @@ POST   /api/git/pr              {cwd, title, body, base?} -> { url, existing }  
                                  existing: an OPEN PR with the same head+base already existed and is returned instead;
                                  400 with byte counts when title/body exceed integrations.pr.limits — UTF-8 BYTES)
 
+GET    /api/fs/search?cwd=&q=&limit=  -> [{ path, score }]   (for @-mentions: `git ls-files --cached --others --exclude-standard`
+                                 (fallback: recursive walk skipping .git/node_modules), cached per cwd ~10 s, fuzzy subsequence
+                                 match on the path with a bonus for basename hits; default limit 30, max 100)
+GET    /api/git/pr-status?cwd=  -> { pr: { index, title, state: 'open'|'merged'|'declined', url, mergeable: boolean|null,
+                                     reviewers: [{ status }], base, updatedAt } | null, error?: string }
+                                 (observe-only, via integrations.pr.listTool for the current branch: OPEN first, else the
+                                  most recent MERGED/DECLINED with that head; 501 when integrations.pr is disabled)
 GET    /api/fs/list?cwd=&path=  -> [{ name, path, dir: boolean, size }]   (path relative to cwd; '' = root; dirs first; skips .git and node_modules)
 GET    /api/fs/file?cwd=&path=  -> { path, content, size, binary: boolean }   (text up to 2 MB; binary => content '')
 PUT    /api/fs/file             {cwd, path, content} -> { ok: true }
@@ -536,6 +543,24 @@ none. `{notes}` = `" " + notes` when the user typed notes at start, else `""`.
   `fs.rm(..., { recursive, force, maxRetries })`.
 - Startup: sessions left `running` become `idle` with a system message ("harness restarted, the turn was interrupted;
   send a message to continue — context is kept by --resume"); orphan locks are cleared.
+
+## Runs survive a harness restart
+
+An agent turn is spawned detached (`detached: true`, `windowsHide: true`) with stdout/stderr redirected to files
+`runs/<sid>/turn-<n>.out.ndjson` / `.err.txt` (not pipes), and the harness tails the stdout file (fs.watch + poll,
+partial-line buffer, byte offset persisted on the session as `turnOffset`). The pid is persisted. On startup, a session
+left `running` whose pid is still alive and whose turn file exists is re-attached (tail resumes from the saved offset; a
+system note "переподключено после перезапуска" is added); liveness is polled (process.kill(pid, 0)) since a re-attached
+process is not our child — the turn ends at the `result` event or when the pid disappears (no result → error from the
+.err file tail). If the pid is gone, the remaining file is drained once and the turn finalized. Harness shutdown never
+kills agent turns (terminal PTYs are still closed). Stop still kills the tree by pid. Turn files are deleted with the session.
+
+Task field `pr: { index, state, url, updatedAt } | null` is refreshed for tasks that have a `branch` and a workspace when
+`integrations.pr.refreshSec` > 0 (min 30) and a UI client is connected; only changes are broadcast.
+
+`GET /api/tasks/:id/external` also returns `links: [{ type, from, to }]` (onework `listLinks`); `decomposition` links whose
+`from` is this task are its children. `POST /api/tasks/:id/import-children` imports those child keys (getIssue each) as tasks
+with `parentId` = this task and the parent's workspace/targets, deduped by externalId → `{ imported, updated }`.
 
 ## Agent-internal sub-agent registry (read-only compatibility)
 
