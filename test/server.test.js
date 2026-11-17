@@ -84,7 +84,8 @@ test('task CRUD, move ordering, deps', async () => {
 
 test('chat session: two turns resume the same CLI session; crash shows stderr', async () => {
   const s = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', cwd: repo, prompt: 'hello' })).body;
-  await waitFor(async () => (await state()).sessions.find((x) => x.id === s.id && x.status === 'idle' && x.externalSessionId), { what: 'turn 1' });
+  // idle at result; the process may still be closing (turnClosing): only then does a message start a turn at once
+  await waitFor(async () => (await state()).sessions.find((x) => x.id === s.id && x.status === 'idle' && !x.turnClosing && x.externalSessionId), { what: 'turn 1' });
   const ext = (await state()).sessions.find((x) => x.id === s.id).externalSessionId;
   assert.deepEqual((await h.api('POST', `/api/sessions/${s.id}/messages`, { text: 'again' })).body, { queued: false });
   await waitFor(async () => (await messages(s.id)).some((m) => m.kind === 'assistant' && m.text.includes(`resumed ${ext}, turn 2`)), { what: 'turn 2' });
