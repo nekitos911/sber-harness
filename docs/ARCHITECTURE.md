@@ -839,6 +839,25 @@ Secrets:
 - `HARNESS_CONFIG` env selects the config file (default `harness.config.json` + `.local`), so work and test
   configs never mix.
 
+## Cross-platform (Windows, Linux, macOS)
+
+- No platform-specific defaults in `harness.config.json`: `shell: null` and `agents.gigacode.command: null` mean "auto":
+  - shell: win32 → `powershell.exe -NoLogo -NoExit -Command [Console]::InputEncoding=[Console]::OutputEncoding=[System.Text.Encoding]::UTF8`;
+    others → `$SHELL` (fallback `/bin/bash`, then `/bin/sh`) with `-l`; env `LANG`/`LC_ALL` default to `C.UTF-8` when unset.
+  - gigacode command: win32 → `C:/Program Files/.gigacode/bin/gigacode.cmd` if it exists, else `gigacode` on PATH (+PATHEXT);
+    others → `gigacode` on PATH, else `~/.gigacode/bin/gigacode`.
+  An explicit value always wins; `--print-config` shows the resolved choice and why.
+- GigaCode launcher on POSIX: if the resolved command is an executable file that is not a `.cmd`, it is spawned directly
+  (no shell; a shebang script sets its own identity env and exit codes are honest) with the same argv after the
+  executable; `nodeArgs`/`cliEntry` resolution and identity parsing are Windows-only unless `node`+`cliEntry` are set
+  explicitly. Fallback parser for sh shims (`ROOT=…`, `export GIGACODE_PACKAGE_IDENTITY=…`, `"$ROOT/runtime/node/bin/node"`)
+  is used only when the direct spawn is not possible. VERIFY the real Linux install layout on a Linux machine.
+- Process control: Windows `taskkill /PID <pid> /T /F`; POSIX `process.kill(-pid, SIGTERM)` then `SIGKILL` after 3 s
+  (agent turns are spawned `detached` = own process group). Open folder: `explorer.exe` / `open` / `xdg-open`.
+- Paths always via `path`; `~` expanded; worktree/stale cleanup identical; tests run on Windows and Linux (Node ≥ 22).
+- UI: shortcuts use Ctrl on Windows/Linux and ⌘ on macOS (labels adapt); font stacks include Linux fallbacks
+  (`"Inter","Ubuntu","Cantarell","Noto Sans"` / `"JetBrains Mono","DejaVu Sans Mono","Noto Sans Mono"`).
+
 ## Security
 
 - Listen on `config.host` (default 127.0.0.1).
