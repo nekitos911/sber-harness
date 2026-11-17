@@ -351,7 +351,8 @@ function AgentStatus({ id }: { id: string }) {
 /** Task command: a preset or a custom template with clickable variables; warns when the slash command is unknown. */
 function CommandRow({ id, a, set, error }: { id: string; a: AgentSettings; set: (p: Partial<AgentSettings>) => void; error?: string }) {
   const meta = useAgentMeta(id)
-  const presets = a.taskPromptPresets ?? []
+  // /full-task-harness is superseded by automatic harness sub-agents; offered only when it is already chosen.
+  const presets = (a.taskPromptPresets ?? []).filter((p) => !p.startsWith('/full-task-harness') || p === a.taskPromptTemplate)
   const value = a.taskPromptTemplate ?? ''
   const [custom, setCustom] = useState(!!value && !presets.includes(value))
   const area = useRef<HTMLTextAreaElement>(null)
@@ -373,7 +374,6 @@ function CommandRow({ id, a, set, error }: { id: string; a: AgentSettings; set: 
           onChange={(v) => { if (v === CUSTOM) setCustom(true); else { setCustom(false); set({ taskPromptTemplate: v }) } }}
           options={[...presets.map((p) => ({ value: p, label: p.split('\n')[0], text: p, hint: PRESET_HINT[p.split(/\s/)[0]] })), { value: CUSTOM, label: 'Свой шаблон…', text: 'Свой шаблон' }]} />
       )}
-      {cmd === 'full-task-harness' && <InstallCommand id={id} name="full-task-harness" />}
       {(custom || !presets.length) && (
         <>
           <Textarea ref={area} mono rows={3} aria-label="Шаблон команды" placeholder="/full-task {taskUrl}{notes}" value={value} onChange={(e) => set({ taskPromptTemplate: e.target.value || null })} />
@@ -508,10 +508,19 @@ function PrSection({ form, update }: Omit<SectionProps, 'fieldError'>) {
 function OrchestrationSection({ form, update }: Omit<SectionProps, 'fieldError'>) {
   const o = form.orchestration ?? {}
   const mode = o.reviewMode ?? 'builtin'
+  const agentId = form.agents[MAIN] ? MAIN : form.defaultAgent
   return (
     <section className="settings-section" id="set-orchestration">
       <h2>Оркестрация</h2>
       <div className="set-rows">
+        <Row label="Субагенты отдельными чатами (через harness)" wide
+          hint="Агент сам запускает субагентов через harness: каждый откроется отдельным чатом. Если модель всё же использует встроенного субагента, он покажется чатом только для чтения.">
+          <Switch label="Субагенты отдельными чатами" checked={(o.subagents ?? 'harness') === 'harness'}
+            onChange={(v) => update({ ...form, orchestration: { ...o, subagents: v ? 'harness' : 'builtin' } })} />
+          {(o.subagents ?? 'harness') === 'harness' && (
+            <InstallFile id={agentId} kind="skills" name="harness-orchestration" target="~/.gigacode/skills/harness-orchestration/SKILL.md" title="навык harness-orchestration" action="Установить навык в GigaCode" />
+          )}
+        </Row>
         <Row label="Ревью" wide hint={mode === 'builtin'
           ? 'Для /full-task оставьте «Внутри агента»: команда сама делает кросс-модельное ревью (§8), харнесс показывает его в карточках субагентов и во вкладке «Вердикты».'
           : '«Через харнесс»: для задач без такой команды. Ревью идёт отдельным чатом-ревьюером другой моделью.'}>
@@ -520,6 +529,10 @@ function OrchestrationSection({ form, update }: Omit<SectionProps, 'fieldError'>
         </Row>
         {mode === 'harness' && <ReviewRows form={form} update={update} />}
       </div>
+      <Disclosure className="settings-advanced" summary={<h3>Дополнительно</h3>}>
+        <p className="set-note">Ручная команда /full-task-harness больше не нужна: субагенты идут через harness автоматически. Её можно установить для старых сценариев.</p>
+        <InstallFile id={agentId} kind="commands" name="full-task-harness" target="~/.gigacode/commands/full-task-harness.md" title="команда /full-task-harness" action="Установить в ~/.gigacode/commands" />
+      </Disclosure>
     </section>
   )
 }
@@ -664,27 +677,26 @@ const PRESET_HINT: Record<string, string> = {
   '/full-task-harness': 'субагенты отдельными интерактивными чатами (как в Orca)',
 }
 
-/** A command file shipped with the harness: installed into ~/.gigacode/commands only on an explicit click. */
-function InstallCommand({ id, name }: { id: string; name: string }) {
+/** A file shipped with the harness (skill or command): written into ~/.gigacode only on an explicit, confirmed click. */
+function InstallFile({ id, kind, name, target, title, action }: { id: string; kind: 'skills' | 'commands'; name: string; target: string; title: string; action: string }) {
   const meta = useAgentMeta(id)
   const [confirm, setConfirm] = useState(false)
   const [busy, setBusy] = useState(false)
-  const state = meta?.commands?.[name]
+  const state = meta?.[kind]?.[name]
   if (!meta || !state) return null
-  const target = `~/.gigacode/commands/${name}.md`
   const install = async () => {
     setBusy(true)
-    const r = await tryApi('POST', `/agents/${encodeURIComponent(id)}/commands/install`, { name, force: state === 'different' || undefined })
+    const r = await tryApi('POST', `/agents/${encodeURIComponent(id)}/${kind}/install`, { name, force: state === 'different' || undefined })
     setBusy(false)
     setConfirm(false)
-    if (r !== undefined) { toast(`Команда /${name} установлена`, 'ok'); loadAgentMeta(id, true) }
+    if (r !== undefined) { toast(`Установлено: ${title}`, 'ok'); loadAgentMeta(id, true) }
   }
   return (
     <div className="install-cmd">
-      {state === 'installed' ? <span className="ok-text"><CircleCheck className="ok" aria-hidden />/{name} установлена</span>
-        : state === 'different' ? <span className="field-warn"><TriangleAlert aria-hidden />Установлена другая версия /{name}</span>
-          : <span className="field-warn"><TriangleAlert aria-hidden />/{name} не установлена в GigaCode</span>}
-      {state !== 'installed' && !confirm && <Button size="sm" onClick={() => setConfirm(true)}>{state === 'different' ? 'Обновить' : 'Установить в ~/.gigacode/commands'}</Button>}
+      {state === 'installed' ? <span className="ok-text"><CircleCheck className="ok" aria-hidden />{title}: установлен в GigaCode</span>
+        : state === 'different' ? <span className="field-warn"><TriangleAlert aria-hidden />{title}: в GigaCode другая версия</span>
+          : <span className="field-warn"><TriangleAlert aria-hidden />{title}: не установлен в GigaCode</span>}
+      {state !== 'installed' && !confirm && <Button size="sm" onClick={() => setConfirm(true)}>{state === 'different' ? 'Обновить' : action}</Button>}
       {confirm && (
         <div className="install-confirm" role="alertdialog" aria-label="Подтверждение установки">
           <span>Записать файл <span className="mono">{target}</span>?{state === 'different' && ' Текущий файл будет перезаписан.'}</span>

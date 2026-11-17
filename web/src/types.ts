@@ -184,6 +184,7 @@ export interface AgentMeta {
   catalog?: { at: number | null; error?: string | null } | null
   modelRefs?: { file: string; model: string; available: boolean | null }[]
   commands?: Record<string, 'installed' | 'missing' | 'different'>
+  skills?: Record<string, 'installed' | 'missing' | 'different'>
   models?: ModelEntry[]
   seen: {
     models: string[]
@@ -263,7 +264,7 @@ export interface Settings {
     prTitleTemplate?: string
   }
   tasks: { refreshSec: number }
-  orchestration?: { reviewMode?: 'builtin' | 'harness'; workerMayCommit?: boolean; review?: ReviewSettings }
+  orchestration?: { reviewMode?: 'builtin' | 'harness'; subagents?: 'harness' | 'builtin'; workerMayCommit?: boolean; review?: ReviewSettings }
   board?: BoardSettings
   integrations?: {
     tasks?: { enabled?: boolean; space?: string; urlTemplate?: string; statusMap?: Record<string, string>; closedStatuses?: string[]; onStartTransition?: string | null }
