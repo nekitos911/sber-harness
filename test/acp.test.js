@@ -125,14 +125,14 @@ test('Stop cancels: a held permission is answered "cancelled", a streaming turn 
   assert.ok((await said(chat.id)).at(-1).includes('прочитал: внутри'));
   await send(chat.id, `#read ${path.join(root, 'outside.txt')}`);
   await idle(chat.id);
-  assert.match((await said(chat.id)).at(-1), /не прочитал: path is outside/);
+  assert.match((await said(chat.id)).at(-1), /не прочитал: путь вне папки сессии/);
 });
 
 test('a dead agent process restarts on the next message with session/load; so does a harness restart', async () => {
   const before = records().length;
   await send(chat.id, '#die');
   await waitFor(async () => (await session(chat.id)).status === 'error', { what: 'process death reported' });
-  assert.ok((await messages(chat.id)).some((m) => m.kind === 'error' && /exited/.test(m.text)));
+  assert.ok((await messages(chat.id)).some((m) => m.kind === 'error' && /Процесс ACP-агента завершился/.test(m.text)));
   await send(chat.id, 'снова');
   await waitFor(async () => (await said(chat.id)).some((t) => /^loaded, ACP mock, turn \d+\. Done\.$/.test(t)), { what: 'loaded after death' });
   await idle(chat.id);

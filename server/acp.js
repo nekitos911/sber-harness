@@ -51,7 +51,7 @@ function connect(child, { onRequest, onNotify, log }) {
     request(method, params, timeoutMs = 0) {
       const id = ++seq;
       return new Promise((resolve, reject) => {
-        const timer = timeoutMs ? setTimeout(() => { pending.delete(id); reject(new Error(`ACP ${method}: no answer within ${Math.round(timeoutMs / 1000)} s`)); }, timeoutMs) : null;
+        const timer = timeoutMs ? setTimeout(() => { pending.delete(id); reject(new Error(`ACP ${method}: нет ответа за ${Math.round(timeoutMs / 1000)} с`)); }, timeoutMs) : null;
         pending.set(id, { resolve: (v) => { clearTimeout(timer); resolve(v); }, reject: (e) => { clearTimeout(timer); reject(e); } });
         write({ id, method, params });
       });
@@ -143,7 +143,7 @@ export function createAcp() {
       c.dead = true;
       if (conns.get(o.sid) === c) conns.delete(o.sid);
       log(`=== ACP process exited code=${code} signal=${signal}\n`);
-      c.rpc.failAll(Object.assign(new Error(`The ACP agent process exited (code ${code}${signal ? `, ${signal}` : ''})`), { exited: true }));
+      c.rpc.failAll(Object.assign(new Error(`Процесс ACP-агента завершился (код ${code}${signal ? `, ${signal}` : ''})`), { exited: true }));
       for (const resolve of c.held.values()) resolve({ outcome: { outcome: 'cancelled' } });
       c.held.clear();
     });
@@ -154,7 +154,7 @@ export function createAcp() {
           return resolveInside(base, p).abs;
         } catch {}
       }
-      throw Object.assign(new Error(`path is outside the session folder and its extra folders: ${p}`), { code: -32602 });
+      throw Object.assign(new Error(`путь вне папки сессии и её дополнительных папок: ${p}`), { code: -32602 });
     };
     c.rpc = connect(child, {
       log,
@@ -186,13 +186,13 @@ export function createAcp() {
           fs.writeFileSync(file, String(params.content ?? ''));
           return null;
         }
-        throw Object.assign(new Error(`method not supported by the harness: ${method}`), { code: -32601 });
+        throw Object.assign(new Error(`harness не поддерживает метод ${method}`), { code: -32601 });
       },
     });
     try {
       const init = await Promise.race([
         c.rpc.request('initialize', { protocolVersion: PROTOCOL_VERSION, clientCapabilities: { fs: { readTextFile: true, writeTextFile: true }, terminal: false } }, o.initTimeoutMs || ACP_INIT_TIMEOUT_MS),
-        exited.then(({ code }) => { throw new Error(`The ACP agent exited during start (code ${code})`); }),
+        exited.then(({ code }) => { throw new Error(`ACP-агент завершился при запуске (код ${code})`); }),
       ]);
       const mcpServers = acpMcpServers(o.ctx.harnessMcp, o.ctx.agentMcpServers);
       c.note = null;
@@ -248,7 +248,7 @@ export function createAcp() {
         res.sawResult = true;
         emit({ type: 'result', tokensIn: r?.usage?.inputTokens || 0, tokensOut: r?.usage?.outputTokens || 0 });
         if (r?.stopReason === 'cancelled') res.stopped = true;
-        else if (r?.stopReason && !['end_turn', 'max_turn_requests'].includes(r.stopReason)) res.error = `The agent stopped: ${r.stopReason}`;
+        else if (r?.stopReason && !['end_turn', 'max_turn_requests'].includes(r.stopReason)) res.error = `Агент остановился: ${r.stopReason}`;
       } catch (e) {
         if (stop || e.stopped) res.stopped = true;
         else {

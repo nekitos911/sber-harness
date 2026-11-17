@@ -63,8 +63,8 @@ test('moving a card syncs the tracker when enabled: transition by target status,
     // "К работе" has trackerStatuses ["todo"]; no available transition leads there
     const moved = (await h.api('POST', `/api/tasks/${a.id}/move`, { status: 'todo' })).body;
     assert.equal(moved.status, 'todo', 'the board move stays');
-    const warn = await waitFor(async () => (await h.api('GET', '/api/state')).body.tasks.find((t) => t.id === a.id).log.find((l) => l.text.startsWith('⚠ Трекер: не удалось (sync')), { what: '⚠ log line' });
-    assert.match(warn.text, /no tracker transition .* "К работе"/);
+    const warn = await waitFor(async () => (await h.api('GET', '/api/state')).body.tasks.find((t) => t.id === a.id).log.find((l) => l.text.startsWith('⚠ Трекер: не удалось (синхронизация')), { what: '⚠ log line' });
+    assert.match(warn.text, /ни один переход трекера .* «К работе»/);
     assert.ok((await h.api('GET', '/api/state')).body.notifications.some((n) => n.taskId === a.id && n.kind === 'error'));
   } finally {
     await h.close();

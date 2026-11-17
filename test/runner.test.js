@@ -67,7 +67,7 @@ test('stop kills a running turn', async () => {
 
 test('resolveCommand: argv arrays, node, missing commands, .cmd shims', () => {
   assert.deepEqual(resolveCommand(['node', 'x.js']), { file: process.execPath, args: ['x.js'] });
-  assert.throws(() => resolveCommand('definitely-not-a-command-xyz'), /argv array/);
+  assert.throws(() => resolveCommand('definitely-not-a-command-xyz'), /массивом argv/);
   if (process.platform === 'win32') {
     const bin = path.join(dir, 'bin');
     fs.mkdirSync(path.join(bin, 'node_modules', 'tool'), { recursive: true });

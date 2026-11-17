@@ -327,7 +327,7 @@ test('onStartTransition: tracker transition after take-into-work, best effort', 
     const r = await h.api('POST', `/api/tasks/${bad.id}/start`, { agent: 'mock' });
     assert.equal(r.status, 200, 'a tracker failure never fails the start');
     const st = (await h.api('GET', '/api/state')).body;
-    assert.ok(st.tasks.find((t) => t.id === bad.id).log.some((l) => /^⚠ Трекер: не удалось \(transition "development"\): .*not found \(404\)/.test(l.text)));
+    assert.ok(st.tasks.find((t) => t.id === bad.id).log.some((l) => /^⚠ Трекер: не удалось \(переход «development»\): .*not found \(404\)/.test(l.text)));
     assert.ok(st.notifications.some((n) => n.taskId === bad.id && n.kind === 'error'));
     await h.api('POST', `/api/sessions/${r.body.id}/stop`);
   } finally {

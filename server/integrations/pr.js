@@ -48,7 +48,7 @@ const LIST_ARGS = { project: '{project}', repository: '{repository}', state: 'OP
 
 export async function createPullRequest({ config, mcp, cwd, branch, base, title, body = '', repo, project = null, repository = null }) {
   const cfg = config.integrations?.pr;
-  if (!cfg?.enabled) throw Object.assign(new Error('PR creation is disabled (integrations.pr.enabled)'), { status: 501 });
+  if (!cfg?.enabled) throw Object.assign(new Error('создание PR выключено (integrations.pr.enabled)'), { status: 501 });
   const { titleBytes, bodyBytes } = cfg.limits || {};
   const tb = Buffer.byteLength(title || '');
   const bb = Buffer.byteLength(body || '');
@@ -73,7 +73,7 @@ export async function createPullRequest({ config, mcp, cwd, branch, base, title,
   const value = toolResultValue(await mcp.callTool(cfg.server, cfg.tool, fillTemplate(cfg.args || {}, vars)));
   const url = getPath(value, cfg.urlPath ?? 'url');
   if (typeof url !== 'string' || !url) {
-    throw Object.assign(new Error(`integrations.pr.urlPath "${cfg.urlPath}" not found in the tool result: ${JSON.stringify(value).slice(0, 300)}`), { status: 502 });
+    throw Object.assign(new Error(`integrations.pr.urlPath «${cfg.urlPath}» не найден в ответе инструмента: ${JSON.stringify(value).slice(0, 300)}`), { status: 502 });
   }
   return { url, existing: false };
 }
@@ -96,8 +96,8 @@ function mapPull(p, cfg) {
 
 export async function prStatus({ config, mcp, branch, project = null, repository = null, repo = null }) {
   const cfg = config.integrations?.pr;
-  if (!cfg?.enabled) throw disabled('PR integration is disabled (integrations.pr.enabled)');
-  if (!cfg.listTool) throw disabled('integrations.pr.listTool is not configured');
+  if (!cfg?.enabled) throw disabled('интеграция PR выключена (integrations.pr.enabled)');
+  if (!cfg.listTool) throw disabled('не настроен integrations.pr.listTool');
   const args = fillTemplate(cfg.listArgs || LIST_ARGS, { repo, project, repository, branch, head: branch });
   const list = async (state) => {
     const pulls = getPath(toolResultValue(await mcp.callTool(cfg.server, cfg.listTool, { ...args, state })), cfg.listItemsPath ?? 'pulls');
@@ -124,10 +124,10 @@ const DECLINE_ARGS = { project: '{project}', repository: '{repository}', pullReq
 /** Declines (closes without merging) pull request `index` of the repository at cwd: integrations.pr.declineTool. */
 export async function declinePullRequest({ config, mcp, cwd, index }) {
   const cfg = config.integrations?.pr;
-  if (!cfg?.enabled) throw Object.assign(new Error('PR integration is disabled (integrations.pr.enabled)'), { status: 501 });
-  if (!Number.isInteger(index) || index <= 0) throw Object.assign(new Error('index must be a positive integer'), { status: 400 });
+  if (!cfg?.enabled) throw Object.assign(new Error('интеграция PR выключена (integrations.pr.enabled)'), { status: 501 });
+  if (!Number.isInteger(index) || index <= 0) throw Object.assign(new Error('index: нужно целое положительное число'), { status: 400 });
   const { project, repository } = await remoteInfo(cwd);
-  if (!project || !repository) throw Object.assign(new Error(`cannot tell project/repository from the origin remote of ${cwd}`), { status: 400 });
+  if (!project || !repository) throw Object.assign(new Error(`не удалось определить проект/репозиторий по origin в ${cwd}`), { status: 400 });
   jobStep('Отклонение PR');
   const value = toolResultValue(await mcp.callTool(cfg.server, cfg.declineTool || 'git_decline_pull_request', fillTemplate(cfg.declineArgs || DECLINE_ARGS, { project, repository, index })));
   return { ok: true, index, result: typeof value === 'string' ? value : JSON.stringify(value) };

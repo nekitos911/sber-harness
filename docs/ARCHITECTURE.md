@@ -328,6 +328,10 @@ Preambles (built in `orchestration.js`, prepended to the first prompt of a sessi
 
 ## UI HTTP API (all under `/api`, header `x-harness-token` required)
 
+Every text the server generates for people is Russian: system/error messages in transcripts, notifications, task log
+entries and the `error` strings of 4xx/5xx answers (code identifiers, flags, paths and git/CLI output stay as they are;
+console logs and the agent-facing preambles/tool descriptions stay English).
+
 ```
 GET    /api/state                         -> { tasks, workspaces, sessions, notifications, agents: [{id,label,launcher,approvalModes,approvalMode,enabled,models,model}],
                                               defaultAgent, shell: {command}, integrations: {tasks: bool, pr: bool, tasksProblem: {error, at} | null} }

@@ -45,7 +45,7 @@ test('login link -> phase auth, message and notification with the link; the run 
 test('login not completed within authTimeoutMs -> killed with a clear error', async () => {
   const s = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mockauth', cwd: root, prompt: '#auth' })).body;
   const err = await waitFor(async () => (await h.api('GET', `/api/sessions/${s.id}/messages`)).body.find((m) => m.kind === 'error'), { what: 'auth timeout' });
-  assert.match(err.text, /Login was not completed within/);
+  assert.match(err.text, /Вход не выполнен за/);
   assert.equal((await state()).sessions.find((x) => x.id === s.id).status, 'error');
 });
 

@@ -85,12 +85,12 @@ export function createModelCatalog({ config, store, getUrl }) {
   }
 
   async function run(agent, entry) {
-    const agentCfg = config.agents[agent] || fail(404, `agent ${agent} not found`);
+    const agentCfg = config.agents[agent] || fail(404, `агент ${agent} не найден`);
     const md = agentCfg.modelsDiscovery;
-    if (!md?.prompt) fail(400, `agents.${agent}.modelsDiscovery.prompt is not configured`);
+    if (!md?.prompt) fail(400, `не настроен agents.${agent}.modelsDiscovery.prompt`);
     const prev = meta(agent).catalog;
     try {
-      const launcher = launchers[agentCfg.launcher] || fail(400, `unknown launcher "${agentCfg.launcher}"`);
+      const launcher = launchers[agentCfg.launcher] || fail(400, `неизвестный лаунчер «${agentCfg.launcher}»`);
       const exe = launcher.resolve(agentCfg);
       const dir = path.join(store.dataDir, 'chats', 'discovery', agent);
       fs.mkdirSync(dir, { recursive: true });
@@ -122,7 +122,7 @@ export function createModelCatalog({ config, store, getUrl }) {
       const res = await handle.done;
       const models = parseModelIds(resultText || text, md.pattern);
       if (models.length) return save(agent, { models, at: Date.now() });
-      const why = res.error || (res.timedOut ? 'timed out' : res.stderrTail.trim().split('\n').slice(-3).join(' ')) || 'no model ids in the answer';
+      const why = res.error || (res.timedOut ? 'нет ответа вовремя' : res.stderrTail.trim().split('\n').slice(-3).join(' ')) || 'в ответе нет id моделей';
       save(agent, { models: prev?.models || [], at: prev?.at ?? null, error: why.slice(0, 500), errorAt: Date.now() });
     } catch (e) {
       save(agent, { models: prev?.models || [], at: prev?.at ?? null, error: e.message, errorAt: Date.now() });

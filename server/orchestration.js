@@ -65,14 +65,14 @@ const str = (description, extra = {}) => ({ type: 'string', description, ...extr
 const strArr = (description) => ({ type: 'array', items: { type: 'string' }, description });
 
 function checkArgs(schema, args) {
-  if (!args || typeof args !== 'object' || Array.isArray(args)) fail(400, 'arguments must be a JSON object');
-  for (const k of schema.required) if (args[k] == null || args[k] === '') fail(400, `${k} is required`);
+  if (!args || typeof args !== 'object' || Array.isArray(args)) fail(400, 'аргументы должны быть JSON-объектом');
+  for (const k of schema.required) if (args[k] == null || args[k] === '') fail(400, `нужен параметр ${k}`);
   for (const [k, p] of Object.entries(schema.properties)) {
     const v = args[k];
     if (v == null) continue;
     const ok = p.type === 'array' ? Array.isArray(v) && v.every((x) => typeof x === 'string') : typeof v === p.type;
-    if (!ok) fail(400, `${k} must be ${p.type === 'array' ? 'an array of strings' : `a ${p.type}`}`);
-    if (p.enum && !p.enum.includes(v)) fail(400, `${k} must be one of ${p.enum.join(', ')}`);
+    if (!ok) fail(400, `${k}: нужен ${p.type === 'array' ? 'массив строк' : `тип ${p.type}`}`);
+    if (p.enum && !p.enum.includes(v)) fail(400, `${k} — одно из: ${p.enum.join(', ')}`);
   }
 }
 
@@ -105,7 +105,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
 
   function workspaceRef(ref) {
     const lower = String(ref).toLowerCase();
-    return db.workspaces.find((w) => w.id === ref) || db.workspaces.find((w) => w.name.toLowerCase() === lower) || fail(404, `workspace "${ref}" not found (see workspace_list)`);
+    return db.workspaces.find((w) => w.id === ref) || db.workspaces.find((w) => w.name.toLowerCase() === lower) || fail(404, `рабочая папка «${ref}» не найдена (см. workspace_list)`);
   }
 
   function activeWorker(task) {
@@ -139,7 +139,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
   function promptTemplate(agent) {
     const tpl = config.agents[agent]?.taskPromptTemplate ?? config.tasks?.promptTemplate ?? '{key}: {title}\n\n{description}';
     if (!TASK_VARS.some((v) => tpl.includes(v))) {
-      fail(400, `config error: the task prompt template for "${agent}" contains none of ${TASK_VARS.join(' ')}, so the agent would start without the task`);
+      fail(400, `ошибка настроек: в шаблоне промпта задачи для «${agent}» нет ни одной из переменных ${TASK_VARS.join(' ')} — агент начал бы без задачи`);
     }
     return tpl;
   }
@@ -177,7 +177,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
 
   /** Worktree + branch for a task: branchTemplate with the task key, started from targets[0]; reused if present. */
   async function taskWorktree(task, cwd, explicitBranch) {
-    if (!(await git.isRepo(cwd))) fail(400, `cannot create a worktree: ${cwd} is not a git repository`);
+    if (!(await git.isRepo(cwd))) fail(400, `нельзя создать рабочее дерево: ${cwd} — не git-репозиторий`);
     let branch;
     if (explicitBranch) branch = git.sanitizeBranch(explicitBranch);
     else if (task.branch && (await git.branchExists(cwd, task.branch))) branch = task.branch;
@@ -205,17 +205,17 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
   /** Creates a worker chat session for `task` and sends it the first prompt. Used by worker_start, assign, start. */
   async function startWorker(task, o, caller) {
     const busy = activeWorker(task);
-    if (busy) fail(409, `task ${task.id} already has an active worker (${busy.id})`);
-    if (starting.has(task.id)) fail(409, `task ${task.id} is being started right now`);
+    if (busy) fail(409, `у задачи ${task.id} уже есть активный агент (${busy.id})`);
+    if (starting.has(task.id)) fail(409, `задача ${task.id} запускается прямо сейчас`);
     const pending = task.deps.filter((d) => tasks.find(d)?.status !== 'done');
-    if (pending.length) fail(409, `task ${task.id} has unfinished dependencies: ${pending.join(', ')}`);
-    if (o.worktree && !['current', 'new'].includes(o.worktree)) fail(400, 'worktree must be "current" or "new"');
+    if (pending.length) fail(409, `у задачи ${task.id} есть незавершённые зависимости: ${pending.join(', ')}`);
+    if (o.worktree && !['current', 'new'].includes(o.worktree)) fail(400, 'worktree: "current" или "new"');
     const agent = o.agent || (caller?.kind === 'chat' ? caller.agent : null) || config.defaultAgent;
     // fail fast, before any worktree or session exists
     jobStep('Проверка агента');
     sessions.resolveAgent(agent);
     if (!o.spec) promptTemplate(agent);
-    const ws = o.workspace ? workspaceRef(o.workspace) : o.workspaceId ? findWs(o.workspaceId) || fail(404, `workspace ${o.workspaceId} not found`) : findWs(task.workspaceId);
+    const ws = o.workspace ? workspaceRef(o.workspace) : o.workspaceId ? findWs(o.workspaceId) || fail(404, `рабочая папка ${o.workspaceId} не найдена`) : findWs(task.workspaceId);
 
     const run = (async () => {
       let cwd = o.cwd ? path.resolve(o.cwd) : ws ? ws.path : caller?.cwd || config.root;
@@ -271,24 +271,24 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
 
   /** Cherry-picks the task's commits into another target branch in a new worktree (see ARCHITECTURE.md). */
   async function port(task, target, { agent } = {}, caller = null) {
-    if (typeof target !== 'string' || !target.trim()) fail(400, 'target is required');
-    if (!task.branch) fail(409, `Task ${task.id} has no work branch yet: take it into work first.`);
+    if (typeof target !== 'string' || !target.trim()) fail(400, 'нужна целевая ветка (target)');
+    if (!task.branch) fail(409, `У задачи ${task.id} ещё нет рабочей ветки — сначала возьмите её в работу.`);
     const primary = task.targets[0];
-    if (target === primary) fail(400, `${target} is the primary target; ports go to the other targets`);
+    if (target === primary) fail(400, `${target} — основная целевая ветка; переносят в остальные`);
     const prev = task.ports.find((p) => p.target === target);
     if (prev?.status === 'clean' || prev?.status === 'done') return prev;
-    if (prev?.status === 'conflict' && isActive(sessions.find(prev.sessionId))) fail(409, `The port of ${task.id} to ${target} is already being resolved (${prev.sessionId}).`);
+    if (prev?.status === 'conflict' && isActive(sessions.find(prev.sessionId))) fail(409, `Перенос ${task.id} в ${target} уже разбирается (${prev.sessionId}).`);
     const ws = findWs(task.workspaceId);
     const repo = ws?.path || sessions.find(task.assigneeSessionId)?.cwd || config.root;
     const conflictAgent = agent || (caller?.kind === 'chat' ? caller.agent : null) || config.defaultAgent;
-    const start = (await git.startPoint(repo, target)) || fail(400, `target branch ${target} not found locally or on origin`);
+    const start = (await git.startPoint(repo, target)) || fail(400, `целевая ветка ${target} не найдена ни локально, ни в origin`);
     const ahead = (await git.revList(repo, `${primary}..${task.branch}`)) ?? (await git.revList(repo, `origin/${primary}..${task.branch}`));
-    if (!ahead) fail(400, `cannot list commits of ${task.branch} relative to ${primary}`);
-    if (!ahead.length) fail(409, `Nothing to port yet: ${task.branch} has no commits ahead of ${primary}. Commit the work first.`);
+    if (!ahead) fail(400, `не удалось получить коммиты ${task.branch} относительно ${primary}`);
+    if (!ahead.length) fail(409, `Пока нечего переносить: в ${task.branch} нет коммитов сверх ${primary}. Сначала закоммитьте работу.`);
     // only what the target lacks (patch-id aware), so a partial earlier port is not picked twice
     const commits = await git.missingCommits(repo, start, task.branch);
-    if (!commits) fail(400, `cannot compare ${task.branch} with ${target}`);
-    if (!commits.length) fail(409, `Nothing to port: ${target} already contains every change of ${task.branch}.`);
+    if (!commits) fail(400, `не удалось сравнить ${task.branch} с ${target}`);
+    if (!commits.length) fail(409, `Нечего переносить: в ${target} уже есть все изменения ${task.branch}.`);
     sessions.resolveAgent(conflictAgent); // a conflict needs a worker: fail before creating the worktree
     const branch = await git.uniqueBranch(repo, git.sanitizeBranch(render(gitCfg().portBranchTemplate, { branch: task.branch, target, targetSlug: git.targetSlug(target), key: tasks.key(task) })));
     jobStep('Создание worktree');
@@ -308,7 +308,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
       });
       rec.sessionId = s.id;
       savePort(task, rec);
-      sessions.deliver(s.id, { from: by, text: `Resolve the cherry-pick conflicts of ${tasks.key(task)} "${task.title}" (commits from ${task.branch}) on ${branch}, which targets ${target}.` });
+      sessions.deliver(s.id, { from: by, text: `Разреши конфликты cherry-pick задачи ${tasks.key(task)} «${task.title}» (коммиты из ${task.branch}) в ветке ${branch}, цель — ${target}.` });
     }
     return rec;
   }
@@ -382,8 +382,8 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
   }
 
   async function workerRun(a, caller) {
-    if (!caller) fail(400, 'worker_run must be called from a harness session (x-harness-session header)');
-    if (typeof a.spec !== 'string' || !a.spec.trim()) fail(400, 'spec is required');
+    if (!caller) fail(400, 'worker_run вызывается только из сессии harness (заголовок x-harness-session)');
+    if (typeof a.spec !== 'string' || !a.spec.trim()) fail(400, 'нужно задание (spec)');
     const agent = caller.kind === 'chat' && config.agents[caller.agent] ? caller.agent : config.defaultAgent;
     const agentCfg = config.agents[agent] || {};
     const profile = a.profile ? loadProfile(agentCfg, a.profile) : null;
@@ -443,7 +443,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
     const prev = task.review?.workerSessionId === worker.id ? task.review : null;
     const round = (prev?.round || 0) + 1;
     const agent = rc.agent || worker.agent;
-    const agentCfg = config.agents[agent] || fail(400, `review agent "${agent}" is not configured`);
+    const agentCfg = config.agents[agent] || fail(400, `агент ревью «${agent}» не настроен`);
     const gradeModel = agentCfg.settings?.agents?.modelGrades?.[rc.grade] || null;
     const model = gradeModel && !sessions.unavailableModels(agent).has(gradeModel) ? gradeModel : null; // else the CLI default
     const mode = rc.approvalMode && (!agentCfg.approvalModes?.length || agentCfg.approvalModes.includes(rc.approvalMode)) ? rc.approvalMode : null;
@@ -633,10 +633,10 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
       return;
     }
     if (s.status === 'error' && s.role !== 'worker') {
-      notify({ kind: 'error', sessionId: s.id, taskId: s.taskId, text: `${s.title}: the agent could not run (see the chat)` });
+      notify({ kind: 'error', sessionId: s.id, taskId: s.taskId, text: `${s.title}: агент не смог выполнить ход (подробности в чате)` });
     }
     if (s.role !== 'worker' || !s.autoReport || reported || communicated || !queueEmpty) return;
-    const text = `Worker ${label(s)} ended its turn without calling worker_done (status: ${s.status}).\nLast output: ${s.preview || '(none)'}\nReply with send_message to "${s.id}" to continue it.`;
+    const text = `Агент ${label(s)} закончил ход, не вызвав worker_done (статус: ${s.status}).\nПоследний вывод: ${s.preview || '(нет)'}\nОтветьте через send_message на «${s.id}», чтобы он продолжил.`;
     const parent = s.parentId && sessions.find(s.parentId);
     if (parent) sessions.deliver(parent.id, { from: s.id, text: fromSession(s, text) });
     else notify({ kind: 'escalation', sessionId: s.id, taskId: s.taskId, text });
@@ -707,7 +707,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
       run: (a, c) => {
         const task = tasks.get(a.id);
         const w = activeWorker(task);
-        if (c && w && w.id !== c.id && w.parentId !== c.id) fail(409, `task ${task.id} is locked by its active worker ${w.id}`);
+        if (c && w && w.id !== c.id && w.parentId !== c.id) fail(409, `задача ${task.id} занята её активным агентом ${w.id}`);
         const patch = {};
         for (const k of ['title', 'description', 'status', 'priority', 'comment']) if (a[k] != null) patch[k] = a[k];
         return tasks.update(task.id, patch, c?.id || 'user');
@@ -734,7 +734,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
         else if (a.spec) {
           const title = (a.title || a.spec.split('\n').find((l) => l.trim()) || 'task').trim().slice(0, 80);
           task = tasks.create({ title, description: a.spec, workspaceId: a.workspace ? workspaceRef(a.workspace).id : c?.workspaceId ?? null }, c?.id || 'user');
-        } else fail(400, 'task_id or spec is required');
+        } else fail(400, 'нужен task_id или spec');
         return sessionInfo(await startWorker(task, { ...a, spec: a.task_id ? undefined : a.spec }, c));
       },
     },
@@ -775,7 +775,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
           notify({ kind: 'info', sessionId: c?.id ?? null, taskId: c?.taskId ?? null, text: a.body });
           return { delivered: 'user' };
         }
-        const target = parent || sessions.find(a.to) || fail(404, `session ${a.to} not found`);
+        const target = parent || sessions.find(a.to) || fail(404, `сессия ${a.to} не найдена`);
         const r = sessions.deliver(target.id, { from: c?.id ?? 'user', text: c ? fromSession(c, a.body) : a.body });
         return { delivered: target.id, queued: r.queued };
       },
@@ -805,7 +805,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
       description: 'Finish your task: summary (what changed, evidence, blockers) and status done | failed.',
       inputSchema: obj({ summary: str('what changed, evidence, open blockers'), status: str('done | failed', { enum: ['done', 'failed'] }) }, ['summary', 'status']),
       run: (a, c) => {
-        if (!c) fail(400, 'worker_done must be called from a harness session (x-harness-session header)');
+        if (!c) fail(400, 'worker_done вызывается только из сессии harness (заголовок x-harness-session)');
         if (c.ephemeral) {
           sessions.flag(c.id, 'reported');
           sessions.setStatus(c.id, a.status);
@@ -850,7 +850,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
   // ---- commit / PR prefill ----
 
   async function gitSuggest(cwd) {
-    if (typeof cwd !== 'string' || !cwd) fail(400, 'cwd is required');
+    if (typeof cwd !== 'string' || !cwd) fail(400, 'нужен cwd');
     const dir = path.resolve(cwd);
     const st = await git.status(dir, config.git.excludeFromCommit);
     const work = st.files.filter((f) => !f.service); // git.excludeFromCommit: never suggested
@@ -921,8 +921,8 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
     },
 
     async call(name, args, callerId) {
-      const tool = TOOLS.find((t) => t.name === name) || fail(404, `unknown tool "${name}"`);
-      const caller = callerId ? sessions.find(callerId) || fail(400, `unknown caller session ${callerId}`) : null;
+      const tool = TOOLS.find((t) => t.name === name) || fail(404, `неизвестный инструмент «${name}»`);
+      const caller = callerId ? sessions.find(callerId) || fail(400, `неизвестная вызывающая сессия ${callerId}`) : null;
       const a = args ?? {};
       checkArgs(tool.inputSchema, a);
       return tool.run(a, caller);
@@ -934,7 +934,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
       if (!body.sessionId) return startWorker(task, { agent: body.agent, workspaceId: body.workspaceId, cwd: body.cwd, worktree: body.worktree }, null);
       const s = sessions.get(body.sessionId);
       const busy = activeWorker(task);
-      if (busy && busy.id !== s.id) fail(409, `task ${task.id} already has an active worker (${busy.id})`);
+      if (busy && busy.id !== s.id) fail(409, `у задачи ${task.id} уже есть активный агент (${busy.id})`);
       const text = taskPrompt(task, s);
       tasks.update(task.id, { status: 'in_progress', assigneeSessionId: s.id }, 'user');
       if (s.kind === 'chat' && !s.taskId) sessions.update(s.id, { taskId: task.id });
@@ -952,10 +952,10 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
      */
     async rework(taskId, { notes, agent } = {}) {
       const task = tasks.get(taskId);
-      if (typeof notes !== 'string' || !notes.trim()) fail(400, 'notes are required');
+      if (typeof notes !== 'string' || !notes.trim()) fail(400, 'нужен текст доработки (notes)');
       const prev = task.assigneeSessionId && sessions.find(task.assigneeSessionId);
       const worker = prev && prev.kind === 'chat' && prev.role === 'worker' && !prev.archived && !prev.ephemeral ? prev : null;
-      if (!worker && !task.branch) fail(409, `${tasks.key(task)} has not been taken into work yet: start it first`);
+      if (!worker && !task.branch) fail(409, `${tasks.key(task)} ещё не брали в работу — сначала возьмите её в работу`);
       if (task.status !== 'in_progress') tasks.move(task.id, 'in_progress', null);
       tasks.addLog(task.id, 'user', `Доработка: ${notes.trim()}`, 'rework', { notes: notes.trim() });
       if (worker) {
@@ -963,7 +963,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
         sessions.deliver(worker.id, { from: 'user', text: reworkPrompt(task, worker, notes) });
         return sessions.get(worker.id);
       }
-      const ws = findWs(task.workspaceId) || fail(400, `task ${task.id} has no workspace; set its workspace first`);
+      const ws = findWs(task.workspaceId) || fail(400, `у задачи ${task.id} не выбран репозиторий — сначала выберите его`);
       const existing = ws.isGit ? (await git.worktrees(ws.path)).find((w) => w.branch === task.branch) : null;
       const a = agent || config.defaultAgent;
       // the prompt needs the session (branch, repo): render it for the worker that startWorker creates
@@ -982,7 +982,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
       const chosen = findWs(task.workspaceId) || findWs(task.suggestedWorkspaceId);
       if (hasChildren || (!chosen && repos.length >= 2)) return startCoordinator(task, { agent, notes });
       const ws = chosen || (repos.length === 1 ? repos[0] : null);
-      if (!ws) fail(400, `task ${task.id} has no workspace; set its workspace first`);
+      if (!ws) fail(400, `у задачи ${task.id} не выбран репозиторий — сначала выберите его`);
       return startWorker(task, { agent: agent || config.defaultAgent, workspaceId: ws.id, worktree: ws.isGit ? 'new' : 'current', notes }, null);
     },
   };

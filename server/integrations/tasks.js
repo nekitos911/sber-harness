@@ -67,7 +67,7 @@ const markdown = (cfg) => cfg.format === 'onework-markdown';
 
 function settings(config) {
   const cfg = config.integrations?.tasks;
-  if (!cfg?.enabled) throw disabled('Task tracker integration is disabled (integrations.tasks.enabled)');
+  if (!cfg?.enabled) throw disabled('Интеграция с трекером выключена (integrations.tasks.enabled)');
   return cfg;
 }
 
@@ -79,7 +79,7 @@ export function checkToolError(text) {
   const inner = text.match(/"error"\s*:\s*"((?:[^"\\]|\\.)*)"/)?.[1];
   let message = text.slice(0, 300);
   try { if (inner) message = JSON.parse(`"${inner}"`); } catch {}
-  throw Object.assign(new Error(`tracker: ${message}`), { status: 502 });
+  throw Object.assign(new Error(`трекер: ${message}`), { status: 502 });
 }
 
 export function parseFindIssues(text) {
@@ -147,7 +147,7 @@ async function callText(mcp, cfg, tool, args) {
   return text;
 }
 
-const toolOf = (cfg, name) => cfg.tools?.[name] || (name === 'find' ? cfg.tool : null) || (() => { throw disabled(`integrations.tasks.tools.${name} is not configured`); })();
+const toolOf = (cfg, name) => cfg.tools?.[name] || (name === 'find' ? cfg.tool : null) || (() => { throw disabled(`не настроен integrations.tasks.tools.${name}`); })();
 
 // ---- import ----
 
@@ -175,7 +175,7 @@ export async function importTasks({ config, mcp, tasks }) {
 
   if (markdown(cfg)) {
     const spaces = [cfg.space].flat().filter(Boolean); // one space code or several
-    if (!spaces.length) throw Object.assign(new Error('integrations.tasks.space (tracker space code) is not set'), { status: 400 });
+    if (!spaces.length) throw Object.assign(new Error('не задан integrations.tasks.space (код пространства трекера)'), { status: 400 });
     const find = toolOf(cfg, 'find');
     const limit = cfg.limit > 0 ? cfg.limit : Infinity;
     const found = new Map();
@@ -204,7 +204,7 @@ export async function importTasks({ config, mcp, tasks }) {
   const args = { ...cfg.args, ...(cfg.limit ? { limit: cfg.limit } : {}) };
   const value = toolResultValue(await mcp.callTool(cfg.server, tool, args));
   const items = getPath(value, cfg.itemsPath);
-  if (!Array.isArray(items)) throw Object.assign(new Error(`integrations.tasks.itemsPath "${cfg.itemsPath}" is not an array in the ${tool} result`), { status: 502 });
+  if (!Array.isArray(items)) throw Object.assign(new Error(`integrations.tasks.itemsPath «${cfg.itemsPath}» — не массив в ответе ${tool}`), { status: 502 });
   const map = { externalId: 'key', title: 'summary', description: 'description', externalUrl: 'url', status: 'status', priority: 'priority', ...cfg.map };
   for (const item of items) {
     const externalId = asStr(getPath(item, map.externalId));
@@ -230,10 +230,10 @@ export async function importTasks({ config, mcp, tasks }) {
  */
 export async function importIssue({ config, mcp, tasks, ref }) {
   const cfg = settings(config);
-  if (!markdown(cfg)) throw disabled('Import by key is only available for the onework-markdown tracker');
+  if (!markdown(cfg)) throw disabled('Импорт по ключу доступен только для трекера onework-markdown');
   const text = String(ref ?? '').trim();
   const key = text.match(/([A-Z][A-Z0-9_]+-\d+)/)?.[1];
-  if (!key) throw Object.assign(new Error('ref must be a task key (PROJ-1234) or a tracker link'), { status: 400 });
+  if (!key) throw Object.assign(new Error('нужен ключ задачи (PROJ-1234) или ссылка на неё в трекере'), { status: 400 });
   const issue = parseIssue(await callText(mcp, cfg, toolOf(cfg, 'get'), { key }));
   const priorities = cfg.priorityMap || ONEWORK_PRIORITY_MAP;
   const source = cfg.source || cfg.server;
@@ -250,7 +250,7 @@ export async function importIssue({ config, mcp, tasks, ref }) {
 // ---- issue details and status changes ----
 
 function trackerKey(task) {
-  if (!task.externalId) throw Object.assign(new Error(`task ${task.id} is not from the tracker`), { status: 400 });
+  if (!task.externalId) throw Object.assign(new Error(`задача ${task.id} не из трекера`), { status: 400 });
   return task.externalId;
 }
 
@@ -267,7 +267,7 @@ async function fetchLinks(mcp, cfg, key) {
 
 export async function getExternal({ config, mcp, tasks, task }) {
   const cfg = settings(config);
-  if (!markdown(cfg)) throw disabled('Issue details are only available for the onework-markdown tracker');
+  if (!markdown(cfg)) throw disabled('Подробности задачи доступны только для трекера onework-markdown');
   const key = trackerKey(task);
   const issue = parseIssue(await callText(mcp, cfg, toolOf(cfg, 'get'), { key }));
   // cached attributes (Component, Repository, ...) also feed the repository auto-fill
@@ -278,9 +278,9 @@ export async function getExternal({ config, mcp, tasks, task }) {
 /** Children of a tracker task (decomposition links from it) as subtasks: same workspace and targets, deduped by key. */
 export async function importChildren({ config, mcp, tasks, task }) {
   const cfg = settings(config);
-  if (!markdown(cfg)) throw disabled('Importing children is only available for the onework-markdown tracker');
+  if (!markdown(cfg)) throw disabled('Импорт подзадач доступен только для трекера onework-markdown');
   const key = trackerKey(task);
-  if (!cfg.tools?.links) throw disabled('integrations.tasks.tools.links is not configured');
+  if (!cfg.tools?.links) throw disabled('не настроен integrations.tasks.tools.links');
   const children = [...new Set((await fetchLinks(mcp, cfg, key)).filter((l) => l.type === 'decomposition' && l.from === key).map((l) => l.to))];
   const source = task.source || cfg.source || cfg.server;
   const priorities = cfg.priorityMap || ONEWORK_PRIORITY_MAP;
@@ -311,7 +311,7 @@ export async function importChildren({ config, mcp, tasks, task }) {
 
 export async function getTransitions({ config, mcp, tasks, task }) {
   const cfg = settings(config);
-  if (!markdown(cfg)) throw disabled('Transitions are only available for the onework-markdown tracker');
+  if (!markdown(cfg)) throw disabled('Переходы доступны только для трекера onework-markdown');
   const meta = parseIssueMeta(await callText(mcp, cfg, toolOf(cfg, 'meta'), { key: trackerKey(task), include_fields: false, include_transitions: true }));
   if (meta.current && meta.current !== task.externalStatus) {
     const mapped = statusFor(config, meta.current);
@@ -324,16 +324,16 @@ export async function transitionTask({ config, mcp, tasks, task, transition, sta
   const cfg = settings(config);
   const key = trackerKey(task);
   if (markdown(cfg)) {
-    if (!transition) throw Object.assign(new Error('transition is required (an id from GET /api/tasks/:id/transitions)'), { status: 400 });
+    if (!transition) throw Object.assign(new Error('нужен переход (id из GET /api/tasks/:id/transitions)'), { status: 400 });
     await callText(mcp, cfg, toolOf(cfg, 'transition'), { key, transition, ...(comment ? { comment } : {}) });
     tasks.addLog(task.id, 'user', `Статус в трекере: ${status || transition}${comment ? ` (${comment})` : ''}`, 'tracker_transition', { transition, status: status ?? null });
     await getTransitions({ config, mcp, tasks, task }); // refresh externalStatus from the tracker
     return tasks.get(task.id);
   }
   const tool = cfg.tools?.transition;
-  if (!tool || !cfg.transition) throw disabled('Tracker status change is not configured (integrations.tasks.transition, tools.transition)');
+  if (!tool || !cfg.transition) throw disabled('Смена статуса в трекере не настроена (integrations.tasks.transition, tools.transition)');
   const target = status || transition;
-  if (!target) throw Object.assign(new Error('status is required'), { status: 400 });
+  if (!target) throw Object.assign(new Error('нужен статус'), { status: 400 });
   await mcp.callTool(cfg.server, tool, fillTemplate(cfg.transition.args || { key: '{key}', status: '{status}' }, { key, id: task.id, status: target, comment }));
   const mapped = statusFor(config, target);
   return tasks.update(task.id, {
@@ -351,7 +351,7 @@ export async function syncColumn({ config, mcp, tasks, task, status }) {
   const pick = (explicit && meta.transitions.find((t) => t.id === explicit))
     || meta.transitions.find((t) => t.target && (column?.trackerStatuses || []).includes(t.target));
   if (!pick) {
-    throw Object.assign(new Error(`no tracker transition from "${meta.current}" leads to the column "${column?.label ?? status}" (available: ${meta.transitions.map((t) => `${t.id}→${t.target ?? '?'}`).join(', ') || 'none'})`), { status: 409 });
+    throw Object.assign(new Error(`ни один переход трекера из «${meta.current}» не ведёт в колонку «${column?.label ?? status}» (доступны: ${meta.transitions.map((t) => `${t.id}→${t.target ?? '?'}`).join(', ') || 'none'})`), { status: 409 });
   }
   await transitionTask({ config, mcp, tasks, task: tasks.get(task.id), transition: pick.id, status: pick.target, comment: '' });
   return { transition: pick.id };

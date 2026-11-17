@@ -66,11 +66,11 @@ function check(obj, spec) {
     const type = optional ? t.slice(0, -1) : t;
     const v = obj[k];
     if (v === undefined || v === null) {
-      if (!optional) fail(400, `${k} is required`);
+      if (!optional) fail(400, `нужен параметр ${k}`);
       continue;
     }
     const ok = type === 'array' ? Array.isArray(v) && v.every((x) => typeof x === 'string') : typeof v === type;
-    if (!ok) fail(400, `${k} must be ${type === 'array' ? 'an array of strings' : `a ${type}`}`);
+    if (!ok) fail(400, `${k}: нужен ${type === 'array' ? 'массив строк' : `тип ${type}`}`);
   }
   return obj;
 }
@@ -79,13 +79,13 @@ const pick = (obj, keys) => Object.fromEntries(keys.filter((k) => k in obj).map(
 
 function readBody(req) {
   return new Promise((resolve, reject) => {
-    if (Number(req.headers['content-length'] || 0) > MAX_BODY) return reject(Object.assign(new Error('request body too large'), { status: 413 }));
+    if (Number(req.headers['content-length'] || 0) > MAX_BODY) return reject(Object.assign(new Error('слишком большой запрос'), { status: 413 }));
     const chunks = [];
     let size = 0;
     req.on('data', (c) => {
       size += c.length;
       if (size > MAX_BODY) {
-        reject(Object.assign(new Error('request body too large'), { status: 413 }));
+        reject(Object.assign(new Error('слишком большой запрос'), { status: 413 }));
         req.destroy();
       } else chunks.push(c);
     });
@@ -97,7 +97,7 @@ function readBody(req) {
         if (!isObj(body)) throw new Error();
         resolve(body);
       } catch {
-        reject(Object.assign(new Error('body must be a JSON object'), { status: 400 }));
+        reject(Object.assign(new Error('тело запроса должно быть JSON-объектом'), { status: 400 }));
       }
     });
     req.on('error', reject);
@@ -193,7 +193,7 @@ export async function startServer(opts = {}) {
       await fn();
     } catch (e) {
       tasks.addLog(task.id, 'harness', `⚠ Трекер: не удалось (${what}): ${e.message}`, 'tracker_transition', { error: e.message });
-      orch.notify({ kind: 'error', taskId: task.id, text: `${tasks.key(task)}: tracker ${what} failed: ${e.message}` });
+      orch.notify({ kind: 'error', taskId: task.id, text: `${tasks.key(task)}: трекер — не удалось (${what}): ${e.message}` });
     }
   }
 
@@ -204,9 +204,9 @@ export async function startServer(opts = {}) {
     if (!tracksTracker(task)) return;
     const transition = config.integrations.tasks.onStartTransition;
     if (transition) {
-      return trackerWrite(task, `transition "${transition}"`, () => transitionTask({ config, mcp, tasks, task, transition, status: transition, comment: 'Взято в работу через harness' }));
+      return trackerWrite(task, `переход «${transition}»`, () => transitionTask({ config, mcp, tasks, task, transition, status: transition, comment: 'Взято в работу через harness' }));
     }
-    if (config.board?.moveSyncsTracker) return trackerWrite(task, 'sync to "in_progress"', () => syncColumn({ config, mcp, tasks, task, status: 'in_progress' }));
+    if (config.board?.moveSyncsTracker) return trackerWrite(task, 'синхронизация в «in_progress»', () => syncColumn({ config, mcp, tasks, task, status: 'in_progress' }));
   }
 
   // ---- PR status of tasks (observe-only) ----
@@ -284,75 +284,75 @@ export async function startServer(opts = {}) {
   const isStrList = (v) => Array.isArray(v) && v.every((x) => typeof x === 'string');
 
   function agentPatch(id, a) {
-    const cur = config.agents[id] || fail(400, `unknown agent "${id}"`);
-    if (!isObj(a)) fail(400, `agents.${id} must be an object`);
+    const cur = config.agents[id] || fail(400, `неизвестный агент «${id}»`);
+    if (!isObj(a)) fail(400, `agents.${id}: нужен объект`);
     const p = {};
     const where = (k) => `agents.${id}.${k}`;
     if ('approvalMode' in a) {
       if (typeof a.approvalMode !== 'string' || (cur.approvalModes?.length && !cur.approvalModes.includes(a.approvalMode))) {
-        fail(400, `${where('approvalMode')} must be one of ${(cur.approvalModes || []).join(', ')}`);
+        fail(400, `${where('approvalMode')} — одно из: ${(cur.approvalModes || []).join(', ')}`);
       }
       p.approvalMode = a.approvalMode;
     }
     // model ids are only checked to be strings: the catalogue may lag behind the backend
     if ('model' in a) {
-      if (a.model !== null && typeof a.model !== 'string') fail(400, `${where('model')} must be a string or null`);
+      if (a.model !== null && typeof a.model !== 'string') fail(400, `${where('model')}: нужна строка или null`);
       p.model = a.model?.trim() || null;
     }
     if ('models' in a) p.models = normalizeModels(a.models);
     if ('approvalModeLabels' in a) {
-      if (!isStrMap(a.approvalModeLabels)) fail(400, `${where('approvalModeLabels')} must map modes to strings`);
+      if (!isStrMap(a.approvalModeLabels)) fail(400, `${where('approvalModeLabels')}: нужен объект «режим → подпись»`);
       p.approvalModeLabels = a.approvalModeLabels;
     }
     if ('command' in a) {
       const c = a.command;
       const ok = c === null || (typeof c === 'string' && c.trim()) || (Array.isArray(c) && c.length && c.every((x) => typeof x === 'string' && x));
-      if (!ok) fail(400, `${where('command')} must be a path, an argv array or null (auto)`);
+      if (!ok) fail(400, `${where('command')}: путь, массив argv или null (авто)`);
       p.command = typeof c === 'string' ? c.trim() : c;
     }
     if ('node' in a || 'cliEntry' in a) {
       const node = 'node' in a ? a.node : config.agents[id]?.node ?? null;
       const entry = 'cliEntry' in a ? a.cliEntry : config.agents[id]?.cliEntry ?? null;
-      for (const [k, v] of [['node', node], ['cliEntry', entry]]) if (v !== null && (typeof v !== 'string' || !v.trim())) fail(400, `${where(k)} must be a path or null`);
-      if ((node === null) !== (entry === null)) fail(400, `${where('node')} and ${where('cliEntry')} must be set together (or both null)`);
+      for (const [k, v] of [['node', node], ['cliEntry', entry]]) if (v !== null && (typeof v !== 'string' || !v.trim())) fail(400, `${where(k)}: путь или null`);
+      if ((node === null) !== (entry === null)) fail(400, `${where('node')} и ${where('cliEntry')} задаются вместе (или оба null)`);
       p.node = node && node.trim();
       p.cliEntry = entry && entry.trim();
     }
     if ('reworkPromptTemplate' in a) {
       const t = a.reworkPromptTemplate;
-      if (t !== null && (typeof t !== 'string' || !t.includes('{notes}'))) fail(400, `${where('reworkPromptTemplate')} must be null or a string with {notes}`);
+      if (t !== null && (typeof t !== 'string' || !t.includes('{notes}'))) fail(400, `${where('reworkPromptTemplate')}: null или строка с {notes}`);
       p.reworkPromptTemplate = t || null;
     }
     if ('taskPromptTemplate' in a) {
-      if (a.taskPromptTemplate !== null && typeof a.taskPromptTemplate !== 'string') fail(400, `${where('taskPromptTemplate')} must be a string or null`);
-      if (a.taskPromptTemplate && !hasTaskVar(a.taskPromptTemplate)) fail(400, `${where('taskPromptTemplate')} must contain one of ${TASK_VARS.join(' ')}`);
+      if (a.taskPromptTemplate !== null && typeof a.taskPromptTemplate !== 'string') fail(400, `${where('taskPromptTemplate')}: нужна строка или null`);
+      if (a.taskPromptTemplate && !hasTaskVar(a.taskPromptTemplate)) fail(400, `${where('taskPromptTemplate')}: нужна хотя бы одна из переменных ${TASK_VARS.join(' ')}`);
       p.taskPromptTemplate = a.taskPromptTemplate || null;
     }
     if ('taskPromptPresets' in a) {
-      if (!isStrList(a.taskPromptPresets) || a.taskPromptPresets.some((t) => !hasTaskVar(t))) fail(400, `${where('taskPromptPresets')} must be templates containing one of ${TASK_VARS.join(' ')}`);
+      if (!isStrList(a.taskPromptPresets) || a.taskPromptPresets.some((t) => !hasTaskVar(t))) fail(400, `${where('taskPromptPresets')}: в каждом шаблоне нужна одна из переменных ${TASK_VARS.join(' ')}`);
       p.taskPromptPresets = a.taskPromptPresets;
     }
     if ('authTimeoutMs' in a) {
-      if (!Number.isInteger(a.authTimeoutMs) || a.authTimeoutMs < 10000 || a.authTimeoutMs > 3600000) fail(400, `${where('authTimeoutMs')} must be an integer between 10000 and 3600000`);
+      if (!Number.isInteger(a.authTimeoutMs) || a.authTimeoutMs < 10000 || a.authTimeoutMs > 3600000) fail(400, `${where('authTimeoutMs')}: целое число от 10000 до 3600000`);
       p.authTimeoutMs = a.authTimeoutMs;
     }
     if ('firstEventTimeoutMs' in a) {
-      if (!Number.isInteger(a.firstEventTimeoutMs) || a.firstEventTimeoutMs < 1000 || a.firstEventTimeoutMs > 30 * 60000) fail(400, `${where('firstEventTimeoutMs')} must be an integer between 1000 and 1800000`);
+      if (!Number.isInteger(a.firstEventTimeoutMs) || a.firstEventTimeoutMs < 1000 || a.firstEventTimeoutMs > 30 * 60000) fail(400, `${where('firstEventTimeoutMs')}: целое число от 1000 до 1800000`);
       p.firstEventTimeoutMs = a.firstEventTimeoutMs;
     }
     for (const k of ['inheritUserMcp', 'enabled']) {
       if (!(k in a)) continue;
-      if (typeof a[k] !== 'boolean') fail(400, `${where(k)} must be a boolean`);
+      if (typeof a[k] !== 'boolean') fail(400, `${where(k)}: нужно true или false`);
       p[k] = a[k];
     }
     if ('modelGrades' in a) {
       if (!isObj(a.modelGrades) || Object.entries(a.modelGrades).some(([g, v]) => !GRADES.includes(g) || (v !== null && typeof v !== 'string'))) {
-        fail(400, `${where('modelGrades')}: keys ${GRADES.join('/')}, string values`);
+        fail(400, `${where('modelGrades')}: ключи ${GRADES.join('/')}, значения — строки`);
       }
       (p.settings ||= { agents: {} }).agents.modelGrades = a.modelGrades;
     }
     if ('allowedGrades' in a) {
-      if (!isStrList(a.allowedGrades)) fail(400, `${where('allowedGrades')} must be an array of strings`);
+      if (!isStrList(a.allowedGrades)) fail(400, `${where('allowedGrades')}: нужен массив строк`);
       (p.settings ||= { agents: {} }).agents.allowedGrades = a.allowedGrades;
     }
     return p;
@@ -362,113 +362,113 @@ export async function startServer(opts = {}) {
     const out = {};
     if (body.tasks !== undefined) {
       const sec = body.tasks?.refreshSec;
-      if (!Number.isInteger(sec) || sec < 0) fail(400, 'tasks.refreshSec must be an integer >= 0 (0 = off, minimum 10)');
+      if (!Number.isInteger(sec) || sec < 0) fail(400, 'tasks.refreshSec: целое число ≥ 0 (0 — выключено, минимум 10)');
       out.tasks = { refreshSec: sec };
     }
     const i = body.integrations;
     if (i === undefined) return out;
-    if (!isObj(i)) fail(400, 'integrations must be an object');
+    if (!isObj(i)) fail(400, 'integrations: нужен объект');
     if (i.tasks !== undefined) {
       const t = i.tasks;
-      if (!isObj(t)) fail(400, 'integrations.tasks must be an object');
+      if (!isObj(t)) fail(400, 'integrations.tasks: нужен объект');
       const p = {};
       if ('enabled' in t) {
-        if (typeof t.enabled !== 'boolean') fail(400, 'integrations.tasks.enabled must be a boolean');
+        if (typeof t.enabled !== 'boolean') fail(400, 'integrations.tasks.enabled: нужно true или false');
         p.enabled = t.enabled;
       }
       if ('space' in t) {
         // one space or several (sync iterates all of them)
         const list = [t.space].flat();
-        if (!list.length || list.some((x) => typeof x !== 'string' || !x.trim())) fail(400, 'integrations.tasks.space must be a space code or an array of them');
+        if (!list.length || list.some((x) => typeof x !== 'string' || !x.trim())) fail(400, 'integrations.tasks.space: код пространства или массив кодов');
         p.space = Array.isArray(t.space) ? t.space.map((x) => x.trim()) : t.space.trim();
       }
       for (const k of ['urlTemplate']) {
         if (!(k in t)) continue;
-        if (typeof t[k] !== 'string') fail(400, `integrations.tasks.${k} must be a string`);
+        if (typeof t[k] !== 'string') fail(400, `integrations.tasks.${k}: нужна строка`);
         p[k] = t[k].trim();
       }
       if ('statusMap' in t) {
-        if (!isObj(t.statusMap) || Object.values(t.statusMap).some((v) => !STATUSES.includes(v))) fail(400, `integrations.tasks.statusMap values must be one of ${STATUSES.join(', ')}`);
+        if (!isObj(t.statusMap) || Object.values(t.statusMap).some((v) => !STATUSES.includes(v))) fail(400, `integrations.tasks.statusMap: значения — из ${STATUSES.join(', ')}`);
         p.statusMap = t.statusMap;
       }
       if ('onStartTransition' in t) {
-        if (t.onStartTransition !== null && typeof t.onStartTransition !== 'string') fail(400, 'integrations.tasks.onStartTransition must be a transition id or null');
+        if (t.onStartTransition !== null && typeof t.onStartTransition !== 'string') fail(400, 'integrations.tasks.onStartTransition: id перехода или null');
         p.onStartTransition = t.onStartTransition?.trim() || null;
       }
       if ('closedStatuses' in t) {
-        if (!isStrList(t.closedStatuses)) fail(400, 'integrations.tasks.closedStatuses must be an array of strings');
+        if (!isStrList(t.closedStatuses)) fail(400, 'integrations.tasks.closedStatuses: нужен массив строк');
         p.closedStatuses = t.closedStatuses;
       }
       out.tasks = { ...out.tasks, ...p };
     }
     if (i.pr !== undefined) {
-      if (!isObj(i.pr) || ('enabled' in i.pr && typeof i.pr.enabled !== 'boolean')) fail(400, 'integrations.pr.enabled must be a boolean');
+      if (!isObj(i.pr) || ('enabled' in i.pr && typeof i.pr.enabled !== 'boolean')) fail(400, 'integrations.pr.enabled: нужно true или false');
       if ('enabled' in i.pr) out.pr = { enabled: i.pr.enabled };
     }
     return out;
   }
 
   function boardPatch(b) {
-    if (!isObj(b)) fail(400, 'board must be an object');
+    if (!isObj(b)) fail(400, 'board: нужен объект');
     const p = {};
     if ('columns' in b) {
       const cols = b.columns;
-      if (!Array.isArray(cols) || !cols.length) fail(400, 'board.columns needs at least one column');
+      if (!Array.isArray(cols) || !cols.length) fail(400, 'board.columns: нужна хотя бы одна колонка');
       const seen = new Set();
       p.columns = cols.map((c, i) => {
-        if (!isObj(c) || !STATUSES.includes(c.status)) fail(400, `board.columns[${i}].status must be one of ${STATUSES.join(', ')}`);
-        if (seen.has(c.status)) fail(400, `board.columns: status "${c.status}" is used twice`);
+        if (!isObj(c) || !STATUSES.includes(c.status)) fail(400, `board.columns[${i}].status: одно из ${STATUSES.join(', ')}`);
+        if (seen.has(c.status)) fail(400, `board.columns: статус «${c.status}» указан дважды`);
         seen.add(c.status);
-        if (typeof c.label !== 'string' || !c.label.trim()) fail(400, `board.columns[${i}].label must be a non-empty string`);
-        if (c.trackerStatuses !== undefined && !isStrList(c.trackerStatuses)) fail(400, `board.columns[${i}].trackerStatuses must be an array of strings`);
+        if (typeof c.label !== 'string' || !c.label.trim()) fail(400, `board.columns[${i}].label: нужна непустая строка`);
+        if (c.trackerStatuses !== undefined && !isStrList(c.trackerStatuses)) fail(400, `board.columns[${i}].trackerStatuses: нужен массив строк`);
         return { status: c.status, label: c.label.trim(), trackerStatuses: c.trackerStatuses || [] };
       });
     }
     if ('onWorkerDone' in b) {
-      if (!['stay', 'review'].includes(b.onWorkerDone)) fail(400, 'board.onWorkerDone must be "stay" or "review"');
+      if (!['stay', 'review'].includes(b.onWorkerDone)) fail(400, 'board.onWorkerDone: "stay" или "review"');
       p.onWorkerDone = b.onWorkerDone;
     }
     if ('moveSyncsTracker' in b) {
-      if (typeof b.moveSyncsTracker !== 'boolean') fail(400, 'board.moveSyncsTracker must be a boolean');
+      if (typeof b.moveSyncsTracker !== 'boolean') fail(400, 'board.moveSyncsTracker: нужно true или false');
       p.moveSyncsTracker = b.moveSyncsTracker;
     }
     if ('columnTransitions' in b) {
-      if (!isStrMap(b.columnTransitions) || Object.keys(b.columnTransitions).some((k) => !STATUSES.includes(k))) fail(400, 'board.columnTransitions maps statuses to transition ids');
+      if (!isStrMap(b.columnTransitions) || Object.keys(b.columnTransitions).some((k) => !STATUSES.includes(k))) fail(400, 'board.columnTransitions: объект «статус → id перехода»');
       p.columnTransitions = b.columnTransitions;
     }
     return p;
   }
 
   function orchestrationPatch(o) {
-    if (!isObj(o)) fail(400, 'orchestration must be an object');
+    if (!isObj(o)) fail(400, 'orchestration: нужен объект');
     const p = {};
     if ('reviewMode' in o) {
-      if (!['builtin', 'harness'].includes(o.reviewMode)) fail(400, 'orchestration.reviewMode must be "builtin" or "harness"');
+      if (!['builtin', 'harness'].includes(o.reviewMode)) fail(400, 'orchestration.reviewMode: "builtin" или "harness"');
       p.reviewMode = o.reviewMode;
     }
     if ('subagents' in o) {
-      if (!['harness', 'builtin'].includes(o.subagents)) fail(400, 'orchestration.subagents must be "harness" or "builtin"');
+      if (!['harness', 'builtin'].includes(o.subagents)) fail(400, 'orchestration.subagents: "harness" или "builtin"');
       p.subagents = o.subagents;
     }
     if ('workerMayCommit' in o) {
-      if (typeof o.workerMayCommit !== 'boolean') fail(400, 'orchestration.workerMayCommit must be a boolean');
+      if (typeof o.workerMayCommit !== 'boolean') fail(400, 'orchestration.workerMayCommit: нужно true или false');
       p.workerMayCommit = o.workerMayCommit;
     }
     if ('review' in o) {
       const r = o.review;
-      if (!isObj(r)) fail(400, 'orchestration.review must be an object');
+      if (!isObj(r)) fail(400, 'orchestration.review: нужен объект');
       const rp = {};
       for (const k of ['grade', 'approvalMode', 'promptTemplate']) {
         if (!(k in r)) continue;
-        if (typeof r[k] !== 'string' || !r[k].trim()) fail(400, `orchestration.review.${k} must be a non-empty string`);
+        if (typeof r[k] !== 'string' || !r[k].trim()) fail(400, `orchestration.review.${k}: нужна непустая строка`);
         rp[k] = r[k];
       }
       if ('maxRounds' in r) {
-        if (!Number.isInteger(r.maxRounds) || r.maxRounds < 1 || r.maxRounds > 10) fail(400, 'orchestration.review.maxRounds must be an integer 1..10');
+        if (!Number.isInteger(r.maxRounds) || r.maxRounds < 1 || r.maxRounds > 10) fail(400, 'orchestration.review.maxRounds: целое число 1..10');
         rp.maxRounds = r.maxRounds;
       }
       if ('agent' in r) {
-        if (r.agent !== null && !config.agents[r.agent]) fail(400, `orchestration.review.agent: unknown agent "${r.agent}"`);
+        if (r.agent !== null && !config.agents[r.agent]) fail(400, `orchestration.review.agent: неизвестный агент «${r.agent}»`);
         rp.agent = r.agent;
       }
       p.review = rp;
@@ -479,16 +479,16 @@ export async function startServer(opts = {}) {
   async function saveSettings(body) {
     const patch = {};
     if (body.agents !== undefined) {
-      if (!isObj(body.agents)) fail(400, 'agents must be an object');
+      if (!isObj(body.agents)) fail(400, 'agents: нужен объект');
       patch.agents = Object.fromEntries(Object.entries(body.agents).map(([id, a]) => [id, agentPatch(id, a)]));
     }
     if (body.defaultAgent !== undefined) {
-      if (!config.agents[body.defaultAgent]) fail(400, `unknown agent "${body.defaultAgent}"`);
+      if (!config.agents[body.defaultAgent]) fail(400, `неизвестный агент «${body.defaultAgent}»`);
       patch.defaultAgent = body.defaultAgent;
     }
     if (body.git !== undefined) {
       if (!isObj(body.git) || Object.entries(body.git).some(([k, v]) => !GIT_KEYS.includes(k) || typeof v !== 'string' || !v.trim())) {
-        fail(400, `git accepts non-empty strings for ${GIT_KEYS.join(', ')}`);
+        fail(400, `git: непустые строки для ${GIT_KEYS.join(', ')}`);
       }
       patch.git = body.git;
     }
@@ -496,19 +496,19 @@ export async function startServer(opts = {}) {
     if (body.recovery !== undefined) {
       const rc = body.recovery;
       if (!isObj(rc) || Object.keys(rc).some((k) => !['autoResume', 'message'].includes(k)) || ('autoResume' in rc && typeof rc.autoResume !== 'boolean') || ('message' in rc && (typeof rc.message !== 'string' || !rc.message.trim()))) {
-        fail(400, 'recovery accepts { autoResume?: boolean, message?: non-empty string }');
+        fail(400, 'recovery: { autoResume?: true/false, message?: непустая строка }');
       }
       patch.recovery = rc;
     }
     if (body.session !== undefined) {
       const sec = body.session?.stallSec;
-      if (!isObj(body.session) || Object.keys(body.session).some((k) => k !== 'stallSec') || !Number.isInteger(sec) || sec < 30) fail(400, 'session accepts { stallSec: integer >= 30 }');
+      if (!isObj(body.session) || Object.keys(body.session).some((k) => k !== 'stallSec') || !Number.isInteger(sec) || sec < 30) fail(400, 'session: { stallSec: целое число ≥ 30 }');
       patch.session = { stallSec: sec };
     }
     if (body.ide !== undefined) {
       const ide = body.ide;
       if (ide !== null && (!isObj(ide) || typeof ide.command !== 'string' || !ide.command.trim() || (ide.args !== undefined && !isStrList(ide.args)))) {
-        fail(400, 'ide must be null or { command: string, args?: string[] } ("{path}" is replaced by the folder)');
+        fail(400, 'ide: null или { command: строка, args?: string[] } («{path}» заменяется на папку)');
       }
       patch.ide = ide && { command: ide.command.trim(), args: ide.args || ['{path}'] };
     }
@@ -517,7 +517,7 @@ export async function startServer(opts = {}) {
       const w = body.workspaces;
       const rootOk = (r) => r === null || (typeof r === 'string' && path.isAbsolute(expandHome(r)) && fs.existsSync(expandHome(r)) && fs.statSync(expandHome(r)).isDirectory());
       if (!isObj(w) || Object.keys(w).some((k) => !['root', 'repos'].includes(k)) || ('root' in w && !rootOk(w.root)) || ('repos' in w && !isStrList(w.repos))) {
-        fail(400, 'workspaces accepts { root: an existing absolute folder or null (auto), repos: string[] }');
+        fail(400, 'workspaces: { root: существующая абсолютная папка или null (авто), repos: string[] }');
       }
       patch.workspaces = w;
     }
@@ -542,7 +542,7 @@ export async function startServer(opts = {}) {
     skills: { 'harness-orchestration': { from: path.join(CODE_ROOT, 'skills', 'harness-orchestration', 'SKILL.md'), dirKey: 'skillsDir', dir: '~/.gigacode/skills', to: (n) => path.join(n, 'SKILL.md') } },
   };
   function shippedTarget(agentCfg, kind, name) {
-    const item = SHIPPED[kind][name] || fail(404, `unknown ${kind.slice(0, -1)} "${name}"`);
+    const item = SHIPPED[kind][name] || fail(404, `неизвестный элемент «${name}»`);
     return { item, target: path.join(expandHome(agentCfg[item.dirKey] || item.dir), item.to(name)) };
   }
   function shippedStatus(agentCfg, kind) {
@@ -553,10 +553,10 @@ export async function startServer(opts = {}) {
     }));
   }
   function installShipped(id, kind, name, force) {
-    const agentCfg = config.agents[id] || fail(404, `agent ${id} not found`);
+    const agentCfg = config.agents[id] || fail(404, `агент ${id} не найден`);
     const { item, target } = shippedTarget(agentCfg, kind, name);
     const status = shippedStatus(agentCfg, kind)[name];
-    if (status === 'different' && !force) fail(409, `${target} exists and differs from the harness version; pass force: true to overwrite`);
+    if (status === 'different' && !force) fail(409, `${target} уже есть и отличается от версии harness; передайте force: true, чтобы перезаписать`);
     fs.mkdirSync(path.dirname(target), { recursive: true });
     fs.copyFileSync(item.from, target);
     return { name, path: target, status: 'installed' };
@@ -564,7 +564,7 @@ export async function startServer(opts = {}) {
 
   /** Launcher resolution of an agent, as --print-config shows it (no spawn; the identity value is never returned). */
   function agentInfo(id) {
-    const a = config.agents[id] || fail(404, `agent ${id} not found`);
+    const a = config.agents[id] || fail(404, `агент ${id} не найден`);
     const meta = db.agentMeta?.[id] ?? null;
     catalog.ensureFresh(id);
     const { catalog: cat, ...seen } = meta || {};
@@ -660,7 +660,7 @@ export async function startServer(opts = {}) {
   const routes = [];
   const route = (method, pattern, handler) => routes.push({ method, re: new RegExp(`^${pattern.replace(/:(\w+)/g, '(?<$1>[^/]+)')}$`), handler, title: JOB_TITLES[`${method} ${pattern}`] || `${method} ${pattern}` });
 
-  const getWs = (id) => db.workspaces.find((w) => w.id === id) || fail(404, `workspace ${id} not found`);
+  const getWs = (id) => db.workspaces.find((w) => w.id === id) || fail(404, `рабочая папка ${id} не найдена`);
   const emitWorkspaces = () => {
     store.save();
     bus.send({ t: 'workspaces', workspaces: db.workspaces });
@@ -699,8 +699,8 @@ export async function startServer(opts = {}) {
   route('POST', '/api/agents/:id/commands/install', ({ params, body }) => installShipped(params.id, 'commands', check(body, { name: 'string', force: 'boolean?' }).name, body.force));
   route('POST', '/api/agents/:id/skills/install', ({ params, body }) => installShipped(params.id, 'skills', body.name || 'harness-orchestration', check(body, { force: 'boolean?' }).force));
   route('POST', '/api/agents/:id/models/refresh', async ({ params }) => {
-    if (!config.agents[params.id]) fail(404, `agent ${params.id} not found`);
-    if (!config.agents[params.id].modelsDiscovery?.prompt) fail(400, `agents.${params.id}.modelsDiscovery.prompt is not configured`);
+    if (!config.agents[params.id]) fail(404, `агент ${params.id} не найден`);
+    if (!config.agents[params.id].modelsDiscovery?.prompt) fail(400, `не настроен agents.${params.id}.modelsDiscovery.prompt`);
     jobStep('Опрос /models');
     const c = await catalog.discover(params.id);
     return { models: catalog.merged(params.id), at: c?.at ?? null, ...(c?.error ? { error: c.error } : {}) };
@@ -717,7 +717,7 @@ export async function startServer(opts = {}) {
 
   async function addWorkspace(rawPath, name, kind) {
     const p = path.resolve(rawPath);
-    if (!path.isAbsolute(rawPath) || !fs.existsSync(p) || !fs.statSync(p).isDirectory()) fail(400, `not an existing absolute directory: ${rawPath}`);
+    if (!path.isAbsolute(rawPath) || !fs.existsSync(p) || !fs.statSync(p).isDirectory()) fail(400, `не существующая абсолютная папка: ${rawPath}`);
     const existing = db.workspaces.find((w) => samePath(w.path, p));
     if (existing) return existing;
     const ws = { id: newId('w', 3), name: name?.trim() || path.basename(p), path: p, isGit: await git.isRepo(p), ...(kind ? { kind } : {}) };
@@ -751,7 +751,7 @@ export async function startServer(opts = {}) {
 
   route('POST', '/api/workspaces', async ({ body }) => {
     check(body, { path: 'string', name: 'string?', kind: 'string?' });
-    if (body.kind && body.kind !== 'folder') fail(400, 'kind must be "folder" (or omitted for a repository)');
+    if (body.kind && body.kind !== 'folder') fail(400, 'kind: "folder" (или не указывать для репозитория)');
     const ws = await addWorkspace(body.path, body.name, body.kind);
     if (body.kind === 'folder') rememberFolder(ws.path);
     return ws;
@@ -784,14 +784,14 @@ export async function startServer(opts = {}) {
   route('DELETE', '/api/workspaces/:id/worktrees', async ({ params, body }) => {
     const ws = getWs(params.id);
     check(body, { path: 'string', force: 'boolean?', deleteBranch: 'string?' });
-    if (body.deleteBranch && !['no', 'safe', 'force'].includes(body.deleteBranch)) fail(400, 'deleteBranch must be no, safe or force');
-    const wt = (await git.worktrees(ws.path)).find((w) => samePath(w.path, body.path)) || fail(404, `not a worktree of ${ws.name}: ${body.path}`);
-    if (wt.main) fail(400, 'the main worktree of a repository cannot be removed');
+    if (body.deleteBranch && !['no', 'safe', 'force'].includes(body.deleteBranch)) fail(400, 'deleteBranch: no, safe или force');
+    const wt = (await git.worktrees(ws.path)).find((w) => samePath(w.path, body.path)) || fail(404, `не рабочее дерево ${ws.name}: ${body.path}`);
+    if (wt.main) fail(400, 'основное рабочее дерево репозитория удалить нельзя');
     const [info] = await Promise.all([worktreeGit(ws, wt, true)]);
     const here = sessionsIn(wt.path);
     const running = here.filter((s) => s.status === 'running').length;
     if ((info.dirty || info.ahead || running) && !body.force) {
-      throw Object.assign(new Error(`${wt.path}: ${info.dirty} uncommitted change(s), ${info.ahead} commit(s) not in ${info.base}, ${running} running turn(s); pass force to remove anyway`), { status: 409, details: { dirty: info.dirty, ahead: info.ahead, running } });
+      throw Object.assign(new Error(`${wt.path}: незакоммиченных изменений — ${info.dirty}, коммитов не в ${info.base} — ${info.ahead}, идущих ходов — ${running}; передайте force, чтобы удалить всё равно`), { status: 409, details: { dirty: info.dirty, ahead: info.ahead, running } });
     }
     jobStep('Остановка сессий', { done: 0, total: here.length });
     for (const [i, s] of here.entries()) {
@@ -815,12 +815,12 @@ export async function startServer(opts = {}) {
   route('PATCH', '/api/worktrees/meta', async ({ body }) => {
     check(body, { path: 'string', label: 'string?', note: 'string?', pinned: 'boolean?', sleeping: 'boolean?', force: 'boolean?' });
     const p = path.resolve(body.path);
-    if (!(await registeredFolder(p))) fail(400, `not a registered workspace or one of its worktrees: ${body.path}`);
+    if (!(await registeredFolder(p))) fail(400, `не зарегистрированная рабочая папка и не её рабочее дерево: ${body.path}`);
     if (body.sleeping) {
       const here = sessionsIn(p);
       const running = here.filter((s) => s.kind === 'chat' && s.status === 'running');
       if (running.length && !body.force) {
-        throw Object.assign(new Error(`${running.length} agent turn(s) running in this worktree; pass force to stop them`), { status: 409, details: { running: running.length } });
+        throw Object.assign(new Error(`в этом рабочем дереве идут ходы агентов (${running.length}); передайте force, чтобы остановить их`), { status: 409, details: { running: running.length } });
       }
       for (const s of here) if (s.kind === 'terminal' || s.status === 'running') try { sessions.stop(s.id); } catch {}
     }
@@ -834,13 +834,13 @@ export async function startServer(opts = {}) {
   });
   route('POST', '/api/open', async ({ body }) => {
     check(body, { cwd: 'string', target: 'string' });
-    if (!['explorer', 'ide'].includes(body.target)) fail(400, 'target must be "explorer" or "ide"');
+    if (!['explorer', 'ide'].includes(body.target)) fail(400, 'target: "explorer" или "ide"');
     const p = path.resolve(body.cwd);
-    if (!(await registeredFolder(p))) fail(400, `not a registered workspace or one of its worktrees: ${body.cwd}`);
+    if (!(await registeredFolder(p))) fail(400, `не зарегистрированная рабочая папка и не её рабочее дерево: ${body.cwd}`);
     let command;
     let args;
     if (body.target === 'ide') {
-      if (!config.ide?.command) fail(400, 'no IDE configured (config.ide)');
+      if (!config.ide?.command) fail(400, 'IDE не настроена (config.ide)');
       command = config.ide.command;
       args = (config.ide.args || ['{path}']).map((a) => String(a).replace(/\{path\}/g, p));
     } else {
@@ -865,7 +865,7 @@ export async function startServer(opts = {}) {
     const before = tasks.get(params.id).status;
     const task = tasks.move(params.id, body.status, body.beforeId || null);
     if (config.board?.moveSyncsTracker && before !== task.status && tracksTracker(task)) {
-      trackerWrite(task, `sync to "${task.status}"`, () => syncColumn({ config, mcp, tasks, task, status: task.status })); // background: the card is already moved
+      trackerWrite(task, `синхронизация в «${task.status}»`, () => syncColumn({ config, mcp, tasks, task, status: task.status })); // background: the card is already moved
     }
     return task;
   });
@@ -884,7 +884,7 @@ export async function startServer(opts = {}) {
     const s = await orch.rework(params.id, body);
     const task = tasks.get(params.id);
     if (config.board?.moveSyncsTracker && before !== task.status && tracksTracker(task)) {
-      trackerWrite(task, 'sync to "in_progress"', () => syncColumn({ config, mcp, tasks, task, status: task.status })); // the normal move-sync
+      trackerWrite(task, 'синхронизация в «in_progress»', () => syncColumn({ config, mcp, tasks, task, status: task.status })); // the normal move-sync
     }
     return s;
   });
@@ -916,7 +916,7 @@ export async function startServer(opts = {}) {
       : m
   )));
   route('GET', '/api/sessions/:id/messages/:mid/output', ({ params }) => {
-    const m = sessions.messages(params.id).find((x) => x.id === params.mid) || fail(404, `message ${params.mid} not found`);
+    const m = sessions.messages(params.id).find((x) => x.id === params.mid) || fail(404, `сообщение ${params.mid} не найдено`);
     return { output: m.tool?.output ?? null };
   });
   route('POST', '/api/sessions/:id/messages', ({ params, body }) => sessions.deliver(params.id, { from: 'user', text: check(body, { text: 'string' }).text }));
@@ -938,7 +938,7 @@ export async function startServer(opts = {}) {
   route('GET', '/api/git/branches', ({ query }) => git.branches(cwdOf(query)));
   route('GET', '/api/git/pr-status', async ({ query }) => {
     const cwd = cwdOf(query);
-    if (!config.integrations.pr?.enabled) fail(501, 'PR integration is disabled (integrations.pr.enabled)');
+    if (!config.integrations.pr?.enabled) fail(501, 'интеграция PR выключена (integrations.pr.enabled)');
     const branch = await git.currentBranch(cwd);
     if (!branch) return { pr: null };
     try {
@@ -951,7 +951,7 @@ export async function startServer(opts = {}) {
   route('POST', '/api/git/checkout', async ({ body }) => {
     check(body, { cwd: 'string', branch: 'string', create: 'boolean?', from: 'string?' });
     const busy = db.sessions.find((s) => s.kind === 'chat' && s.status === 'running' && samePath(s.cwd, body.cwd));
-    if (busy) fail(409, `An agent is working in this folder right now (${busy.title}); stop it or wait before switching branches.`);
+    if (busy) fail(409, `В этой папке сейчас работает агент (${busy.title}); остановите его или дождитесь окончания, прежде чем переключать ветку.`);
     jobStep(`git checkout ${body.branch}`);
     const r = await git.checkout(body.cwd, body);
     refreshBranch(body.cwd, r.branch);
@@ -968,8 +968,8 @@ export async function startServer(opts = {}) {
   });
   route('POST', '/api/git/pr', async ({ body }) => {
     check(body, { cwd: 'string', title: 'string', body: 'string?', base: 'string?' });
-    if (!config.integrations.pr?.enabled) fail(501, 'PR creation is disabled (integrations.pr.enabled)');
-    const branch = (await git.currentBranch(body.cwd)) || fail(400, 'cwd is not on a branch');
+    if (!config.integrations.pr?.enabled) fail(501, 'создание PR выключено (integrations.pr.enabled)');
+    const branch = (await git.currentBranch(body.cwd)) || fail(400, 'в cwd не выбрана ветка');
     const base = body.base || config.git.defaultBase;
     const r = await createPullRequest({
       config, mcp, cwd: body.cwd, branch, base,
@@ -1014,7 +1014,7 @@ export async function startServer(opts = {}) {
     store.save();
   });
   route('POST', '/api/notifications/:id/read', ({ params }) => {
-    const n = db.notifications.find((x) => x.id === params.id) || fail(404, `notification ${params.id} not found`);
+    const n = db.notifications.find((x) => x.id === params.id) || fail(404, `уведомление ${params.id} не найдено`);
     n.read = true;
     store.save();
     bus.send({ t: 'notify', n });
@@ -1046,25 +1046,25 @@ export async function startServer(opts = {}) {
   }
 
   function serveStatic(req, res, pathname) {
-    if (req.method !== 'GET' && req.method !== 'HEAD') return sendJson(res, 405, { error: 'method not allowed' });
+    if (req.method !== 'GET' && req.method !== 'HEAD') return sendJson(res, 405, { error: 'метод не поддерживается' });
     let file;
     try {
       file = path.join(distDir, decodeURIComponent(pathname));
     } catch {
-      return sendJson(res, 400, { error: 'bad path' });
+      return sendJson(res, 400, { error: 'неверный путь' });
     }
     const rel = path.relative(distDir, file);
     if (!rel.startsWith('..') && !path.isAbsolute(rel) && rel !== 'index.html' && fs.existsSync(file) && fs.statSync(file).isFile()) {
       res.writeHead(200, { 'content-type': MIME[path.extname(file).toLowerCase()] || 'application/octet-stream', 'x-content-type-options': 'nosniff' });
       return fs.createReadStream(file).pipe(res);
     }
-    if (path.extname(pathname) && pathname !== '/index.html') return sendJson(res, 404, { error: 'not found' });
+    if (path.extname(pathname) && pathname !== '/index.html') return sendJson(res, 404, { error: 'не найдено' });
     return serveIndex(res, pathname);
   }
 
   /** GET /api/fs/raw?cwd=&path= — an image for a chat thumbnail; `?token=` works too (an <img src> sends no headers). */
   function serveRaw(req, res, u) {
-    if (!tokenOk(req.headers['x-harness-token'] ?? u.searchParams.get('token') ?? undefined)) return sendJson(res, 401, { error: 'missing or invalid token' });
+    if (!tokenOk(req.headers['x-harness-token'] ?? u.searchParams.get('token') ?? undefined)) return sendJson(res, 401, { error: 'нет токена или он неверный' });
     const q = check(Object.fromEntries(u.searchParams), { cwd: 'string', path: 'string' });
     const extra = db.sessions.filter((s) => s.cwd && samePath(s.cwd, q.cwd)).flatMap((s) => s.includeDirs || []);
     const f = wfs.rawImage([q.cwd, ...extra], q.path);
@@ -1084,23 +1084,23 @@ export async function startServer(opts = {}) {
   const server = http.createServer(async (req, res) => {
     const port = server.address()?.port;
     const allowed = [`127.0.0.1:${port}`, `localhost:${port}`, `[::1]:${port}`];
-    if (!allowed.includes(String(req.headers.host).toLowerCase())) return sendJson(res, 403, { error: 'forbidden host' });
+    if (!allowed.includes(String(req.headers.host).toLowerCase())) return sendJson(res, 403, { error: 'запрещённый Host' });
     let u;
     try {
       u = new URL(req.url, 'http://localhost');
     } catch {
-      return sendJson(res, 400, { error: 'bad url' });
+      return sendJson(res, 400, { error: 'неверный адрес' });
     }
     try {
       // liveness for the single-instance lock: no token (it proves nothing secret), still behind the Host guard
       if (u.pathname === '/api/health') return sendJson(res, 200, { ok: true, pid: process.pid, dataDir: config.dataDir });
       if (u.pathname === '/api/fs/raw' && req.method === 'GET') return serveRaw(req, res, u);
       if (u.pathname === '/api' || u.pathname.startsWith('/api/')) {
-        if (!tokenOk(req.headers['x-harness-token'])) return sendJson(res, 401, { error: 'missing or invalid x-harness-token' });
+        if (!tokenOk(req.headers['x-harness-token'])) return sendJson(res, 401, { error: 'нет x-harness-token или он неверный' });
         const candidates = routes.map((r) => ({ r, m: u.pathname.match(r.re) })).filter((x) => x.m);
-        if (!candidates.length) return sendJson(res, 404, { error: `no route ${u.pathname}` });
+        if (!candidates.length) return sendJson(res, 404, { error: `нет такого маршрута: ${u.pathname}` });
         const hit = candidates.find((x) => x.r.method === req.method);
-        if (!hit) return sendJson(res, 405, { error: 'method not allowed' });
+        if (!hit) return sendJson(res, 405, { error: 'метод не поддерживается' });
         const body = req.method === 'GET' || req.method === 'HEAD' ? {} : await readBody(req);
         const params = Object.fromEntries(Object.entries(hit.m.groups || {}).map(([k, v]) => [k, decodeURIComponent(v)]));
         const call = () => hit.r.handler({ req, body, params, query: Object.fromEntries(u.searchParams) });
@@ -1195,7 +1195,7 @@ export async function startServer(opts = {}) {
       store.close();
       if (e.code !== 'EADDRINUSE') return reject(e);
       const hint = process.platform === 'win32' ? `netstat -ano | findstr :${port}` : `lsof -i :${port}`;
-      reject(Object.assign(new Error(`Port ${port} is already in use (an old harness?). Find the process with: ${hint}  - or set "port" in harness.config.local.json.`), { code: 'EADDRINUSE' }));
+      reject(Object.assign(new Error(`Порт ${port} уже занят (старый harness?). Найдите процесс: ${hint} — или задайте "port" в harness.config.local.json.`), { code: 'EADDRINUSE' }));
     });
     server.listen(port, config.host, () => resolve());
   });
@@ -1259,14 +1259,14 @@ async function assertSingleInstance(serverJson, dataDir) {
     health = await (await fetch(`${other.url}/api/health`, { signal: AbortSignal.timeout(1000) })).json();
   } catch {}
   if (health?.ok !== true || health.pid !== other.pid) return;
-  throw Object.assign(new Error(`Another harness (pid ${other.pid}, ${other.url}) is already running on ${dataDir}. Stop it first or use another dataDir.`), { code: 'ELOCKED' });
+  throw Object.assign(new Error(`Другой harness (pid ${other.pid}, ${other.url}) уже работает с ${dataDir}. Остановите его или используйте другой dataDir.`), { code: 'ELOCKED' });
 }
 
 /** { ok, command, node, entry, identity: boolean } of an agent's launcher resolution, or { ok: false, error }. */
 function resolveAgentView(a) {
   try {
     const r = launchers[a.launcher]?.resolve(a);
-    if (!r) return { ok: false, identity: false, error: `unknown launcher "${a.launcher}"` };
+    if (!r) return { ok: false, identity: false, error: `неизвестный лаунчер «${a.launcher}»` };
     const entry = r.args.filter((x) => /\.[cm]?js$/i.test(x)).pop() ?? null;
     return {
       ok: true,
@@ -1295,7 +1295,7 @@ export function describeConfig(config) {
       let resolved;
       try {
         const r = launchers[a.launcher]?.resolve(a);
-        resolved = r ? { file: ex(r.file), args: r.args } : { error: `unknown launcher "${a.launcher}"` };
+        resolved = r ? { file: ex(r.file), args: r.args } : { error: `неизвестный лаунчер «${a.launcher}»` };
       } catch (e) {
         resolved = { error: e.message };
       }

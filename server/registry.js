@@ -51,9 +51,9 @@ export function readRegistry(dir, { idleWindowSec = 90, now = Date.now() } = {})
   for (const e of entries) {
     try {
       const rec = JSON.parse(fs.readFileSync(path.join(dir, e.name, 'agent.json'), 'utf8').replace(/^﻿/, ''));
-      if (!rec || typeof rec !== 'object') throw new Error('not an object');
-      for (const k of ['id', 'name', 'startedAt', 'state']) if (rec[k] == null || rec[k] === '') throw new Error(`missing ${k}`);
-      if (!STATES.includes(rec.state)) throw new Error(`unknown state "${rec.state}"`);
+      if (!rec || typeof rec !== 'object') throw new Error('не объект');
+      for (const k of ['id', 'name', 'startedAt', 'state']) if (rec[k] == null || rec[k] === '') throw new Error(`нет поля ${k}`);
+      if (!STATES.includes(rec.state)) throw new Error(`неизвестное состояние «${rec.state}»`);
       const item = { id: String(rec.id), name: String(rec.name), startedAt: rec.startedAt, state: rec.state, flags: [] };
       for (const k of OPTIONAL) item[k] = rec[k] ?? null;
       item.tokensIn = Number.isFinite(rec.tokensIn) ? rec.tokensIn : 0;

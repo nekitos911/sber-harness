@@ -19,12 +19,12 @@ const AUTH_RE = /could not read (Username|Password)|terminal prompts disabled|Au
 
 /** timeoutSec: network operations (push/fetch/...) are killed (whole tree) after it, with a clear message. */
 export function git(cwd, args, { ok = [0], timeoutSec = 0 } = {}) {
-  if (typeof cwd !== 'string' || !path.isAbsolute(cwd) || !fs.existsSync(cwd)) fail(400, `cwd must be an existing absolute directory: ${cwd}`);
+  if (typeof cwd !== 'string' || !path.isAbsolute(cwd) || !fs.existsSync(cwd)) fail(400, `cwd должен быть существующей абсолютной папкой: ${cwd}`);
   if (timeoutSec > 0) return gitNetwork(cwd, args, ok, timeoutSec);
   return new Promise((resolve, reject) => {
     execFile('git', args, { cwd, maxBuffer: 64 * 1024 * 1024, windowsHide: true, env: gitEnv() }, (err, stdout, stderr) => {
       const code = err ? err.code : 0;
-      if (err && typeof code !== 'number') return reject(Object.assign(new Error(`git failed: ${err.message}`), { status: 500 }));
+      if (err && typeof code !== 'number') return reject(Object.assign(new Error(`ошибка запуска git: ${err.message}`), { status: 500 }));
       if (!ok.includes(code)) return reject(Object.assign(new Error((stderr || stdout || err.message).trim()), { status: 400 }));
       resolve({ code, stdout, stderr });
     });
@@ -56,9 +56,9 @@ function gitNetwork(cwd, args, ok, timeoutSec) {
       child.stdout.destroy();
       child.stderr.destroy();
       if (timedOut) return reject(Object.assign(new Error(`Нет ответа от удалённого репозитория за ${timeoutSec} с`), { status: 504 }));
-      if (error) return reject(Object.assign(new Error(`git failed: ${error.message}`), { status: 500 }));
+      if (error) return reject(Object.assign(new Error(`ошибка запуска git: ${error.message}`), { status: 500 }));
       if (ok.includes(code)) return resolve({ code, stdout, stderr });
-      const text = (stderr || stdout || `git exited with code ${code}`).trim();
+      const text = (stderr || stdout || `git завершился с кодом ${code}`).trim();
       if (AUTH_RE.test(text)) return reject(Object.assign(new Error(`Git требует авторизацию — выполните ${args[0]} в терминале этого рабочего дерева.\n${text}`), { status: 401 }));
       reject(Object.assign(new Error(text), { status: 400 }));
     };
@@ -145,10 +145,10 @@ export async function onelines(cwd, range) {
 }
 
 export async function commit(cwd, message, paths, exclude = []) {
-  if (typeof message !== 'string' || !message.trim()) fail(400, 'commit message is required');
+  if (typeof message !== 'string' || !message.trim()) fail(400, 'нужно сообщение коммита');
   if (paths?.length) {
     const keep = paths.filter((p) => !isService(p, exclude));
-    if (!keep.length) fail(400, `only service files selected (git.excludeFromCommit: ${exclude.join(', ')}); they are never committed by the harness`);
+    if (!keep.length) fail(400, `выбраны только служебные файлы (git.excludeFromCommit: ${exclude.join(', ')}); harness их не коммитит`);
     await git(cwd, ['add', '-A', '--', ...keep]);
     await git(cwd, ['commit', '-m', message, '--', ...keep]);
   } else if (exclude.length) {
@@ -261,15 +261,15 @@ export async function branches(cwd) {
  */
 export async function checkout(cwd, { branch, create = false, from = null }) {
   const name = String(branch || '').replace(/^origin\//, '');
-  if (!name) fail(400, 'branch is required');
-  if ((await git(cwd, ['check-ref-format', '--branch', name], { ok: [0, 1, 128] })).code) fail(400, `invalid branch name: ${name}`);
+  if (!name) fail(400, 'нужна ветка');
+  if ((await git(cwd, ['check-ref-format', '--branch', name], { ok: [0, 1, 128] })).code) fail(400, `недопустимое имя ветки: ${name}`);
   const here = (await out(cwd, ['rev-parse', '--show-toplevel'])).replace(/\//g, path.sep);
   const elsewhere = (await worktrees(cwd)).find((w) => w.branch === name && !samePath(w.path, here));
-  if (elsewhere) fail(409, `${name} is checked out in another worktree: ${elsewhere.path}`);
+  if (elsewhere) fail(409, `${name} уже выбрана в другом рабочем дереве: ${elsewhere.path}`);
   if (create) await git(cwd, ['switch', '-c', name, from || 'HEAD']);
   else if (await branchExists(cwd, name)) await git(cwd, ['switch', name]);
   else if (await refExists(cwd, `origin/${name}`)) await git(cwd, ['switch', '--track', `origin/${name}`]);
-  else fail(404, `branch ${name} not found (locally or on origin)`);
+  else fail(404, `ветка ${name} не найдена (ни локально, ни в origin)`);
   return { branch: name };
 }
 
@@ -333,7 +333,7 @@ export async function removeWorktree(cwd, wtPath) {
   const dir = path.resolve(wtPath);
   const r = await git(cwd, ['worktree', 'remove', '--force', dir], { ok: [0, 128] });
   await git(cwd, ['worktree', 'prune', '--expire', 'now'], { ok: [0, 128] });
-  if (!(await removeDir(dir)) && r.code) fail(400, `cannot remove worktree ${dir}: ${r.stderr.trim()}`);
+  if (!(await removeDir(dir)) && r.code) fail(400, `не удалось удалить рабочее дерево ${dir}: ${r.stderr.trim()}`);
 }
 
 /** project + repository = the last two path segments of the origin URL (ssh://, https://, scp-like), without .git. */
@@ -381,5 +381,5 @@ export async function cherryPick(cwd, commits) {
   const r = await git(cwd, ['cherry-pick', '-x', ...commits], { ok: [0, 1] });
   if (r.code === 0) return 'clean';
   if (await refExists(cwd, 'CHERRY_PICK_HEAD')) return 'conflict';
-  fail(400, `cherry-pick failed: ${(r.stderr || r.stdout).trim()}`);
+  fail(400, `cherry-pick не удался: ${(r.stderr || r.stdout).trim()}`);
 }

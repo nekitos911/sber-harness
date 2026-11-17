@@ -69,7 +69,7 @@ test('checkout: create from, track a remote-only branch, refuse busy branches/fo
 
   const taken = await h.api('POST', '/api/git/checkout', { cwd: repo, branch: 'feature/elsewhere' });
   assert.equal(taken.status, 409);
-  assert.match(taken.body.error, /another worktree/);
+  assert.match(taken.body.error, /в другом рабочем дереве/);
 
   assert.equal((await h.api('POST', '/api/git/checkout', { cwd: repo, branch: 'develop' })).status, 200);
   fs.writeFileSync(path.join(repo, 'README.md'), 'dirty change\n');
@@ -85,7 +85,7 @@ test('checkout: create from, track a remote-only branch, refuse busy branches/fo
   await waitFor(async () => (await state()).sessions.find((s) => s.id === chat.id).status === 'running');
   const busy = await h.api('POST', '/api/git/checkout', { cwd: repo, branch: 'feature/local' });
   assert.equal(busy.status, 409);
-  assert.match(busy.body.error, /agent is working/);
+  assert.match(busy.body.error, /сейчас работает агент/);
   await h.api('POST', `/api/sessions/${chat.id}/stop`);
   await waitFor(async () => (await state()).sessions.find((s) => s.id === chat.id).pid === null);
 });

@@ -16,18 +16,18 @@ const inside = (root, p) => {
 
 /** Resolves `rel` inside `cwd`; also checks the real path so symlinks cannot escape. */
 export function resolveInside(cwd, rel = '') {
-  if (typeof cwd !== 'string' || !path.isAbsolute(cwd) || !fs.existsSync(cwd)) fail(400, 'cwd must be an existing absolute directory');
-  if (typeof rel !== 'string') fail(400, 'path must be a string');
+  if (typeof cwd !== 'string' || !path.isAbsolute(cwd) || !fs.existsSync(cwd)) fail(400, 'cwd должен быть существующей абсолютной папкой');
+  if (typeof rel !== 'string') fail(400, 'path: нужна строка');
   const root = fs.realpathSync(cwd);
   const abs = path.resolve(root, rel);
-  if (!inside(root, abs)) fail(400, 'path escapes cwd');
+  if (!inside(root, abs)) fail(400, 'путь выходит за пределы папки');
   let real = abs;
   try {
     real = fs.realpathSync(abs);
   } catch {
     try { real = path.join(fs.realpathSync(path.dirname(abs)), path.basename(abs)); } catch {}
   }
-  if (!inside(root, real)) fail(400, 'path escapes cwd');
+  if (!inside(root, real)) fail(400, 'путь выходит за пределы папки');
   return { root, abs };
 }
 
@@ -63,9 +63,9 @@ export function readFile(cwd, rel) {
   try {
     st = fs.statSync(abs);
   } catch {
-    fail(404, `file not found: ${rel}`);
+    fail(404, `файл не найден: ${rel}`);
   }
-  if (st.isDirectory()) fail(400, 'path is a directory');
+  if (st.isDirectory()) fail(400, 'это папка, а не файл');
   const res = { path: relPosix(root, abs), content: '', size: st.size, binary: false };
   if (st.size > MAX_TEXT) return { ...res, binary: true }; // too large to show as text
   const buf = fs.readFileSync(abs);
@@ -74,8 +74,8 @@ export function readFile(cwd, rel) {
 }
 
 export function writeFile(cwd, rel, content) {
-  if (typeof content !== 'string') fail(400, 'content must be a string');
-  if (!rel) fail(400, 'path is required');
+  if (typeof content !== 'string') fail(400, 'content: нужна строка');
+  if (!rel) fail(400, 'нужен путь (path)');
   const { abs } = resolveInside(cwd, rel);
   fs.mkdirSync(path.dirname(abs), { recursive: true });
   fs.writeFileSync(abs, content);
@@ -181,12 +181,12 @@ async function fsRoots() {
 
 export async function listDirs(dir, { hidden = false } = {}) {
   const p = path.resolve(dir || os.homedir());
-  if (!path.isAbsolute(dir || p)) throw Object.assign(new Error('path must be absolute'), { status: 400 });
+  if (!path.isAbsolute(dir || p)) throw Object.assign(new Error('путь должен быть абсолютным'), { status: 400 });
   let entries;
   try {
     entries = await fs.promises.readdir(p, { withFileTypes: true });
   } catch (e) {
-    throw Object.assign(new Error(`cannot list ${p}: ${e.code || e.message}`), { status: e.code === 'ENOENT' || e.code === 'ENOTDIR' ? 404 : 400 });
+    throw Object.assign(new Error(`не удалось открыть ${p}: ${e.code || e.message}`), { status: e.code === 'ENOENT' || e.code === 'ENOTDIR' ? 404 : 400 });
   }
   const parent = path.dirname(p);
   return {
@@ -206,8 +206,8 @@ export const RAW_MAX = 10 * 1024 * 1024;
 
 /** An image inside one of `bases` (the session cwd, then its includeDirs); same guard as every fs route. */
 export function rawImage(bases, rel) {
-  if (typeof rel !== 'string' || !rel) fail(400, 'path is required');
-  const type = IMAGE_TYPES[path.extname(rel).toLowerCase()] || fail(400, 'only png, jpg, jpeg, gif, webp and svg images are served');
+  if (typeof rel !== 'string' || !rel) fail(400, 'нужен путь (path)');
+  const type = IMAGE_TYPES[path.extname(rel).toLowerCase()] || fail(400, 'отдаются только картинки png, jpg, jpeg, gif, webp и svg');
   let abs = null;
   for (const base of bases) {
     try {
@@ -215,14 +215,14 @@ export function rawImage(bases, rel) {
       break;
     } catch {}
   }
-  if (!abs) fail(400, 'path is outside the session folder and its extra folders');
+  if (!abs) fail(400, 'путь вне папки сессии и её дополнительных папок');
   let st;
   try {
     st = fs.statSync(abs);
   } catch {
-    fail(404, `not found: ${rel}`);
+    fail(404, `не найдено: ${rel}`);
   }
-  if (!st.isFile()) fail(404, `not a file: ${rel}`);
-  if (st.size > RAW_MAX) fail(413, 'image is larger than 10 MB');
+  if (!st.isFile()) fail(404, `не файл: ${rel}`);
+  if (st.size > RAW_MAX) fail(413, 'картинка больше 10 МБ');
   return { abs, type, size: st.size, mtimeMs: st.mtimeMs };
 }

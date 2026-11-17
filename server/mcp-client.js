@@ -71,7 +71,7 @@ function resolveRefs(value, secrets) {
     return value.replace(/\$\{env:([^}]+)\}|\$\{secret:([^}]+)\}|\$secret:([\w.\-/]+)/g, (m, envName, s1, s2) => {
       const name = envName || s1 || s2;
       const v = envName && process.env[envName] !== undefined ? process.env[envName] : secrets.get(canon(name))?.value;
-      if (v === undefined) fail(424, `missing secret ${name}`, { problem: true });
+      if (v === undefined) fail(424, `нет секрета ${name}`, { problem: true });
       return v;
     });
   }
@@ -109,7 +109,7 @@ function rpcError(name, err) {
 }
 
 function timeoutError(name, method, ms) {
-  return Object.assign(new Error(`MCP ${name}: ${method} timed out after ${ms} ms`), { status: 504 });
+  return Object.assign(new Error(`MCP ${name}: ${method} — нет ответа за ${ms} мс`), { status: 504 });
 }
 
 function stdioTransport(name, cfg, root) {
@@ -157,11 +157,11 @@ function stdioTransport(name, cfg, root) {
   child.stderr.setEncoding('utf8').on('data', (d) => { stderr = (stderr + d).slice(-2000); });
   child.stdin.on('error', () => {});
   child.on('error', (e) => die(rpcError(name, e)));
-  child.on('exit', (code) => die(rpcError(name, { message: `server exited with code ${code}${stderr ? `: ${stderr.trim()}` : ''}` })));
+  child.on('exit', (code) => die(rpcError(name, { message: `сервер завершился с кодом ${code}${stderr ? `: ${stderr.trim()}` : ''}` })));
 
   return {
     request(method, params, ms) {
-      if (dead) return Promise.reject(rpcError(name, { message: 'server is not running' }));
+      if (dead) return Promise.reject(rpcError(name, { message: 'сервер не запущен' }));
       const id = ++seq;
       return new Promise((resolve, reject) => {
         const timer = setTimeout(() => {
@@ -217,7 +217,7 @@ function httpTransport(name, cfg) {
     if (body.id == null) return null;
     // shortcut: an SSE response is read to its end; streamable-HTTP servers close it after the response.
     const msg = (res.headers.get('content-type') || '').includes('text/event-stream') ? parseSse(await res.text(), body.id) : await res.json();
-    if (!msg) throw rpcError(name, { message: 'no JSON-RPC response in the event stream' });
+    if (!msg) throw rpcError(name, { message: 'в потоке событий нет ответа JSON-RPC' });
     if (msg.error) throw rpcError(name, msg.error);
     return msg.result;
   }
@@ -240,8 +240,8 @@ function httpTransport(name, cfg) {
 export function createMcpManager(config) {
   /** Server config with secrets applied; throws { problem: true } when a referenced secret is missing. */
   function prepared(name) {
-    const def = serverDefs(config)[name] || fail(404, `MCP server "${name}" is not configured (mcpServers)`);
-    if (!def.enabled) fail(400, `MCP server "${name}" is disabled (mcpServers.${name}.enabled)`);
+    const def = serverDefs(config)[name] || fail(404, `MCP-сервер «${name}» не настроен (mcpServers)`);
+    if (!def.enabled) fail(400, `MCP-сервер «${name}» выключен (mcpServers.${name}.enabled)`);
     const secrets = loadSecrets(config);
     const own = {}; // "<server>/<Name>" secrets: headers of an http server, env of a stdio server
     const prefix = `${canon(name)}_`;
@@ -284,7 +284,7 @@ export function createMcpManager(config) {
 
   const callTool = (name, tool, args = {}) => withClient(name, async (request) => {
     const result = await request('tools/call', { name: tool, arguments: args });
-    if (result?.isError) throw rpcError(name, { message: `${tool} failed: ${JSON.stringify(toolResultValue(result))}` });
+    if (result?.isError) throw rpcError(name, { message: `${tool} — ошибка: ${JSON.stringify(toolResultValue(result))}` });
     return result;
   });
 

@@ -23,7 +23,7 @@ export function createTasks({ store, bus, defaultBase = 'main' }) {
     t.targets ??= [defaultBase];
   }
   const find = (id) => db.tasks.find((t) => t.id === id);
-  const get = (id) => find(id) || fail(404, `task ${id} not found`);
+  const get = (id) => find(id) || fail(404, `задача ${id} не найдена`);
   const column = (status, exceptId) => db.tasks.filter((t) => t.status === status && t.id !== exceptId).sort((a, b) => a.order - b.order);
   const endOrder = (status, exceptId) => (column(status, exceptId).at(-1)?.order ?? 0) + 1;
 
@@ -59,32 +59,32 @@ export function createTasks({ store, bus, defaultBase = 'main' }) {
   }
 
   function validate(f, selfId) {
-    if ('title' in f && (typeof f.title !== 'string' || !f.title.trim())) fail(400, 'title must be a non-empty string');
+    if ('title' in f && (typeof f.title !== 'string' || !f.title.trim())) fail(400, 'название не может быть пустым');
     for (const k of ['description', 'externalId', 'externalUrl', 'source', 'workspaceId', 'assigneeSessionId', 'parentId', 'branch', 'externalStatus']) {
-      if (k in f && f[k] !== null && f[k] !== undefined && typeof f[k] !== 'string') fail(400, `${k} must be a string`);
+      if (k in f && f[k] !== null && f[k] !== undefined && typeof f[k] !== 'string') fail(400, `${k}: нужна строка`);
     }
-    if ('status' in f && !STATUSES.includes(f.status)) fail(400, `status must be one of ${STATUSES.join(', ')}`);
-    if ('priority' in f && f.priority !== null && f.priority !== undefined && !PRIORITIES.includes(f.priority)) fail(400, `priority must be one of ${PRIORITIES.join(', ')} or null`);
-    if ('order' in f && !Number.isFinite(f.order)) fail(400, 'order must be a number');
-    if ('labels' in f && !isStrArr(f.labels)) fail(400, 'labels must be an array of strings');
-    if ('includeDirs' in f && f.includeDirs !== undefined && !isStrArr(f.includeDirs)) fail(400, 'includeDirs must be an array of folder paths');
-    if ('targets' in f && f.targets !== undefined && (!isStrArr(f.targets) || f.targets.some((t) => !t.trim()))) fail(400, 'targets must be an array of branch names');
-    if ('ports' in f && !Array.isArray(f.ports)) fail(400, 'ports must be an array');
-    for (const k of ['statusManual', 'hidden']) if (k in f && typeof f[k] !== 'boolean') fail(400, `${k} must be a boolean`);
-    if ('takenAt' in f && f.takenAt !== null && !Number.isFinite(f.takenAt)) fail(400, 'takenAt must be a number or null');
-    for (const k of ['snapshot', 'pr', 'review']) if (k in f && f[k] !== null && (typeof f[k] !== 'object' || Array.isArray(f[k]))) fail(400, `${k} must be an object or null`);
+    if ('status' in f && !STATUSES.includes(f.status)) fail(400, `status — одно из: ${STATUSES.join(', ')}`);
+    if ('priority' in f && f.priority !== null && f.priority !== undefined && !PRIORITIES.includes(f.priority)) fail(400, `priority — одно из: ${PRIORITIES.join(', ')} или null`);
+    if ('order' in f && !Number.isFinite(f.order)) fail(400, 'order: нужно число');
+    if ('labels' in f && !isStrArr(f.labels)) fail(400, 'labels: нужен массив строк');
+    if ('includeDirs' in f && f.includeDirs !== undefined && !isStrArr(f.includeDirs)) fail(400, 'includeDirs: нужен массив путей к папкам');
+    if ('targets' in f && f.targets !== undefined && (!isStrArr(f.targets) || f.targets.some((t) => !t.trim()))) fail(400, 'targets: нужен массив имён веток');
+    if ('ports' in f && !Array.isArray(f.ports)) fail(400, 'ports: нужен массив');
+    for (const k of ['statusManual', 'hidden']) if (k in f && typeof f[k] !== 'boolean') fail(400, `${k}: нужно true или false`);
+    if ('takenAt' in f && f.takenAt !== null && !Number.isFinite(f.takenAt)) fail(400, 'takenAt: число или null');
+    for (const k of ['snapshot', 'pr', 'review']) if (k in f && f[k] !== null && (typeof f[k] !== 'object' || Array.isArray(f[k]))) fail(400, `${k}: объект или null`);
     if ('deps' in f && f.deps !== undefined) {
-      if (!isStrArr(f.deps)) fail(400, 'deps must be an array of task ids');
+      if (!isStrArr(f.deps)) fail(400, 'deps: нужен массив id задач');
       for (const d of f.deps) {
-        if (!find(d)) fail(400, `dependency ${d} not found`);
-        if (selfId && reaches(d, selfId, (t) => t.deps)) fail(400, `dependency ${d} would create a cycle`);
+        if (!find(d)) fail(400, `зависимость ${d} не найдена`);
+        if (selfId && reaches(d, selfId, (t) => t.deps)) fail(400, `зависимость ${d} создаст цикл`);
       }
     }
     if (f.parentId) {
-      if (!find(f.parentId)) fail(400, `parent task ${f.parentId} not found`);
-      if (selfId && reaches(f.parentId, selfId, (t) => (t.parentId ? [t.parentId] : []))) fail(400, 'parentId would create a cycle');
+      if (!find(f.parentId)) fail(400, `родительская задача ${f.parentId} не найдена`);
+      if (selfId && reaches(f.parentId, selfId, (t) => (t.parentId ? [t.parentId] : []))) fail(400, 'parentId создаст цикл');
     }
-    if ('comment' in f && f.comment !== undefined && typeof f.comment !== 'string') fail(400, 'comment must be a string');
+    if ('comment' in f && f.comment !== undefined && typeof f.comment !== 'string') fail(400, 'comment: нужна строка');
   }
 
   function isReady(t) {
@@ -107,7 +107,7 @@ export function createTasks({ store, bus, defaultBase = 'main' }) {
     create(fields, by = 'user') {
       const f = defined(fields);
       validate(f);
-      if (typeof f.title !== 'string') fail(400, 'title is required');
+      if (typeof f.title !== 'string') fail(400, 'нужно название');
       const parent = f.parentId ? find(f.parentId) : null;
       const now = Date.now();
       const task = {
@@ -171,7 +171,7 @@ export function createTasks({ store, bus, defaultBase = 'main' }) {
     move(id, status, beforeId = null) {
       const task = get(id);
       validate({ status });
-      if (task.status !== status) task.log.push({ at: Date.now(), by: 'user', text: `status -> ${status}` });
+      if (task.status !== status) task.log.push({ at: Date.now(), by: 'user', type: 'status', text: `Статус: ${STATUS_LABEL[status] ?? status}`, data: { to: status } });
       task.status = status;
       task.statusManual = true; // a human moved the card: tracker sync no longer changes its column
       if (!beforeId) {
@@ -180,7 +180,7 @@ export function createTasks({ store, bus, defaultBase = 'main' }) {
       }
       const col = column(status, id);
       const idx = col.findIndex((t) => t.id === beforeId);
-      if (idx < 0) fail(400, `beforeId ${beforeId} is not in column ${status}`);
+      if (idx < 0) fail(400, `beforeId ${beforeId} не в колонке ${status}`);
       const next = col[idx];
       const prev = col[idx - 1];
       task.order = prev ? (prev.order + next.order) / 2 : next.order - 1;

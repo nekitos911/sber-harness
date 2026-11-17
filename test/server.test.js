@@ -91,7 +91,7 @@ test('chat session: two turns resume the same CLI session; crash shows stderr', 
 
   const c = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', cwd: repo, prompt: '#crash' })).body;
   const err = await waitFor(async () => (await messages(c.id)).find((m) => m.kind === 'error'), { what: 'crash error' });
-  assert.match(err.text, /^The agent failed \(exit code 1\):\nmock-agent: simulated crash/);
+  assert.match(err.text, /^Агент завершился с ошибкой \(код 1\):\nmock-agent: simulated crash/);
   assert.equal((await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'nope' })).status, 400);
 });
 
@@ -202,7 +202,7 @@ test('restart: an interrupted chat turn becomes idle with a system message', asy
     const get = (p) => fetch(srv.url + p, { headers: { 'x-harness-token': srv.token } }).then((r) => r.json());
     const s = (await get('/api/state')).sessions[0];
     assert.deepEqual([s.status, s.queued, s.pid], ['idle', 0, null]);
-    assert.match((await get('/api/sessions/s_old/messages'))[0].text, /harness restarted/);
+    assert.match((await get('/api/sessions/s_old/messages'))[0].text, /Harness перезапущен/);
   } finally {
     await srv.close();
     rmrf(dataDir);
@@ -215,7 +215,7 @@ test('stop: status is stopped at once and a late exit never overwrites it; the n
   await h.api('POST', `/api/sessions/${s.id}/messages`, { text: '#slow' });
   await waitFor(async () => (await messages(s.id)).some((m) => m.kind === 'assistant' && m.text.includes('slow')), { what: 'slow output' });
   assert.equal((await h.api('POST', `/api/sessions/${s.id}/stop`)).body.status, 'stopped');
-  await waitFor(async () => (await messages(s.id)).some((m) => m.text === 'Stopped by user'), { what: 'process exit' });
+  await waitFor(async () => (await messages(s.id)).some((m) => m.text === 'Остановлено пользователем'), { what: 'process exit' });
   const after = (await state()).sessions.find((x) => x.id === s.id);
   assert.deepEqual([after.status, after.pid], ['stopped', null]);
   await h.api('POST', `/api/sessions/${s.id}/messages`, { text: 'continue' });
@@ -301,7 +301,7 @@ test('subagents registry route; board: manual status, hidden imported tasks, tra
 test('run outcomes: silent exit 0 is an error, stderr at exit 0 is a warning, phase starting -> null', async () => {
   const quiet = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', cwd: repo, prompt: '#nooutput' })).body;
   const err = await waitFor(async () => (await messages(quiet.id)).find((m) => m.kind === 'error'), { what: 'silent failure' });
-  assert.match(err.text, /without any output[\s\S]*identities do not match/);
+  assert.match(err.text, /ничего не выведя[\s\S]*identities do not match/);
   assert.equal((await state()).sessions.find((x) => x.id === quiet.id).status, 'error');
 
   const warn = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', cwd: repo, prompt: '#warn' })).body;
@@ -346,7 +346,7 @@ test('ops: one harness per data dir, a clear message for a busy port; models in 
     try {
       const port = await new Promise((resolve) => other.stdout.once('data', (d) => resolve(Number(String(d).trim()))));
       fs.writeFileSync(path.join(busy, 'server.json'), JSON.stringify({ url: `http://127.0.0.1:${port}`, pid: other.pid }));
-      await assert.rejects(startServer({ dataDir: busy, port: 0, configOverrides: { mcpServersFrom: null } }), /already running on/);
+      await assert.rejects(startServer({ dataDir: busy, port: 0, configOverrides: { mcpServersFrom: null } }), /уже работает с/);
     } finally {
       other.kill();
     }

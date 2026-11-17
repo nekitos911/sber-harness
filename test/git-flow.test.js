@@ -174,7 +174,7 @@ test('concurrent starts give one worker; a live task jumps to it; port needs com
 
   const r = await h.api('POST', `/api/tasks/${t.id}/port`, { target: 'release-1' });
   assert.equal(r.status, 409);
-  assert.match(r.body.error, /no commits ahead of develop/);
+  assert.match(r.body.error, /нет коммитов сверх develop/);
 
   const run = await waitFor(() => {
     try {

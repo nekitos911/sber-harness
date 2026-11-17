@@ -87,14 +87,14 @@ export function resolveShell(shell, platform = process.platform, env = process.e
 
 /** Model catalogue entries are objects { id, label?, context?, description? }; a plain string means { id }. */
 export function normalizeModels(list) {
-  if (!Array.isArray(list)) throw Object.assign(new Error('models must be an array'), { status: 400 });
+  if (!Array.isArray(list)) throw Object.assign(new Error('models: нужен массив'), { status: 400 });
   return list.map((m) => {
     const entry = typeof m === 'string' ? { id: m } : m;
-    if (!isObj(entry) || typeof entry.id !== 'string' || !entry.id.trim()) throw Object.assign(new Error('each model needs a non-empty string id'), { status: 400 });
+    if (!isObj(entry) || typeof entry.id !== 'string' || !entry.id.trim()) throw Object.assign(new Error('у каждой модели нужен непустой строковый id'), { status: 400 });
     const out = { id: entry.id.trim() };
     for (const k of ['label', 'context', 'description']) {
       if (entry[k] == null) continue;
-      if (typeof entry[k] !== 'string') throw Object.assign(new Error(`model ${out.id}: ${k} must be a string`), { status: 400 });
+      if (typeof entry[k] !== 'string') throw Object.assign(new Error(`модель ${out.id}: ${k} — нужна строка`), { status: 400 });
       out[k] = entry[k];
     }
     return out;

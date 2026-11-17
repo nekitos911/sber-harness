@@ -24,12 +24,12 @@ const sameDir = (a, b) => (process.platform === 'win32' ? path.resolve(a).toLowe
  */
 export function normalizeIncludeDirs(dirs, cwd, strict = true) {
   if (dirs == null) return [];
-  if (!Array.isArray(dirs) || dirs.some((d) => typeof d !== 'string')) fail(400, 'includeDirs must be an array of folder paths');
+  if (!Array.isArray(dirs) || dirs.some((d) => typeof d !== 'string')) fail(400, 'includeDirs: нужен массив путей к папкам');
   const out = [];
   for (const d of dirs) {
     const ok = path.isAbsolute(d) && isDir(d);
     if (!ok) {
-      if (strict) fail(400, `includeDirs: not an existing absolute folder: ${d}`);
+      if (strict) fail(400, `includeDirs: не существующая абсолютная папка: ${d}`);
       continue;
     }
     const p = path.resolve(d);
@@ -81,7 +81,7 @@ async function loadPty() {
       ptyError = e.message;
     }
   }
-  if (!ptyModule) fail(501, `Terminals are unavailable: cannot load @lydell/node-pty (${ptyError})`);
+  if (!ptyModule) fail(501, `Терминалы недоступны: не загружается @lydell/node-pty (${ptyError})`);
   return ptyModule;
 }
 
@@ -107,7 +107,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
   const hooks = { preamble: () => '', turnEnded: () => {} };
 
   const find = (sid) => db.sessions.find((s) => s.id === sid);
-  const get = (sid) => find(sid) || fail(404, `session ${sid} not found`);
+  const get = (sid) => find(sid) || fail(404, `сессия ${sid} не найдена`);
   const runDir = (sid) => path.join(store.dataDir, 'runs', sid);
   const registryDir = (sid) => path.join(runDir(sid), 'registry');
 
@@ -154,12 +154,12 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
 
   /** Agent config + launcher + executable for an agent id; throws 400 with a clear message (fail fast). */
   function resolveAgent(agent, launcherId) {
-    const agentCfg = config.agents[agent] || fail(400, `unknown agent "${agent}"`);
-    if (agentCfg.enabled === false) fail(400, `agent "${agent}" is disabled in the config`);
+    const agentCfg = config.agents[agent] || fail(400, `неизвестный агент «${agent}»`);
+    if (agentCfg.enabled === false) fail(400, `агент «${agent}» выключен в настройках`);
     if (launcherId && agentCfg.launcher !== launcherId) {
-      fail(409, `agent "${agent}" now uses launcher "${agentCfg.launcher}" but this session was started with "${launcherId}"; a session never switches CLI, start a new chat`);
+      fail(409, `агент «${agent}» теперь использует лаунчер «${agentCfg.launcher}», а сессия начата с «${launcherId}»; сессия не меняет CLI — начните новый чат`);
     }
-    const launcher = launchers[agentCfg.launcher] || fail(400, `agent "${agent}" has unknown launcher "${agentCfg.launcher}"`);
+    const launcher = launchers[agentCfg.launcher] || fail(400, `у агента «${agent}» неизвестный лаунчер «${agentCfg.launcher}»`);
     let exe;
     try {
       exe = launcher.resolve(agentCfg);
@@ -171,7 +171,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
 
   function checkMode(agentCfg, mode) {
     if (mode && agentCfg.approvalModes?.length && !agentCfg.approvalModes.includes(mode)) {
-      fail(400, `approval mode "${mode}" is not one of ${agentCfg.approvalModes.join(', ')}`);
+      fail(400, `режим подтверждений «${mode}» не из списка: ${agentCfg.approvalModes.join(', ')}`);
     }
   }
 
@@ -248,7 +248,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     s.interrupted = { at: Date.now(), reason: interruptReason({ startedAt: s.pidStartedAt || s.lastActivityAt, bootTime: Date.now() - os.uptime() * 1000, crashed }), lastActivity };
     addMessage(s, { kind: 'system', text: INTERRUPTED });
   }
-  const INTERRUPTED = 'harness restarted, the turn was interrupted; send a message to continue (context is kept by --resume)';
+  const INTERRUPTED = 'Harness перезапущен, ход прерван — отправьте сообщение, чтобы продолжить (контекст сохраняется через --resume)';
   for (const s of db.sessions) {
     if (s.kind === 'chat') {
       s.queue = Array.isArray(s.queue) ? s.queue : []; // persisted deliveries survive a restart
@@ -405,7 +405,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     switch (ev.type) {
       case 'init': {
         const mcp = ev.mcpServers.map((m) => `${m.name} ${/^connected$/i.test(m.status) ? '✓' : '✗'}`).join(', ');
-        const note = [ev.model && `Model: ${ev.model}`, mcp && `MCP: ${mcp}`].filter(Boolean).join(' · ');
+        const note = [ev.model && `Модель: ${ev.model}`, mcp && `MCP: ${mcp}`].filter(Boolean).join(' · ');
         // once per session (again only when it changes, e.g. an MCP server went down)
         if (note && !store.messages(s.id).some((m) => m.kind === 'system' && m.text === note)) addMessage(s, { kind: 'system', text: note });
         // what the CLI reported about itself, for GET /api/agents/:id/info (models seen accumulate, newest first)
@@ -524,7 +524,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
       case 'result':
         s.tokensIn += ev.tokensIn || 0;
         s.tokensOut += ev.tokensOut || 0;
-        if (ev.isError) addMessage(s, { kind: 'error', text: ev.text || 'The agent reported an error' });
+        if (ev.isError) addMessage(s, { kind: 'error', text: ev.text || 'Агент сообщил об ошибке' });
         else if (ev.text && !c.gotText) {
           addMessage(s, { kind: 'assistant', text: ev.text });
           s.preview = ev.text.slice(-200);
@@ -556,7 +556,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
       const model = s.model || agentCfg.model;
       if (model && catalog?.unavailable(s.agent).has(model)) {
         // only when a fresh discovery says so; with a stale catalogue the run is attempted
-        throw Object.assign(new Error(`Model "${model}" is not in the backend catalogue (checked ${new Date(catalog.info(s.agent).at).toLocaleString()}). Pick another model and send again.`), { action: 'pick-model' });
+        throw Object.assign(new Error(`Модели «${model}» нет в каталоге сервера (проверено ${new Date(catalog.info(s.agent).at).toLocaleString('ru-RU')}). Выберите другую модель и отправьте снова.`), { action: 'pick-model' });
       }
       const dropped = droppedGrades(s);
       const note = dropped.length && `⚠ Недоступные модели убраны из грейдов, CLI возьмёт модель по умолчанию: ${dropped.map(([g, id]) => `${g} → ${id}`).join(', ')}`;
@@ -575,7 +575,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
       const firstEventTimeoutMs = agentCfg.firstEventTimeoutMs || launcher.defaults.firstEventTimeoutMs || 30000;
       let handle;
       if (agentCfg.transport === 'acp') {
-        if (!launcher.acpArgs) throw new Error(`launcher "${launcher.id}" has no ACP mode; set agents.${s.agent}.transport to "headless"`);
+        if (!launcher.acpArgs) throw new Error(`у лаунчера «${launcher.id}» нет режима ACP; укажите agents.${s.agent}.transport = "headless"`);
         handle = acp.turn({
           sid: s.id, launcher, ctx, command: exe, cwd: s.cwd, env, logFile: turnFiles(s, r.turn).logFile, roots: [s.cwd, ...(s.includeDirs || [])],
           externalSessionId: s.externalSessionId, prompt, initTimeoutMs: firstEventTimeoutMs, onEvent: (ev) => applyEvent(s, ev),
@@ -676,7 +676,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     let status = r.flags.reported && (s.status === 'done' || s.status === 'failed') ? s.status : 'idle';
     if (stopped) {
       status = 'stopped'; // already set by stop(); a late exit never overwrites it
-      addMessage(s, { kind: 'system', text: 'Stopped by user' });
+      addMessage(s, { kind: 'system', text: 'Остановлено пользователем' });
     } else if (unadopted && !res.sawResult) {
       // the saved pid is gone or now belongs to another process: what the file had is shown, the rest is lost
       markInterrupted(s);
@@ -685,16 +685,16 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
       status = 'error';
     } else if (res.authTimedOut) {
       const min = Math.round((config.agents[s.agent]?.authTimeoutMs || 600000) / 60000);
-      addMessage(s, { kind: 'error', text: `Login was not completed within ${min} min; the process was killed. Open the link above and log in, or log in once from Settings (interactive terminal), then send the message again.${tail(res.stderrTail)}` });
+      addMessage(s, { kind: 'error', text: `Вход не выполнен за ${min} мин — процесс остановлен. Откройте ссылку выше и войдите (или один раз через Настройки → интерактивный терминал), затем отправьте сообщение снова.${tail(res.stderrTail)}` });
       status = 'error';
     } else if (res.timedOut) {
       const ms = config.agents[s.agent]?.firstEventTimeoutMs || launchers[s.launcherId]?.defaults.firstEventTimeoutMs;
-      addMessage(s, { kind: 'error', text: `No output from the agent within ${Math.round(ms / 1000)} s; the process was killed.${tail(res.stderrTail)}` });
+      addMessage(s, { kind: 'error', text: `Агент ничего не вывел за ${Math.round(ms / 1000)} с — процесс остановлен.${tail(res.stderrTail)}` });
       status = 'error';
     } else if (!res.sawResult && res.code !== 0) {
       // a fatal CLI error leaves stdout empty and the whole story in stderr: lead with it
       const why = res.stderrTail.trim();
-      const how = res.code == null ? 'The agent process ended without a result' : `The agent failed (exit code ${res.code}${res.signal ? `, ${res.signal}` : ''})`;
+      const how = res.code == null ? 'Процесс агента завершился без результата' : `Агент завершился с ошибкой (код ${res.code}${res.signal ? `, ${res.signal}` : ''})`;
       const md = config.agents[s.agent]?.modelsDiscovery;
       const modelGone = /not present in the current backend catalogue/i.test(why) || (!!md?.missingPattern && new RegExp(md.missingPattern, 'i').test(why));
       addMessage(s, { kind: 'error', text: `${how}${why ? `:\n${why.slice(-2000)}` : '.'}`, ...(modelGone ? { action: 'pick-model' } : {}) });
@@ -702,7 +702,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
       if (!res.eventCount && !res.priorOutput) status = 'error';
     } else if (!res.eventCount && !res.priorOutput) {
       // exit 0 without a single event: e.g. GigaCode's identity check fails silently (message only on stderr)
-      addMessage(s, { kind: 'error', text: `The agent exited without any output.${tail(res.stderrTail)}` });
+      addMessage(s, { kind: 'error', text: `Агент завершился, ничего не выведя.${tail(res.stderrTail)}` });
       status = 'error';
     } else if (res.stderrTail.trim()) {
       addMessage(s, { kind: 'system', text: `⚠ ${res.stderrTail.trim().slice(-2000)}` });
@@ -874,16 +874,16 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
 
     async create(o = {}) {
       const kind = o.kind || 'chat';
-      if (!['chat', 'terminal'].includes(kind)) fail(400, 'kind must be "chat" or "terminal"');
+      if (!['chat', 'terminal'].includes(kind)) fail(400, 'kind: "chat" или "terminal"');
       const role = o.role || 'solo';
-      if (!['solo', 'coordinator', 'worker', 'reviewer'].includes(role)) fail(400, 'role must be solo, coordinator, worker or reviewer');
+      if (!['solo', 'coordinator', 'worker', 'reviewer'].includes(role)) fail(400, 'role: solo, coordinator, worker или reviewer');
       for (const k of ['agent', 'cwd', 'workspaceId', 'title', 'prompt', 'approvalMode', 'model', 'command', 'branch']) {
-        if (o[k] != null && typeof o[k] !== 'string') fail(400, `${k} must be a string`);
+        if (o[k] != null && typeof o[k] !== 'string') fail(400, `${k}: нужна строка`);
       }
-      const ws = o.workspaceId ? db.workspaces.find((w) => w.id === o.workspaceId) || fail(404, `workspace ${o.workspaceId} not found`) : null;
+      const ws = o.workspaceId ? db.workspaces.find((w) => w.id === o.workspaceId) || fail(404, `рабочая папка ${o.workspaceId} не найдена`) : null;
       const id = newId('s');
       let cwd = o.cwd || ws?.path ? path.resolve(o.cwd || ws.path) : null;
-      if (cwd && !isDir(cwd)) fail(400, `cwd is not a directory: ${cwd}`);
+      if (cwd && !isDir(cwd)) fail(400, `cwd — не папка: ${cwd}`);
 
       let agent = o.agent || null;
       let agentCfg = null;
@@ -891,8 +891,8 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
         agent ||= config.defaultAgent;
         if (kind === 'chat') ({ agentCfg } = resolveAgent(agent));
         else {
-          agentCfg = config.agents[agent] || fail(400, `unknown agent "${agent}"`);
-          if (agentCfg.enabled === false) fail(400, `agent "${agent}" is disabled in the config`);
+          agentCfg = config.agents[agent] || fail(400, `неизвестный агент «${agent}»`);
+          if (agentCfg.enabled === false) fail(400, `агент «${agent}» выключен в настройках`);
         }
         checkMode(agentCfg, o.approvalMode);
       }
@@ -947,7 +947,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
           launchers[s.launcherId].prepare(turnCtx(s, agentCfg, ''));
         } catch (e) {
           fs.rmSync(runDir(id), { recursive: true, force: true });
-          fail(500, `Cannot write the session settings (${s.settingsPath}): ${e.message}`);
+          fail(500, `Не удалось записать настройки сессии (${s.settingsPath}): ${e.message}`);
         }
       }
       db.sessions.push(s);
@@ -966,7 +966,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
         } catch (e) {
           Object.assign(s, { status: 'error' });
           emit(s);
-          fail(500, `Cannot start terminal: ${e.message}`);
+          fail(500, `Не удалось запустить терминал: ${e.message}`);
         }
       } else if (o.prompt) {
         api.deliver(id, { from: 'user', text: o.prompt });
@@ -980,15 +980,15 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
      */
     permission(sid, { permissionId, optionId, note } = {}) {
       const s = get(sid);
-      if (typeof permissionId !== 'string' || typeof optionId !== 'string') fail(400, 'permissionId and optionId are required');
-      if (note != null && typeof note !== 'string') fail(400, 'note must be a string');
-      const msg = store.messages(sid).find((m) => m.kind === 'permission' && m.permission?.id === permissionId) || fail(404, `permission request ${permissionId} not found`);
+      if (typeof permissionId !== 'string' || typeof optionId !== 'string') fail(400, 'нужны permissionId и optionId');
+      if (note != null && typeof note !== 'string') fail(400, 'note: нужна строка');
+      const msg = store.messages(sid).find((m) => m.kind === 'permission' && m.permission?.id === permissionId) || fail(404, `запрос разрешения ${permissionId} не найден`);
       const p = msg.permission;
-      if (p.resolved) fail(409, `already answered: ${p.resolved}`);
-      if (!p.options.some((o) => o.id === optionId)) fail(400, `optionId must be one of ${p.options.map((o) => o.id).join(', ')}`);
+      if (p.resolved) fail(409, `уже отвечено: ${p.resolved}`);
+      if (!p.options.some((o) => o.id === optionId)) fail(400, `optionId — один из: ${p.options.map((o) => o.id).join(', ')}`);
       if (p.transport === 'acp') {
         // the agent holds its session/request_permission until this answer
-        if (!acp.answer(sid, permissionId, optionId)) fail(409, 'the agent no longer waits for this answer');
+        if (!acp.answer(sid, permissionId, optionId)) fail(409, 'агент больше не ждёт этого ответа');
         msg.permission = { ...p, resolved: optionId, resolvedAt: Date.now() };
         updateMessage(s, msg);
         setWaiting(s, null);
@@ -1014,10 +1014,10 @@ ${note.trim()}` : text });
     deliver(sid, { from = 'user', text, options }) {
       const s = get(sid);
       if (s.virtual) fail(409, 'внутренний субагент — писать можно только в родительский чат');
-      if (typeof text !== 'string' || !text.trim()) fail(400, 'text is required');
+      if (typeof text !== 'string' || !text.trim()) fail(400, 'нужен текст сообщения');
       const r = runtime(sid);
       if (s.kind === 'terminal') {
-        if (!r.pty) fail(409, 'terminal is not running');
+        if (!r.pty) fail(409, 'терминал не запущен');
         r.pty.write(`${text}\r`);
         return { queued: false };
       }
@@ -1089,8 +1089,8 @@ ${note.trim()}` : text });
 
     patch(sid, p) {
       const s = get(sid);
-      for (const k of ['title', 'approvalMode', 'model']) if (k in p && p[k] !== null && typeof p[k] !== 'string') fail(400, `${k} must be a string`);
-      if ('autoReport' in p && typeof p.autoReport !== 'boolean') fail(400, 'autoReport must be a boolean');
+      for (const k of ['title', 'approvalMode', 'model']) if (k in p && p[k] !== null && typeof p[k] !== 'string') fail(400, `${k}: нужна строка`);
+      if ('autoReport' in p && typeof p.autoReport !== 'boolean') fail(400, 'autoReport: нужно true или false');
       if (p.approvalMode && config.agents[s.agent]) checkMode(config.agents[s.agent], p.approvalMode);
       if (p.title?.trim()) s.title = p.title.trim();
       if ('approvalMode' in p) s.approvalMode = p.approvalMode || null;
@@ -1158,15 +1158,15 @@ ${note.trim()}` : text });
     },
     /** Sends the message to each interrupted session (workers/reviewers before their coordinators). */
     recoveryResume(ids, message) {
-      if (!Array.isArray(ids) || ids.some((x) => typeof x !== 'string')) fail(400, 'sessionIds must be an array of session ids');
+      if (!Array.isArray(ids) || ids.some((x) => typeof x !== 'string')) fail(400, 'sessionIds: нужен массив id сессий');
       const text = (typeof message === 'string' && message.trim()) || config.recovery?.message;
-      if (!text) fail(400, 'message is required (recovery.message is empty)');
+      if (!text) fail(400, 'нужен текст сообщения (recovery.message пуст)');
       const list = ids.map(get).filter((s) => s.interrupted).sort((a, b) => (a.role === 'coordinator') - (b.role === 'coordinator'));
       for (const s of list) api.deliver(s.id, { from: 'user', text });
       return { resumed: list.map((s) => s.id) };
     },
     recoveryDismiss(ids) {
-      if (!Array.isArray(ids) || ids.some((x) => typeof x !== 'string')) fail(400, 'sessionIds must be an array of session ids');
+      if (!Array.isArray(ids) || ids.some((x) => typeof x !== 'string')) fail(400, 'sessionIds: нужен массив id сессий');
       const list = ids.map(get).filter((s) => s.interrupted);
       for (const s of list) {
         s.interrupted = null;

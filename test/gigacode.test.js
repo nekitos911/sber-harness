@@ -86,15 +86,15 @@ test('shim parsing: ROOT=%~dp0.. resolves to the bundled node + cli-entry next t
   assert.equal(resolveGigacode(giga(plain)).file, bundledNode);
   assert.deepEqual(resolveGigacode(giga(shim, { node: process.execPath, cliEntry: entry })), { file: process.execPath, args: ['--max-old-space-size=6144', entry], env });
 
-  assert.throws(() => resolveGigacode(giga(badShim)), /GIGACODE_PACKAGE_IDENTITY not found/);
-  assert.throws(() => resolveGigacode(giga(path.join(bin, 'missing.cmd'))), /launcher not found/);
-  assert.throws(() => resolveGigacode(giga(shim, { node: process.execPath })), /must be set together/);
-  assert.throws(() => resolveGigacode(giga(shim, { node: process.execPath, cliEntry: path.join(bin, 'nope.js') })), /cliEntry does not exist/);
+  assert.throws(() => resolveGigacode(giga(badShim)), /нет GIGACODE_PACKAGE_IDENTITY/);
+  assert.throws(() => resolveGigacode(giga(path.join(bin, 'missing.cmd'))), /Лаунчер GigaCode не найден/);
+  assert.throws(() => resolveGigacode(giga(shim, { node: process.execPath })), /задаются вместе/);
+  assert.throws(() => resolveGigacode(giga(shim, { node: process.execPath, cliEntry: path.join(bin, 'nope.js') })), /cliEntry не существует/);
   // no bundled runtime anywhere: a clear error, never the system node
   const lonely = path.join(root, 'elsewhere', 'bin', 'gigacode.cmd');
   fs.mkdirSync(path.dirname(lonely), { recursive: true });
   fs.writeFileSync(lonely, shimText(IDENTITY));
-  assert.throws(() => resolveGigacode(giga(lonely)), /bundled node \+ cli-entry\.js/);
+  assert.throws(() => resolveGigacode(giga(lonely)), /встроенные в GigaCode node и cli-entry\.js/);
 });
 
 test('exact argv on new and resumed turns; settings.json without permissions; identity env', async () => {
@@ -159,7 +159,7 @@ test('interactive terminal of an agent types its resolved CLI; state has default
   const st = await state();
   assert.equal(st.defaultAgent, 'mock');
   assert.equal((await h.api('POST', '/api/tasks/sync')).status, 404);
-  assert.match((await state()).integrations.tasksProblem.error, /not configured/);
+  assert.match((await state()).integrations.tasksProblem.error, /не настроен/);
 
   const res = await h.api('POST', '/api/sessions', { kind: 'terminal', agent: 'giga', cwd: os.tmpdir() }); // the PTY host can hold its cwd briefly after kill
   if (res.status === 501) return t.skip(res.body.error);

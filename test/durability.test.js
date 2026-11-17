@@ -134,7 +134,7 @@ test('a saved pid that is alive but started at another time is neither adopted n
     await waitFor(async () => (await h.session('s_reused')).status === 'idle', { what: 'finalized from the file' });
     const msgs = await h.messages('s_reused');
     assert.ok(msgs.some((m) => m.kind === 'assistant' && m.text === 'частичный ответ'), 'what the file had is shown');
-    assert.ok(msgs.some((m) => m.kind === 'system' && /harness restarted, the turn was interrupted/.test(m.text)));
+    assert.ok(msgs.some((m) => m.kind === 'system' && /Harness перезапущен, ход прерван/.test(m.text)));
     assert.ok(!msgs.some((m) => m.text === 'переподключено после перезапуска'));
     assert.equal((await h.session('s_reused')).pid, null);
   } finally {

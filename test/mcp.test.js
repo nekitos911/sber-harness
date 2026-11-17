@@ -84,7 +84,7 @@ test('missing secret: that server reports a problem, the others keep working', a
   const rows = Object.fromEntries((await mcp.status()).map((r) => [r.name, r]));
   assert.equal(rows.tracker.ok, true, rows.tracker.error);
   assert.equal(rows.broken.ok, false);
-  assert.match(rows.broken.problem, /missing secret broken\/token/);
+  assert.match(rows.broken.problem, /нет секрета broken\/token/);
   assert.ok(!JSON.stringify(rows).includes('Bearer'));
 });
 

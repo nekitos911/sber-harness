@@ -85,7 +85,7 @@ test('crash (server.json left behind) and autoResume: the configured message goe
     await waitFor(async () => (await h.messages(a)).some((m) => m.kind === 'user' && /^Был перезапуск/.test(m.text)), { what: 'auto-resume message' });
     await waitFor(async () => (await h.state()).sessions.every((s) => s.status === 'idle' && !s.interrupted), { what: 'both resumed', timeout: 30000 });
     const last = (await h.messages(a)).filter((m) => m.kind === 'system').map((m) => m.text);
-    assert.ok(last.some((t) => /harness restarted/.test(t)));
+    assert.ok(last.some((t) => /Harness перезапущен/.test(t)));
     assert.equal((await h.api('GET', '/api/settings')).body.recovery.autoResume, true);
   } finally {
     await h.srv.close();

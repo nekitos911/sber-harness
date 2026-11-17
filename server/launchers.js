@@ -294,24 +294,24 @@ export function parseShim(shimPath, text) {
 export function resolveGigacode(agentCfg) {
   const { command } = gigacodeCommand(agentCfg);
   const shim = typeof command === 'string' ? locate(command) : null;
-  if (!shim) fail(`GigaCode launcher not found: ${JSON.stringify(command)}. Set agents.gigacode.command to the path of gigacode.cmd (Windows) or the gigacode executable.`);
+  if (!shim) fail(`Лаунчер GigaCode не найден: ${JSON.stringify(command)}. Укажите agents.gigacode.command — путь к gigacode.cmd (Windows) или к исполняемому gigacode.`);
   const explicit = !!(agentCfg.node || agentCfg.cliEntry);
   if (process.platform !== 'win32' && !explicit && !/\.(cmd|bat)$/i.test(shim)) {
     // POSIX: the launcher sets its own identity env and exit codes are honest: run it as is, same argv
     if (executable(shim)) return { file: shim, args: [], env: {} };
     const text = fs.readFileSync(shim, 'utf8');
     const pair = parseShShim(shim, text);
-    if (!exists(pair.node) || !exists(pair.entry)) fail(`${shim} is not executable and its node + cli-entry.js could not be found; chmod +x it or set agents.gigacode.node and cliEntry.`);
+    if (!exists(pair.node) || !exists(pair.entry)) fail(`${shim} не исполняемый, и его node + cli-entry.js не найдены; сделайте chmod +x или задайте agents.gigacode.node и cliEntry.`);
     const identity = shimIdentity(text);
     return { file: pair.node, args: [...(agentCfg.nodeArgs || []), pair.entry], env: identity ? { GIGACODE_PACKAGE_IDENTITY: identity, GIGACODE_PACKAGE_LAUNCHER: shim } : {} };
   }
   const text = fs.readFileSync(shim, 'utf8');
   const identity = shimIdentity(text);
-  if (!identity) fail(`GIGACODE_PACKAGE_IDENTITY not found in ${shim}; the CLI refuses to start without it. Point agents.gigacode.command at the gigacode.cmd shim.`);
+  if (!identity) fail(`В ${shim} нет GIGACODE_PACKAGE_IDENTITY, без него CLI не запустится. Укажите в agents.gigacode.command путь к gigacode.cmd.`);
   let pair;
   if (agentCfg.node || agentCfg.cliEntry) {
-    if (!agentCfg.node || !agentCfg.cliEntry) fail('agents.gigacode.node and agents.gigacode.cliEntry must be set together (or both null).');
-    for (const k of ['node', 'cliEntry']) if (!exists(agentCfg[k])) fail(`agents.gigacode.${k} does not exist: ${agentCfg[k]}`);
+    if (!agentCfg.node || !agentCfg.cliEntry) fail('agents.gigacode.node и agents.gigacode.cliEntry задаются вместе (или оба null).');
+    for (const k of ['node', 'cliEntry']) if (!exists(agentCfg[k])) fail(`agents.gigacode.${k} не существует: ${agentCfg[k]}`);
     pair = { node: agentCfg.node, entry: agentCfg.cliEntry };
   } else {
     const dir = path.dirname(shim);
@@ -323,7 +323,7 @@ export function resolveGigacode(agentCfg) {
     ].map((c) => ({ node: c.node && path.resolve(c.node), entry: c.entry && path.resolve(c.entry) }));
     pair = candidates.find((c) => exists(c.node) && exists(c.entry));
     if (!pair) {
-      fail(`Cannot find GigaCode's bundled node + cli-entry.js for ${shim} (tried ${candidates.map((c) => c.node).filter(Boolean).join(', ')}). Set agents.gigacode.node and agents.gigacode.cliEntry.`);
+      fail(`Не найдены встроенные в GigaCode node и cli-entry.js для ${shim} (проверено: ${candidates.map((c) => c.node).filter(Boolean).join(', ')}). Задайте agents.gigacode.node и agents.gigacode.cliEntry.`);
     }
   }
   return {

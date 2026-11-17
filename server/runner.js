@@ -45,26 +45,26 @@ function unwrapShim(file) {
   if (js) return { file: process.execPath, args: [js] };
   const exe = shimTargets(file).filter((t) => /\.exe$/i.test(t) && !/[\\/]node\.exe$/i.test(t)).pop();
   if (exe) return { file: exe, args: [] };
-  throw new Error(`Cannot unwrap "${file}" to a node entry point. Set "command" in harness.config.json to an argv array, e.g. ["node", "C:/path/to/cli.js"].`);
+  throw new Error(`Не удалось найти node-скрипт за «${file}». Укажите "command" в harness.config.json массивом argv, например ["node", "C:/path/to/cli.js"].`);
 }
 
 /** @returns {{file: string, args: string[]}} */
 export function resolveCommand(command, env = process.env) {
   if (Array.isArray(command)) {
-    if (!command.length) throw new Error('"command" argv array is empty');
+    if (!command.length) throw new Error('массив argv в "command" пуст');
     return { file: command[0] === 'node' ? process.execPath : command[0], args: command.slice(1) };
   }
-  if (typeof command !== 'string' || !command) throw new Error('"command" must be a string or an argv array');
+  if (typeof command !== 'string' || !command) throw new Error('"command": строка или массив argv');
   if (command === 'node') return { file: process.execPath, args: [] };
   const found = locate(command, env);
   if (!found) {
-    throw new Error(`Command "${command}" not found in PATH. Set "command" in harness.config.json to an absolute path or an argv array, e.g. ["node", "C:/path/to/cli.js"].`);
+    throw new Error(`Команда «${command}» не найдена в PATH. Укажите "command" в harness.config.json абсолютным путём или массивом argv, например ["node", "C:/path/to/cli.js"].`);
   }
   if (!isWin) return { file: found, args: [] };
   const ext = path.extname(found).toLowerCase();
   if (ext === '.exe' || ext === '.com') return { file: found, args: [] };
   if (ext === '.cmd' || ext === '.bat') return unwrapShim(found);
-  throw new Error(`Cannot run "${found}" without a shell. Set "command" in harness.config.json to an argv array, e.g. ["node", "C:/path/to/cli.js"].`);
+  throw new Error(`«${found}» нельзя запустить без оболочки. Укажите "command" в harness.config.json массивом argv, например ["node", "C:/path/to/cli.js"].`);
 }
 
 export function killTree(pid) {
@@ -282,7 +282,7 @@ export function runTurn({ launcher, ctx, command, cwd, env, firstEventTimeoutMs,
   let startedAt = reattach?.startedAt ?? null;
   if (!reattach) {
     try {
-      if (!fs.existsSync(cwd)) throw new Error(`Working directory does not exist: ${cwd}`);
+      if (!fs.existsSync(cwd)) throw new Error(`Рабочая папка не существует: ${cwd}`);
       const { file, args: pre } = command?.file ? command : resolveCommand(command);
       const args = [...pre, ...launcher.buildArgs(ctx)];
       log.write(`\n=== ${new Date().toISOString()} ${shortArg(file)} ${args.map(shortArg).join(' ')}\n`);
@@ -401,7 +401,7 @@ export function runTurn({ launcher, ctx, command, cwd, env, firstEventTimeoutMs,
     };
     if (child) {
       child.on('error', (e) => {
-        res.error = e.code === 'ENOENT' ? `Cannot start agent: ${e.message}` : e.message;
+        res.error = e.code === 'ENOENT' ? `Не удалось запустить агента: ${e.message}` : e.message;
         if (!child.pid) finish();
       });
       child.on('exit', (code, signal) => {
