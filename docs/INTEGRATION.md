@@ -97,6 +97,29 @@ reconstruction: fix the normalizer in `server/launchers.js` (stream) or the pars
   `workspaces.root` = the folder with the repositories (e.g. `C:/Users/<you>/IdeaProjects`), `repos` = the list of names
   (empty = all git repositories in the folder).
 
+## 6. Sub-agents, questions, permissions, ACP (built on assumptions; check and fix)
+
+Answer the "Open questions" in `docs/GIGACODE-FACTS.md` live (raw samples into `docs/target-machine/` or the
+fixtures) and fix only the seams:
+- **Sub-agents as chats.** With the default `orchestration.subagents: "harness"`, ask GigaCode in a chat: "start the
+  repository-explorer sub-agent and find pom.xml". Expected: the agent calls `mcp__harness__agent` and a separate child chat
+  appears. If the model calls the built-in `agent` anyway, a read-only sub-agent chat is shown (this needs
+  `parent_tool_use_id` in the stream; if it is missing, fix the normalizer in `server/launchers.js`). Install the
+  `harness-orchestration` skill in Settings (with the user's consent). If GigaCode supports hooks, fill in
+  `agents.gigacode.agentToolHook` (format in `docs/ARCHITECTURE.md` → "Automatic: …") so the built-in `agent` is blocked reliably.
+- **MCP timeout.** A `worker_run` sub-agent can run a long time: check that the `harness` tool call does not fail on
+  GigaCode's timeout (the run file sets `mcpServers.harness.timeout`; check the units and whether `progress` is honoured).
+- **Questions.** Find the name of GigaCode's built-in question tool → `agents.gigacode.questionTools`. Check that the card with options appears.
+- **Permissions (headless).** In "With confirmation" mode, ask for a command that needs permission → the real denial text
+  → `agents.gigacode.denialPattern`; the "Allow once" card should let the agent continue.
+- **ACP.** Try `transport: "acp"` (Settings → GigaCode → Transport) on a test chat: streaming, a permission request with
+  the agent waiting, Stop, continuing after a harness restart. If `--acp` in GigaCode differs from the protocol, fix
+  `server/acp.js` (tests: `test/acp.test.js` + `scripts/mock-acp-agent.js`). If ACP works, decide with the user whether to
+  make it the default.
+- **Recovery.** Reboot the PC (or kill `node` while an agent is running): after startup the "Session recovery" window
+  appears; "Continue selected" continues the sessions with context.
+- **Linux** (if relevant): the actual GigaCode install layout on Linux (`docs/ARCHITECTURE.md` → "Cross-platform").
+
 ## Done when
 
 - [ ] `npm test` and `npm run build` are green; the fixtures are replaced with real ones (or the differences are fixed in parsers).
@@ -106,4 +129,7 @@ reconstruction: fix the normalizer in `server/launchers.js` (stream) or the pars
 - [ ] "Take into work" on a task card starts `/full-task <url>` in a new worktree `<repo>-worktrees/<KEY>`.
 - [ ] "Sync" pulls your tasks from onework; the description and transitions load in the drawer.
 - [ ] "Create PR" creates a PR in sourcecontrol and shows the link; a repeat does not create a duplicate.
+- [ ] Sub-agents of `/full-task` are visible as separate chats (harness or read-only); a question and a permission are answered from the UI.
+- [ ] After a harness restart running agents keep going; after a PC reboot the "Session recovery" window continues them.
+- [ ] The open questions in `docs/GIGACODE-FACTS.md` are answered, and the facts/fixtures are updated.
 - [ ] Secrets live only in the secrets file; `git status` is clean of local configs and `data/`.

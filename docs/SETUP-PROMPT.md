@@ -38,6 +38,10 @@ Order (each step ends with evidence: the command and its output, or a descriptio
 5. PRs (section 4): on a test branch of <REPOSITORY>, create a PR, check that a repeat does not create a duplicate.
 6. Full scenario: "Take into work" on <TASK_KEY> → a worktree <repo>-worktrees/<KEY>, a chat with /full-task, agent
    statuses in the sidebar; then a coordinator with two workers in different repositories.
+7. Section 6 of INTEGRATION.md: answer the open questions of docs/GIGACODE-FACTS.md live (mcpServers merge, hooks,
+   the agent schema and parent_tool_use_id, MCP timeout, the question tool, the denial text, --acp, /models, long
+   prompts, authorization), install the harness-orchestration skill (ask the user first), and check sub-agents as chats,
+   questions/permissions, ACP on a test chat, and recovery after a restart. Record the facts in GIGACODE-FACTS.md.
 
 Constraints:
 - Do not change the UI, orchestration or the API contract without need; if you have to, update docs/ARCHITECTURE.md
