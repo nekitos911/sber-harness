@@ -55,9 +55,15 @@ protected by a token plus a Host check.
   `~/.gigacode/agents/<name>.md`) → an ephemeral child chat → the result returns to the orchestrator as a tool result
   (long-poll + progress, survives a harness restart). If the model uses the built-in `agent`, a virtual read-only chat is
   built from the stream.
-- **Questions/permissions.** `ask` and GigaCode's question tool become a card with options. In headless mode a denial
-  becomes a card with allow once / allow for this session / reject (the next turn runs with an escalated mode). In ACP
-  mode the agent waits for the answer to `request_permission`.
+- **Questions/permissions.** `ask` and GigaCode's question tool become a card with options. GigaCode has no yolo, so
+  three layers keep it from asking: "Full access" = `auto` + `tools.sandbox: workspace` (self-healing: if the sandbox
+  does not start, auto-edit plus the allow-list is used and the user is notified); a default allow-list of routine
+  commands (`--allowed-tools run_shell_command(git)` …) on every auto-edit/default turn; denials that are left become a
+  card "the CLI denied" with "Allow and retry" (a grant for one turn, the session or the project via `--allowed-tools`).
+  In ACP mode the agent really waits for the answer to `request_permission`. Exactly how the turn ran is in `runInfo`
+  on the user message.
+- **Turn end.** The turn ends for the user at the `result` event; a CLI process that lingers is killed after
+  `exitGraceMs`. Prompts over ~30K characters go through a file (the Windows command-line limit).
 - **Rework.** Into the same worker session (`--resume`, context preserved) or a new one in the same worktree; the task goes back to "In progress".
 - **Release ports, commit/PR, tracker:** see the `README` and `docs/ARCHITECTURE.md`, sections "Branches", "Board ↔ tracker".
 - **Restarts.** Harness: agents keep running and are reattached. Reboot/crash: sessions are marked `interrupted` and
@@ -72,11 +78,24 @@ own rules (`..\<repo>-worktrees\<KEY>`, `feature/<KEY>`). The harness links ever
 key to the task (task.worktrees, branch, repository) and logs «Агент создал рабочее дерево …»; Changes / commit / PR then
 work per worktree.
 
+### Seeing what the agents do (UI)
+
+- Sidebar: "Needs attention" at the top (permission, question, login, no output); projects → worktrees (one line, a
+  summary on the right) → agents (state, current action, model, time); same-worktree sub-agents with `↳`, archived once
+  finished; children in other worktrees shown under their own worktree; terminals as `⌨N`; service sessions in
+  "Service". "Workspace settings": grouping, sorting, filters.
+- Board: a card shows the live state of its agent, ± changes and, after the agent finishes, "Diff · Commit · PR · Rework".
+- "Waiting for me" (Inbox): one entry per session with inline actions; pending counts in the tab title.
+- Chat: Orca-style turns (timer, current action, "Reasoned", step groups, "Changed N files", "New"), the composer
+  scrolls to the bottom when you send.
+
 ## 4. What has been checked and how
 
 | What | How it was checked |
 |---|---|
-| The whole server (≈137 tests): launch, stream, orchestration, sub-agents, review, board, git, ports, branches, MCP, integrations, durability, recovery, ACP, folders, attention | `npm test` on Windows (Node 24) and Linux (Node 22, Docker) |
+| The whole server (≈170 tests): launch, stream, orchestration, sub-agents, review, board, git, ports, branches, MCP, integrations, durability, recovery, ACP, folders, attention, permissions | `npm test` on Windows (Node 24) and Linux (Node 22, Docker) |
+| Independent audit | a separate review of the server code (11 bugs found and fixed with regression tests) and a separate QA pass over the UI at 7 widths (768–1920), dark/light — the findings are fixed |
+| Real machine (partly) | the user's agent: launch via `node.exe`+`cli-entry.js`, MCP servers, the `auto` + sandbox and denial texts (see GIGACODE-FACTS "Confirmed") |
 | Full chat cycle, `--resume`, harness MCP tools inside the agent | live, with Claude Code as a stand-in for GigaCode |
 | UI | by hand in a browser against a live server with the mock agent and fixture-backed onework/sourcecontrol: questions, permissions, folders, rework, stalled, job progress, recovery, PRs, sync |
 | GigaCode, onework, sourcecontrol, ACP mode of GigaCode | **not live**: built from facts (`docs/GIGACODE-FACTS.md`); the open questions are listed there |
@@ -110,6 +129,7 @@ node server/index.js --print-config   # resolved paths, launcher, models, secret
 node scripts/mcp-call.js <server> --list | <tool> '<json>'
 ```
 Mock agent directives in a message: `#spawn <spec>`, `#done <summary>`, `#fail`, `#ask <q> | <opt> | …`,
-`#question`, `#deny <tool>`, `#run <profile> <spec>`, `#auth`, `#crash`, `#silent`, `#slow`, `#raw`, `/models`.
+`#question`, `#deny <tool>`, `#subdeny`, `#run <profile> <spec>`, `#runwt`, `#auth`, `#crash`, `#silent`, `#slow`,
+`#linger`, `#sandboxfail`, `#raw`, `/models` (the up-to-date list is in the header of `scripts/mock-agent.js`).
 Rules: `AGENTS.md`. Contract: `docs/ARCHITECTURE.md` (keep it in sync). Optional server features are announced in
 `/api/state.features`; the UI calls only what is listed there.
