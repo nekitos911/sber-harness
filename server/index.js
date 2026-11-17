@@ -17,7 +17,7 @@ import * as git from './git.js';
 import * as wfs from './fs.js';
 import { createMcpManager, loadSecrets, secretsFile, serverDefs } from './mcp-client.js';
 import { launchers } from './launchers.js';
-import { importTasks, transitionTask } from './integrations/tasks.js';
+import { importTasks, transitionTask, getExternal, getTransitions } from './integrations/tasks.js';
 import { createPullRequest } from './integrations/pr.js';
 
 const MAX_BODY = 1024 * 1024;
@@ -93,6 +93,8 @@ export async function startServer(opts = {}) {
   if (literal.length) {
     console.warn(`\n!!! WARNING: config values look like literal credentials: ${literal.join(', ')}\n!!! Move them to the secrets file (${secretsFile(config)}) and reference them as $secret:<scope>/<name>.\n`);
   }
+  const serverJson = path.join(config.dataDir, 'server.json');
+  assertSingleInstance(serverJson, config.dataDir);
   const store = createStore(config.dataDir);
   const db = store.db;
   const bus = createBus();
@@ -138,6 +140,7 @@ export async function startServer(opts = {}) {
         approvalMode: a.approvalMode ?? null,
         approvalModes: a.approvalModes || [],
         model: a.model ?? null,
+        models: a.models || [],
         modelGrades: a.settings?.agents?.modelGrades || {},
         allowedGrades: a.settings?.agents?.allowedGrades || [],
         taskPromptTemplate: a.taskPromptTemplate ?? null,
@@ -161,6 +164,10 @@ export async function startServer(opts = {}) {
     if ('model' in a) {
       if (a.model !== null && typeof a.model !== 'string') fail(400, `agents.${id}.model must be a string or null`);
       p.model = a.model || null;
+    }
+    if ('models' in a) {
+      check(a, { models: 'array' });
+      p.models = a.models.map((m) => m.trim()).filter(Boolean);
     }
     if ('taskPromptTemplate' in a) {
       if (a.taskPromptTemplate !== null && typeof a.taskPromptTemplate !== 'string') fail(400, `agents.${id}.taskPromptTemplate must be a string or null`);
@@ -234,6 +241,7 @@ export async function startServer(opts = {}) {
     notifications: db.notifications,
     agents: Object.entries(config.agents).map(([id, a]) => ({
       id, label: a.label || id, launcher: a.launcher, approvalModes: a.approvalModes || [], approvalMode: a.approvalMode || null, enabled: a.enabled !== false,
+      models: a.models || [], model: a.model ?? null,
     })),
     defaultAgent: config.agents[config.defaultAgent] && config.agents[config.defaultAgent].enabled !== false
       ? config.defaultAgent
@@ -305,9 +313,11 @@ export async function startServer(opts = {}) {
     check(body, { target: 'string', agent: 'string?' });
     return orch.port(params.id, body.target, { agent: body.agent });
   });
+  route('GET', '/api/tasks/:id/external', ({ params }) => getExternal({ config, mcp, tasks, task: tasks.get(params.id) }));
+  route('GET', '/api/tasks/:id/transitions', ({ params }) => getTransitions({ config, mcp, tasks, task: tasks.get(params.id) }));
   route('POST', '/api/tasks/:id/tracker-status', ({ params, body }) => {
-    check(body, { status: 'string', comment: 'string?' });
-    return transitionTask({ config, mcp, tasks, task: tasks.get(params.id), status: body.status, comment: body.comment || '' });
+    check(body, { transition: 'string?', status: 'string?', comment: 'string?' });
+    return transitionTask({ config, mcp, tasks, task: tasks.get(params.id), transition: body.transition, status: body.status, comment: body.comment || '' });
   });
 
   // sessions
@@ -341,7 +351,7 @@ export async function startServer(opts = {}) {
     const branch = (await git.currentBranch(body.cwd)) || fail(400, 'cwd is not on a branch');
     return createPullRequest({
       config, mcp, cwd: body.cwd, branch, base: body.base || config.git.defaultBase,
-      title: body.title, body: body.body || '', repo: await git.repoName(body.cwd),
+      title: body.title, body: body.body || '', ...(await git.remoteInfo(body.cwd)),
     });
   });
 
@@ -515,17 +525,23 @@ export async function startServer(opts = {}) {
 
   const port = opts.port ?? config.port ?? 4777;
   await new Promise((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(port, config.host, () => {
-      server.off('error', reject);
-      resolve();
+    server.once('error', (e) => {
+      sessions.close();
+      store.close();
+      if (e.code !== 'EADDRINUSE') return reject(e);
+      const hint = process.platform === 'win32' ? `netstat -ano | findstr :${port}` : `lsof -i :${port}`;
+      reject(Object.assign(new Error(`Port ${port} is already in use (an old harness?). Find the process with: ${hint}  - or set "port" in harness.config.local.json.`), { code: 'EADDRINUSE' }));
     });
+    server.listen(port, config.host, () => resolve());
   });
   const actualPort = server.address().port;
   url = `http://${config.host.includes(':') ? `[${config.host}]` : config.host}:${actualPort}`;
-  const serverJson = path.join(config.dataDir, 'server.json');
   writeAtomic(serverJson, JSON.stringify({ url, pid: process.pid }));
   scheduleSync();
+  // best-effort: folders renamed to *.stale-<ts> by earlier deletions (files held by antivirus/indexer)
+  for (const dir of [config.dataDir, path.join(config.dataDir, 'runs'), ...db.workspaces.map((w) => git.worktreeRootFor(w.path, config.worktreeRoot))]) {
+    git.sweepStale(dir);
+  }
 
   let closed = false;
   return {
@@ -550,6 +566,23 @@ export async function startServer(opts = {}) {
       } catch {}
     },
   };
+}
+
+/** One harness per data dir: a live pid in <dataDir>/server.json (not ours) means another instance owns it. */
+function assertSingleInstance(serverJson, dataDir) {
+  let other;
+  try {
+    other = JSON.parse(fs.readFileSync(serverJson, 'utf8'));
+  } catch {
+    return;
+  }
+  if (!other?.pid || other.pid === process.pid) return;
+  try {
+    process.kill(other.pid, 0);
+  } catch (e) {
+    if (e.code === 'ESRCH') return; // stale file from a crashed run
+  }
+  throw Object.assign(new Error(`Another harness (pid ${other.pid}, ${other.url}) is already running on ${dataDir}. Stop it first or use another dataDir.`), { code: 'ELOCKED' });
 }
 
 /** Resolved config for humans: paths and whether they exist, modes, refresh, secret NAMES (never values). */

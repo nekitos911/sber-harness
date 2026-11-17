@@ -160,17 +160,22 @@ export async function worktrees(cwd) {
   });
 }
 
+/** Default worktree root: <repoParent>/<repoName>-worktrees (short paths: Windows MAX_PATH is 260). */
+export const worktreeRootFor = (mainRepo, worktreeRoot) => (worktreeRoot
+  ? path.resolve(mainRepo, expandHome(worktreeRoot))
+  : path.join(path.dirname(mainRepo), `${path.basename(mainRepo)}-worktrees`));
+
 /**
- * Creates a worktree for `branch` under <worktreeRoot> (default <repo>/../<repoName>.worktrees), directory named
- * after the branch. Existing branch: checked out (or its existing worktree reused); new branch: created from `start`.
+ * Creates a worktree for `branch` in <worktreeRoot>/<dirName> (dirName defaults to the branch's last segment).
+ * Existing branch: its existing worktree is reused, else it is checked out; new branch: created from `start`.
  */
-export async function addWorktree(cwd, { branch, start = null, worktreeRoot = null }) {
+export async function addWorktree(cwd, { branch, start = null, worktreeRoot = null, dirName = null }) {
   const list = await worktrees(cwd);
   const existing = list.find((w) => w.branch === branch);
   if (existing) return existing;
   const main = list[0].path;
-  const root = worktreeRoot ? path.resolve(main, expandHome(worktreeRoot)) : path.join(path.dirname(main), `${path.basename(main)}.worktrees`);
-  const base = path.join(root, branch.replace(/[\\/]/g, '-'));
+  const root = worktreeRootFor(main, worktreeRoot);
+  const base = path.join(root, String(dirName || branch.split('/').pop()).replace(/[^\w.-]+/g, '-'));
   let dir = base;
   for (let n = 2; fs.existsSync(dir); n++) dir = `${base}-${n}`;
   fs.mkdirSync(root, { recursive: true });
@@ -181,37 +186,75 @@ export async function addWorktree(cwd, { branch, start = null, worktreeRoot = nu
   return { path: dir, branch, head: await out(dir, ['rev-parse', 'HEAD']).catch(() => ''), main: false };
 }
 
+/**
+ * Removes a folder even while an antivirus/indexer holds files in it: rename to <dir>.stale-<ts> first (that works on
+ * Windows), then delete with retries. Leftovers are swept on the next start (sweepStale).
+ */
+export async function removeDir(dir) {
+  if (!fs.existsSync(dir)) return true;
+  let target = dir;
+  try {
+    target = `${dir}.stale-${Date.now()}`;
+    fs.renameSync(dir, target);
+  } catch {
+    target = dir;
+  }
+  try {
+    await fs.promises.rm(target, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Best-effort removal of <parent>/*.stale-<ts> folders left by removeDir. */
+export async function sweepStale(parent) {
+  let names = [];
+  try { names = fs.readdirSync(parent); } catch { return; }
+  await Promise.all(names.filter((n) => /\.stale-\d+$/.test(n))
+    .map((n) => fs.promises.rm(path.join(parent, n), { recursive: true, force: true, maxRetries: 3 }).catch(() => {})));
+}
+
 /** `worktree remove --force` + `prune --expire now`, then whatever is left of the folder. */
 export async function removeWorktree(cwd, wtPath) {
   const dir = path.resolve(wtPath);
   const r = await git(cwd, ['worktree', 'remove', '--force', dir], { ok: [0, 128] });
   await git(cwd, ['worktree', 'prune', '--expire', 'now'], { ok: [0, 128] });
-  if (!fs.existsSync(dir)) return;
-  let target = dir;
-  if (process.platform === 'win32') {
-    // a locked folder can still be renamed; the stale copy is removed with retries and never blocks a new worktree
-    try {
-      target = `${dir}.stale-${Date.now()}`;
-      fs.renameSync(dir, target);
-    } catch {
-      target = dir;
-    }
-  }
-  try {
-    await fs.promises.rm(target, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
-  } catch (e) {
-    if (r.code) fail(400, `cannot remove worktree ${dir}: ${r.stderr.trim() || e.message}`);
-  }
+  if (!(await removeDir(dir)) && r.code) fail(400, `cannot remove worktree ${dir}: ${r.stderr.trim()}`);
 }
 
-/** Repository id for PR services: "owner/name" from the origin URL, else the folder name. */
-export async function repoName(cwd) {
+/** project + repository = the last two path segments of the origin URL (ssh://, https://, scp-like), without .git. */
+export function parseRemote(url) {
+  const p = String(url).trim()
+    .replace(/^[a-z][a-z0-9+.-]*:\/\/[^/]+/i, '') // scheme://user@host:port
+    .replace(/^[^@/\\]+@[^:/]+:/, '') // git@host:
+    .replace(/\.git\/?$/i, '')
+    .replace(/\/+$/, '');
+  const parts = p.split(/[\\/]/).filter(Boolean);
+  return parts.length ? { project: parts.length > 1 ? parts.at(-2) : null, repository: parts.at(-1) } : null;
+}
+
+/** { project, repository, repo } of cwd's origin; falls back to the folder name. */
+export async function remoteInfo(cwd) {
   const r = await git(cwd, ['remote', 'get-url', 'origin'], { ok: [0, 2, 128] });
-  const url = r.code ? '' : r.stdout.trim();
-  const m = url.match(/^(?:[a-z+]+:\/\/[^/]+\/|[^@/]+@[^:]+:)(.+?)(?:\.git)?\/?$/i);
-  if (m) return m[1];
-  if (url) return path.basename(url).replace(/\.git$/, '');
-  return path.basename(await out(cwd, ['rev-parse', '--show-toplevel']));
+  const parsed = r.code ? null : parseRemote(r.stdout);
+  const repository = parsed?.repository || path.basename(await out(cwd, ['rev-parse', '--show-toplevel']));
+  const project = parsed?.project ?? null;
+  return { project, repository, repo: project ? `${project}/${repository}` : repository };
+}
+
+export const repoName = async (cwd) => (await remoteInfo(cwd)).repo;
+
+/** release/1.54.0 -> rel154; anything else -> a branch-safe slug of the target. */
+export function targetSlug(target) {
+  const m = String(target).match(/^release\/(\d+)\.(\d+)/);
+  return m ? `rel${m[1]}${m[2]}` : sanitizeBranch(target).replace(/\//g, '-');
+}
+
+/** Commits of `branch` whose change is not in `target` yet (patch-id aware), oldest first; null if a ref is missing. */
+export async function missingCommits(cwd, target, branch) {
+  const r = await git(cwd, ['log', '--cherry-pick', '--right-only', '--no-merges', '--reverse', '--format=%H', `${target}...${branch}`], { ok: [0, 128] });
+  return r.code ? null : r.stdout.split('\n').map((l) => l.trim()).filter(Boolean);
 }
 
 export async function revList(cwd, range) {

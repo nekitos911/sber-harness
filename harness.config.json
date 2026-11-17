@@ -2,16 +2,19 @@
   "host": "127.0.0.1",
   "port": 4777,
   "dataDir": "./data",
-  "shell": { "command": "powershell.exe", "args": ["-NoLogo"] },
+  "shell": {
+    "command": "powershell.exe",
+    "args": ["-NoLogo", "-NoExit", "-Command", "[Console]::InputEncoding=[Console]::OutputEncoding=[System.Text.Encoding]::UTF8"]
+  },
   "defaultAgent": "gigacode",
   "workspaces": { "root": null, "repos": [] },
   "worktreeRoot": null,
   "git": {
     "defaultBase": "develop",
     "branchTemplate": "feature/{key}",
-    "portBranchTemplate": "{branch}-{target}",
-    "commitTitleTemplate": "{key}: {title}",
-    "prTitleTemplate": "{key}: {title}"
+    "portBranchTemplate": "{branch}-{targetSlug}",
+    "commitTitleTemplate": "{key} {title}",
+    "prTitleTemplate": "{key} {title}"
   },
   "tasks": {
     "promptTemplate": "{key}: {title}\n\n{description}\n\nTarget branches: {targets}\nLink: {taskUrl}{notes}"
@@ -29,13 +32,15 @@
       "approvalMode": "auto",
       "approvalModes": ["plan", "default", "auto-edit", "auto"],
       "model": null,
+      "models": [],
       "settingsEnv": "GIGACODE_SYSTEM_SETTINGS_PATH",
       "settings": {
         "agents": { "modelGrades": {}, "allowedGrades": [] },
         "chatRecording": true
       },
-      "taskPromptTemplate": null,
-      "firstEventTimeoutMs": 30000,
+      "inheritUserMcp": false,
+      "taskPromptTemplate": "/full-task {taskUrl}{notes}",
+      "firstEventTimeoutMs": 120000,
       "env": {}
     },
     "claude": {
@@ -68,7 +73,9 @@
   "integrations": {
     "tasks": {
       "enabled": false,
+      "format": "onework-markdown",
       "server": "onework",
+      "space": "PROJ",
       "tools": {
         "find": "sbertrack_findIssues",
         "get": "sbertrack_getIssue",
@@ -78,27 +85,40 @@
         "me": "sbertrack_getUser"
       },
       "args": {},
-      "limit": 30,
+      "limit": 100,
       "refreshSec": 0,
-      "itemsPath": "issues",
-      "map": {
-        "externalId": "key",
-        "title": "summary",
-        "description": "description",
-        "externalUrl": "url",
-        "status": "status",
-        "priority": "priority"
+      "urlTemplate": "",
+      "statusMap": {
+        "todo": "todo",
+        "development": "in_progress",
+        "to_code_review": "review",
+        "code_review": "review",
+        "qa": "review",
+        "ready_for_ift": "review",
+        "ift": "review",
+        "ready_for_uat": "review",
+        "done": "done"
       },
-      "statusMap": { "Open": "todo", "In Progress": "in_progress", "Review": "review", "Done": "done" },
-      "closedStatuses": ["Closed", "Cancelled", "Declined"],
-      "transition": { "args": { "key": "{key}", "status": "{status}", "comment": "{comment}" } }
+      "priorityMap": { "low": "low", "mid": "medium", "medium": "medium", "high": "high" },
+      "closedStatuses": ["done", "cancelled", "declined"]
     },
     "pr": {
       "enabled": false,
       "server": "sourcecontrol",
-      "tool": "create_pull_request",
-      "args": { "repo": "{repo}", "source": "{branch}", "target": "{base}", "title": "{title}", "description": "{body}" },
-      "urlPath": "url"
+      "tool": "git_create_pull_request",
+      "args": {
+        "project": "{project}",
+        "repository": "{repository}",
+        "head": "{branch}",
+        "base": "{base}",
+        "title": "{title}",
+        "body": "{body}"
+      },
+      "urlPath": "html_url",
+      "listTool": "git_list_pull_requests",
+      "listArgs": { "project": "{project}", "repository": "{repository}", "state": "OPEN", "page": 1, "limit": 100 },
+      "listItemsPath": "pulls",
+      "limits": { "titleBytes": 100, "bodyBytes": 512 }
     }
   }
 }

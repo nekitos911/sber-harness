@@ -91,7 +91,7 @@ test('chat session: two turns resume the same CLI session; crash shows stderr', 
 
   const c = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', cwd: repo, prompt: '#crash' })).body;
   const err = await waitFor(async () => (await messages(c.id)).find((m) => m.kind === 'error'), { what: 'crash error' });
-  assert.match(err.text, /exited with code 1[\s\S]*simulated crash/);
+  assert.match(err.text, /^The agent failed \(exit code 1\):\nmock-agent: simulated crash/);
   assert.equal((await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'nope' })).status, 400);
 });
 
@@ -167,7 +167,7 @@ test('harness-mcp stdio server proxies tools/list and tools/call', async () => {
 
 test('terminal session runs a command in a PTY', async (t) => {
   const isWin = process.platform === 'win32';
-  const res = await h.api('POST', '/api/sessions', { kind: 'terminal', cwd: os.tmpdir(), command: isWin ? 'Write-Output (6*7001)' : 'echo $((6*7001))' });
+  const res = await h.api('POST', '/api/sessions', { kind: 'terminal', cwd: os.tmpdir(), command: isWin ? "Write-Output ('при' + 'вет' + (6*7001))" : 'echo "при""вет"$((6*7001))' });
   if (res.status === 501) return t.skip(res.body.error);
   assert.equal(res.status, 200, JSON.stringify(res.body));
   const s = res.body;
@@ -180,7 +180,7 @@ test('terminal session runs a command in a PTY', async (t) => {
   await new Promise((r) => ws.on('open', r));
   ws.send(JSON.stringify({ t: 'term.attach', id: s.id }));
   try {
-    await waitFor(() => out.includes('42006'), { timeout: 20000, what: 'pty output' });
+    await waitFor(() => out.includes('привет42006'), { timeout: 20000, what: 'pty output (UTF-8)' });
   } finally {
     ws.close();
     await h.api('DELETE', `/api/sessions/${s.id}`);
@@ -294,4 +294,49 @@ test('subagents registry route; board: manual status, hidden imported tasks, tra
   const hidden = (await state()).tasks.find((x) => x.id === t.id);
   assert.equal(hidden.hidden, true);
   assert.equal((await h.api('POST', `/api/tasks/${t.id}/tracker-status`, { status: 'Done' })).status, 501);
+});
+
+test('run outcomes: silent exit 0 is an error, stderr at exit 0 is a warning, phase starting -> null', async () => {
+  const quiet = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', cwd: repo, prompt: '#nooutput' })).body;
+  const err = await waitFor(async () => (await messages(quiet.id)).find((m) => m.kind === 'error'), { what: 'silent failure' });
+  assert.match(err.text, /without any output[\s\S]*identities do not match/);
+  assert.equal((await state()).sessions.find((x) => x.id === quiet.id).status, 'error');
+
+  const warn = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', cwd: repo, prompt: '#warn' })).body;
+  const w = await waitFor(async () => (await messages(warn.id)).find((m) => m.kind === 'system' && m.text.startsWith('⚠')), { what: 'warning' });
+  assert.match(w.text, /java-lsp/);
+  assert.equal((await state()).sessions.find((x) => x.id === warn.id).status, 'idle');
+
+  const slow = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', cwd: repo, prompt: '#silent' })).body;
+  await waitFor(async () => (await state()).sessions.find((x) => x.id === slow.id).phase === 'starting', { what: 'phase starting' });
+  await h.api('POST', `/api/sessions/${slow.id}/stop`);
+  await waitFor(async () => (await state()).sessions.find((x) => x.id === slow.id).pid === null, { what: 'stopped' });
+  assert.equal((await state()).sessions.find((x) => x.id === slow.id).phase, null);
+});
+
+test('built-in sub-agent activity lands on the parent tool call, not in the main chat', async () => {
+  const s = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', cwd: repo, prompt: '#subagent' })).body;
+  await waitFor(async () => (await state()).sessions.find((x) => x.id === s.id && x.status === 'idle'));
+  const msgs = await messages(s.id);
+  const agentCall = msgs.find((m) => m.kind === 'tool' && m.tool.id === 'call_agent_1');
+  assert.deepEqual(agentCall.tool.progress, ['Reviewing…', '→ grep_search {"pattern":"TODO"}', '✓ grep_search no matches']);
+  assert.equal(agentCall.tool.output, 'APPROVED');
+  assert.ok(!msgs.some((m) => m.kind === 'assistant' && m.text.includes('Reviewing')));
+  assert.ok(!msgs.some((m) => m.kind === 'tool' && m.tool.id === 'sub_grep'));
+});
+
+test('ops: one harness per data dir, a clear message for a busy port; models in state', async () => {
+  const busy = fs.mkdtempSync(path.join(os.tmpdir(), 'harness-lock-'));
+  try {
+    fs.writeFileSync(path.join(busy, 'server.json'), JSON.stringify({ url: 'http://127.0.0.1:1', pid: process.ppid }));
+    await assert.rejects(startServer({ dataDir: busy, port: 0, configOverrides: { mcpServersFrom: null } }), /already running on/);
+    fs.writeFileSync(path.join(busy, 'server.json'), JSON.stringify({ url: 'http://127.0.0.1:1', pid: 999999 }));
+    await assert.rejects(startServer({ dataDir: busy, port: h.srv.port, configOverrides: { mcpServersFrom: null } }), (e) => e.code === 'EADDRINUSE' && new RegExp(`${h.srv.port}[\\s\\S]*(netstat|lsof)`).test(e.message));
+  } finally {
+    rmrf(busy);
+  }
+  const mock = (await state()).agents.find((a) => a.id === 'mock');
+  assert.deepEqual(mock.models, []);
+  assert.deepEqual((await h.api('PUT', '/api/settings', { agents: { mock: { models: ['m-1', ' m-2 '] } } })).body.agents.mock.models, ['m-1', 'm-2']);
+  assert.deepEqual((await state()).agents.find((a) => a.id === 'mock').models, ['m-1', 'm-2']);
 });

@@ -70,7 +70,7 @@ test('task start: worktree from targets[0], branch from the key, task prompt tem
   const t = (await h.api('POST', '/api/tasks', { title: 'Health', description: 'add /health', workspaceId: wsA.id, targets: ['release-1', 'develop'] })).body;
   const s = (await h.api('POST', `/api/tasks/${t.id}/start`, { agent: 'mock' })).body;
   assert.equal(s.branch, `feature/${t.id}`);
-  assert.equal(s.cwd, path.join(`${repoA}.worktrees`, `feature-${t.id}`));
+  assert.equal(s.cwd, path.join(`${repoA}-worktrees`, t.id));
   assert.equal(gitIn(s.cwd, 'rev-parse', 'HEAD'), gitIn(repoA, 'rev-parse', 'release-1'));
   assert.equal((await task(t.id)).branch, `feature/${t.id}`);
   const first = await waitFor(async () => (await messages(s.id)).find((m) => m.kind === 'user'), { what: 'first prompt' });
@@ -91,7 +91,8 @@ test('subtasks share the root key; branch gets a suffix when taken; suggest pref
   const wB = (await h.api('POST', '/api/agent/worker_start', { task_id: subB.id, worktree: 'new', agent: 'mock' })).body;
   assert.equal(wA.branch, 'feature/JIRA-77');
   assert.equal(wB.branch, 'feature/JIRA-77-2');
-  assert.ok(wA.cwd.startsWith(`${repoA}.worktrees`));
+  assert.equal(wA.cwd, path.join(`${repoA}-worktrees`, 'JIRA-77'));
+  assert.equal(wB.cwd, path.join(`${repoB}-worktrees`, 'JIRA-77'));
   assert.equal((await h.api('POST', '/api/agent/whoami', {}, { 'x-harness-session': wA.id })).body.taskKey, 'JIRA-77');
   const first = await waitFor(async () => (await messages(wA.id)).find((m) => m.kind === 'user'));
   assert.match(first.text, /^\/full-task JIRA-77 on feature\/JIRA-77/);
@@ -100,7 +101,7 @@ test('subtasks share the root key; branch gets a suffix when taken; suggest pref
   assert.equal((await task(subA.id)).status, 'review');
   fs.writeFileSync(path.join(wA.cwd, 'a.txt'), 'a\n');
   gitIn(wA.cwd, 'add', 'a.txt');
-  gitIn(wA.cwd, 'commit', '-q', '-m', 'JIRA-77: add a');
+  gitIn(wA.cwd, 'commit', '-q', '-m', 'JIRA-77 add a');
   fs.writeFileSync(path.join(wA.cwd, 'b.txt'), 'b\n');
 
   const sg = (await h.api('GET', `/api/git/suggest?${q(wA.cwd)}`)).body;
@@ -108,10 +109,10 @@ test('subtasks share the root key; branch gets a suffix when taken; suggest pref
   assert.equal(sg.key, 'JIRA-77');
   assert.equal(sg.branch, 'feature/JIRA-77');
   assert.equal(sg.base, 'develop');
-  assert.equal(sg.commit.title, 'JIRA-77: A part');
+  assert.equal(sg.commit.title, 'JIRA-77 A part');
   assert.match(sg.commit.body, /Added the A endpoint[\s\S]*- b\.txt/);
-  assert.equal(sg.pr.title, 'JIRA-77: A part');
-  assert.match(sg.pr.body, /Target: develop[\s\S]*Added the A endpoint[\s\S]*JIRA-77: add a/);
+  assert.equal(sg.pr.title, 'JIRA-77 A part');
+  assert.match(sg.pr.body, /Target: develop[\s\S]*Added the A endpoint[\s\S]*JIRA-77 add a/);
   await h.api('POST', `/api/sessions/${wB.id}/stop`);
 });
 
@@ -161,7 +162,7 @@ test('concurrent starts give one worker; a live task jumps to it; port needs com
   assert.equal([a.body.jumped, b.body.jumped].filter(Boolean).length, 1);
   const workers = (await h.api('GET', '/api/state')).body.sessions.filter((s) => s.taskId === t.id);
   assert.equal(workers.length, 1);
-  assert.equal(gitIn(repoA, 'worktree', 'list').split('\n').filter((l) => l.includes(`feature-${t.id}`)).length, 1);
+  assert.equal(gitIn(repoA, 'worktree', 'list').split('\n').filter((l) => l.includes(`[feature/${t.id}]`)).length, 1);
   const first = await waitFor(async () => (await messages(a.body.id)).find((m) => m.kind === 'user'));
   assert.equal(first.text, `/full-task ${t.id} on feature/${t.id} -> develop, release-1`);
 
@@ -182,7 +183,12 @@ test('concurrent starts give one worker; a live task jumps to it; port needs com
     }
   }, { what: 'worker argv' });
   const prompt = run.argv[run.argv.indexOf('-p') + 1];
+  // a slash command must be the first word: the rendered task prompt goes first, the preamble after it
+  assert.ok(prompt.startsWith(`/full-task ${t.id} on feature/${t.id} -> develop, release-1\n\n[harness] You are a WORKER`), prompt.slice(0, 120));
   assert.match(prompt, /Do NOT commit, push, merge/);
+  assert.match(prompt, /commit message format: "T-\d+ <summary>"/);
+  assert.match(prompt, /Registry dir: .*registry/);
+  assert.match(prompt, /built-in agent tool is fine for internal helpers/);
   assert.match(prompt, /Base branch \(primary target\): develop/);
   await h.api('POST', `/api/sessions/${a.body.id}/stop`);
 });
@@ -197,4 +203,35 @@ test('worktrees: create from a base, remove a dirty one (force + prune + folder 
   assert.equal((await h.api('DELETE', `/api/workspaces/${wsA.id}/worktrees`, { path: wt.path })).status, 200);
   assert.equal(fs.existsSync(wt.path), false);
   assert.ok(!gitIn(repoA, 'worktree', 'list').includes('remove-me'));
+});
+
+test('port to release/x.y.z: rel slug branch, only the commits the target lacks; PR suggestion within byte limits', async () => {
+  // release/1.54.0 already got the first fix by hand (same patch, different commit)
+  gitIn(repoA, 'branch', 'release/1.54.0', 'develop');
+  const t = (await h.api('POST', '/api/tasks', { title: 'Двойной фикс для релиза и develop '.repeat(4).trim(), workspaceId: wsA.id, targets: ['develop', 'release/1.54.0'] })).body;
+  const s = (await h.api('POST', `/api/tasks/${t.id}/start`, { agent: 'mock' })).body;
+  await h.api('POST', `/api/sessions/${s.id}/stop`);
+  fs.writeFileSync(path.join(s.cwd, 'one.txt'), 'one\n');
+  gitIn(s.cwd, 'add', '-A');
+  gitIn(s.cwd, 'commit', '-q', '-m', `${t.id} first`);
+  fs.writeFileSync(path.join(s.cwd, 'two.txt'), 'two\n');
+  gitIn(s.cwd, 'add', '-A');
+  gitIn(s.cwd, 'commit', '-q', '-m', `${t.id} second`);
+  const first = gitIn(s.cwd, 'rev-parse', 'HEAD~1');
+  const rel = path.join(root, 'rel-wt');
+  gitIn(repoA, 'worktree', 'add', '-q', rel, 'release/1.54.0');
+  gitIn(rel, 'cherry-pick', first);
+  gitIn(repoA, 'worktree', 'remove', '--force', rel);
+
+  const p = (await h.api('POST', `/api/tasks/${t.id}/port`, { target: 'release/1.54.0' })).body;
+  assert.equal(p.status, 'clean', JSON.stringify(p));
+  assert.equal(p.branch, `feature/${t.id}-rel154`);
+  assert.equal(p.cwd, path.join(`${repoA}-worktrees`, `${t.id}-rel154`));
+  const picked = gitIn(p.cwd, 'log', '--format=%s', 'release/1.54.0..HEAD').split('\n');
+  assert.deepEqual(picked, [`${t.id} second`], 'only the missing commit is cherry-picked');
+
+  const sg = (await h.api('GET', `/api/git/suggest?${q(s.cwd)}`)).body;
+  assert.ok(Buffer.byteLength(sg.pr.title) <= 100 && sg.pr.title.endsWith('…'), sg.pr.title);
+  assert.ok(Buffer.byteLength(sg.pr.body) <= 512);
+  assert.ok(!sg.pr.title.includes('�'));
 });

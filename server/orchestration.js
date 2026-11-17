@@ -10,6 +10,20 @@ const HARNESS_CLI = path.join(CODE_ROOT, 'mcp', 'harness-mcp.js');
 const REPORT_RE = /^Worker report \((?:done|failed)\): ([\s\S]*)$/;
 const TASK_VARS = ['{taskUrl}', '{key}', '{id}', '{description}'];
 
+/** Longest prefix of `text` within `max` UTF-8 bytes, cut on a code point boundary (an ellipsis marks the cut). */
+export function truncateBytes(text, max) {
+  if (!max || Buffer.byteLength(text) <= max) return text;
+  let out = '';
+  let used = Buffer.byteLength('…');
+  for (const ch of text) {
+    const n = Buffer.byteLength(ch);
+    if (used + n > max) break;
+    out += ch;
+    used += n;
+  }
+  return `${out}…`;
+}
+
 /**
  * Single pass with a replacer function: values are inserted literally ($&, $' stay as typed) and never
  * expanded again; unknown {placeholders} are left as they are.
@@ -34,7 +48,7 @@ function checkArgs(schema, args) {
 
 export function createOrchestration({ config, store, bus, tasks, sessions }) {
   const db = store.db;
-  const gitCfg = () => ({ branchTemplate: 'feature/{key}', portBranchTemplate: '{branch}-{target}', commitTitleTemplate: '{key}: {title}', prTitleTemplate: '{key}: {title}', ...config.git });
+  const gitCfg = () => ({ branchTemplate: 'feature/{key}', portBranchTemplate: '{branch}-{targetSlug}', commitTitleTemplate: '{key} {title}', prTitleTemplate: '{key} {title}', ...config.git });
   const label = (s) => `${s.title} (${s.id})`;
   const fromSession = (s, text) => `[harness] Message from ${label(s)}:\n${text}`;
   const isActive = (s) => !!s && s.kind === 'chat' && (s.status === 'idle' || s.status === 'running');
@@ -114,7 +128,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
     else branch = await git.uniqueBranch(cwd, git.sanitizeBranch(render(gitCfg().branchTemplate, { key: tasks.key(task), id: task.id })), task.branch);
     const existed = (await git.worktrees(cwd)).some((w) => w.branch === branch);
     const start = await git.startPoint(cwd, task.targets[0]);
-    const wt = await git.addWorktree(cwd, { branch, start, worktreeRoot: config.worktreeRoot });
+    const wt = await git.addWorktree(cwd, { branch, start, worktreeRoot: config.worktreeRoot, dirName: tasks.key(task) });
     return { wt, created: !existed, repo: cwd };
   }
 
@@ -188,11 +202,15 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
     const repo = ws?.path || sessions.find(task.assigneeSessionId)?.cwd || config.root;
     const conflictAgent = agent || (caller?.kind === 'chat' ? caller.agent : null) || config.defaultAgent;
     const start = (await git.startPoint(repo, target)) || fail(400, `target branch ${target} not found locally or on origin`);
-    const commits = (await git.revList(repo, `${primary}..${task.branch}`)) ?? (await git.revList(repo, `origin/${primary}..${task.branch}`));
-    if (!commits) fail(400, `cannot list commits of ${task.branch} relative to ${primary}`);
-    if (!commits.length) fail(409, `Nothing to port yet: ${task.branch} has no commits ahead of ${primary}. Commit the work first.`);
+    const ahead = (await git.revList(repo, `${primary}..${task.branch}`)) ?? (await git.revList(repo, `origin/${primary}..${task.branch}`));
+    if (!ahead) fail(400, `cannot list commits of ${task.branch} relative to ${primary}`);
+    if (!ahead.length) fail(409, `Nothing to port yet: ${task.branch} has no commits ahead of ${primary}. Commit the work first.`);
+    // only what the target lacks (patch-id aware), so a partial earlier port is not picked twice
+    const commits = await git.missingCommits(repo, start, task.branch);
+    if (!commits) fail(400, `cannot compare ${task.branch} with ${target}`);
+    if (!commits.length) fail(409, `Nothing to port: ${target} already contains every change of ${task.branch}.`);
     sessions.resolveAgent(conflictAgent); // a conflict needs a worker: fail before creating the worktree
-    const branch = await git.uniqueBranch(repo, git.sanitizeBranch(render(gitCfg().portBranchTemplate, { branch: task.branch, target, key: tasks.key(task) })));
+    const branch = await git.uniqueBranch(repo, git.sanitizeBranch(render(gitCfg().portBranchTemplate, { branch: task.branch, target, targetSlug: git.targetSlug(target), key: tasks.key(task) })));
     const wt = await git.addWorktree(repo, { branch, start, worktreeRoot: config.worktreeRoot });
     const status = await git.cherryPick(wt.path, commits);
     const rec = { target, branch, cwd: wt.path, status, sessionId: null };
@@ -215,14 +233,17 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
 
   function preamble(s) {
     const tools = `Harness tools are in the MCP server "harness" (fallback from a shell: node "${HARNESS_CLI}" call <tool> '<json>').`;
+    const registry = `Registry dir: ${sessions.registryDir(s.id)} - if you start built-in helper sub-agents (agent tool), record them there per your orchestration skill (<id>/agent.json + log.jsonl).`;
+    const helpers = '- The built-in agent tool is fine for internal helpers (review, exploration); parallel task work the user should see goes through worker_start (each worker gets its own chat).';
     if (s.role === 'coordinator') {
       return [
         `[harness] You are the COORDINATOR session ${s.id} ("${s.title}") in a local multi-agent harness. Working directory: ${s.cwd}.`,
         tools,
+        registry,
         'Rules:',
         '- Split the work into tasks with task_create; put ordering into deps. Every task spec must be self-contained (goal, files, constraints, how to verify).',
         '- Start workers with worker_start (task_id; worktree "new" gives the worker its own git worktree and branch).',
-        '- Never use built-in sub-agent tools (Task, Agent or similar): every sub-agent must be a harness worker so it gets its own chat.',
+        helpers,
         '- After starting workers END YOUR TURN. The harness wakes you with a message for every worker report, question or escalation. Do not poll.',
         '- Answer worker questions with send_message(to: <worker session id>, body); ask the user with send_message(to: "user") when needed.',
         '- Several repositories: one task per repository. Call workspace_list, then create one subtask per repo with task_create({ parent_id, workspace, ... }). Subtasks share the parent key, so every repo gets the same branch.',
@@ -235,12 +256,14 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
     const who = `Session: ${s.id}; parent: ${parent ? label(parent) : 'none (your reports go to the user)'}.`;
     const common = [
       '- Need a decision? Call ask(question, options?), then END YOUR TURN; the answer arrives as your next message.',
-      '- Never use built-in sub-agent tools (Task, Agent or similar).',
+      helpers,
       '- Finish with exactly one worker_done(summary, status: "done" | "failed"): what changed, evidence (commands and results), open blockers.',
       tools,
+      registry,
     ];
     if (!task) return [`[harness] You are a WORKER session in a local multi-agent harness. ${who}`, `Working directory: ${s.cwd}.`, ...common].join('\n');
     const key = tasks.key(task);
+    const commitFormat = `commit message format: "${key} <summary>" (the key, a space, a short summary from the task; no colon, no feat:/fix: prefixes, no Co-authored-by, no mention of AI or GigaCode)`;
     const portRec = task.ports.find((p) => p.sessionId === s.id);
     if (portRec) {
       return [
@@ -249,13 +272,13 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
         `Working directory: ${s.cwd}.`,
         'Steps: run git status; resolve every conflict keeping the intent of the original change; git add the files;',
         'run `git -c core.editor=true cherry-pick --continue` (repeat until the cherry-pick finishes; never abort or skip commits without asking);',
-        'run the project checks if any. Stay on this branch; do not push, merge or create pull requests.',
+        `run the project checks if any. Stay on this branch; do not push, merge or create pull requests. If you must write a commit message yourself, ${commitFormat}.`,
         ...common,
       ].join('\n');
     }
     const commitRule = config.orchestration?.workerMayCommit
-      ? `- Commit your changes; every commit message must start with "${key}: ". Do not push, merge or create pull requests.`
-      : '- Do NOT commit, push, merge, create pull requests or change the tracker unless the task explicitly says so: leave your changes in the working tree; the user reviews and commits them from the harness UI (the commit message is prefilled from your worker_done summary).';
+      ? `- Commit your changes on this branch; ${commitFormat}. Do not push, merge or create pull requests.`
+      : `- Do NOT commit, push, merge, create pull requests or change the tracker unless the task explicitly says so: leave your changes in the working tree; the user reviews and commits them from the harness UI (the commit message is prefilled from your worker_done summary). If the task does ask you to commit, ${commitFormat}.`;
     return [
       `[harness] You are a WORKER session in a local multi-agent harness. ${who}`,
       `Task: ${key} - ${task.title} (task id ${task.id}).`,
@@ -486,6 +509,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
     const baseRef = (await git.refExists(dir, base)) ? base : `origin/${base}`;
     const commits = await git.onelines(dir, `${baseRef}..HEAD`);
     const desc = task?.description?.trim();
+    const limits = config.integrations?.pr?.limits || {}; // the code host's byte limits (sourcecontrol: 100 / 512)
     return {
       taskId: task?.id ?? null,
       key,
@@ -493,14 +517,14 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
       base,
       commit: { title: title(g.commitTitleTemplate), body: [summary, files].filter(Boolean).join('\n\n') },
       pr: {
-        title: title(g.prTitleTemplate),
-        body: [
+        title: truncateBytes(title(g.prTitleTemplate), limits.titleBytes),
+        body: truncateBytes([
           desc && (desc.length > 600 ? `${desc.slice(0, 600)}...` : desc),
           task?.externalUrl,
           `Target: ${base}`,
           summary && `Summary: ${summary}`,
           commits.length && `Commits:\n${commits.map((l) => `- ${l}`).join('\n')}`,
-        ].filter(Boolean).join('\n\n'),
+        ].filter(Boolean).join('\n\n'), limits.bodyBytes),
         base,
       },
     };
