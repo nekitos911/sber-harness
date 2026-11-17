@@ -366,6 +366,13 @@ function geminiFamily(id, defaults, resolve) {
       const model = session.model || agentCfg.model;
       if (model) args.push('--model', model);
       for (const dir of session.includeDirs || []) args.push(INCLUDE_FLAG, dir); // every turn: a new process
+      // headless cannot ask: what the user allowed goes in as an allow-list (VERIFY flag/pattern syntax)
+      const allowed = [...new Set([...(agentCfg.allowedTools || []), ...(session.allowedTools || []), ...(session.grantsOnce || [])])];
+      const flag = agentCfg.allowedToolsFlag ?? defaults.allowedToolsFlag;
+      if (allowed.length && flag) {
+        if ((agentCfg.allowedToolsJoin ?? 'repeat') === 'comma') args.push(flag, allowed.join(','));
+        else for (const t of allowed) args.push(flag, t);
+      }
       return args;
     },
     /** transport "acp": one long-lived process per session; the prompt goes over JSON-RPC, not argv. VERIFY GigaCode --acp. */
@@ -416,13 +423,14 @@ const claude = {
 
 export const launchers = {
   // cold start (hundreds of tools, ~9 MCP servers) can take 30-60 s before system/init
-  gigacode: geminiFamily('gigacode', { command: 'gigacode', settingsEnv: 'GIGACODE_SYSTEM_SETTINGS_PATH', firstEventTimeoutMs: 120000, continueArgs: ['-c'], approvalModeMap: { auto: 'auto-edit' } }, (cfg) => resolveGigacode(cfg)),
-  qwen: geminiFamily('qwen', { command: 'qwen', settingsEnv: 'QWEN_CODE_SYSTEM_SETTINGS_PATH', firstEventTimeoutMs: 30000, approvalModeMap: { auto: 'auto-edit' } }),
+  gigacode: geminiFamily('gigacode', { command: 'gigacode', settingsEnv: 'GIGACODE_SYSTEM_SETTINGS_PATH', firstEventTimeoutMs: 120000, continueArgs: ['-c'], approvalModeMap: { auto: 'auto-edit' }, allowedToolsFlag: '--allowed-tools' }, (cfg) => resolveGigacode(cfg)),
+  qwen: geminiFamily('qwen', { command: 'qwen', settingsEnv: 'QWEN_CODE_SYSTEM_SETTINGS_PATH', firstEventTimeoutMs: 30000, approvalModeMap: { auto: 'auto-edit' }, allowedToolsFlag: '--allowed-tools' }),
   gemini: geminiFamily('gemini', { command: 'gemini', settingsEnv: 'GEMINI_CLI_SYSTEM_SETTINGS_PATH', firstEventTimeoutMs: 30000 }),
   claude,
   mock: geminiFamily('mock', {
     command: [process.execPath, path.join(CODE_ROOT, 'scripts', 'mock-agent.js')],
     settingsEnv: 'MOCK_AGENT_SETTINGS_PATH',
     firstEventTimeoutMs: 15000,
+    allowedToolsFlag: '--allowed-tools', // the mock behaves like GigaCode
   }),
 };

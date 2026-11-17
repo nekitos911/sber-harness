@@ -264,6 +264,7 @@ export async function startServer(opts = {}) {
         approvalModeLabels: a.approvalModeLabels || {},
         approvalModeMap: a.approvalModeMap ?? launchers[a.launcher]?.defaults.approvalModeMap ?? {},
         autoSandbox: a.autoSandbox ?? null,
+        allowedTools: a.allowedTools || [],
         model: a.model ?? null,
         models: a.models || [],
         modelGrades: a.settings?.agents?.modelGrades || {},
@@ -345,6 +346,10 @@ export async function startServer(opts = {}) {
       const m = a.approvalModeMap;
       if (m !== null && (!isObj(m) || Object.values(m).some((v) => typeof v !== 'string' || !v))) fail(400, `${where('approvalModeMap')}: объект «режим → режим CLI» или null`);
       p.approvalModeMap = m;
+    }
+    if ('allowedTools' in a) {
+      if (!isStrList(a.allowedTools) || a.allowedTools.some((x) => !x.trim())) fail(400, `${where('allowedTools')}: нужен массив непустых строк`);
+      p.allowedTools = a.allowedTools.map((x) => x.trim());
     }
     if ('autoSandbox' in a) {
       if (![null, 'workspace', 'workspace-offline'].includes(a.autoSandbox)) fail(400, `${where('autoSandbox')}: null, "workspace" или "workspace-offline"`);

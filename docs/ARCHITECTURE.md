@@ -937,6 +937,18 @@ options: [{id:'allow_once',label:'Разрешить один раз'}, {id:'all
 (`plan→default→auto-edit→auto`, from `approvalModes` order) for that turn only + message «Разрешаю: выполни <tool> <input
 summary>»; allow_session → PATCH session.approvalMode to that mode + same message; reject → message «Не выполняй это
 (<tool>); найди другой путь или спроси». The card shows the resolved choice afterwards.
+**Superseded on the target (confirmed: `auto` runs as `auto-edit`, which never allows `run_shell_command`, so escalation
+has nowhere to go) — headless permissions are an allow-list now:** the denial text `requires permission to use "<tool>"`
+gives the tool; the card carries `permission.pattern` (shell → `run_shell_command(<first non-cd command word>)`, e.g.
+`cd /d X && git status` → `run_shell_command(git)`; other tools → the tool name), `answered`/`resolved`/`resolvedAt`.
+allow_once → a one-turn grant (`session.grantsOnce`, consumed by the next turn); allow_session → `session.allowedTools`
+(PATCH `/api/sessions/:id { allowedTools }` edits it); both deliver «Разрешено: повтори <tool> <input summary>» (queued if
+the turn still runs). Every headless turn passes `agents.<id>.allowedTools` (Settings «Разрешённые команды») ∪
+`session.allowedTools` ∪ the one-turn grants as `agents.<id>.allowedToolsFlag` (gigacode/qwen default `--allowed-tools`,
+VERIFY) repeated per entry (`allowedToolsJoin: "comma"` joins them). The approval mode is escalated only for an edit tool
+in plan/default mode. A sub-agent's denial is re-emitted in the PARENT chat (`from` = the sub-agent session,
+`permission.fromSubSessionId`, text «субагент <type>: <tool>»); the grant applies to the parent's next turn. A repeated
+stderr warning is one ⚠ message per session with a `count`; the init MCP statuses are kept as `session.mcpStatus`.
 
 **Permissions, ACP transport (`agents.<id>.transport: "acp"`, VERIFY for GigaCode `--acp`).** One long-lived process per
 session (`<cli> --acp [--approval-mode m] [--model m] [--include-directories …]`), JSON-RPC 2.0 over stdio (ndjson):

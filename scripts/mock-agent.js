@@ -137,11 +137,23 @@ if (has(/#bigoutput\b/)) {
   emit({ type: 'tool_use', tool_name: 'run_shell_command', tool_id: 'big_1', parameters: { command: 'cat big.log' } });
   emit({ type: 'tool_result', tool_id: 'big_1', status: 'success', output: `${'строка лога\n'.repeat(10000)}КОНЕЦ` });
 }
-const deny = lines.map((l) => l.match(/#deny\s+(\S+)/)).filter(Boolean).pop();
+const denialText = (tool) => `GigaCode requires permission to use "${tool}", but that permission was declined (non-interactive mode cannot prompt for confirmation).`;
+const allowed = argv.flatMap((a, i) => (a === '--allowed-tools' ? [argv[i + 1]] : []));
+const deny = lines.map((l) => l.match(/#deny\s+(\S+)(?:\s+(.+))?/)).filter(Boolean).pop();
 if (deny) {
-  // headless -p cannot ask for a confirmation: the CLI denies the call
-  emit({ type: 'tool_use', tool_name: deny[1], tool_id: 'deny_1', parameters: { command: 'rm -rf build' } });
-  emit({ type: 'tool_result', tool_id: 'deny_1', status: 'error', output: `Tool "${deny[1]}" requires user approval in non-interactive mode (approval mode ${opt('--approval-mode')})` });
+  // headless -p cannot ask for a confirmation: the CLI denies the call unless it is on --allowed-tools
+  const command = deny[2]?.trim() || 'rm -rf build';
+  const word = command.split('&&').map((x) => x.trim()).find((x) => !/^cd\s/i.test(x))?.split(/\s+/)[0];
+  emit({ type: 'tool_use', tool_name: deny[1], tool_id: 'deny_1', parameters: { command } });
+  if (allowed.includes(deny[1]) || allowed.includes(`${deny[1]}(${word})`)) emit({ type: 'tool_result', tool_id: 'deny_1', status: 'success', output: 'ok' });
+  else emit({ type: 'tool_result', tool_id: 'deny_1', status: 'error', output: denialText(deny[1]) });
+}
+if (has(/#subdeny\b/)) {
+  // a built-in sub-agent whose shell call is denied (its events carry parent_tool_use_id)
+  emit({ type: 'tool_use', tool_name: 'agent', tool_id: 'sa_1', parameters: { subagent_type: 'java-reviewer', prompt: 'проверь' } });
+  emit({ type: 'tool_use', tool_name: 'run_shell_command', tool_id: 'sa_c1', parameters: { command: 'mvn -q test' }, parent_tool_use_id: 'sa_1' });
+  emit({ type: 'tool_result', tool_id: 'sa_c1', status: 'error', output: denialText('run_shell_command'), parent_tool_use_id: 'sa_1' });
+  emit({ type: 'tool_result', tool_id: 'sa_1', status: 'success', output: 'sub-agent done' });
 }
 const question = lines.map((l) => l.match(/#question\s+(.+)/)).filter(Boolean).pop();
 if (question) {

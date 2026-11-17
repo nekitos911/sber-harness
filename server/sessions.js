@@ -42,7 +42,25 @@ const tail = (text) => (text ? `\n\nstderr:\n${text.slice(-2000).trim()}` : '');
 const fence = (lines) => `\`\`\`text\n${lines.join('\n')}\n\`\`\``;
 const REGISTRY_POLL_MS = 2000;
 const QUESTION_TOOLS = ['ask_user_question', 'ask_user', 'AskUserQuestion']; // VERIFY the real GigaCode name
-const DENIAL_RE = /(requires? (user )?(approval|confirmation)|not allowed|denied|permission|подтвержд|запрещ)/i; // VERIFY
+// confirmed: `GigaCode requires permission to use "run_shell_command", but that permission was declined (...)`
+const DENIAL_RE = /(requires permission to use|requires? (user )?(approval|confirmation)|not allowed|denied|permission|подтвержд|запрещ)/i;
+const EDIT_TOOLS = /^(write_file|replace|edit|edit_file|write|apply_patch|create_file)$/i;
+
+/** The allow-list entry for a denied call: run_shell_command(<first non-cd command word>), else the tool name. */
+export function permissionPattern(tool, input) {
+  if (!/shell|bash|command/i.test(tool) || typeof input?.command !== 'string') return tool;
+  const first = input.command.split(/&&|\|\||;|\|/).map((x) => x.trim()).find((x) => x && !/^cd(\s|$)/i.test(x));
+  const word = first?.match(/^"([^"]+)"|^'([^']+)'|^(\S+)/);
+  const name = word ? (word[1] ?? word[2] ?? word[3]).split(/[\\/]/).pop().replace(/\.(exe|cmd|bat)$/i, '') : null;
+  return name ? `${tool}(${name})` : tool;
+}
+
+/** A denied tool_result -> { tool, reason } or null (agents.<id>.denialPattern overrides the default). */
+function denialOf(agentCfg, ev, fallbackTool) {
+  const text = String(ev.output ?? '');
+  if (!ev.isError || !(agentCfg?.denialPattern ? new RegExp(agentCfg.denialPattern, 'i') : DENIAL_RE).test(text)) return null;
+  return { tool: text.match(/requires permission to use "(.+?)"/i)?.[1] || fallbackTool || 'tool', reason: text.slice(0, 2000) };
+}
 export const PERMISSION_OPTIONS = [
   { id: 'allow_once', label: 'Разрешить один раз' },
   { id: 'allow_session', label: 'Разрешать в этой сессии' },
@@ -364,8 +382,23 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     emit(v);
   }
 
+  /** A headless permission card (in the PARENT for a sub-agent's denial: it is the parent's next turn that retries). */
+  function permissionCard(s, { toolId, tool, input, reason, sub = null }) {
+    addMessage(s, {
+      kind: 'permission', text: sub ? `субагент ${sub.type}: ${tool}` : '', ...(sub ? { from: sub.id } : {}),
+      permission: { id: newId('p'), toolId, tool, input, reason, pattern: permissionPattern(tool, input), transport: 'headless', options: PERMISSION_OPTIONS, resolved: null, answered: false, ...(sub ? { fromSubSessionId: sub.id } : {}) },
+    });
+    setWaiting(s, 'permission');
+  }
+
   function subagentProgress(s, c, ev) {
     applyVirtual(s, c, ev);
+    if (ev.type === 'tool_call') (c.subInputs ||= new Map()).set(ev.id, ev.input);
+    if (ev.type === 'tool_result') {
+      const denied = denialOf(config.agents[s.agent], ev, c.subTools.get(ev.id));
+      const v = find(virtualId(s.id, ev.parentToolId));
+      if (denied) permissionCard(s, { toolId: ev.id, tool: denied.tool, input: c.subInputs?.get(ev.id) ?? null, reason: denied.reason, sub: { id: v?.id ?? null, type: v?.title?.split(' · ')[0] || 'agent' } });
+    }
     const parent = c.tools.get(ev.parentToolId);
     if (!parent) return;
     const short = (v, n = 160) => {
@@ -421,6 +454,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     if (ev.type !== 'raw') c.raw = null;
     switch (ev.type) {
       case 'init': {
+        s.mcpStatus = ev.mcpServers.map((m) => ({ name: m.name, status: m.status }));
         const mcp = ev.mcpServers.map((m) => `${m.name} ${/^connected$/i.test(m.status) ? '✓' : '✗'}`).join(', ');
         const note = [ev.model && `Модель: ${ev.model}`, mcp && `MCP: ${mcp}`].filter(Boolean).join(' · ');
         // once per session (again only when it changes, e.g. an MCP server went down)
@@ -456,7 +490,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
       case 'permission_cancelled': // Stop: held requests were answered "cancelled"
         for (const m of store.messages(s.id)) {
           if (m.kind === 'permission' && m.permission.transport === 'acp' && !m.permission.resolved) {
-            m.permission = { ...m.permission, resolved: 'cancelled', resolvedAt: Date.now() };
+            m.permission = { ...m.permission, resolved: 'cancelled', resolvedAt: Date.now(), answered: true };
             updateMessage(s, m);
           }
         }
@@ -519,12 +553,9 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
         if (c.questions?.has(ev.id)) break;
         const m = c.tools.get(ev.id);
         const status = ev.isError ? 'error' : 'ok';
-        const denial = config.agents[s.agent]?.denialPattern;
-        if (ev.isError && (denial ? new RegExp(denial, 'i') : DENIAL_RE).test(String(ev.output ?? ''))) {
-          // headless -p cannot wait for a confirmation, so the CLI denied: ask the user instead
-          addMessage(s, { kind: 'permission', text: '', permission: { id: newId('p'), toolId: ev.id, tool: m?.tool?.name ?? 'tool', input: m?.tool?.input ?? null, reason: String(ev.output ?? '').slice(0, 2000), transport: 'headless', options: PERMISSION_OPTIONS, resolved: null } });
-          setWaiting(s, 'permission');
-        }
+        const denied = denialOf(config.agents[s.agent], ev, m?.tool?.name);
+        // headless -p cannot wait for a confirmation, so the CLI denied: ask the user instead
+        if (denied) permissionCard(s, { toolId: ev.id, tool: denied.tool, input: m?.tool?.input ?? null, reason: denied.reason });
         if (m) {
           m.tool = { ...m.tool, output: ev.output, status };
           updateMessage(s, m);
@@ -550,6 +581,17 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
         closeAtResult(s);
         break;
     }
+  }
+
+  /** A stderr warning once per session: a repeat (same text, numbers ignored) only increments `count` on it. */
+  function warnOnce(s, raw) {
+    const text = `⚠ ${raw.trim().slice(-2000)}`;
+    const key = text.replace(/\d+/g, '#').replace(/\s+/g, ' ');
+    const prev = store.messages(s.id).find((m) => m.kind === 'system' && m.warnKey === key);
+    if (!prev) return addMessage(s, { kind: 'system', text, warnKey: key, count: 1 });
+    prev.count = (prev.count || 1) + 1;
+    prev.at = Date.now();
+    updateMessage(s, prev);
   }
 
   function runTurnEnded(s, r, stopped) {
@@ -605,8 +647,10 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     r.cur = { assistant: null, thought: null, raw: null, tools: new Map(), subTools: new Map(), gotText: false };
     for (const it of items) addMessage(s, { kind: 'user', text: it.text, from: it.from, ...(it.options ? { options: it.options } : {}) });
     Object.assign(s, { status: 'running', queued: 0, lastActivityAt: Date.now(), lastEventAt: null, stalled: false });
-    const approvalOnce = s.approvalOnce; // «Разрешить один раз»: this turn only
+    const approvalOnce = s.approvalOnce; // an edit tool allowed once in plan/default mode: this turn only
     delete s.approvalOnce;
+    const grantsOnce = s.grantsOnce || []; // «Разрешить один раз»: allow-list entries for this turn only
+    delete s.grantsOnce;
     emit(s);
 
     let res;
@@ -627,7 +671,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
         // a slash command only works as the first word of the prompt; the rest becomes its $ARGUMENTS
         if (pre) prompt = prompt.startsWith('/') ? `${prompt}\n\n${pre}` : `${pre}\n\n${prompt}`;
       }
-      const ctx = turnCtx(approvalOnce ? { ...s, approvalMode: approvalOnce } : s, agentCfg, prompt);
+      const ctx = turnCtx({ ...s, ...(approvalOnce ? { approvalMode: approvalOnce } : {}), grantsOnce }, agentCfg, prompt);
       // the session keeps its chosen mode; the UI shows what the CLI really got (e.g. auto -> auto-edit)
       s.effectiveApprovalMode = launcher.effectiveMode?.(ctx) ?? (ctx.session.approvalMode || agentCfg.approvalMode || null);
       fs.mkdirSync(runDir(s.id), { recursive: true });
@@ -768,7 +812,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
       addMessage(s, { kind: 'error', text: `Агент завершился, ничего не выведя.${tail(res.stderrTail)}` });
       status = 'error';
     } else if (res.stderrTail.trim()) {
-      addMessage(s, { kind: 'system', text: `⚠ ${res.stderrTail.trim().slice(-2000)}` });
+      warnOnce(s, res.stderrTail);
     }
     Object.assign(s, { status, pid: null, pidStartedAt: null, phase: null, turnOffset: null, lastActivityAt: Date.now(), stalled: false, turnClosing: false });
     if (s.waitingFor === 'auth') s.waitingFor = null;
@@ -789,7 +833,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     try {
       fs.appendFileSync(turnFiles(s, r.turn).logFile, `[harness] process exited ${Date.now() - r.resultAt} ms after result${killed ? ' (killed after exitGraceMs)' : ''}\n`);
     } catch {}
-    if (res.stderrTail.trim() && !res.killReason) addMessage(s, { kind: 'system', text: `⚠ ${res.stderrTail.trim().slice(-2000)}` });
+    if (res.stderrTail.trim() && !res.killReason) warnOnce(s, res.stderrTail);
     Object.assign(s, { pid: null, pidStartedAt: null, turnOffset: null, turnClosing: false });
     emit(s);
     store.flush();
@@ -1104,21 +1148,28 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
       if (p.transport === 'acp') {
         // the agent holds its session/request_permission until this answer
         if (!acp.answer(sid, permissionId, optionId)) fail(409, 'агент больше не ждёт этого ответа');
-        msg.permission = { ...p, resolved: optionId, resolvedAt: Date.now() };
+        msg.permission = { ...p, resolved: optionId, resolvedAt: Date.now(), answered: true };
         updateMessage(s, msg);
         setWaiting(s, null);
         return s;
       }
-      msg.permission = { ...p, resolved: optionId, resolvedAt: Date.now() };
+      msg.permission = { ...p, resolved: optionId, resolvedAt: Date.now(), answered: true };
       updateMessage(s, msg);
       const what = `${p.tool}${p.input != null ? ` ${inputSummary(p.input)}` : ''}`;
       let text;
       if (optionId === 'reject') text = `Не выполняй это (${p.tool}); найди другой путь или спроси.`;
       else {
-        const mode = nextMode(s);
-        if (optionId === 'allow_session') s.approvalMode = mode;
-        else s.approvalOnce = mode;
-        text = `Разрешаю: выполни ${what}`;
+        // the denied call goes on the allow-list (--allowed-tools): once = the next turn only, session = this chat
+        const pattern = p.pattern || permissionPattern(p.tool, p.input);
+        if (optionId === 'allow_session') s.allowedTools = [...new Set([...(s.allowedTools || []), pattern])];
+        else s.grantsOnce = [...new Set([...(s.grantsOnce || []), pattern])];
+        // an edit tool in plan/default mode also needs a more permissive mode (auto-edit allows edits, never shell)
+        const cur = s.approvalMode || config.agents[s.agent]?.approvalMode;
+        if (EDIT_TOOLS.test(p.tool) && ['plan', 'default'].includes(cur)) {
+          if (optionId === 'allow_session') s.approvalMode = nextMode(s);
+          else s.approvalOnce = nextMode(s);
+        }
+        text = `Разрешено: повтори ${what}`;
       }
       return api.deliver(sid, { from: 'user', text: note?.trim() ? `${text}
 
@@ -1256,6 +1307,10 @@ ${note.trim()}` : text });
       if ('model' in p) s.model = p.model || null;
       if ('autoReport' in p) s.autoReport = p.autoReport;
       if ('includeDirs' in p) s.includeDirs = normalizeIncludeDirs(p.includeDirs, s.cwd); // applies from the next turn
+      if ('allowedTools' in p) {
+        if (!Array.isArray(p.allowedTools) || p.allowedTools.some((x) => typeof x !== 'string' || !x.trim())) fail(400, 'allowedTools: нужен массив непустых строк');
+        s.allowedTools = [...new Set(p.allowedTools.map((x) => x.trim()))];
+      }
       return emit(s);
     },
 

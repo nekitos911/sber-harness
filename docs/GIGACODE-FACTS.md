@@ -217,6 +217,8 @@ others work. Transport per call. GigaCode's own encrypted store (`~/.gigacode/mc
     VERIFY — the harness currently assumes Gemini/Qwen records: `~/.gigacode/tmp/<sha256(project path)>/chats/*.json`
     with `{ sessionId, projectHash, startTime, lastUpdated, messages: [{ type: user|gemini, content, thoughts, toolCalls }] }`;
     anything else is listed as raw.
+13. The headless allow-list flag and pattern syntax: is it `--allowed-tools`, repeated or comma-separated, and does
+    `run_shell_command(git)` match `git status`? (→ `allowedToolsFlag`, `allowedToolsJoin`, the permission patterns)
 11. `--acp` mode: does it work with the identity env + per-session settings; `initialize` capabilities (loadSession?),
     `session/request_permission` for tool confirmations, MCP servers passed in `session/new`, auth behaviour
     (→ `transport: "acp"` for real interactive permissions).
