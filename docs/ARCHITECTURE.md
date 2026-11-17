@@ -841,6 +841,15 @@ Secrets:
 - `HARNESS_CONFIG` env selects the config file (default `harness.config.json` + `.local`), so work and test
   configs never mix.
 
+## Session activity states (what the UI shows)
+
+Session gains `lastEventAt: number | null` (last stdout event of the current turn), `waitingFor: 'answer' | 'auth' | null`
+(set when the session called `ask` and no reply was delivered yet, or phase auth), and `stalled: boolean` (server-side:
+running AND phase !== 'auth' AND no event for `session.stallSec` (default 300, in /api/settings) while the pid is alive;
+re-evaluated every 15 s; flips are broadcast). Derived UI state, in priority order:
+`waiting_answer` (waitingFor) → `stalled` → `starting` (phase starting/auth) → `running` → `error`/`failed` → `stopped` →
+`done` (worker_done done) → `exited` (terminal) → `idle` (turn finished, ready for the next message).
+
 ## Nothing is lost on restart (harness, browser, PC)
 
 Durable state (all in `<dataDir>`, atomic writes):
