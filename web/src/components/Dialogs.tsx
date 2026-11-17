@@ -1,14 +1,15 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api, errorText, qs, tryApi } from '../api'
-import { closeDialog, openWorktree, setState, toast, useStore, type DialogRequest } from '../store'
+import { closeDialog, openWorktree, setState, toast, upsert, useStore, type DialogRequest } from '../store'
 import { adoptSession } from '../lib/actions'
 import { loadWorktrees } from '../ws'
 import { basename, isAbsolutePath } from '../lib/format'
-import type { GitSuggest, Session, Workspace, Worktree } from '../types'
+import type { GitSuggest, Session, Task, Workspace, Worktree } from '../types'
 import { Modal } from './ui/Dialog'
 import { CleanupDialog, DeleteWorktreeDialog, WorktreeInfoDialog } from './WorktreeMenu'
 import { Segmented, Select, SuggestInput } from './ui'
-import { modeShort } from '../lib/agents'
+import { modeShort, useSettings } from '../lib/agents'
+import { pendingDeps, taskKey } from '../lib/tasks'
 import { loadPr } from '../lib/pr'
 import { Markdown } from './Markdown'
 
@@ -317,13 +318,32 @@ function StartDialog({ taskId }: { taskId: string }) {
   const [agent, setAgent] = useState((enabled.find((a) => a.id === defaultAgent) ?? enabled[0])?.id ?? '')
   const [notes, setNotes] = useState('')
   const [busy, run] = useBusy()
+  const tasks = useStore((s) => s.tasks)
+  const workspaces = useStore((s) => s.workspaces)
+  const settings = useSettings()
   if (!task) return null
+
+  // What «Запустить» will do, said before the click.
+  const byId = new Map(tasks.map((t) => [t.id, t]))
+  const key = taskKey(task, byId)
+  const kids = tasks.filter((t) => t.parentId === task.id)
+  const waiting = pendingDeps(task, byId)
+  const repo = workspaces.find((w) => w.id === task.workspaceId)
+  const needsRepo = !kids.length && !repo && workspaces.length >= 2
+  const branch = (settings?.git.branchTemplate || 'feature/{key}').replaceAll('{key}', key)
+  const agentLabel = enabled.find((a) => a.id === agent)?.label ?? agent
+  const kidRepos = [...new Set(kids.map((k) => workspaces.find((w) => w.id === k.workspaceId)?.name).filter(Boolean))]
+  const setRepo = async (id: string) => {
+    const t = await tryApi<Task>('PATCH', `/tasks/${encodeURIComponent(task.id)}`, { workspaceId: id })
+    if (t) setState((s) => ({ tasks: upsert(s.tasks, t) }))
+  }
+
   return (
     <Modal
       title={`Взять в работу ${task.externalId ?? task.id}`}
-      submitLabel="Запустить"
+      submitLabel={kids.length ? 'Запустить координатора' : 'Запустить'}
       busy={busy}
-      disabled={!agent}
+      disabled={!agent || waiting.length > 0 || needsRepo}
       onClose={closeDialog}
       onSubmit={() => run(async () => {
         const s = await tryApi<Session & { jumped?: boolean }>('POST', `/tasks/${encodeURIComponent(task.id)}/start`, { agent, notes: notes.trim() || undefined })
@@ -334,6 +354,23 @@ function StartDialog({ taskId }: { taskId: string }) {
       })}
     >
       <p className="muted" style={{ marginTop: -6 }}>{task.title}</p>
+      <div className="start-plan" data-blocked={waiting.length > 0 || needsRepo || undefined}>
+        {waiting.length > 0 ? (
+          <span>Ждёт: {waiting.join(', ')}. Сначала закончите зависимости.</span>
+        ) : kids.length ? (
+          <span>Координатор раздаст {kids.length} {kids.length === 1 ? 'подзадачу' : kids.length < 5 ? 'подзадачи' : 'подзадач'}{kidRepos.length ? <> по репозиториям: {kidRepos.join(', ')}</> : null}; каждая в своём рабочем дереве на ветке <span className="mono">{branch}</span>.</span>
+        ) : needsRepo ? (
+          <span>У задачи нет репозитория, а их несколько: выберите, где работать.</span>
+        ) : (
+          <span>Агент {agentLabel} · ветка <span className="mono">{branch}</span> от <span className="mono">{task.targets[0] ?? 'базовой'}</span> · новое дерево в <span className="mono">{repo ? `${repo.name}-worktrees/${key}` : `worktrees/${key}`}</span></span>
+        )}
+      </div>
+      {needsRepo && (
+        <label className="field">
+          <span>Репозиторий</span>
+          <Select label="Репозиторий задачи" size="lg" value="" placeholder="Выберите репозиторий…" onChange={(id) => void setRepo(id)} options={workspaces.map((w) => ({ value: w.id, label: w.name, hint: w.path }))} />
+        </label>
+      )}
       <label className="field">
         <span>Агент</span>
         <Select label="Агент" size="lg" value={agent} onChange={setAgent} options={enabled.map((a) => ({ value: a.id, label: a.label, hint: a.id === defaultAgent ? 'по умолчанию' : undefined }))} />
@@ -341,7 +378,6 @@ function StartDialog({ taskId }: { taskId: string }) {
       <label className="field">
         <span>Заметки</span>
         <textarea className="textarea" rows={3} autoFocus placeholder="Необязательно: уточнения к задаче, которые получит агент" value={notes} onChange={(e) => setNotes(e.target.value)} />
-        <span className="field-hint">Агент стартует в новом рабочем дереве задачи{task.targets[0] ? ` от ${task.targets[0]}` : ''}.</span>
       </label>
     </Modal>
   )
