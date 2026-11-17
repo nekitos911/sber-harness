@@ -12,6 +12,7 @@ import { Disclosure, Segmented, Select, SuggestInput } from './ui'
 import { modeShort, useSettings } from '../lib/agents'
 import { pendingDeps, taskKey } from '../lib/tasks'
 import { loadPr } from '../lib/pr'
+import { endJob, startJob, useJobStep } from '../lib/jobs'
 import { Markdown } from './Markdown'
 
 export function Dialogs() {
@@ -34,13 +35,16 @@ function DialogSwitch({ d }: { d: DialogRequest }) {
   }
 }
 
+/** Submit state of a dialog; the job id goes with the request so the server's steps show on the button. */
 function useBusy() {
-  const [busy, setBusy] = useState(false)
-  const run = async (fn: () => Promise<unknown>) => {
-    setBusy(true)
-    try { await fn() } finally { setBusy(false) }
+  const [job, setJob] = useState<string | null>(null)
+  const step = useJobStep(job)
+  const run = async (fn: (jobId: string) => Promise<unknown>) => {
+    const id = startJob('', true)
+    setJob(id)
+    try { await fn(id) } finally { endJob(id); setJob(null) }
   }
-  return [busy, run] as const
+  return [job !== null, run, step] as const
 }
 
 // ---------- workspace ----------
@@ -48,13 +52,14 @@ function useBusy() {
 function WorkspaceDialog() {
   const [path, setPath] = useState('')
   const [name, setName] = useState('')
-  const [busy, run] = useBusy()
+  const [busy, run, step] = useBusy()
   const valid = isAbsolutePath(path)
   return (
     <Modal
       title="Добавить проект"
       submitLabel="Добавить"
       busy={busy}
+      progress={step}
       disabled={!valid}
       onClose={closeDialog}
       onSubmit={() => run(async () => {
@@ -142,13 +147,14 @@ function ChatDialog(init: Partial<Where>) {
   const [role, setRole] = useState<'solo' | 'coordinator'>('solo')
   const [title, setTitle] = useState('')
   const [prompt, setPrompt] = useState('')
-  const [busy, run] = useBusy()
+  const [busy, run, step] = useBusy()
 
   return (
     <Modal
       title="Новый чат с настройками"
       submitLabel={prompt.trim() ? 'Начать' : 'Создать'}
       busy={busy}
+      progress={step}
       disabled={!agent || !where.cwd}
       wide
       onClose={closeDialog}
@@ -223,13 +229,14 @@ function TerminalDialog(init: Partial<Where>) {
   const [program, setProgram] = useState('shell')
   const [command, setCommand] = useState('')
   const [title, setTitle] = useState('')
-  const [busy, run] = useBusy()
+  const [busy, run, step] = useBusy()
 
   return (
     <Modal
       title="Новый терминал"
       submitLabel="Открыть"
       busy={busy}
+      progress={step}
       disabled={!where.cwd}
       onClose={closeDialog}
       onSubmit={() => run(async () => {
@@ -276,16 +283,17 @@ function WorktreeDialog({ workspaceId }: { workspaceId?: string }) {
   const [repo, setRepo] = useState(workspaceId ?? git[0]?.id ?? '')
   const [name, setName] = useState('')
   const [base, setBase] = useState('')
-  const [busy, run] = useBusy()
+  const [busy, run, step] = useBusy()
   return (
     <Modal
       title="Новое рабочее дерево"
       submitLabel="Создать"
       busy={busy}
+      progress={step}
       disabled={!name.trim() || !repo}
       onClose={closeDialog}
-      onSubmit={() => run(async () => {
-        const wt = await tryApi<Worktree>('POST', `/workspaces/${encodeURIComponent(repo)}/worktrees`, { name: name.trim(), base: base.trim() || undefined })
+      onSubmit={() => run(async (jobId) => {
+        const wt = await tryApi<Worktree>('POST', `/workspaces/${encodeURIComponent(repo)}/worktrees`, { name: name.trim(), base: base.trim() || undefined }, { jobId })
         if (!wt) return
         await loadWorktrees(repo)
         openWorktree(wt.path)
@@ -324,7 +332,7 @@ function StartDialog({ taskId }: { taskId: string }) {
   const enabled = useMemo(() => agents.filter((a) => a.enabled), [agents])
   const [agent, setAgent] = useState((enabled.find((a) => a.id === defaultAgent) ?? enabled[0])?.id ?? '')
   const [notes, setNotes] = useState('')
-  const [busy, run] = useBusy()
+  const [busy, run, step] = useBusy()
   const tasks = useStore((s) => s.tasks)
   const workspaces = useStore((s) => s.workspaces)
   const settings = useSettings()
@@ -350,10 +358,11 @@ function StartDialog({ taskId }: { taskId: string }) {
       title={`Взять в работу ${task.externalId ?? task.id}`}
       submitLabel={kids.length ? 'Запустить координатора' : 'Запустить'}
       busy={busy}
+      progress={step}
       disabled={!agent || waiting.length > 0 || needsRepo}
       onClose={closeDialog}
-      onSubmit={() => run(async () => {
-        const s = await tryApi<Session & { jumped?: boolean }>('POST', `/tasks/${encodeURIComponent(task.id)}/start`, { agent, notes: notes.trim() || undefined })
+      onSubmit={() => run(async (jobId) => {
+        const s = await tryApi<Session & { jumped?: boolean }>('POST', `/tasks/${encodeURIComponent(task.id)}/start`, { agent, notes: notes.trim() || undefined }, { jobId })
         if (!s) return
         closeDialog()
         if (s.jumped) toast('Задача уже в работе — открыл текущую сессию')
@@ -424,7 +433,7 @@ function PrDialog({ cwd, base: initBase }: { cwd: string; base?: string }) {
     saveDraft(draftKey, d)
   }
   const [preview, setPreview] = useState(false)
-  const [busy, run] = useBusy()
+  const [busy, run, step] = useBusy()
 
   useEffect(() => {
     api<GitSuggest>('GET', `/git/suggest${qs({ cwd })}`).then((s) => {
@@ -444,11 +453,12 @@ function PrDialog({ cwd, base: initBase }: { cwd: string; base?: string }) {
       title="Создать pull request"
       submitLabel="Создать PR"
       busy={busy}
+      progress={step}
       disabled={!title.trim() || !base.trim() || over}
       wide
       onClose={closeDialog}
-      onSubmit={() => run(async () => {
-        const res = await tryApi<{ url: string; existing?: boolean }>('POST', '/git/pr', { cwd, title: title.trim(), body, base: base.trim() })
+      onSubmit={() => run(async (jobId) => {
+        const res = await tryApi<{ url: string; existing?: boolean }>('POST', '/git/pr', { cwd, title: title.trim(), body, base: base.trim() }, { jobId })
         if (!res) return
         toast(res.existing ? 'PR уже открыт' : 'Pull request создан', res.existing ? 'info' : 'ok', res.url)
         saveDraft(draftKey, null)

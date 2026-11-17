@@ -1,5 +1,6 @@
-import { forwardRef, useRef, type ButtonHTMLAttributes, type InputHTMLAttributes, type KeyboardEvent, type ReactNode, type TextareaHTMLAttributes } from 'react'
-import { Check, X } from 'lucide-react'
+import { forwardRef, useRef, useState, type ButtonHTMLAttributes, type InputHTMLAttributes, type KeyboardEvent, type ReactNode, type TextareaHTMLAttributes } from 'react'
+import { Check, LoaderCircle, X } from 'lucide-react'
+import { useElapsed } from '../../lib/live'
 
 // ---------- buttons ----------
 
@@ -10,16 +11,23 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   icon?: ReactNode
   /** Tooltip (shown by the tooltip layer). */
   tip?: string
+  /** An action in flight: spinner instead of the icon, seconds after the first one, no second click. */
+  busy?: boolean
 }
 
 const cls = (variant: Variant, size: string, extra?: string) =>
   ['btn', variant !== 'secondary' && `btn-${variant}`, size !== 'md' && `btn-${size}`, extra].filter(Boolean).join(' ')
 
-export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button({ variant = 'secondary', size = 'md', icon, tip, className, children, type = 'button', ...rest }, ref) {
+export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button({ variant = 'secondary', size = 'md', icon, tip, className, children, type = 'button', busy, disabled, ...rest }, ref) {
+  const [since, setSince] = useState(0)
+  if (busy && !since) setSince(Date.now())
+  if (!busy && since) setSince(0)
+  const sec = useElapsed(since, !!busy)
   return (
-    <button ref={ref} type={type} className={cls(variant, size, className)} data-tip={tip} {...rest}>
-      {icon}
+    <button ref={ref} type={type} className={cls(variant, size, className)} data-tip={tip} disabled={disabled || busy} aria-busy={busy || undefined} {...rest}>
+      {busy ? <LoaderCircle className="spinner" aria-hidden /> : icon}
       {children}
+      {busy && sec >= 1 && <span className="btn-elapsed num">{sec} с</span>}
     </button>
   )
 })

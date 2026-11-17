@@ -1,4 +1,4 @@
-import { setState, toast } from './store'
+import { getState, setState, toast } from './store'
 
 const token = document.querySelector<HTMLMetaElement>('meta[name="harness-token"]')?.content ?? ''
 
@@ -14,14 +14,19 @@ export class ApiError extends Error {
 
 type Method = 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE'
 
-export async function api<T>(method: Method, path: string, body?: unknown): Promise<T> {
+export interface ApiOpts { jobId?: string } // x-job-id: the server reports progress of this request over WS
+
+export async function api<T>(method: Method, path: string, body?: unknown, opts?: ApiOpts): Promise<T> {
+  // No socket = the server is down or unreachable: say so at once instead of a slow network failure.
+  if (method !== 'GET' && getState().conn === 'closed') throw new ApiError('Нет связи с сервером', 0)
+  const headers: Record<string, string> = { 'x-harness-token': token }
+  if (body !== undefined) headers['content-type'] = 'application/json'
+  if (opts?.jobId) headers['x-job-id'] = opts.jobId
   let res: Response
   try {
     res = await fetch(`/api${path}`, {
       method,
-      headers: body === undefined
-        ? { 'x-harness-token': token }
-        : { 'x-harness-token': token, 'content-type': 'application/json' },
+      headers,
       body: body === undefined ? undefined : JSON.stringify(body),
     })
   } catch {
@@ -45,9 +50,9 @@ export async function api<T>(method: Method, path: string, body?: unknown): Prom
 }
 
 /** Like api(), but reports the error as a toast and resolves to undefined. */
-export async function tryApi<T>(method: Method, path: string, body?: unknown): Promise<T | undefined> {
+export async function tryApi<T>(method: Method, path: string, body?: unknown, opts?: ApiOpts): Promise<T | undefined> {
   try {
-    return await api<T>(method, path, body)
+    return await api<T>(method, path, body, opts)
   } catch (e) {
     if (!(e instanceof ApiError && e.status === 401)) toast(errorText(e), 'error')
     return undefined

@@ -267,3 +267,15 @@ kbd {
 
 /* Code is read character by character: no programming ligatures (Cascadia turns <= into ≤). */
 pre, code, .diff-table, .edit-lines, .xterm { font-variant-ligatures: none; }
+
+/* Busy buttons: spinner instead of the icon, seconds after the first one. */
+.btn[aria-busy="true"] { cursor: progress; }
+.btn .spinner { width: 14px; height: 14px; }
+.btn-elapsed { margin-left: 2px; opacity: 0.75; font-size: 0.92em; }
+/* A long operation in a toast: label · server step · seconds. */
+.toast-job p .muted { color: var(--ink-3); }
+.toast-job .btn { flex-shrink: 0; }
+/* No connection: changing things is off (the tooltip says why). */
+.app[data-conn="closed"] :is(.btn-primary, .composer-send, [data-mutates]) { opacity: 0.45; cursor: not-allowed; }
+.board-loading { padding: 24px; max-width: 720px; }
+.tree-skel { padding: 2px 8px 4px 30px; }

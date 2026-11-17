@@ -1,7 +1,7 @@
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
 import { ArrowUpToLine, Ellipsis, ExternalLink, EyeOff, GitMerge, Lock, Pencil, Play, Plus, Send, SquareArrowOutUpRight, Trash2, UserPlus, X } from 'lucide-react'
 import { api, ApiError, errorText, tryApi } from '../../api'
-import { openDialog, openSession, setState, toast, upsert, useFeature, useStore, without } from '../../store'
+import { getState, openDialog, openSession, setState, toast, upsert, useFeature, useStore, without } from '../../store'
 import { COLUMNS, fullTime, PRIORITY, relTime } from '../../lib/format'
 import { isImported, pendingDeps, taskKey } from '../../lib/tasks'
 import { useNow } from '../../lib/useNow'
@@ -16,9 +16,14 @@ import { PrChip } from '../PrChip'
 import { openPrSettings, usePr } from '../../lib/pr'
 import type { BoardCtx } from './TaskCard'
 
+/** Optimistic: the change shows at once; the server's answer settles it, a failure rolls back (with a toast). */
 async function patchTask(id: string, fields: Partial<Task> & { comment?: string }) {
+  const before = getState().tasks.find((t) => t.id === id)
+  const { comment: _c, ...shown } = fields
+  if (before) setState((s) => ({ tasks: upsert(s.tasks, { ...before, ...shown }) }))
   const t = await tryApi<Task>('PATCH', `/tasks/${encodeURIComponent(id)}`, fields)
   if (t) setState((s) => ({ tasks: upsert(s.tasks, t) }))
+  else if (before) setState((s) => ({ tasks: upsert(s.tasks, before) }))
   return t
 }
 

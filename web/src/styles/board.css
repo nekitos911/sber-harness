@@ -301,3 +301,6 @@
 .drawer-desc-edit:hover { border-color: var(--rule-strong); }
 .drawer-more .disclosure-toggle h3 { margin: 0; font-size: 12px; font-weight: 600; color: var(--ink-2); }
 .drawer-more .collapse > div > * { margin-top: 10px; }
+.agent-badge[data-s] { color: var(--state-ink, var(--ink-2)); }
+.agent-badge[data-s] .st { width: 12px; height: 12px; }
+.agent-badge-name { color: var(--ink); }

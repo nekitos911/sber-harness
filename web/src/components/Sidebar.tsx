@@ -7,7 +7,7 @@ import { sessionVisualState, stateSummary } from '../lib/sessionState'
 import { basename, normPath, relTime, tokens } from '../lib/format'
 import { newChat, newTerminal } from '../lib/actions'
 import type { Session, Workspace, Worktree } from '../types'
-import { StatusIcon, SubStateIcon, subStateLabel } from './bits'
+import { Skeleton, StatusIcon, SubStateIcon, subStateLabel } from './bits'
 import { BranchPicker } from './pickers/BranchPicker'
 import { Menu } from './ui'
 import { ideEnabled, isUnread, onWorktreeKey, projectMenu, setUnread, worktreeMenu } from './WorktreeMenu'
@@ -199,6 +199,7 @@ function ProjectNode({ ws, tree, filtering }: { ws: Workspace; tree: Tree; filte
       </div>
       <Menu anchor={projRow} open={menu} onClose={() => setMenu(false)} items={projectMenu(ws)} label={`Проект ${ws.name}`} placement="bottom-end" />
       {!expanded && <StateSummary sessions={withKids(mine, tree.kids)} />}
+      {expanded && ws.isGit && !loaded && <div className="tree-skel"><Skeleton rows={2} label="Загрузка рабочих деревьев…" /></div>}
       {expanded && list.map((wt) => {
         const here = mine.filter((s) => normPath(s.cwd) === normPath(wt.path))
         if (filtering && here.length === 0) return null

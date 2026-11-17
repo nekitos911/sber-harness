@@ -302,6 +302,7 @@ export type ServerEvent =
   | { t: 'sdd'; cwd: string; plans: SddPlan[] }
   | { t: 'term'; id: string; data: string }
   | { t: 'term.replay'; id: string; data: string }
+  | { t: 'job'; id: string; text?: string; step?: number; total?: number; done?: boolean; error?: string }
 
 export type ClientEvent =
   | { t: 'term.attach'; id: string }

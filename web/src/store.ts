@@ -33,6 +33,9 @@ export type DialogRequest =
 
 export interface Toast { id: number; text: string; tone: 'info' | 'ok' | 'error'; href?: string; leaving?: boolean }
 
+/** A long operation in flight (lib/jobs): label, the server's current step, error with retry. Inline jobs show in their dialog. */
+export interface Job { id: string; label: string; step: string | null; started: number; error: string | null; retry?: () => void; inline?: boolean }
+
 /** Git state of one worktree: status plus the whole-tree diff parsed once (per-file +N −M and inline diffs). */
 export interface GitInfo { status: GitStatus | null; error: string | null; files: DiffFile[] | null }
 
@@ -73,6 +76,7 @@ export interface State extends Prefs {
   features: string[] // optional API groups of this server; an optional endpoint is called only when listed
   dirty: Record<string, boolean>
   toasts: Toast[]
+  jobs: Job[]
   focusTaskId: string | null
   dialog: DialogRequest | null
   back: Loc[]
@@ -123,7 +127,7 @@ let state: State = {
   conn: 'connecting', loaded: false, authExpired: false, scheme: resolveScheme(prefs.theme),
   tasks: [], sessions: [], workspaces: [], notifications: [], agents: [], defaultAgent: null, shell: '',
   integrations: { tasks: false, pr: false },
-  messages: {}, subagents: {}, worktrees: {}, git: {}, agentMeta: {}, settings: null, prs: {}, sdd: {}, features: [], dirty: {}, toasts: [], focusTaskId: null, dialog: null, back: [], forward: [],
+  messages: {}, subagents: {}, worktrees: {}, git: {}, agentMeta: {}, settings: null, prs: {}, sdd: {}, features: [], dirty: {}, toasts: [], jobs: [], focusTaskId: null, dialog: null, back: [], forward: [],
 }
 
 const listeners = new Set<() => void>()

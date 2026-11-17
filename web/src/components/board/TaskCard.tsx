@@ -4,6 +4,7 @@ import { PRIORITY } from '../../lib/format'
 import { pendingDeps, taskKey, trackerDiffers, unusualTargets } from '../../lib/tasks'
 import type { AgentInfo, Priority, Session, Task, Workspace } from '../../types'
 import { StatusIcon, statusText } from '../bits'
+import { sessionVisualState } from '../../lib/sessionState'
 import { PrGlyph } from '../PrChip'
 import { openSession } from '../../store'
 
@@ -130,6 +131,18 @@ const AGENT_STATE: Record<NonNullable<Task['agentState']>, { text: string; tone:
 
 /** What the agent (and the harness review) is doing; click opens that chat (the reviewer's while reviewing). */
 function AgentBadge({ task, session, ctx }: { task: Task; session: Session; ctx: BoardCtx }) {
+  const review = task.agentState === 'reviewing' || task.agentState === 'approved' || task.agentState === 'changes_requested'
+  if (!review) {
+    // The agent itself: the same state, icon and words as in the sidebar.
+    return (
+      <button type="button" className="agent-badge" data-s={sessionVisualState(session)} data-tip={`${session.title}: открыть чат`}
+        onPointerDown={stop} onKeyDown={stop} onClick={(e) => { e.stopPropagation(); openSession(session.id) }}>
+        <StatusIcon session={session} />
+        <span className="agent-badge-name">{ctx.agents.get(session.agent)?.label ?? session.agent}</span>
+        {statusText(session)}
+      </button>
+    )
+  }
   const st = AGENT_STATE[task.agentState!]
   const reviewer = [...ctx.sessions.values()].filter((x) => x.parentId === session.id && x.role === 'reviewer').sort((a, b) => b.createdAt - a.createdAt)[0]
   const target = (task.agentState === 'reviewing' || task.agentState === 'approved' || task.agentState === 'changes_requested') && reviewer ? reviewer : session

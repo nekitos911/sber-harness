@@ -9,7 +9,8 @@ import { useNow } from '../../lib/useNow'
 import type { GitCommit, GitFile, GitSuggest } from '../../types'
 import type { DiffFile } from '../../lib/diff'
 import { DiffLines } from '../DiffLines'
-import { Disclosure } from '../ui'
+import { Button, Disclosure } from '../ui'
+import { runJob } from '../../lib/jobs'
 import { PrCard } from '../PrChip'
 import { openPrSettings, usePr } from '../../lib/pr'
 import { Skeleton } from '../bits'
@@ -82,7 +83,7 @@ export function ChangesTab({ cwd }: { cwd: string }) {
 
   const push = async () => {
     setBusy('push')
-    const res = await tryApi<{ output: string }>('POST', '/git/push', { cwd })
+    const res = await runJob('Push', (jobId) => api<{ output: string }>('POST', '/git/push', { cwd }, { jobId }))
     setBusy(null)
     if (!res) return
     toast(res.output?.trim().split('\n').pop() || 'Отправлено', 'ok')
@@ -156,13 +157,12 @@ export function ChangesTab({ cwd }: { cwd: string }) {
           <input className="input" aria-label="Заголовок коммита" placeholder="Заголовок коммита" value={title} onChange={(e) => edit({ title: e.target.value })} />
           <textarea className="textarea" aria-label="Описание коммита" placeholder="Описание (необязательно)" rows={4} value={body} onChange={(e) => edit({ body: e.target.value })} />
           <div className="actions">
-            <button type="button" className="btn btn-primary" disabled={!title.trim() || !files.length || !!busy} onClick={commit}>
+            <Button variant="primary" busy={busy === 'commit'} disabled={!title.trim() || !files.length || !!busy} onClick={commit}>
               {busy === 'commit' ? 'Коммит…' : `Закоммитить ${files.length ? files.length : ''}`.trim()}
-            </button>
-            <button type="button" className="btn" disabled={!!busy} onClick={push} data-tip={status.upstream ? `в ${status.upstream}` : 'Опубликовать ветку'}>
-              <Upload />
+            </Button>
+            <Button icon={<Upload />} busy={busy === 'push'} disabled={!!busy} onClick={push} tip={status.upstream ? `в ${status.upstream}` : 'Опубликовать ветку'}>
               {busy === 'push' ? 'Push…' : 'Push'}
-            </button>
+            </Button>
 
           </div>
         </div>

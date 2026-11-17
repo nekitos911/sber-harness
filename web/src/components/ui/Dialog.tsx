@@ -8,6 +8,8 @@ interface Props {
   onSubmit: () => void
   onClose: () => void
   busy?: boolean
+  /** The server's current step while busy (x-job-id progress). */
+  progress?: string | null
   disabled?: boolean
   wide?: boolean
   /** Destructive submit (red). */
@@ -16,7 +18,7 @@ interface Props {
 }
 
 /** Native <dialog> modal: focus trap, Esc and top layer come from the platform. */
-export function Modal({ title, submitLabel, onSubmit, onClose, busy, disabled, wide, danger, children }: Props) {
+export function Modal({ title, submitLabel, onSubmit, onClose, busy, progress, disabled, wide, danger, children }: Props) {
   const ref = useRef<HTMLDialogElement>(null)
   const titleId = useId()
 
@@ -49,7 +51,7 @@ export function Modal({ title, submitLabel, onSubmit, onClose, busy, disabled, w
         {children}
         <div className="dialog-actions">
           <Button size="lg" onClick={onClose}>Отмена</Button>
-          <Button size="lg" type="submit" variant={danger ? 'danger' : 'primary'} className={danger ? 'btn-primary' : undefined} disabled={busy || disabled}>{busy ? 'Подождите…' : submitLabel}</Button>
+          <Button size="lg" type="submit" variant={danger ? 'danger' : 'primary'} className={danger ? 'btn-primary' : undefined} busy={busy} disabled={disabled}>{busy ? progress || 'Подождите…' : submitLabel}</Button>
         </div>
       </form>
     </dialog>

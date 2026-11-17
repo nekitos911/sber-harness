@@ -2,6 +2,7 @@ import { api, ApiError, errorText, wsUrl } from './api'
 import { closeSessionTab, getState, hasFeature, setState, tabKey, toast, upsert, without, wtKey, type WtTabs } from './store'
 import { desktopNotify } from './lib/notify'
 import { saveDraft } from './lib/draft'
+import { applyJobEvent } from './lib/jobs'
 import type { AppState, ClientEvent, Message, ServerEvent, SubAgent, Worktree } from './types'
 
 type TermListener = (data: string, replay: boolean) => void
@@ -144,6 +145,9 @@ export async function loadWorktrees(workspaceId: string) {
 
 function apply(ev: ServerEvent) {
   switch (ev.t) {
+    case 'job':
+      applyJobEvent(ev)
+      break
     case 'task':
       setState((s) => ({ tasks: upsert(s.tasks, ev.task) }))
       break

@@ -5,6 +5,9 @@ import { useEffect, useRef, useState } from 'react'
  * focus (not on mouse focus). The first one waits a moment; while one was just visible, the next shows at
  * once, so scanning a toolbar is fast. Lives in the top layer, so it also works inside dialogs.
  */
+const MUTATING = '.btn-primary, .composer-send, [data-mutates]' // same as App: blocked while offline
+const offline = () => document.querySelector('.app')?.getAttribute('data-conn') === 'closed'
+
 export function TooltipLayer() {
   const ref = useRef<HTMLDivElement>(null)
   const [tip, setTip] = useState<{ text: string; el: HTMLElement } | null>(null)
@@ -14,7 +17,7 @@ export function TooltipLayer() {
     let lastHidden = 0
     let current: HTMLElement | null = null
     const show = (el: HTMLElement) => {
-      const text = el.dataset.tip
+      const text = offline() && el.matches(MUTATING) ? 'Нет связи с сервером' : el.dataset.tip
       if (!text || el === current) return
       // Rows and titles: a tooltip only when the visible label is actually truncated, and a bit later.
       const trunc = el.hasAttribute('data-tip-trunc')
@@ -35,7 +38,7 @@ export function TooltipLayer() {
     }
     const over = (e: PointerEvent) => {
       if (e.pointerType === 'touch') return
-      const el = (e.target as Element).closest<HTMLElement>('[data-tip]')
+      const el = (e.target as Element).closest<HTMLElement>(offline() ? `${MUTATING}, [data-tip]` : '[data-tip]')
       if (el) show(el)
       else if (current) hide()
     }

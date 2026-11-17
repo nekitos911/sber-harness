@@ -36,9 +36,11 @@ export function openFolder(cwd: string) {
   void tryApi('POST', '/open', { cwd, target: 'explorer' })
 }
 
+/** Optimistic: pin/sleep/label show at once; the list is reloaded after (which also undoes a failed change). */
 async function patchMeta(workspaceId: string, path: string, meta: Partial<NonNullable<Worktree['meta']>>) {
-  const res = await tryApi('PATCH', '/worktrees/meta', { path, ...meta })
-  if (res !== undefined) void loadWorktrees(workspaceId)
+  setState((s) => ({ worktrees: { ...s.worktrees, [workspaceId]: (s.worktrees[workspaceId] ?? []).map((w) => (w.path === path ? { ...w, meta: { ...w.meta, ...meta } } : w)) } }))
+  await tryApi('PATCH', '/worktrees/meta', { path, ...meta })
+  void loadWorktrees(workspaceId)
 }
 
 const copy = (text: string, what: string) => {

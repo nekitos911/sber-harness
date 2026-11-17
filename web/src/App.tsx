@@ -24,6 +24,9 @@ import { useGitWatch } from './lib/git'
 import { useUnreadTitle } from './lib/notify'
 import { modKey } from './lib/keys'
 
+/** Buttons that change something on the server (blocked while there is no connection). */
+const MUTATING = '.btn-primary, .composer-send, [data-mutates]'
+
 // Heavy editors load on first use.
 const TerminalView = lazy(() => import('./views/TerminalView'))
 const FileView = lazy(() => import('./views/FileView'))
@@ -34,7 +37,20 @@ export function App() {
   const panel = useStore((s) => s.panel)
   const view = useStore((s) => s.view)
   const wt = useStore((s) => s.wt)
+  const conn = useStore((s) => s.conn)
   const [palette, setPalette] = useState(false)
+
+  // No connection: actions that change something do nothing but say why (navigation and reading still work).
+  useEffect(() => {
+    if (conn !== 'closed') return
+    const block = (e: MouseEvent) => {
+      if (!(e.target as Element).closest?.(MUTATING)) return
+      e.preventDefault()
+      e.stopPropagation()
+    }
+    document.addEventListener('click', block, true)
+    return () => document.removeEventListener('click', block, true)
+  }, [conn])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -53,7 +69,7 @@ export function App() {
   const showsTab = !!hereTabs?.tabs.some((t) => tabKey(t) === hereTabs.active)
 
   return (
-    <div className="app" data-sidebar={sidebar} style={{ '--sb-w': sidebar ? `${width}px` : '0px' } as CSSProperties}>
+    <div className="app" data-sidebar={sidebar} data-conn={conn} style={{ '--sb-w': sidebar ? `${width}px` : '0px' } as CSSProperties}>
       <ErrorBoundary area="верхнюю панель"><TopBar onCommand={() => setPalette(true)} /></ErrorBoundary>
       <ErrorBoundary area="боковую панель"><Sidebar /></ErrorBoundary>
       <main className="main">

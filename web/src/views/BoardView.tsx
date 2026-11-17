@@ -1,4 +1,6 @@
 import { memo, useEffect, useMemo, useState, type CSSProperties } from 'react'
+import { runJob } from '../lib/jobs'
+import { Skeleton } from '../components/bits'
 import {
   closestCorners, DndContext, DragOverlay, KeyboardSensor, PointerSensor, useDroppable, useSensor, useSensors,
   type Announcements, type DragEndEvent, type DragOverEvent, type DragStartEvent,
@@ -22,6 +24,7 @@ const COL_PREFIX = 'col:'
 
 export function BoardView() {
   const tasks = useStore((s) => s.tasks)
+  const loaded = useStore((s) => s.loaded)
   const sessions = useStore((s) => s.sessions)
   const workspaces = useStore((s) => s.workspaces)
   const agents = useStore((s) => s.agents)
@@ -176,7 +179,7 @@ export function BoardView() {
 
   const sync = async () => {
     setSyncing(true)
-    const res = await tryApi<{ imported: number; updated: number }>('POST', '/tasks/sync')
+    const res = await runJob('Синхронизация с трекером', (jobId) => api<{ imported: number; updated: number }>('POST', '/tasks/sync', undefined, { jobId }))
     setSyncing(false)
     if (res) toast(`Синхронизировано: новых ${res.imported}, обновлено ${res.updated}`, 'ok')
   }
@@ -190,6 +193,8 @@ export function BoardView() {
 
   const dragged = drag ? byId.get(drag.id) : undefined
   const openTaskObj = openId ? byId.get(openId) : undefined
+
+  if (!loaded) return <div className="board-view"><div className="board-loading"><Skeleton rows={8} label="Загрузка задач…" /></div></div>
 
   return (
     <div className="board-view">
