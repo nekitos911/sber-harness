@@ -760,6 +760,16 @@ function GeneralSection({ form, update }: Omit<SectionProps, 'fieldError'>) {
             <ProjectsFolder value={form.workspaces?.root ?? null} onChange={(root) => update({ ...form, workspaces: { ...form.workspaces, root } })} />
           </Row>
         )}
+        {form.recovery !== undefined && (
+          <>
+            <Row label="Продолжать прерванные сессии автоматически" hint="После перезапуска harness или ПК прерванные ходы продолжаются сами (координаторы — после своих исполнителей). Иначе — окно «Восстановление сессий».">
+              <Switch label="Продолжать прерванные сессии автоматически" checked={!!form.recovery.autoResume} onChange={(v) => update({ ...form, recovery: { ...form.recovery, autoResume: v } })} />
+            </Row>
+            <Row label="Сообщение для продолжения" hint="Что получает агент, когда его прерванный ход продолжают." wide>
+              <Textarea rows={2} aria-label="Сообщение для продолжения" value={form.recovery.message ?? ''} onChange={(e) => update({ ...form, recovery: { ...form.recovery, message: e.target.value } })} />
+            </Row>
+          </>
+        )}
         <Row label="Тема" hint="Хранится в этом браузере.">
           <Segmented label="Тема" value={scheme} onChange={(v) => setState({ theme: v })} options={[{ value: 'dark', label: 'Тёмная' }, { value: 'light', label: 'Светлая' }]} />
         </Row>

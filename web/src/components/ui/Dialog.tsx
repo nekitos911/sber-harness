@@ -5,6 +5,7 @@ import { Button, IconButton } from './controls'
 interface Props {
   title: string
   submitLabel: string
+  cancelLabel?: string
   onSubmit: () => void
   onClose: () => void
   busy?: boolean
@@ -18,7 +19,7 @@ interface Props {
 }
 
 /** Native <dialog> modal: focus trap, Esc and top layer come from the platform. */
-export function Modal({ title, submitLabel, onSubmit, onClose, busy, progress, disabled, wide, danger, children }: Props) {
+export function Modal({ title, submitLabel, cancelLabel = 'Отмена', onSubmit, onClose, busy, progress, disabled, wide, danger, children }: Props) {
   const ref = useRef<HTMLDialogElement>(null)
   const titleId = useId()
 
@@ -51,7 +52,7 @@ export function Modal({ title, submitLabel, onSubmit, onClose, busy, progress, d
         </div>
         {children}
         <div className="dialog-actions">
-          <Button size="lg" onClick={onClose}>Отмена</Button>
+          <Button size="lg" onClick={onClose}>{cancelLabel}</Button>
           <Button size="lg" type="submit" variant={danger ? 'danger' : 'primary'} className={danger ? 'btn-primary' : undefined} busy={busy} disabled={disabled}>{busy ? progress || 'Подождите…' : submitLabel}</Button>
         </div>
       </form>

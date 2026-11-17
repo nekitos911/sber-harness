@@ -1,8 +1,8 @@
 import { useMemo, useState } from 'react'
 import { useEffect } from 'react'
-import { CheckCheck, CircleAlert, CircleCheck, CircleHelp, Inbox, Info, Megaphone, ShieldAlert, TriangleAlert } from 'lucide-react'
+import { CheckCheck, CircleAlert, CircleCheck, CircleHelp, Inbox, Info, Megaphone, RotateCcw, ShieldAlert, TriangleAlert } from 'lucide-react'
 import { tryApi } from '../api'
-import { openSession, openTask, setState, useStore } from '../store'
+import { openDialog, openSession, openTask, setState, useStore } from '../store'
 import { fullTime, NOTIFY_KIND, relTime } from '../lib/format'
 import { useNow } from '../lib/useNow'
 import type { Notification, NotificationKind } from '../types'
@@ -10,6 +10,21 @@ import { LinkButton, ReplyOptions } from '../components/chat/MessageItem'
 import { AskToolCard, isAskTool, MessageQuestion, PermissionCard } from '../components/chat/Attention'
 import { ensureMessages } from '../ws'
 import type { Message, Session } from '../types'
+
+/** Sessions a restart interrupted: reopens the recovery dialog. */
+function Interrupted() {
+  const n = useStore((s) => s.recovery?.sessions.length ?? 0)
+  if (!n) return null
+  return (
+    <section className="inbox-waiting" aria-label="Прерванные сессии">
+      <button type="button" className="inbox-recovery" onClick={() => openDialog({ kind: 'recovery' })}>
+        <RotateCcw aria-hidden />
+        Прерванные сессии ({n})
+        <span className="muted">— продолжить или отпустить</span>
+      </button>
+    </section>
+  )
+}
 
 /** Sessions waiting for an answer or a permission: their open question / request, answerable right here. */
 function WaitingForYou() {
@@ -45,7 +60,7 @@ function WaitingItem({ s }: { s: Session }) {
 }
 
 const ICON: Record<NotificationKind, typeof Info> = {
-  question: CircleHelp, permission: ShieldAlert, done: CircleCheck, failed: TriangleAlert, escalation: Megaphone, info: Info, error: CircleAlert,
+  question: CircleHelp, permission: ShieldAlert, recovery: RotateCcw, done: CircleCheck, failed: TriangleAlert, escalation: Megaphone, info: Info, error: CircleAlert,
 }
 
 function markRead(ids: string[]) {
@@ -74,6 +89,7 @@ export function InboxView() {
           Прочитать все
         </button>
       </header>
+      <Interrupted />
       <WaitingForYou />
       {list.length === 0 ? (
         <div className="empty">

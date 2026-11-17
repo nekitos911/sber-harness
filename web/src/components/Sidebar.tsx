@@ -323,6 +323,7 @@ function SessionRow({ s, nested, level = 0, caret }: { s: Session; nested: boole
         {s.title || s.id}
         {doing && <span className="sess-doing"> · {doing}</span>}
       </span>
+      {s.interrupted && <span className="badge-interrupted" data-tip={s.interrupted.lastActivity ? `Прервана на: ${s.interrupted.lastActivity}` : 'Перезапуск прервал ход'}>прервана</span>}
       <span className="sess-state" data-s={v}>
         {line || <><span className="agent">{s.kind === 'terminal' ? 'shell' : s.model ?? s.agent}</span> · {relTime(s.lastActivityAt, now)}</>}
       </span>

@@ -110,6 +110,7 @@ export interface Session {
   waitingFor?: 'answer' | 'auth' | 'permission' | null // called `ask` and no reply yet, or needs a login (newer servers)
   stalled?: boolean // running, process alive, but silent for session.stallSec (newer servers)
   includeDirs?: string[] // extra directories the CLI may use (--include-directories), feature include-dirs
+  interrupted?: { at: number; reason: 'harness_restart' | 'reboot' | 'crash'; lastActivity: string | null } | null // a restart cut its turn
   archived?: boolean // its worktree was removed: hidden from the sidebar, transcript kept
   virtual?: boolean // a built-in sub-agent of the parent's stream: read-only chat // newer servers: 'starting' = process up, no event yet (cold start)
   externalSessionId: string | null
@@ -158,7 +159,7 @@ export interface Message {
   permission?: { id: string; tool: string; input: unknown; reason?: string | null; transport?: 'headless' | 'acp'; options: PermissionOption[]; choice?: string | null } | null
 }
 
-export type NotificationKind = 'question' | 'permission' | 'done' | 'failed' | 'escalation' | 'info' | 'error'
+export type NotificationKind = 'question' | 'permission' | 'recovery' | 'done' | 'failed' | 'escalation' | 'info' | 'error'
 
 export interface Notification {
   id: string
@@ -271,6 +272,7 @@ export interface AgentSettings {
 export interface Settings {
   workspaces?: { root?: string | null } // projects folder; null = auto (deepest common parent)
   session?: { stallSec?: number } // «нет вывода» after this many seconds of silence (≥ 30)
+  recovery?: { autoResume?: boolean; message?: string } // interrupted sessions after a restart
   agents: Record<string, AgentSettings>
   defaultAgent: string
   git: {
@@ -322,3 +324,7 @@ export type ClientEvent =
   | { t: 'term.detach'; id: string }
   | { t: 'term.in'; id: string; data: string }
   | { t: 'term.resize'; id: string; cols: number; rows: number }
+
+/** GET /api/recovery: sessions a restart interrupted mid-turn (feature recovery). */
+export interface RecoveryItem { id: string; title: string; cwd: string; taskId: string | null; role: SessionRole; reason: 'harness_restart' | 'reboot' | 'crash'; at: number; lastActivity: string | null }
+export interface RecoveryState { sessions: RecoveryItem[]; message: string }

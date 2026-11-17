@@ -3,6 +3,7 @@ import { closeSessionTab, getState, hasFeature, setState, tabKey, toast, upsert,
 import { desktopNotify } from './lib/notify'
 import { saveDraft } from './lib/draft'
 import { applyJobEvent } from './lib/jobs'
+import { loadRecovery } from './lib/recovery'
 import type { AppState, ClientEvent, Message, ServerEvent, SubAgent, Worktree } from './types'
 
 type TermListener = (data: string, replay: boolean) => void
@@ -31,7 +32,10 @@ export function connect() {
     retry = 0
     failed = 0
     setState({ conn: 'open' })
-    void refreshState().then((ok) => { if (ok && restarted) toast('Сервер перезапущен — всё восстановлено', 'ok') })
+    void refreshState().then((ok) => {
+      if (ok && restarted) toast('Сервер перезапущен — всё восстановлено', 'ok')
+      if (ok) void loadRecovery()
+    })
     for (const id of terms.keys()) send({ t: 'term.attach', id })
   }
   ws.onmessage = (e) => {

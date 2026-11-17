@@ -14,6 +14,7 @@ import { modeShort, useSettings } from '../lib/agents'
 import { pendingDeps, taskKey } from '../lib/tasks'
 import { loadPr } from '../lib/pr'
 import { FolderPicker } from './FolderPicker'
+import { RecoveryDialog } from './RecoveryDialog'
 import { endJob, startJob, useJobStep } from '../lib/jobs'
 import { Markdown } from './Markdown'
 
@@ -34,6 +35,7 @@ function DialogSwitch({ d }: { d: DialogRequest }) {
     case 'wt-delete': return <DeleteWorktreeDialog workspaceId={d.workspaceId} path={d.path} />
     case 'wt-info': return <WorktreeInfoDialog workspaceId={d.workspaceId} path={d.path} />
     case 'wt-cleanup': return <CleanupDialog workspaceId={d.workspaceId} />
+    case 'recovery': return <RecoveryDialog />
     case 'folder-chat': return <FolderPicker title="Новый чат в папке" submitLabel="Начать чат здесь" onClose={closeDialog} onPick={(p) => { closeDialog(); void newChatInFolder(p) }} />
   }
 }
