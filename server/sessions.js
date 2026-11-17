@@ -945,6 +945,9 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     return { workspaceId: folder?.id ?? null, worktreePath: null, system: false };
   }
 
+  const archiveTimer = setInterval(() => api.autoArchive(), 3600000); // hourly; also once on startup (index.js)
+  archiveTimer.unref?.();
+
   // ---- public API ----
 
   const api = {
@@ -1184,9 +1187,47 @@ ${note.trim()}` : text });
       return s;
     },
 
-    remove(sid) {
+    /** Archive (hide; transcript kept) or unarchive; a working session only with stop: its virtual sub-agents follow. */
+    archive(sid, archived = true, { stop = false } = {}) {
       const s = get(sid);
-      for (const v of db.sessions.filter((x) => x.virtual && x.parentId === sid)) api.remove(v.id);
+      const r = runtime(sid);
+      const live = r.running || !!r.pty;
+      if (archived && live && !stop) fail(409, 'сессия работает — остановите её или передайте stop: true');
+      if (archived && live) api.stop(sid);
+      for (const x of [s, ...db.sessions.filter((v) => v.virtual && v.parentId === sid)]) {
+        if (!!x.archived === archived) continue;
+        Object.assign(x, { archived, archivedAt: archived ? Date.now() : null });
+        emit(x);
+      }
+      return s;
+    },
+
+    /**
+     * sessions.autoArchiveDays (0 = off): idle chats with nothing pending and exited terminals older than N days are
+     * archived; never one that runs, waits for an answer, was interrupted, owns an in-progress task or leads live workers.
+     */
+    autoArchive(now = Date.now()) {
+      const days = Number(config.sessions?.autoArchiveDays ?? 7);
+      if (!(days > 0)) return 0;
+      const cutoff = now - days * 86400000;
+      const liveChild = (s) => db.sessions.some((c) => c.parentId === s.id && !c.virtual && !c.archived && ['running', 'idle'].includes(c.status));
+      const ownsWork = (s) => db.tasks.some((t) => t.assigneeSessionId === s.id && t.status === 'in_progress');
+      let n = 0;
+      for (const s of db.sessions.filter((x) => !x.archived && !x.virtual && (x.lastActivityAt || 0) < cutoff)) {
+        const r = runtime(s.id);
+        const idle = s.kind === 'terminal' ? s.status === 'exited' && !r.pty : !r.running && s.status !== 'running';
+        if (!idle || s.waitingFor || s.interrupted || ownsWork(s) || liveChild(s)) continue;
+        api.archive(s.id, true);
+        n++;
+      }
+      if (n) console.log(`[harness] auto-archived ${n} inactive session(s)`);
+      return n;
+    },
+
+    remove(sid, { force = false } = {}) {
+      const s = get(sid);
+      if (!force && (runtime(sid).running || runtime(sid).pty)) fail(409, 'сессия работает — остановите её или удалите с ?force=1');
+      for (const v of db.sessions.filter((x) => x.virtual && x.parentId === sid)) api.remove(v.id, { force: true });
       const r = runtime(sid);
       clearInterval(r.registryTimer);
       r.handle?.stop();
@@ -1207,7 +1248,8 @@ ${note.trim()}` : text });
     patch(sid, p) {
       const s = get(sid);
       for (const k of ['title', 'approvalMode', 'model']) if (k in p && p[k] !== null && typeof p[k] !== 'string') fail(400, `${k}: нужна строка`);
-      if ('autoReport' in p && typeof p.autoReport !== 'boolean') fail(400, 'autoReport: нужно true или false');
+      for (const k of ['autoReport', 'archived', 'stop']) if (k in p && typeof p[k] !== 'boolean') fail(400, `${k}: нужно true или false`);
+      if ('archived' in p) api.archive(sid, p.archived, { stop: p.stop === true });
       if (p.approvalMode && config.agents[s.agent]) checkMode(config.agents[s.agent], p.approvalMode);
       if (p.title?.trim()) s.title = p.title.trim();
       if ('approvalMode' in p) s.approvalMode = p.approvalMode || null;
@@ -1328,6 +1370,7 @@ ${note.trim()}` : text });
     /** Harness shutdown: agent turns keep running (re-attached on the next start); terminals are closed. */
     close() {
       clearInterval(stallTimer);
+      clearInterval(archiveTimer);
       acp.close();
       for (const r of rt.values()) {
         clearInterval(r.registryTimer);

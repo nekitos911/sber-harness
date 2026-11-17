@@ -52,6 +52,7 @@ export function loadConfig({ root = CODE_ROOT, overrides = {}, dataDir, configFi
   cfg.integrations ||= {};
   cfg.git = { defaultBase: 'main', excludeFromCommit: ['.superpowers/'], networkTimeoutSec: 120, ...cfg.git };
   cfg.session = { idleWindowSec: 90, stallSec: 300, ...cfg.session };
+  cfg.sessions = { autoArchiveDays: 7, ...cfg.sessions };
   cfg.terminal = { autoRespawn: true, ...cfg.terminal };
   cfg.recovery = { autoResume: false, message: 'Был перезапуск, твой предыдущий ход прервался. Продолжи с того места, где остановился — сначала проверь текущее состояние рабочего дерева.', ...cfg.recovery };
   cfg.orchestration = { workerMayCommit: false, reviewMode: 'builtin', subagents: 'harness', ...cfg.orchestration };

@@ -292,6 +292,7 @@ export async function startServer(opts = {}) {
         rootAuto: !config.workspaces?.root,
       },
       session: { stallSec: config.session.stallSec },
+      sessions: { autoArchiveDays: config.sessions.autoArchiveDays },
       recovery: { autoResume: !!config.recovery.autoResume, message: config.recovery.message },
       ide: config.ide ?? null,
       orchestration: { reviewMode: config.orchestration.reviewMode, subagents: config.orchestration.subagents, workerMayCommit: !!config.orchestration.workerMayCommit, review: config.orchestration.review },
@@ -535,6 +536,11 @@ export async function startServer(opts = {}) {
       const sec = body.session?.stallSec;
       if (!isObj(body.session) || Object.keys(body.session).some((k) => k !== 'stallSec') || !Number.isInteger(sec) || sec < 30) fail(400, 'session: { stallSec: целое число ≥ 30 }');
       patch.session = { stallSec: sec };
+    }
+    if (body.sessions !== undefined) {
+      const d = body.sessions?.autoArchiveDays;
+      if (!isObj(body.sessions) || Object.keys(body.sessions).some((k) => k !== 'autoArchiveDays') || !Number.isInteger(d) || d < 0) fail(400, 'sessions: { autoArchiveDays: целое число ≥ 0 (0 — выключено) }');
+      patch.sessions = { autoArchiveDays: d };
     }
     if (body.ide !== undefined) {
       const ide = body.ide;
@@ -836,6 +842,7 @@ export async function startServer(opts = {}) {
   await registerConfiguredWorkspaces();
   syncRootWorkspace();
   await sessions.reresolveWorkspaces(); // data saved before the repo-first rule
+  sessions.autoArchive();
   route('DELETE', '/api/workspaces/:id', ({ params }) => {
     getWs(params.id);
     db.workspaces = db.workspaces.filter((w) => w.id !== params.id);
@@ -873,7 +880,7 @@ export async function startServer(opts = {}) {
       if (s.status === 'running' || s.kind === 'terminal') {
         try { sessions.stop(s.id); } catch {}
       }
-      sessions.update(s.id, { archived: true }); // hidden from the sidebar; transcripts kept
+      sessions.archive(s.id, true, { stop: true }); // hidden from the sidebar; transcripts kept
     }
     await Promise.all(here.filter((s) => s.pid).map((s) => waitGone(s.pid)));
     jobStep('git worktree remove');
@@ -981,7 +988,7 @@ export async function startServer(opts = {}) {
     return s;
   });
   route('PATCH', '/api/sessions/:id', ({ params, body }) => sessions.patch(params.id, body));
-  route('DELETE', '/api/sessions/:id', ({ params }) => sessions.remove(params.id));
+  route('DELETE', '/api/sessions/:id', ({ params, query }) => sessions.remove(params.id, { force: query.force === '1' }));
   // the transcript keeps every tool output whole; the list sends at most 64 KB of each (full text on demand)
   const OUTPUT_MAX = 64 * 1024;
   route('GET', '/api/sessions/:id/messages', ({ params }) => sessions.messages(params.id).map((m) => (

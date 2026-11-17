@@ -1072,6 +1072,17 @@ Durable state (all in `<dataDir>`, atomic writes):
 - The transcript keeps every tool output whole; `GET /api/sessions/:id/messages` returns `tool.output` cut to 64 K
   characters with `tool.outputTruncated: true`; `GET /api/sessions/:id/messages/:mid/output` → `{ output }` (full).
 
+## Tidying up sessions
+
+- `PATCH /api/sessions/:id { archived: boolean, stop?: boolean, title? }`: archiving a working session (a running turn or
+  a live terminal) → 409 unless `stop: true` (stop, then archive); archived sessions stay in `/api/state` with
+  `archived: true, archivedAt`; unarchive is allowed; virtual sub-agent sessions follow their parent.
+- `sessions.autoArchiveDays` (default 7, 0 = off, in /api/settings as `sessions: { autoArchiveDays }`): on startup and
+  hourly, chats that are idle (not running, `waitingFor` null, not `interrupted`, no in-progress task assigned, not a
+  coordinator with live workers) and exited terminals whose `lastActivityAt` is older than N days are archived.
+- `DELETE /api/sessions/:id` refuses a working session (409) unless `?force=1`; it also removes the virtual children and
+  the run files.
+
 ## Auto-fill: repository suggestion, readable task log, PR decline
 
 - `task.suggestedWorkspaceId` (flag `task-suggest`), recomputed on every create/update/import while `workspaceId` is
