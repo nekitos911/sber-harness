@@ -172,6 +172,21 @@ others work. Transport per call. GigaCode's own encrypted store (`~/.gigacode/mc
 - Porting: by commits, only the missing ones (`git log --cherry-pick --right-only <target>...<branch>`), done by the author,
   separate PR per release branch. No automatic develop→release merge. No local hooks; conventions are not enforced by CI.
 
+## Open questions (verify on the target; each changes the implementation)
+
+1. `mcpServers` in the run settings file: merged with `~/.gigacode/settings.json` or replacing it? (→ `inheritUserMcp`)
+2. Hooks in settings (PreToolUse-like): key, events, format, can deny a tool with a message? (→ `agentToolHook` to force
+   `mcp__harness__agent` instead of the built-in `agent`)
+3. Built-in `agent` / `fork` exact inputSchema; do sub-agent events appear in stream-json with non-null
+   `parent_tool_use_id`? (→ harness `agent` alias schema; Level 1 virtual chats)
+4. MCP tool-call timeout default; `mcpServers.<name>.timeout` units; does `notifications/progress` reset it? (→ long
+   `worker_run` waits)
+5. Parallel tool calls in one turn — concurrent? (→ parallel harness sub-agents)
+6. Headless `-p` without authorization: output, link format, waits or exits, exit code; where the login is stored.
+7. `-p "/models"` raw output (→ model discovery parser).
+8. stdin + `-p` order with slash commands; max argv length on Windows (40K chars?) (→ long prompts via stdin).
+9. `auto` approval mode in headless when the classifier wants a confirmation: event? deny/skip/stop?
+
 ## 9. Machine pitfalls
 
 - Console output in CP866 (Cyrillic garbled) — never rely on console text; read bytes, write files with explicit UTF-8.
