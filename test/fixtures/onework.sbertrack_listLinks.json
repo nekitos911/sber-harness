@@ -1,0 +1,10 @@
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "Links for PROJ-14904 (5 total, page 0, has_next: False)\n\n1. PROJ-15384 **wiki_page_mention** -> PROJ-14904\n2. PROJ-14904 **decomposition** -> PROJ-15099\n3. PROJ-14906 **plain_connection** -> PROJ-14904\n4. PROJ-14904 **decomposition** -> PROJ-14438",
+      "annotations": null,
+      "_meta": null
+    }
+  ]
+}

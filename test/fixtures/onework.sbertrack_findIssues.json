@@ -1,0 +1,10 @@
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "Found 5 issues on this page (page 0, 5 per page, has_next: True, more pages available)\n\n1. **PROJ-13398** — SOWA. S50. Методы для справочников [done | mid] @***\n2. **PROJ-15430** — valueDisplayOnTile добавить в получение шаблона [todo | low] @***\n3. **PROJ-14904** — BACK. S54. Оптимизация расчёта [development | low] @***\n4. **PROJ-14932** — BACK. S54. Новые типы полей в задачах и процессах [qa | low] @***\n5. **PROJ-14933** — SOWA. S54. Новые типы полей [qa | high] @***",
+      "annotations": null,
+      "_meta": null
+    }
+  ]
+}

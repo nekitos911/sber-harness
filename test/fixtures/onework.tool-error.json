@@ -1,0 +1,10 @@
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "MCP tool 'sbertrack_getIssue' reported tool error for function call: {\"name\":\"sbertrack_getIssue\",\"args\":{\"key\":\"PROJ-99001\"}} with response: [{\"functionResponse\":{\"name\":\"sbertrack_getIssue\",\"response\":{\"error\":\"Issue PROJ-99001 not found (404)\"}}}]",
+      "annotations": null,
+      "_meta": null
+    }
+  ]
+}

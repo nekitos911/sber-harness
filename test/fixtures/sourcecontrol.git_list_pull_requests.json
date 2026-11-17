@@ -1,0 +1,49 @@
+{
+  "pagination": {
+    "current_page": 1,
+    "per_page": 3,
+    "total_pages": 1,
+    "total_items": 1
+  },
+  "pulls": [
+    {
+      "index": 561,
+      "title": "PROJ-15311 BACK. S55. Увеличение количества символов в текстовом поле до 3000",
+      "body": "",
+      "state": "open",
+      "pr_creator": "***",
+      "head": {
+        "name": "feature/PROJ-15311",
+        "protected": false,
+        "commit": {
+          "hash": "cc789b60",
+          "title": "PROJ-15311 …",
+          "created_at": "2026-11-17T11:01:54Z"
+        }
+      },
+      "base": {
+        "name": "develop",
+        "protected": true,
+        "protection_rules": [
+          "develop"
+        ]
+      },
+      "mergeable": true,
+      "assignees": [],
+      "reviewers": [
+        {
+          "username": "***",
+          "status": "PENDING"
+        }
+      ],
+      "code_owners": [],
+      "labels": [],
+      "diff_url": "https://code.example/sc/PROJ/demo-service/pulls/561.diff",
+      "html_url": "https://code.example/sc/PROJ/demo-service/pulls/561",
+      "url": "https://code.example/sc/api/v3/repos/00000000-repo-uuid/pulls/561",
+      "merge_base": "9d2da5cc",
+      "created_at": "2026-11-17T11:05:25Z",
+      "updated_at": "2026-11-17T14:36:21Z"
+    }
+  ]
+}

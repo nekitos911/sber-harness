@@ -1,0 +1,34 @@
+{
+  "index": 562,
+  "title": "PROJ-14904 Оптимизация расчёта",
+  "body": "",
+  "state": "open",
+  "pr_creator": "***",
+  "head": {
+    "name": "feature/PROJ-14904",
+    "protected": false
+  },
+  "base": {
+    "name": "develop",
+    "protected": true,
+    "protection_rules": [
+      "develop"
+    ]
+  },
+  "mergeable": true,
+  "assignees": [],
+  "reviewers": [
+    {
+      "username": "***",
+      "status": "PENDING"
+    }
+  ],
+  "code_owners": [],
+  "labels": [],
+  "diff_url": "https://code.example/sc/PROJ/demo-service/pulls/561.diff",
+  "html_url": "https://code.example/sc/PROJ/demo-service/pulls/562",
+  "url": "https://code.example/sc/api/v3/repos/00000000-repo-uuid/pulls/562",
+  "merge_base": "9d2da5cc",
+  "created_at": "2026-11-17T11:05:25Z",
+  "updated_at": "2026-11-17T14:36:21Z"
+}

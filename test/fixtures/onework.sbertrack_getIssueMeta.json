@@ -1,0 +1,10 @@
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "## Current Status: development (`development`)\n\n## Available Transitions\n\n- `to_code_review` → to_code_review (`to_code_review`)\n- `qa` → qa (`qa`)\n- `discover_issue` → discover_issue (`discover_issue`)\n- `ready_for_uat` → ready_for_uat (`ready_for_uat`)\n- `ready_for_ift` → ready_for_ift (`ready_for_ift`)\n- `ift` → ift (`ift`)\n- `stop_progress` → stop_progress (`stop_progress`)\n- `cancel_issue` → cancel_issue (`cancel_issue`)",
+      "annotations": null,
+      "_meta": null
+    }
+  ]
+}

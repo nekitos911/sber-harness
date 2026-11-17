@@ -1,0 +1,10 @@
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "# PROJ-14904 — BACK. S54. Оптимизация расчёта\n\n- **Space**: PROJ\n- **Type**: Story\n- **Status**: development\n- **Priority**: low\n- **Labels**: backend, s54\n- **Assignee**: ***\n- **Reporter**: ***\n- **Created**: 2026-10-01T09:12:00Z\n- **Updated**: 2026-11-17T11:00:00Z\n\nНужно ускорить расчёт: кешировать справочник и убрать N+1 запрос. См. [спеку](https://wiki.example/spec-14904).\n\n### Attributes\n\n- **Sprint**: S54\n- **Component**: process-service",
+      "annotations": null,
+      "_meta": null
+    }
+  ]
+}

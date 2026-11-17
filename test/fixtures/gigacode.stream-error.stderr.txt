@@ -1,0 +1,3 @@
+An unexpected critical error occurred:
+Error: The selected model 'no-such-model-xyz' is not present in the current backend catalogue
+    at resolveBackendModelSource (file:///C:/Program%20Files/.gigacode/lib/chunks/c-TM5V4JRX.js:64:17208)
