@@ -366,6 +366,14 @@ GET    /api/sessions/:id/subagents                        -> { items, problems }
 GET    /api/git/status?cwd=     -> { branch, upstream, ahead, behind, files: [{ path, x, y, status: 'M'|'A'|'D'|'R'|'?'|'U' }] }
 GET    /api/git/diff?cwd=&path= -> { diff }   (unified; path optional = whole tree; untracked files shown as added)
 GET    /api/git/log?cwd=&n=     -> [{ hash, subject, author, at }]
+GET    /api/git/branches?cwd=   -> { current, branches: [{ name, remote: boolean, current: boolean, upstream: string|null,
+                                     lastCommitAt: number, worktree: string|null }] }
+                                 (local refs/heads + origin/* without a local twin; `worktree` = path of the worktree that
+                                  has it checked out, if any — such a branch cannot be switched to here)
+POST   /api/git/checkout        {cwd, branch, create?: boolean, from?: string} -> { branch }
+                                 (create: `git switch -c <branch> <from|HEAD>`; remote-only: `git switch --track origin/<b>`;
+                                  409 when a chat session in this cwd is running or the branch is checked out in another
+                                  worktree; 400 with git's message on dirty-tree conflicts; refreshes session.branch)
 GET    /api/git/suggest?cwd=    -> { taskId, key, branch, base,
                                      commit: { title, body },        (prefill for the commit box, user edits before commit)
                                      pr: { title, body, base } }     (prefill for the PR dialog, user edits before create)
@@ -382,8 +390,19 @@ PUT    /api/fs/file             {cwd, path, content} -> { ok: true }
 
 GET    /api/mcp/servers         -> [{ name, enabled, transport, ok, error?, problem?, tools: [{name, description}] }]
 
-GET    /api/settings            -> { agents: { <id>: { approvalMode, approvalModes, model, models, modelGrades: { default?, fast?, review?, explore? }, allowedGrades, taskPromptTemplate } },
-                                     defaultAgent, git: {...}, tasks: { refreshSec } }
+GET    /api/settings            -> { agents: { <id>: { approvalMode, approvalModes, approvalModeLabels, model, models,
+                                     modelGrades: { default?, fast?, review?, explore? }, allowedGrades, taskPromptTemplate,
+                                     taskPromptPresets, firstEventTimeoutMs, inheritUserMcp, enabled } },
+                                     defaultAgent, git: {...}, tasks: { refreshSec },
+                                     integrations: { tasks: { enabled, space, urlTemplate, statusMap, closedStatuses },
+                                                     pr: { enabled, limits } } }
+                                 Model entries everywhere (config, /api/state agents[].models, /api/settings) are objects
+                                 `{ id, label?, context?, description? }` (a plain string in config is normalized to {id}).
+GET    /api/agents/:id/info     -> { id, resolved: { ok, command?, node?, entry?, identity: boolean, error? },
+                                     seen: { models: string[], slashCommands: string[], mcpServers: [{name, status}],
+                                             agents: string[], version: string|null, at: number } | null }
+                                 (`seen` is captured from the last `system/init` event of any session of that agent and
+                                  persisted in db.agentMeta; `resolved` = launcher resolution like --print-config, no spawn)
 PUT    /api/settings            same shape (partial) -> saved into harness.config.local.json (never secrets; approvalMode validated)
                                  modelGrades/allowedGrades map to agents.<id>.settings.agents.{modelGrades,allowedGrades}
 POST   /api/notifications/:id/read

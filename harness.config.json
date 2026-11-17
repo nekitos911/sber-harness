@@ -32,12 +32,33 @@
       "approvalMode": "auto",
       "approvalModes": ["plan", "default", "auto-edit", "auto"],
       "model": null,
-      "models": [],
+      "models": [
+        { "id": "Qwen3.8-Flash-Next-262k", "label": "Qwen 3.8 Flash Next", "context": "262k" },
+        { "id": "DeepSeek-V4.1-Flash-1017-262k", "label": "DeepSeek V4.1 Flash", "context": "262k" },
+        { "id": "GLM-5.3-Flash-262k", "label": "GLM 5.3 Flash", "context": "262k" },
+        { "id": "Qwen3.6-35B-262k", "label": "Qwen 3.6 35B", "context": "262k" },
+        { "id": "GigaChat-3.5-Ultra-Preview-128k", "label": "GigaChat 3.5 Ultra Preview", "context": "128k" }
+      ],
+      "approvalModeLabels": {
+        "plan": "Только план — ничего не меняет",
+        "default": "Спрашивать перед действиями",
+        "auto-edit": "Правки файлов без подтверждения",
+        "auto": "Полный доступ (классификатор сервера)"
+      },
       "settingsEnv": "GIGACODE_SYSTEM_SETTINGS_PATH",
       "settings": {
-        "agents": { "modelGrades": {}, "allowedGrades": [] },
+        "agents": {
+          "modelGrades": {
+            "default": "Qwen3.8-Flash-Next-262k",
+            "fast": "DeepSeek-V4.1-Flash-1017-262k",
+            "review": "GLM-5.3-Flash-262k",
+            "explore": "Qwen3.6-35B-262k"
+          },
+          "allowedGrades": ["default", "fast", "review", "explore"]
+        },
         "chatRecording": true
       },
+      "taskPromptPresets": ["/full-task {taskUrl}{notes}", "/full-task-ui {taskUrl}{notes}", "{key} {title}\n\n{description}"],
       "inheritUserMcp": false,
       "taskPromptTemplate": "/full-task {taskUrl}{notes}",
       "firstEventTimeoutMs": 120000,
