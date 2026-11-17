@@ -75,6 +75,18 @@ One JSON object per line. Every event has `session_id` (equal to the init `uuid`
   the prompt becomes `$ARGUMENTS`. The command expands into the `skill` tool (`{"skill":"full-task","args":"<url>"}`).
 - `{taskUrl}` = full tracker link (`https://<tracker>/swtr/units/all/unit/<KEY>` and variants) or just the key; `{notes}` =
   appended after the link with a leading space/newline, usually empty.
+- `/full-task` body (user-level, ~370 lines): "Ты — оркестратор"; task text arrives as `{{args}}`. §0 hard rules (git
+  read-only, no tracker/CI writes, minimal diff, secrets); §1 domain by repo markers (pom.xml/build.gradle → Java
+  sub-agents; package.json → TS flow; pyproject → Python; YAML → config flow); §2 context mode NORMAL / SDD_EXISTING /
+  SDD_NEW / FOLLOW_UP; §4 own worktree `..\<repo>-worktrees\<task-id>` (reuse if `git worktree list` has it; branch by the
+  repo convention), work stays uncommitted; §5 risk FAST / STANDARD / STRICT; §6 Java sub-agents java-fast-engineer /
+  backend-engineer / sdd-engineer / repository-explorer / Explore; §8 cross-model review: first pass `java-reviewer`
+  (GLM), second pass `java-reviewer-qwen` (Qwen) with explicit models per implementer family; §9 OpenSpec skills
+  (`openspec-*`), changes in a separate store; §11 superpowers skills by trigger; §13 sub-agent check with a verdict file
+  `<worktree>\.superpowers\sdd\<plan>\verdicts\task-<N>.md` (`status: PASS|FAIL|ESCALATION_REQUIRED|INDEPENDENT_VERIFICATION_REQUIRED`,
+  `files_changed`, `commands`, `open_questions`, `implementer_model`, `reviewer_model`, `second_review_model`, `notes`)
+  + ledger `progress.md`; `.superpowers/` is never committed; §14 DONE gate with fresh evidence, final message lists
+  implementer/reviewer models; PR description ≤ 300 chars; §15 loops are separate from full-task.
 - `/full-task` rules: no commit/push/merge/PR/tracker writes without an explicit request; worktree per task; modes
   NORMAL/SDD_EXISTING/SDD_NEW/FOLLOW_UP; scope FAST/STANDARD/STRICT; cross-model review by a sub-agent of another model family;
   DONE requires fresh evidence; "observe and propose" loops only.

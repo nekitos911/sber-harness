@@ -554,6 +554,26 @@ none. `{notes}` = `" " + notes` when the user typed notes at start, else `""`.
 - Startup: sessions left `running` become `idle` with a system message ("harness restarted, the turn was interrupted;
   send a message to continue — context is kept by --resume"); orphan locks are cleared.
 
+## Working with `/full-task` (the user's task command is an orchestrator itself)
+
+`/full-task` (see `docs/GIGACODE-FACTS.md` §4) classifies the task, works in `..\<repo>-worktrees\<task-id>`, never commits,
+runs implementer/reviewer sub-agents with cross-model review and writes a ledger + verdict files. The harness aligns:
+- Worker preamble for a task started in a harness worktree adds: «Ты уже в рабочем дереве задачи `<cwd>` (ветка
+  `<branch>`) — это и есть worktree задачи; не создавай другой. Коммиты/пуш/PR/трекер — только пользователь из UI.
+  После финального сообщения твоей команды вызови worker_done с тем же текстом.»
+- SDD artifacts viewer: `GET /api/sdd?cwd=` → `{ plans: [{ name, dir, progress: { raw, items: [{ title, status }] },
+  verdicts: [{ n, file, status: 'PASS'|'FAIL'|'ESCALATION_REQUIRED'|'INDEPENDENT_VERIFICATION_REQUIRED'|null,
+  filesChanged: string[], commands: [{ cmd, result }], openQuestions, implementerModel, reviewerModel, secondReviewModel,
+  notes, raw }] }] }` from `<cwd>/.superpowers/sdd/*/progress.md` and `verdicts/task-*.md` (tolerant parser of the
+  `key: value` block + list items; unparsed → `raw` only). While a session in that cwd runs, the server polls (3 s) and
+  broadcasts `{ t: 'sdd', cwd, plans }` on change.
+- `git.excludeFromCommit` (default `[".superpowers/"]`): `GET /api/git/status` marks matching files `service: true`;
+  commit-all and the suggested file list skip them (pathspec `:!<pattern>`); they are never pushed by the harness.
+- Model references check: `GET /api/agents/:id/info` adds `modelRefs: [{ file, model, available }]` from
+  `agents.<id>.modelRefsScan` (gigacode default `["~/.gigacode/agents/*.md", "~/.gigacode/commands/*.md"]`; frontmatter
+  `model:` and model-id-looking tokens that match the catalogue naming), `available` against the discovered catalogue
+  (prefix match tolerates the `-262k` suffix). Read-only; the harness never edits these files.
+
 ## Review loop run by the harness (`orchestration.reviewMode: "harness"`)
 
 Does not depend on what the task command (`/full-task`) says. Config:
