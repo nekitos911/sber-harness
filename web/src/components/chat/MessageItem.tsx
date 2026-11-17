@@ -11,7 +11,7 @@ import { DiffLines } from '../DiffLines'
 import { Disclosure, IconButton } from '../ui'
 import { isSubagentTool, SubagentCard } from './SubagentCard'
 import { ThoughtBlock } from './ToolSteps'
-import { MessageQuestion, PermissionCard } from './Attention'
+import { AskToolCard, isAskTool, MessageQuestion, PermissionCard } from './Attention'
 
 /** `until`: for a thought, when it ended (null = still thinking); the thought shows how long it took. */
 export const MessageItem = memo(function MessageItem({ m, fresh = false, until }: { m: Message; fresh?: boolean; until?: number | null }) {
@@ -32,7 +32,7 @@ function MessageBody({ m }: { m: Message }) {
     case 'user': return <UserMessage m={m} />
     case 'assistant': return <div className="msg msg-assistant"><Markdown text={m.text} /></div>
     case 'thought': return <ThoughtBlock m={m} until={m.at} />
-    case 'tool': return m.tool ? <ToolCard tool={m.tool} sessionId={m.sessionId} /> : null
+    case 'tool': return m.tool ? <ToolCard tool={m.tool} sessionId={m.sessionId} m={m} /> : null
     case 'error': return m.action === 'pick-model' ? <PickModelError m={m} /> : <div className="msg msg-error" role="alert">{m.text}{m.link && <LinkButton href={m.link} />}</div>
     case 'system': return <>{<SystemNote text={m.text} />}{m.link && <LinkButton href={m.link} />}</>
     case 'question': return <MessageQuestion m={m} />
@@ -124,8 +124,9 @@ function outputDiff(tool: ToolCall): DiffFile | null {
 const editLines = (e: FileEdit): DiffLine[] =>
   e.lines.map((l) => ({ kind: l.kind === '+' ? 'add' : l.kind === '-' ? 'del' : 'ctx', text: l.text, old: null, new: null }))
 
-function ToolCard({ tool, sessionId }: { tool: ToolCall; sessionId: string }) {
+function ToolCard({ tool, sessionId, m }: { tool: ToolCall; sessionId: string; m?: Message }) {
   if (isSubagentTool(tool)) return <SubagentCard tool={tool} />
+  if (isAskTool(tool.name) && m) return <AskToolCard m={m} />
   const edit = fileEdit(tool.input)
   if (edit) return <EditBlock tool={tool} sessionId={sessionId} file={edit.file} created={edit.created} added={edit.added} removed={edit.removed} lines={editLines(edit)} />
   const out = outputDiff(tool)

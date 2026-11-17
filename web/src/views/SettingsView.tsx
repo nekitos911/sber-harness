@@ -8,7 +8,7 @@ import { setState, toast, useFeature, useStore } from '../store'
 import { adoptSession } from '../lib/actions'
 import { desktopNotifyOn, setDesktopNotify } from '../lib/notify'
 import { COLUMNS, relTime } from '../lib/format'
-import { FULL_ACCESS, GRADES, loadAgentMeta, loadSettings, modeShort, normModels, useAgentMeta } from '../lib/agents'
+import { FULL_ACCESS, GRADES, loadAgentMeta, loadSettings, modeShort, normMeta, normModels, useAgentMeta } from '../lib/agents'
 import { useNow } from '../lib/useNow'
 import type { AgentSettings, BoardColumn, BoardSettings, GitBranches, Grade, Session, Settings, TaskStatus } from '../types'
 import { Skeleton } from '../components/bits'
@@ -307,7 +307,7 @@ function AgentStatus({ id }: { id: string }) {
     setChecking(true)
     try {
       const m = await api<NonNullable<typeof meta>>('GET', `/agents/${encodeURIComponent(id)}/info`)
-      setState((s) => ({ agentMeta: { ...s.agentMeta, [id]: m } }))
+      setState((s) => ({ agentMeta: { ...s.agentMeta, [id]: normMeta(m) } }))
     } catch { /* keep the last answer */ }
     setChecking(false)
   }

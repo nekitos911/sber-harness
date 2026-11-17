@@ -7,7 +7,7 @@ import { fullTime, NOTIFY_KIND, relTime } from '../lib/format'
 import { useNow } from '../lib/useNow'
 import type { Notification, NotificationKind } from '../types'
 import { LinkButton, ReplyOptions } from '../components/chat/MessageItem'
-import { MessageQuestion, PermissionCard } from '../components/chat/Attention'
+import { AskToolCard, isAskTool, MessageQuestion, PermissionCard } from '../components/chat/Attention'
 import { ensureMessages } from '../ws'
 import type { Message, Session } from '../types'
 
@@ -31,13 +31,14 @@ function WaitingItem({ s }: { s: Session }) {
     for (let i = list.length - 1; i >= 0; i--) {
       const m = list[i]
       if ((m.kind === 'permission' && m.permission && !m.permission.choice) || (m.kind === 'question' && m.question && !m.question.answer)) return m
+      if (m.kind === 'tool' && m.tool && isAskTool(m.tool.name)) return list.slice(i + 1).some((x) => x.kind === 'user') ? null : m
     }
     return null
   })
   return (
     <div className="inbox-wait">
       <button type="button" className="chip" onClick={() => openSession(s.id)}>{s.title}</button>
-      {open ? (open.kind === 'permission' ? <PermissionCard m={open} /> : <MessageQuestion m={open} />)
+      {open ? (open.kind === 'permission' ? <PermissionCard m={open} /> : open.kind === 'tool' ? <AskToolCard m={open} /> : <MessageQuestion m={open} />)
         : <span className="muted">{s.waitingFor === 'permission' ? 'ждёт разрешения' : 'ждёт ответа'} — откройте чат</span>}
     </div>
   )

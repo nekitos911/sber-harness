@@ -23,12 +23,20 @@ export const modeShort = (m: string) => MODE_SHORT[m] ?? m
 const inflight = new Set<string>()
 
 /** CLI resolution + what the last session reported; null when the server does not have the endpoint. */
+/** The server answers `seen: {}` before the agent's first session: treat that as none, and lists as lists. */
+export function normMeta(m: AgentMeta): AgentMeta {
+  const seen = m.seen && typeof m.seen.at === 'number'
+    ? { ...m.seen, models: m.seen.models ?? [], slashCommands: m.seen.slashCommands ?? [], mcpServers: m.seen.mcpServers ?? [], agents: m.seen.agents ?? [] }
+    : null
+  return { ...m, seen }
+}
+
 export function loadAgentMeta(id: string, force = false) {
   if (!hasFeature('agent-info')) { if (!(id in getState().agentMeta)) setState((s) => ({ agentMeta: { ...s.agentMeta, [id]: null } })); return }
   if (inflight.has(id) || (!force && id in getState().agentMeta)) return
   inflight.add(id)
   api<AgentMeta>('GET', `/agents/${encodeURIComponent(id)}/info`)
-    .then((m) => setState((s) => ({ agentMeta: { ...s.agentMeta, [id]: m } })))
+    .then((m) => setState((s) => ({ agentMeta: { ...s.agentMeta, [id]: normMeta(m) } })))
     .catch(() => setState((s) => ({ agentMeta: { ...s.agentMeta, [id]: null } })))
     .finally(() => inflight.delete(id))
 }

@@ -11,6 +11,7 @@ import type { Message, Session } from '../../types'
 import { DiffLines } from '../DiffLines'
 import { Disclosure, IconButton } from '../ui'
 import { isSubagentTool } from './SubagentCard'
+import { isAskTool } from './Attention'
 import { longDur, RunImages, StepList } from './ToolSteps'
 import { toolRunSummary } from '../../lib/toolRun'
 
@@ -22,7 +23,7 @@ export type Item =
   | { kind: 'files'; key: string; msgs: Message[] }
   | { kind: 'new'; key: string }
 
-const isGroupable = (m: Message) => m.kind === 'tool' && !!m.tool && !isSubagentTool(m.tool)
+const isGroupable = (m: Message) => m.kind === 'tool' && !!m.tool && !isSubagentTool(m.tool) && !isAskTool(m.tool.name)
 
 /**
  * Turns a page of the transcript into items. `runningTurn` is the turn still in progress (or null);

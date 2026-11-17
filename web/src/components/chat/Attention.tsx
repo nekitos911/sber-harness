@@ -1,6 +1,7 @@
 import { useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { CircleHelp, Eye, Pencil, Plug, ShieldAlert, SquareTerminal, Wrench } from 'lucide-react'
 import { tryApi } from '../../api'
+import { useStore } from '../../store'
 import { loadDraft, saveDraft } from '../../lib/draft'
 import { mcpParts, obj, pathOf, toolKind } from '../../lib/toolRun'
 import { summarizeInput } from '../../lib/toolcall'
@@ -70,6 +71,22 @@ export function QuestionCard({ id, text, options, multiSelect, answered, send }:
       </form>
     </section>
   )
+}
+
+/** The harness `ask` MCP tool (harness.ask / mcp__harness__ask): its question waits in the asking chat. */
+export const isAskTool = (name: string) => /^(mcp__)?harness(\.|__)ask$/.test(name)
+
+/** That call as a question card; answered once a later message reached this chat (the reply is delivered there). */
+export function AskToolCard({ m }: { m: Message }) {
+  const input = obj(m.tool?.input)
+  const later = useStore((s) => {
+    const list = s.messages[m.sessionId] ?? []
+    const i = list.findIndex((x) => x.id === m.id)
+    return i < 0 ? null : list.slice(i + 1).find((x) => x.kind === 'user')?.text ?? null
+  })
+  const options = Array.isArray(input.options) ? input.options.map(String) : []
+  return <QuestionCard id={m.id} text={String(input.question ?? summarizeInput(m.tool?.input))} options={options.map((label) => ({ label }))} answered={later}
+    send={async (text) => (await tryApi('POST', `/sessions/${encodeURIComponent(m.sessionId)}/messages`, { text })) !== undefined} />
 }
 
 /** A question in the transcript: the CLI's own question tool (kind question) or a harness `ask` with options. */

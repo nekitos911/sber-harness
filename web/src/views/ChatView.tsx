@@ -45,10 +45,11 @@ export function ChatView({ id, active }: { id: string; active: boolean }) {
   const restored = useRef(false)
   const anchor = useRef<number | null>(null) // distance from the bottom kept while older messages are added on top
   const seenKey = `seen:${id}`
-  const [newSince, setNewSince] = useState<number | null>(() => loadDraft<number>(seenKey))
+  // «НОВОЕ» marks what arrived while the chat was not on screen: last read time, taken when it is shown.
+  const [mark, setMark] = useState(() => ({ since: loadDraft<number>(seenKey), at: Date.now() }))
   const wasActive = useRef(active)
   useEffect(() => {
-    if (active && !wasActive.current) setNewSince(loadDraft<number>(seenKey)) // re-shown: a fresh «НОВОЕ» mark
+    if (active && !wasActive.current) setMark({ since: loadDraft<number>(seenKey), at: Date.now() }) // re-shown: a fresh mark
     wasActive.current = active
   }, [active, seenKey])
   useEffect(() => {
@@ -74,6 +75,8 @@ export function ChatView({ id, active }: { id: string; active: boolean }) {
   const hidden = Math.max(0, list.length - limit)
   const visible = useMemo(() => (hidden ? list.slice(hidden) : list), [list, hidden])
   const runningTurn = running && list.length ? list[list.length - 1].turn : null
+  // Messages that arrive while you watch are not «new»: no mark unless something unread was already there.
+  const newSince = mark.since !== null && visible.some((m) => m.kind !== 'user' && m.at > mark.since! && m.at <= mark.at) ? mark.since : null
   const items = useMemo(() => buildItems(visible, runningTurn, newSince, session?.lastActivityAt), [visible, runningTurn, newSince, session?.lastActivityAt])
 
   // Read up to here: remembered for the next «НОВОЕ» mark.
