@@ -995,6 +995,35 @@ Durable state (all in `<dataDir>`, atomic writes):
 - The transcript keeps every tool output whole; `GET /api/sessions/:id/messages` returns `tool.output` cut to 64 K
   characters with `tool.outputTruncated: true`; `GET /api/sessions/:id/messages/:mid/output` → `{ output }` (full).
 
+## Auto-fill: repository suggestion, readable task log, PR decline
+
+- `task.suggestedWorkspaceId` (flag `task-suggest`), recomputed on every create/update/import while `workspaceId` is
+  empty (else null): one repository workspace → it; else a repository whose name or folder name appears as a token in
+  the title/description/cached tracker attributes (`task.externalFields` from the last `GET /api/tasks/:id/external`:
+  Component/Компонент/Repository/Репозиторий/Сервис/Service), exact first, then the `-service` stem in either direction
+  (`payments` ↔ `payments-service`); else `db.prefs.lastWorkspaceBySpace[<key prefix>]` (written when a task of that
+  space is taken into work). `POST /api/tasks/:id/start` uses `workspaceId ?? suggestedWorkspaceId` and records it.
+- Task log entries: `{ at, by, type, text, data? }`, `type` ∈ created, imported, status, started, agent_done,
+  agent_failed, review, rework, port, pr_created, tracker_transition, comment; `text` is human Russian without session ids
+  or paths («Взята в работу: GigaCode, ветка feature/T-10», «Агент закончил», «PR #562 в develop создан»); ids, summaries,
+  verdicts are in `data`. Old entries have no `type` (show their `text`).
+- `POST /api/git/pr/decline { cwd, index }` (flag `pr-decline`) → `integrations.pr.declineTool` (default
+  `git_decline_pull_request`) with `integrations.pr.declineArgs` (default `{ project, repository, pullRequestIndex }`,
+  project/repository from origin), then the task's PR status is refreshed. Imported tasks are recognized by `task.source`.
+
+### Session recovery after a restart
+- On startup, every chat session that was `running` and could NOT be re-attached (pid gone / identity mismatch) gets
+  `interrupted: { at, reason: 'harness_restart' | 'reboot' | 'crash', lastActivity: string|null }` (reason: `reboot` when
+  the OS boot time is newer than the turn's start, `crash` when the previous harness did not shut down cleanly
+  (`server.json` left behind), else `harness_restart`; `lastActivity` = last tool/step summary of the interrupted turn);
+  status becomes `idle` with the existing system note; one notification `{ kind: 'recovery', text: 'Прервано сессий: N' }`.
+- `GET /api/recovery` → `{ sessions: [{ id, title, cwd, taskId, role, reason, at, lastActivity }], message }` (only
+  `interrupted` and not dismissed); `POST /api/recovery/resume { sessionIds, message? }` → delivers the message to each
+  (normal queue; continues the same CLI session via --resume), clears `interrupted`; `POST /api/recovery/dismiss
+  { sessionIds }` clears it without sending. Config `recovery: { autoResume: false, message: "Был перезапуск, твой
+  предыдущий ход прервался. Продолжи с того места, где остановился — сначала проверь текущее состояние рабочего дерева." }`
+  (in /api/settings); `autoResume: true` resumes all on startup (coordinators after their workers). Feature flag `recovery`.
+
 ## Feature flags (client/server version skew)
 
 `GET /api/state` returns `features: string[]` — the optional API groups this server implements, e.g. `sdd`, `subagents`,
