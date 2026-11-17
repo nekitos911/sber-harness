@@ -269,3 +269,12 @@ test('agent info: identity found + its source shim, never the value; effectiveAp
   const s = await waitFor(async () => { const x = (await state()).sessions.find((y) => y.id === created.id); return x.status === 'idle' && x; }, { what: 'giga turn' });
   assert.deepEqual([s.approvalMode, s.effectiveApprovalMode], ['auto', 'auto-edit'], 'the session keeps the chosen mode');
 });
+
+test('mcpExclude goes into the run settings under the configured key only', () => {
+  const harnessMcp = { command: 'node', args: [], env: {} };
+  const settings = (agentCfg) => sessionSettings({ agentCfg: { settings: {}, ...agentCfg }, harnessMcp, agentMcpServers: {} });
+  assert.deepEqual(settings({ mcpExclude: ['java-lsp', 'harness'] }).mcp, { excluded: ['java-lsp'] }, 'never the harness server');
+  const gemini = settings({ mcpExclude: ['java-lsp'], mcpExcludeKey: 'excludeMCPServers' });
+  assert.deepEqual([gemini.excludeMCPServers, gemini.mcp], [['java-lsp'], undefined]);
+  assert.equal(settings({}).mcp, undefined);
+});

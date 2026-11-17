@@ -156,6 +156,7 @@ export async function startServer(opts = {}) {
   const tasks = createTasks({ store, bus, defaultBase: config.git.defaultBase });
   const catalog = createModelCatalog({ config, store, getUrl: () => url });
   const sessions = createSessions({ config, store, bus, getUrl: () => url, catalog, crashed });
+  catalog.useAcp((agent, text) => sessions.acpPrompt(agent, text)); // /models on a warm ACP process when there is one
   const orch = createOrchestration({ config, store, bus, tasks, sessions });
   const mcp = createMcpManager(config);
   const tokenBuf = Buffer.from(store.token);
@@ -276,6 +277,10 @@ export async function startServer(opts = {}) {
         approvalModeMap: a.approvalModeMap ?? launchers[a.launcher]?.defaults.approvalModeMap ?? {},
         autoSandbox: a.autoSandbox ?? null,
         allowedTools: a.allowedTools || [],
+        transport: a.transport || 'headless',
+        acpIdleMin: a.acpIdleMin ?? a.acpIdleTimeoutMin ?? 30,
+        mcpExclude: a.mcpExclude || [],
+        mcpExcludeKey: a.mcpExcludeKey || 'mcp.excluded',
         model: a.model ?? null,
         models: a.models || [],
         modelGrades: a.settings?.agents?.modelGrades || {},
@@ -357,6 +362,23 @@ export async function startServer(opts = {}) {
       const m = a.approvalModeMap;
       if (m !== null && (!isObj(m) || Object.values(m).some((v) => typeof v !== 'string' || !v))) fail(400, `${where('approvalModeMap')}: объект «режим → режим CLI» или null`);
       p.approvalModeMap = m;
+    }
+    if ('transport' in a) {
+      if (!['headless', 'acp'].includes(a.transport)) fail(400, `${where('transport')}: "headless" или "acp"`);
+      p.transport = a.transport;
+    }
+    if ('acpIdleMin' in a || 'acpIdleTimeoutMin' in a) {
+      const v = a.acpIdleMin ?? a.acpIdleTimeoutMin;
+      if (!Number.isInteger(v) || v < 0) fail(400, `${where('acpIdleMin')}: целое число минут ≥ 0 (0 — не выгружать)`);
+      p.acpIdleMin = v;
+    }
+    if ('mcpExclude' in a) {
+      if (!isStrList(a.mcpExclude)) fail(400, `${where('mcpExclude')}: нужен массив имён MCP-серверов`);
+      p.mcpExclude = a.mcpExclude;
+    }
+    if ('mcpExcludeKey' in a) {
+      if (typeof a.mcpExcludeKey !== 'string' || !/^[\w-]+(\.[\w-]+)*$/.test(a.mcpExcludeKey)) fail(400, `${where('mcpExcludeKey')}: путь ключа, например mcp.excluded`);
+      p.mcpExcludeKey = a.mcpExcludeKey;
     }
     if ('allowedTools' in a) {
       if (!isStrList(a.allowedTools) || a.allowedTools.some((x) => !x.trim())) fail(400, `${where('allowedTools')}: нужен массив непустых строк`);
@@ -624,6 +646,8 @@ export async function startServer(opts = {}) {
     return {
       id, resolved: resolveAgentView(a), auth: meta?.auth ?? 'unknown', seen: meta ? seen : null, catalog: catalog.info(id), models: catalog.merged(id),
       commands: shippedStatus(a, 'commands'), skills: shippedStatus(a, 'skills'), identity: identityView(a),
+      // what the CLI reported at its last init, for the per-agent MCP toggles
+      mcpServers: (meta?.mcpServers || []).map((m) => ({ name: m.name, status: m.status, excluded: (a.mcpExclude || []).includes(m.name) })),
       modelRefs: scanModelRefs(a.modelRefsScan, catalog.merged(id)), // read-only: the harness never edits these files
     };
   }

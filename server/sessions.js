@@ -133,7 +133,16 @@ const brief = (input) => {
 export function createSessions({ config, store, bus, getUrl, catalog = null, crashed = false }) {
   const db = store.db;
   const rt = new Map(); // sid -> runtime state (not persisted)
-  const acp = createAcp(); // agents.<id>.transport "acp": long-lived agent processes
+  // agents.<id>.transport "acp": long-lived agent processes; session.warm = its process is loaded
+  const acp = createAcp({
+    onWarm(sid, warm) {
+      const s = find(sid);
+      if (s && !!s.warm !== warm) {
+        s.warm = warm;
+        emit(s);
+      }
+    },
+  });
   const hooks = { preamble: () => '', turnEnded: () => {} };
 
   const find = (sid) => db.sessions.find((s) => s.id === sid);
@@ -288,6 +297,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
       }
     }
     s.queued = s.queue?.length ?? 0;
+    if (s.warm) s.warm = false; // ACP processes do not survive a restart (reloaded on the next message)
     s.tokensIn ??= 0;
     s.tokensOut ??= 0;
     s.phase = null;
@@ -683,7 +693,8 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
       if (agentCfg.transport === 'acp') {
         if (!launcher.acpArgs) throw new Error(`у лаунчера «${launcher.id}» нет режима ACP; укажите agents.${s.agent}.transport = "headless"`);
         handle = acp.turn({
-          sid: s.id, launcher, ctx, command: exe, cwd: s.cwd, env, logFile: turnFiles(s, r.turn).logFile, roots: [s.cwd, ...(s.includeDirs || [])],
+          sid: s.id, agent: s.agent, launcher, ctx, command: exe, cwd: s.cwd, env, logFile: turnFiles(s, r.turn).logFile, roots: [s.cwd, ...(s.includeDirs || [])],
+          idleMs: (agentCfg.acpIdleMin ?? agentCfg.acpIdleTimeoutMin ?? 30) * 60000,
           externalSessionId: s.externalSessionId, prompt, initTimeoutMs: firstEventTimeoutMs, onEvent: (ev) => applyEvent(s, ev),
         });
       } else {
@@ -1361,6 +1372,9 @@ ${note.trim()}` : text });
       for (const s of db.sessions) if (s.kind === 'chat' && !s.virtual && s.queue?.length && !runtime(s.id).running) startTurn(s);
       await Promise.all(toRespawn.splice(0).filter((s) => find(s.id)).map(respawnTerminal));
     },
+
+    /** A prompt on a warm ACP process of `agent` in a hidden session (null when none is warm). */
+    acpPrompt: (agent, text) => acp.helperPrompt(agent, text),
 
     /** A CLI history transcript as the past of a harness chat (marked imported; turn 0). */
     importMessages(sid, msgs) {

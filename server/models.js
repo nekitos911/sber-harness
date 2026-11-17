@@ -92,6 +92,12 @@ export function createModelCatalog({ config, store, getUrl }) {
     const prev = meta(agent).catalog;
     try {
       const launcher = launchers[agentCfg.launcher] || fail(400, `неизвестный лаунчер «${agentCfg.launcher}»`);
+      if (agentCfg.transport === 'acp' && acpPrompt) {
+        // a warm ACP process answers /models in a hidden session: no extra cold start of the CLI and its MCP servers
+        const answer = await acpPrompt(agent, md.prompt).catch(() => null);
+        const found = answer ? parseModelIds(answer, md.pattern) : [];
+        if (found.length) return save(agent, { models: found, at: Date.now() });
+      }
       const exe = launcher.resolve(agentCfg);
       const dir = path.join(store.dataDir, 'chats', 'discovery', agent);
       fs.mkdirSync(dir, { recursive: true });
@@ -129,6 +135,8 @@ export function createModelCatalog({ config, store, getUrl }) {
       save(agent, { models: prev?.models || [], at: prev?.at ?? null, error: e.message, errorAt: Date.now() });
     }
   }
+
+  let acpPrompt = null; // set by the server once sessions exist (warm ACP processes)
 
   function discover(agent) {
     if (!inflight.has(agent)) {
@@ -184,6 +192,9 @@ export function createModelCatalog({ config, store, getUrl }) {
   }
 
   return {
+    useAcp(fn) {
+      acpPrompt = fn;
+    },
     discover,
     ensureFresh,
     merged,

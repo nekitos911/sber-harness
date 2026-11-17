@@ -185,12 +185,29 @@ function userMcpServers(file = USER_SETTINGS) {
 }
 
 /** Per-session settings.json for the Gemini-CLI family. Never contains `permissions`. */
+/**
+ * agents.<id>.mcpExclude under agents.<id>.mcpExcludeKey (default "mcp.excluded"; Gemini-style "excludeMCPServers" —
+ * VERIFY which one GigaCode honours): servers the harness runs do not start (each headless turn starts every server).
+ */
+function mcpExclusion(agentCfg, rest) {
+  const list = (agentCfg.mcpExclude || []).filter((x) => x !== 'harness');
+  if (!list.length) return {};
+  const [head, ...tail] = (agentCfg.mcpExcludeKey || 'mcp.excluded').split('.');
+  if (!tail.length) return { [head]: list };
+  const obj = { ...(rest[head] || {}) };
+  let cur = obj;
+  for (const k of tail.slice(0, -1)) cur = cur[k] = { ...(cur[k] || {}) };
+  cur[tail.at(-1)] = list;
+  return { [head]: obj };
+}
+
 export function sessionSettings({ agentCfg, harnessMcp, agentMcpServers }) {
   const { permissions, agents, mcpServers, ...rest } = agentCfg.settings || {};
   return {
     ...rest,
     // opt-in: GigaCode allows a real `auto` only under an action sandbox (restricts tools to the workspace; VERIFY)
     ...(agentCfg.autoSandbox ? { tools: { ...rest.tools, sandbox: agentCfg.autoSandbox } } : {}),
+    ...mcpExclusion(agentCfg, rest),
     agents: { ...agents, modelGrades: agents?.modelGrades || {}, allowedGrades: agents?.allowedGrades || [] },
     chatRecording: true,
     mcpServers: {

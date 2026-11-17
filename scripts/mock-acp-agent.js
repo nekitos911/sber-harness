@@ -32,6 +32,11 @@ const record = (params) => {
 
 async function prompt({ sessionId, prompt: parts }) {
   const text = parts.map((p) => p.text || '').join('\n');
+  if (text.trim() === '/models') {
+    // like the headless mock: the catalogue from the fixture, in a (hidden) helper session
+    say(sessionId, fs.readFileSync(new URL('../test/fixtures/gigacode.models.txt', import.meta.url), 'utf8'));
+    return { stopReason: 'end_turn' };
+  }
   const st = JSON.parse(fs.readFileSync(stateFile(sessionId), 'utf8'));
   st.turns += 1;
   st.history.push(text);

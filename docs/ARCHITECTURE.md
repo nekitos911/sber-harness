@@ -971,7 +971,14 @@ failed load or an agent without `loadSession` → `session/new` + a system note;
 with the whole old/new text (no minimal hunks); a Stop marks open ACP cards `resolved: 'cancelled'`; an ACP answer is not a
 new message (the agent continues the same prompt) and a late answer → 409. `session.pid` stays null for ACP turns, so
 `stalled` does not apply to them. A running ACP turn at a harness restart is `interrupted` (recovery); the next message
-starts the process again with `session/load`. Notes: the question card's answer is an ordinary message
+starts the process again with `session/load`. Warm process: `session.warm` (loaded); an idle one (no prompt, no held
+permission) is unloaded after `agents.<id>.acpIdleMin` minutes (default 30, 0 = never; PUT also accepts
+`acpIdleTimeoutMin`) and reloaded with `session/load` on the next message (a note only if the load fails); `transport`
+and `acpIdleMin` are in /api/settings. Model discovery of an ACP agent asks a warm process in a hidden extra session
+(no cold start); without one it runs headless as before. MCP exclusions for harness runs: `agents.<id>.mcpExclude`
+(never `harness`) written into the run settings under `agents.<id>.mcpExcludeKey` (default `mcp.excluded`, alt
+`excludeMCPServers`; VERIFY which one GigaCode honours); `GET /api/agents/:id/info` → `mcpServers: [{ name, status,
+excluded }]` from the last init for the toggles. Notes: the question card's answer is an ordinary message
 (`POST /api/sessions/:id/messages` with «Ответ на вопрос «…»: …»); any delivery to the session clears `waitingFor`
 'answer'/'permission'. A permission answer also sets `permission.resolved` (+ `resolvedAt`) on the card; a second answer →
 409; `note` is appended to the delivered message. allow_once sets `session.approvalOnce` (consumed by the next turn).

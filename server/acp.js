@@ -101,14 +101,32 @@ export function acpEvents(update) {
   }
 }
 
-/** Per-session ACP connections of one harness. */
-export function createAcp() {
+/**
+ * Per-session ACP connections of one harness. `onWarm(sid, warm)` reports a process loaded / unloaded (session.warm).
+ * An idle process (no prompt, no held permission) is unloaded after `idleMs` and reloaded with session/load on the next
+ * message.
+ */
+export function createAcp({ onWarm = () => {} } = {}) {
   const conns = new Map(); // sid -> connection state
+  const idleTimers = new Map(); // sid -> timer
+
+  function armIdle(c, idleMs) {
+    clearTimeout(idleTimers.get(c.sid));
+    if (!(idleMs > 0)) return;
+    const t = setTimeout(() => {
+      if (!c.turn && !c.held.size && !c.helpers?.size) drop(c.sid); // still idle: unload, the next message reloads
+    }, idleMs);
+    t.unref?.();
+    idleTimers.set(c.sid, t);
+  }
 
   function drop(sid) {
+    clearTimeout(idleTimers.get(sid));
+    idleTimers.delete(sid);
     const c = conns.get(sid);
     if (!c) return;
     conns.delete(sid);
+    onWarm(sid, false);
     c.dead = true;
     for (const resolve of c.held.values()) resolve({ outcome: { outcome: 'cancelled' } });
     c.held.clear();
@@ -134,13 +152,16 @@ export function createAcp() {
     } finally {
       fs.closeSync(err);
     }
-    const c = { sid: o.sid, child, held: new Map(), loading: false, turn: null, dead: false, errFile, sessionId: null };
+    const c = { sid: o.sid, agent: o.agent ?? null, cwd: o.cwd, mcp: acpMcpServers(o.ctx.harnessMcp, o.ctx.agentMcpServers), child, held: new Map(), helpers: new Map(), loading: false, turn: null, dead: false, errFile, sessionId: null };
     conns.set(o.sid, c);
     const exited = new Promise((resolve) => child.on('exit', (code, signal) => resolve({ code, signal })));
     child.on('error', (e) => log(`[acp] ${e.message}\n`));
     exited.then(({ code, signal }) => {
       c.dead = true;
-      if (conns.get(o.sid) === c) conns.delete(o.sid);
+      if (conns.get(o.sid) === c) {
+        conns.delete(o.sid);
+        onWarm(o.sid, false);
+      }
       log(`=== ACP process exited code=${code} signal=${signal}\n`);
       c.rpc.failAll(Object.assign(new Error(`Процесс ACP-агента завершился (код ${code}${signal ? `, ${signal}` : ''})`), { exited: true }));
       for (const resolve of c.held.values()) resolve({ outcome: { outcome: 'cancelled' } });
@@ -158,7 +179,13 @@ export function createAcp() {
     c.rpc = connect(child, {
       log,
       onNotify(method, params) {
-        if (method !== 'session/update' || c.loading || !c.turn) return; // load replays the transcript we already have
+        if (method !== 'session/update' || c.loading) return; // load replays the transcript we already have
+        const helper = c.helpers.get(params.sessionId);
+        if (helper) { // a hidden helper session (e.g. /models) on this warm process
+          if (params.update?.sessionUpdate === 'agent_message_chunk' && params.update.content?.type === 'text') helper.text += params.update.content.text;
+          return;
+        }
+        if (!c.turn) return;
         for (const ev of acpEvents(params.update)) c.turn.emit(ev);
       },
       async onRequest(method, params) {
@@ -209,6 +236,7 @@ export function createAcp() {
         c.note = 'ACP: агент не умеет загружать сессии — начата новая, прежний контекст агенту недоступен.';
       }
       if (!c.sessionId) c.sessionId = (await c.rpc.request('session/new', { cwd: o.cwd, mcpServers })).sessionId;
+      onWarm(o.sid, true);
     } catch (e) {
       drop(o.sid);
       throw Object.assign(e, { stderrTail: readTail(errFile) });
@@ -235,6 +263,7 @@ export function createAcp() {
     (async () => {
       try {
         c = await ensure(o);
+        clearTimeout(idleTimers.get(o.sid));
         c.turn = { emit, roots: o.roots };
         if (c.sessionId) emit({ type: 'session', id: c.sessionId });
         if (c.note) {
@@ -255,7 +284,10 @@ export function createAcp() {
           res.stderrTail = e.stderrTail ?? (c ? readTail(c.errFile) : '');
         }
       } finally {
-        if (c) c.turn = null;
+        if (c) {
+          c.turn = null;
+          if (!c.dead) armIdle(c, o.idleMs);
+        }
         settle(res);
       }
     })();
@@ -292,6 +324,24 @@ export function createAcp() {
       return true;
     },
     pid: (sid) => conns.get(sid)?.child.pid ?? null,
+    warm: (sid) => !!conns.get(sid) && !conns.get(sid).dead,
+    /**
+     * A prompt in a hidden extra session on a warm process of `agent` (e.g. /models without another cold start);
+     * null when no process of that agent is warm.
+     */
+    async helperPrompt(agent, text, timeoutMs = 120000) {
+      const c = [...conns.values()].find((x) => x.agent === agent && !x.dead && x.sessionId);
+      if (!c) return null;
+      const { sessionId } = await c.rpc.request('session/new', { cwd: c.cwd, mcpServers: c.mcp }, timeoutMs);
+      const helper = { text: '' };
+      c.helpers.set(sessionId, helper);
+      try {
+        await c.rpc.request('session/prompt', { sessionId, prompt: [{ type: 'text', text }] }, timeoutMs);
+        return helper.text;
+      } finally {
+        c.helpers.delete(sessionId);
+      }
+    },
     drop,
     close() {
       for (const sid of [...conns.keys()]) drop(sid);

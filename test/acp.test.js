@@ -26,7 +26,9 @@ async function harness() {
     configOverrides: {
       defaultAgent: 'mock', mcpServersFrom: null, agents: {
         mock: { modelsDiscovery: null },
-        acpmock: { launcher: 'mock', label: 'ACP mock', transport: 'acp', command: [process.execPath, path.join(CODE_ROOT, 'scripts', 'mock-acp-agent.js')], approvalMode: 'auto', approvalModes: ['default', 'auto'] },
+        acpmock: { launcher: 'mock', label: 'ACP mock', transport: 'acp', command: [process.execPath, path.join(CODE_ROOT, 'scripts', 'mock-acp-agent.js')], approvalMode: 'auto', approvalModes: ['default', 'auto'], modelsDiscovery: { prompt: '/models', maxAgeHours: 24 } },
+        // the same mock, unloaded after 0.4 s idle
+        acpidle: { launcher: 'mock', label: 'ACP idle', transport: 'acp', acpIdleMin: 0.4 / 60, command: [process.execPath, path.join(CODE_ROOT, 'scripts', 'mock-acp-agent.js')], approvalMode: 'auto', approvalModes: ['default', 'auto'] },
       },
     },
   });
@@ -148,4 +150,24 @@ test('a dead agent process restarts on the next message with session/load; so do
   await idle(chat.id);
   assert.match((await said(chat.id)).at(-1), /^loaded, ACP mock, turn \d+\. Done\.$/);
   assert.equal(records().length, before + 2, 'session/load after the harness restart');
+});
+
+test('an idle ACP process is unloaded (warm false) and reloaded with session/load on the next message', async () => {
+  const s = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'acpidle', cwd, prompt: 'привет' })).body;
+  await idle(s.id);
+  await waitFor(async () => (await session(s.id)).warm === false, { what: 'unloaded after idle' });
+  const before = records().length;
+  await send(s.id, 'снова');
+  await waitFor(async () => (await said(s.id)).some((t) => /^loaded, ACP mock, turn 2\. Done\.$/.test(t)), { what: 'reloaded' });
+  assert.equal(records().length, before + 1, 'one session/load');
+  assert.ok(!(await messages(s.id)).some((m) => m.kind === 'system' && /ACP:/.test(m.text)), 'no note when the load works');
+  await idle(s.id);
+});
+
+test('model discovery asks a warm ACP process in a hidden session (no headless cold start)', async () => {
+  assert.equal((await session(chat.id)).warm, true);
+  const r = (await h.api('POST', '/api/agents/acpmock/models/refresh')).body;
+  assert.ok(r.models.some((m) => m.id === 'GLM-5.3-Flash-262k' && m.available), JSON.stringify(r));
+  // (a headless run of this ACP-only mock could not answer: the catalogue came from the warm process)
+  assert.ok(!(await said(chat.id)).some((t) => t.includes('GLM-5.3-Flash')), 'the helper session stays out of the chat');
 });
