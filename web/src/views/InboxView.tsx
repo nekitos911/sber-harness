@@ -7,7 +7,7 @@ import { fullTime, NOTIFY_KIND, relTime } from '../lib/format'
 import { useNow } from '../lib/useNow'
 import type { Notification, NotificationKind } from '../types'
 import { LinkButton, ReplyOptions } from '../components/chat/MessageItem'
-import { AskToolCard, isAskTool, MessageQuestion, PermissionCard } from '../components/chat/Attention'
+import { AskToolCard, isAskTool, MessageQuestion, PermissionCard, permissionSettled, questionSettled } from '../components/chat/Attention'
 import { ensureMessages } from '../ws'
 import type { Message, Session } from '../types'
 
@@ -45,7 +45,7 @@ function WaitingItem({ s }: { s: Session }) {
     const list: Message[] = st.messages[s.id] ?? []
     for (let i = list.length - 1; i >= 0; i--) {
       const m = list[i]
-      if ((m.kind === 'permission' && m.permission && !m.permission.choice) || (m.kind === 'question' && m.question && !m.question.answer)) return m
+      if ((m.kind === 'permission' && m.permission && !permissionSettled(m.permission)) || (m.kind === 'question' && m.question && !questionSettled(m.question))) return m
       if (m.kind === 'tool' && m.tool && isAskTool(m.tool.name)) return list.slice(i + 1).some((x) => x.kind === 'user') ? null : m
     }
     return null

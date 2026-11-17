@@ -9,6 +9,11 @@ import type { Message, PermissionOption } from '../../types'
 import { Markdown } from '../Markdown'
 import { Button, Checkbox, Disclosure } from '../ui'
 
+/** Settled per the server: permission.resolved / choice / answered (the server's word over this browser's memory). */
+export const permissionSettled = (p: NonNullable<Message['permission']>) => p.resolved ?? p.choice ?? (p.answered ? 'answered' : null)
+/** question.answer, else question.answered (closed without a text we know: cancelled, answered elsewhere). */
+export const questionSettled = (q: NonNullable<Message['question']>) => !!(q.answer || q.answered)
+
 /** An answer remembered per card (the reply may go to another chat, so the transcript alone cannot tell). */
 function useAnswer(key: string, server?: string | null) {
   const [local, setLocal] = useState<string | null>(() => loadDraft<string>(`answered:${key}`))
@@ -20,12 +25,13 @@ function useAnswer(key: string, server?: string | null) {
  * «Агент спрашивает»: the question, one-click options (with descriptions; several with checkboxes when multiSelect),
  * and a free-text answer. Once answered it folds to «Вы ответили: …».
  */
-export function QuestionCard({ id, text, options, multiSelect, answered, send }: {
+export function QuestionCard({ id, text, options, multiSelect, answered, closed, send }: {
   id: string
   text: string
   options: { label: string; description?: string }[]
   multiSelect?: boolean
   answered?: string | null
+  closed?: boolean // the server says it is over, with no answer text (cancelled, answered elsewhere)
   send: (answer: string) => Promise<boolean>
 }) {
   const [answer, setAnswer] = useAnswer(id, answered)
@@ -39,8 +45,8 @@ export function QuestionCard({ id, text, options, multiSelect, answered, send }:
     setBusy(null)
     if (ok) setAnswer(v.trim())
   }
-  if (answer) {
-    return <div className="ask-card ask-done" role="note"><CircleHelp aria-hidden /><span className="ellipsis">Вы ответили: <strong>{answer}</strong></span></div>
+  if (answer || closed) {
+    return <div className="ask-card ask-done" role="note"><CircleHelp aria-hidden /><span className="ellipsis">{answer ? <>Вы ответили: <strong>{answer}</strong></> : 'Вопрос закрыт'}</span></div>
   }
   return (
     <section className="ask-card" aria-label="Вопрос агента">
@@ -95,7 +101,7 @@ export function MessageQuestion({ m }: { m: Message }) {
   const to = m.from && m.from !== 'user' ? m.from : m.sessionId // an `ask` from a worker is answered in that worker
   const post = async (text: string) => (await tryApi('POST', `/sessions/${encodeURIComponent(to)}/messages`, { text })) !== undefined
   if (q) {
-    return <QuestionCard id={m.id} text={q.text} options={q.options} multiSelect={q.multiSelect} answered={q.answer}
+    return <QuestionCard id={m.id} text={q.text} options={q.options} multiSelect={q.multiSelect} answered={q.answer} closed={!!q.answered}
       send={(a) => post(`Ответ на вопрос «${q.text.split('\n')[0].slice(0, 200)}»: ${a}`)} />
   }
   return <QuestionCard id={m.id} text={m.text} options={(m.options ?? []).map((label) => ({ label }))} send={post} />
@@ -125,7 +131,7 @@ const optionLabel = (o: PermissionOption) => o.label ?? o.name ?? o.id
 
 /** How a resolved request reads afterwards. */
 function resolvedText(o: PermissionOption | undefined, id: string) {
-  if (!o) return id === 'cancelled' ? 'Отменено' : id
+  if (!o) return id === 'cancelled' ? 'Отменено' : 'Решено'
   if (isReject(o)) return 'Запрещено'
   if (isOnce(o)) return 'Разрешено один раз'
   return /session|always/i.test(`${o.id} ${o.kind ?? ''}`) ? 'Разрешено в этой сессии' : optionLabel(o)
@@ -138,7 +144,7 @@ function resolvedText(o: PermissionOption | undefined, id: string) {
  */
 export function PermissionCard({ m }: { m: Message }) {
   const p = m.permission!
-  const [choice, setChoice] = useAnswer(m.id, p.choice ?? p.resolved ?? null)
+  const [choice, setChoice] = useAnswer(m.id, permissionSettled(p))
   const here = useStore((s) => s.sessions.find((x) => x.id === m.sessionId))
   const from = useStore((s) => (m.from && m.from !== m.sessionId && m.from !== 'user' ? s.sessions.find((x) => x.id === m.from) : undefined))
   const headless = p.transport !== 'acp'

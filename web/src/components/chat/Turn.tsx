@@ -192,8 +192,14 @@ export function activityOf(list: Message[], lastEventKind?: string | null, quiet
     if (list[i].kind === 'tool' && t?.status === 'running') return { text: `Выполняет: ${t.name} ${summarizeInput(t.input)}`.slice(0, 140) }
   }
   const last = list[list.length - 1]
+  // a thought, or a tool just done: the next step is being worked out
+  if (lastEventKind === 'thought' || lastEventKind === 'tool_done') return { text: 'Думает' }
   if (!last || last.kind === 'user' || last.kind === 'thought' || last.kind === 'system') return { text: 'Думает' }
-  if (last.kind === 'assistant') return lastEventKind === 'assistant_final' || quietMs > 3000 ? { text: 'Завершает ход…', closing: true } : { text: 'Пишет ответ' }
+  if (last.kind === 'assistant') {
+    // older servers do not say which event came last: a pause after text reads as the end of the turn
+    const final = lastEventKind ? lastEventKind === 'assistant_final' || lastEventKind === 'result' : quietMs > 3000
+    return final ? { text: 'Завершает ход…', closing: true } : { text: 'Пишет ответ' }
+  }
   return { text: 'Работает…' }
 }
 

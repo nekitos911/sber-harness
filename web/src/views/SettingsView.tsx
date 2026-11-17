@@ -261,8 +261,8 @@ function AgentSection({ id, form, update, fieldError, primary }: SectionProps & 
         )}
         {primary && acpOn && a.transport === 'acp' && (
           <Row label="Простой выгружает процесс через" hint="Неактивный чат освобождает память; следующее сообщение снова запустит процесс.">
-            <Select label="Простой выгружает процесс через" value={a.acpIdleMin == null ? 'never' : String(a.acpIdleMin)}
-              onChange={(v) => set({ acpIdleMin: v === 'never' ? null : Number(v) })}
+            <Select label="Простой выгружает процесс через" value={!a.acpIdleMin ? 'never' : String(a.acpIdleMin)}
+              onChange={(v) => set({ acpIdleMin: v === 'never' ? 0 : Number(v) })}
               options={[{ value: '15', label: '15 мин' }, { value: '30', label: '30 мин' }, { value: '60', label: '60 мин' }, { value: 'never', label: 'никогда' }]} />
           </Row>
         )}
@@ -476,9 +476,13 @@ function McpServersRow({ id, a, set }: { id: string; a: AgentSettings; set: (p: 
   )
 }
 
+const FULL_TASK_REWORK = '/full-task {taskUrl} Задача готова, но нужны правки: {notes}' // GigaCode's /full-task with the notes
+
 /** «Доработать»: the message the agent gets with the person's notes; presets (the default first) or a custom template. */
 function ReworkRow({ a, set }: { a: AgentSettings; set: (p: Partial<AgentSettings>) => void }) {
-  const presets = [...new Set([DEFAULT_REWORK, ...(a.reworkPromptPresets ?? [])])]
+  const all = useStore((s) => s.settings?.reworkPromptPresets)
+  // unset = the server's default; then the presets it sends (per agent, else for all)
+  const presets = [...new Set([DEFAULT_REWORK, FULL_TASK_REWORK, ...(a.reworkPromptPresets ?? all ?? [])])]
   const value = a.reworkPromptTemplate || DEFAULT_REWORK
   const [custom, setCustom] = useState(!presets.includes(value))
   return (
@@ -645,9 +649,9 @@ function OrchestrationSection({ form, update }: Omit<SectionProps, 'fieldError'>
               onChange={(v) => update({ ...form, orchestration: { ...o, subagentRetention: v ? 'keep' : 'archive' } })} />
           </Row>
         )}
-        {o.subagentMaxDepth !== undefined && (
+        {o.maxSubagentDepth !== undefined && (
           <Row label="Глубина субагентов" hint="Может ли субагент запускать своих субагентов. 1 — только оркестратор.">
-            <Select label="Глубина субагентов" value={String(o.subagentMaxDepth)} onChange={(v) => update({ ...form, orchestration: { ...o, subagentMaxDepth: Number(v) } })}
+            <Select label="Глубина субагентов" value={String(o.maxSubagentDepth)} onChange={(v) => update({ ...form, orchestration: { ...o, maxSubagentDepth: Number(v) } })}
               options={[{ value: '1', label: '1' }, { value: '2', label: '2' }, { value: '3', label: '3' }]} />
           </Row>
         )}
@@ -834,8 +838,8 @@ function GeneralSection({ form, update }: Omit<SectionProps, 'fieldError'>) {
         )}
         {form.sessions !== undefined && (
           <Row label="Автоархив неактивных чатов через" hint="Чаты без активности дольше этого уходят в архив (история сохраняется, вернуть — на экране «Агенты»).">
-            <Select label="Автоархив неактивных чатов" value={form.sessions.autoArchiveDays == null ? 'off' : String(form.sessions.autoArchiveDays)}
-              onChange={(v) => update({ ...form, sessions: { ...form.sessions, autoArchiveDays: v === 'off' ? null : Number(v) } })}
+            <Select label="Автоархив неактивных чатов" value={!form.sessions.autoArchiveDays ? 'off' : String(form.sessions.autoArchiveDays)}
+              onChange={(v) => update({ ...form, sessions: { ...form.sessions, autoArchiveDays: v === 'off' ? 0 : Number(v) } })}
               options={[{ value: 'off', label: 'выкл' }, { value: '1', label: '1 день' }, { value: '3', label: '3 дня' }, { value: '7', label: '7 дней' }, { value: '30', label: '30 дней' }]} />
           </Row>
         )}

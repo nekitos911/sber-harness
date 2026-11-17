@@ -116,7 +116,7 @@ export interface Session {
   status: SessionStatus
   phase?: 'starting' | 'streaming' | 'auth' | null
   lastEventAt?: number | null // last stdout event of the current turn (newer servers)
-  lastEventKind?: string | null // e.g. 'assistant_delta', 'assistant_final', 'tool', 'thought' (newer servers)
+  lastEventKind?: 'text_delta' | 'assistant_final' | 'tool_running' | 'tool_done' | 'thought' | 'result' | null // the latest stream event (newer servers)
   turnClosing?: boolean // the answer is complete (result seen); the CLI is only shutting down
   warm?: boolean // ACP sessions only: the process is loaded (false = unloaded after idling)
   mcpStatus?: { name: string; status: string }[] // MCP servers as the CLI reported them at the turn's start
@@ -174,8 +174,8 @@ export interface Message {
   link?: string | null // e.g. the GigaCode login URL
   action?: 'pick-model' | null // failure the user fixes by choosing another model
   imported?: boolean // copied from a CLI-recorded chat (turn 0): no timing of its own
-  question?: { id: string; text: string; options: { label: string; description?: string }[]; multiSelect?: boolean; answer?: string | null } | null
-  permission?: { id: string; tool: string; input: unknown; reason?: string | null; transport?: 'headless' | 'acp'; options: PermissionOption[]; choice?: string | null; resolved?: string | null; pattern?: string | null } | null
+  question?: { id: string; text: string; options: { label: string; description?: string }[]; multiSelect?: boolean; answer?: string | null; answered?: boolean; resolved?: string | null } | null
+  permission?: { id: string; tool: string; input: unknown; reason?: string | null; transport?: 'headless' | 'acp'; options: PermissionOption[]; choice?: string | null; resolved?: string | null; answered?: boolean; pattern?: string | null } | null
 }
 
 export type NotificationKind = 'question' | 'permission' | 'recovery' | 'done' | 'failed' | 'escalation' | 'info' | 'error'
@@ -292,6 +292,7 @@ export interface AgentSettings {
 }
 
 export interface Settings {
+  reworkPromptPresets?: string[] // «Доработать» templates offered for every agent
   workspaces?: { root?: string | null } // projects folder; null = auto (deepest common parent)
   session?: { stallSec?: number } // «нет вывода» after this many seconds of silence (≥ 30)
   recovery?: { autoResume?: boolean; message?: string } // interrupted sessions after a restart
@@ -306,7 +307,7 @@ export interface Settings {
     prTitleTemplate?: string
   }
   tasks: { refreshSec: number }
-  orchestration?: { reviewMode?: 'builtin' | 'harness'; subagents?: 'harness' | 'builtin'; workerMayCommit?: boolean; review?: ReviewSettings; subagentRetention?: 'archive' | 'keep'; subagentMaxDepth?: number }
+  orchestration?: { reviewMode?: 'builtin' | 'harness'; subagents?: 'harness' | 'builtin'; workerMayCommit?: boolean; review?: ReviewSettings; subagentRetention?: 'archive' | 'keep'; maxSubagentDepth?: number }
   board?: BoardSettings
   integrations?: {
     tasks?: { enabled?: boolean; space?: string | string[]; urlTemplate?: string; statusMap?: Record<string, string>; closedStatuses?: string[]; onStartTransition?: string | null }

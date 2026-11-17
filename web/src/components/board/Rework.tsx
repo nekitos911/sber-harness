@@ -11,7 +11,7 @@ import { useSettings } from '../../lib/agents'
 import type { Session, Task } from '../../types'
 import { Button, Popover, Select } from '../ui'
 
-export const DEFAULT_REWORK = '/full-task {taskUrl} Задача готова, но нужны правки: {notes}'
+export const DEFAULT_REWORK = '{key} {title}: нужны правки: {notes}' // the server's own default (agents.<id>.reworkPromptTemplate unset)
 
 /** First line of what the agent will receive: «/full-task <url> Задача готова, но нужны правки: …». */
 function reworkPreview(template: string, task: Task, notes: string) {

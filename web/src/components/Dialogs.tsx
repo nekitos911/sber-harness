@@ -15,7 +15,7 @@ import { pendingDeps, taskKey } from '../lib/tasks'
 import { loadPr } from '../lib/pr'
 import { FolderPicker } from './FolderPicker'
 import { RecoveryDialog } from './RecoveryDialog'
-import { deleteSession } from '../lib/sessionActions'
+import { archiveSession, deleteSession, isLive } from '../lib/sessionActions'
 import { endJob, startJob, useJobStep } from '../lib/jobs'
 import { Markdown } from './Markdown'
 import { useWhere as useStartWhere } from './board/Rework'
@@ -39,6 +39,7 @@ function DialogSwitch({ d }: { d: DialogRequest }) {
     case 'wt-cleanup': return <CleanupDialog workspaceId={d.workspaceId} />
     case 'recovery': return <RecoveryDialog />
     case 'session-delete': return <SessionDeleteDialog id={d.id} />
+    case 'session-archive': return <SessionArchiveDialog id={d.id} />
     case 'session-perms': return <SessionPermsDialog id={d.id} />
     case 'folder-chat': return <FolderPicker title="Новый чат в папке" submitLabel="Начать чат здесь" onClose={closeDialog} onPick={(p) => { closeDialog(); void newChatInFolder(p) }} />
   }
@@ -552,11 +553,24 @@ function SessionDeleteDialog({ id }: { id: string }) {
   const s = useStore((st) => st.sessions.find((x) => x.id === id))
   const [busy, run, step] = useBusy()
   if (!s) return null
-  const running = s.status === 'running'
+  const running = isLive(s)
   return (
     <Modal title={`Удалить «${s.title || s.id}»?`} submitLabel={running ? 'Остановить и удалить' : 'Удалить'} danger busy={busy} progress={step}
       onClose={closeDialog} onSubmit={() => run(async () => { if (await deleteSession(s)) closeDialog() })}>
       <p>История чата будет удалена. {running ? 'Агент сейчас работает — он будет остановлен.' : 'Если она ещё понадобится, лучше убрать чат в архив.'}</p>
+    </Modal>
+  )
+}
+
+/** Archiving a chat that still works: it is stopped first (PATCH archived + stop: true). */
+function SessionArchiveDialog({ id }: { id: string }) {
+  const s = useStore((st) => st.sessions.find((x) => x.id === id))
+  const [busy, run, step] = useBusy()
+  if (!s) return null
+  return (
+    <Modal title={`Убрать «${s.title || s.id}» в архив?`} submitLabel="Остановить и убрать в архив" busy={busy} progress={step}
+      onClose={closeDialog} onSubmit={() => run(async () => { if (await archiveSession(s, true, { stop: true })) closeDialog() })}>
+      <p>{s.turnClosing ? 'Агент заканчивает ход' : 'Агент сейчас работает'} — он будет остановлен. История чата сохранится.</p>
     </Modal>
   )
 }
