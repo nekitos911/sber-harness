@@ -222,8 +222,9 @@ export function parseShim(shimPath, text) {
     const n = quoted.find((q) => /[\\/]node(\.exe)?$/i.test(q));
     const e = quoted.find((q) => /\.[cm]?js$/i.test(q));
     if (n && e) {
-      node = path.resolve(n);
-      entry = path.resolve(e);
+      // .cmd text uses backslashes; '/' is a separator on every platform, '\' only on Windows
+      node = path.resolve(n.replace(/\\/g, '/'));
+      entry = path.resolve(e.replace(/\\/g, '/'));
     }
   }
   return { node, entry };
