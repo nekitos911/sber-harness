@@ -124,7 +124,9 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
 
   const lastSummary = (task) => {
     for (let i = task.log.length - 1; i >= 0; i--) {
-      const m = task.log[i].text.match(REPORT_RE);
+      const e = task.log[i];
+      if ((e.type === 'agent_done' || e.type === 'agent_failed') && e.data?.summary) return e.data.summary;
+      const m = !e.type && e.text.match(REPORT_RE); // entries written before typed logs
       if (m) return m[1];
     }
     return null;
@@ -250,7 +252,12 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
         patch.snapshot = { title: task.title, description: task.description, externalStatus: task.externalStatus ?? null, at: patch.takenAt };
       }
       tasks.update(task.id, patch, by);
-      tasks.addLog(task.id, by, `worker ${s.id} started (${agent}) in ${cwd}${branch ? ` on ${branch}` : ''}`);
+      tasks.addLog(task.id, by, `Взята в работу: ${config.agents[agent]?.label || agent}${branch ? `, ветка ${branch}` : ''}`, 'started', { sessionId: s.id, agent, branch: branch ?? null });
+      const prefix = tasks.key(task).match(/^([A-Z][A-Z0-9_]*)-\d+$/)?.[1];
+      if (prefix && ws) {
+        db.prefs ||= {};
+        db.prefs.lastWorkspaceBySpace = { ...db.prefs.lastWorkspaceBySpace, [prefix]: ws.id }; // a hint for the next task of this space
+      }
       sessions.deliver(s.id, { from: by, text: o.spec ?? taskPrompt(task, s, { notes: o.notes }) });
       return s;
     })();
@@ -292,7 +299,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
     const rec = { target, branch, cwd: wt.path, status, sessionId: null };
     savePort(task, rec);
     const by = caller?.id || 'user';
-    tasks.addLog(task.id, by, `port to ${target}: ${status} (${commits.length} commit(s) on ${branch})`);
+    tasks.addLog(task.id, by, `Перенос в ${target}: ${status === 'clean' ? 'без конфликтов' : 'конфликт, агент разбирается'} (коммитов: ${commits.length})`, 'port', { target, status, branch, commits: commits.length });
     if (status === 'conflict') {
       jobStep('Конфликт: запуск агента');
       const s = await sessions.create({
@@ -341,7 +348,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
         patch.snapshot = { title: task.title, description: task.description, externalStatus: task.externalStatus ?? null, at: patch.takenAt };
       }
       tasks.update(task.id, patch, 'user');
-      tasks.addLog(task.id, 'user', `coordinator ${s.id} started (${agent}) for ${subs.length} subtask(s)`);
+      tasks.addLog(task.id, 'user', `Взята в работу координатором: ${config.agents[agent]?.label || agent}, подзадач: ${subs.length}`, 'started', { sessionId: s.id, agent, subtasks: subs.length });
       sessions.deliver(s.id, { from: 'user', text: taskPrompt(task, s, { notes }) });
       return s;
     })();
@@ -454,7 +461,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
       setReview(tasks.get(task.id), { reviewerSessionId: reviewer.id });
       sessions.deliver(reviewer.id, { from: 'harness', text });
     }
-    tasks.addLog(task.id, 'harness', `review round ${round} started in ${reviewer.id}${model ? ` (${model})` : ''}`);
+    tasks.addLog(task.id, 'harness', `Ревью, раунд ${round}: начато${model ? ` (${model})` : ''}`, 'review', { round, sessionId: reviewer.id, model: model ?? null });
   }
 
   function reviewerDone(summary, reviewer) {
@@ -471,7 +478,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
     const worker = sessions.find(rv.workerSessionId);
     const coordinator = worker?.parentId && sessions.find(worker.parentId);
     const key = tasks.key(task);
-    tasks.addLog(task.id, reviewer.id, `Review round ${rv.round}: ${verdict}`);
+    tasks.addLog(task.id, reviewer.id, `Ревью, раунд ${rv.round}: ${verdict === 'APPROVED' ? 'одобрено' : 'есть замечания'}`, 'review', { round: rv.round, verdict });
     if (verdict === 'APPROVED') {
       setReview(task, { state: 'approved', findings: summary });
       if (worker) sessions.note(worker.id, `Ревью (раунд ${rv.round}): APPROVED\n\n${summary}`);
@@ -814,11 +821,11 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
         const portRec = task?.ports.find((p) => p.sessionId === c.id);
         if (portRec) {
           savePort(task, { ...portRec, status });
-          tasks.addLog(task.id, c.id, `port to ${portRec.target} ${status}: ${a.summary}`);
+          tasks.addLog(task.id, c.id, `Перенос в ${portRec.target}: ${status === 'done' ? 'конфликты разобраны' : 'не удалось'}`, 'port', { target: portRec.target, status, summary: a.summary });
         } else if (task) {
           // board.onWorkerDone "stay" (default): the card keeps its column, the agent badge shows the outcome
           if (config.board?.onWorkerDone === 'review') tasks.update(task.id, { status: status === 'done' ? 'review' : 'todo' }, c.id);
-          tasks.addLog(task.id, c.id, `Worker report (${status}): ${a.summary}`);
+          tasks.addLog(task.id, c.id, status === 'done' ? 'Агент закончил' : 'Агент не справился', status === 'done' ? 'agent_done' : 'agent_failed', { summary: a.summary, sessionId: c.id });
         }
         const ready = tasks.list({ ready: true }).filter((t) => !activeWorker(t) && !t.hidden);
         const what = portRec ? ` the port of ${tasks.key(task)} to ${portRec.target}` : task ? ` task ${tasks.key(task)} "${task.title}" (${task.id})` : '';
@@ -950,7 +957,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
       const worker = prev && prev.kind === 'chat' && prev.role === 'worker' && !prev.archived && !prev.ephemeral ? prev : null;
       if (!worker && !task.branch) fail(409, `${tasks.key(task)} has not been taken into work yet: start it first`);
       if (task.status !== 'in_progress') tasks.move(task.id, 'in_progress', null);
-      tasks.addLog(task.id, 'user', `Доработка: ${notes.trim()}`);
+      tasks.addLog(task.id, 'user', `Доработка: ${notes.trim()}`, 'rework', { notes: notes.trim() });
       if (worker) {
         jobStep('Отправка агенту');
         sessions.deliver(worker.id, { from: 'user', text: reworkPrompt(task, worker, notes) });
@@ -971,8 +978,10 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
       if (starting.has(task.id)) return { ...(await starting.get(task.id)), jumped: true };
       // a parent of subtasks (or a task without a repo while there are several) is coordinated, not worked on
       const hasChildren = db.tasks.some((t) => t.parentId === task.id && !t.hidden);
-      if (hasChildren || (!task.workspaceId && db.workspaces.length >= 2)) return startCoordinator(task, { agent, notes });
-      const ws = findWs(task.workspaceId) || (db.workspaces.length === 1 ? db.workspaces[0] : null);
+      const repos = db.workspaces.filter((w) => !w.kind);
+      const chosen = findWs(task.workspaceId) || findWs(task.suggestedWorkspaceId);
+      if (hasChildren || (!chosen && repos.length >= 2)) return startCoordinator(task, { agent, notes });
+      const ws = chosen || (repos.length === 1 ? repos[0] : null);
       if (!ws) fail(400, `task ${task.id} has no workspace; set its workspace first`);
       return startWorker(task, { agent: agent || config.defaultAgent, workspaceId: ws.id, worktree: ws.isGit ? 'new' : 'current', notes }, null);
     },

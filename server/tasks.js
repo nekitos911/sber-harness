@@ -5,15 +5,19 @@ export const STATUSES = ['backlog', 'todo', 'in_progress', 'review', 'done'];
 export const PRIORITIES = ['low', 'medium', 'high'];
 const EDITABLE = ['title', 'description', 'status', 'order', 'priority', 'deps', 'labels', 'workspaceId', 'parentId',
   'targets', 'branch', 'ports', 'assigneeSessionId', 'externalId', 'externalUrl', 'source',
-  'externalStatus', 'statusManual', 'hidden', 'takenAt', 'snapshot', 'pr', 'agentState', 'review', 'includeDirs'];
+  'externalStatus', 'statusManual', 'hidden', 'takenAt', 'snapshot', 'pr', 'agentState', 'review', 'includeDirs', 'externalFields'];
 const DEFAULTS = { parentId: null, targets: null, branch: null, ports: [], externalStatus: null, statusManual: false, hidden: false, takenAt: null, snapshot: null, pr: null, agentState: null, review: null };
 
 const fail = (status, message) => { throw Object.assign(new Error(message), { status }); };
 const isStrArr = (v) => Array.isArray(v) && v.every((x) => typeof x === 'string');
 const defined = (f) => Object.fromEntries(Object.entries(f).filter(([, v]) => v !== undefined));
 
+const STATUS_LABEL = { backlog: 'Бэклог', todo: 'К работе', in_progress: 'В работе', review: 'На проверке', done: 'Готово' };
+export const LOG_TYPES = ['created', 'imported', 'status', 'started', 'agent_done', 'agent_failed', 'review', 'rework', 'port', 'pr_created', 'tracker_transition', 'comment'];
+
 export function createTasks({ store, bus, defaultBase = 'main' }) {
   const db = store.db;
+  let suggest = null; // (task) -> workspace id | null, set by the server (auto-fill of the repository)
   for (const t of db.tasks) {
     for (const [k, v] of Object.entries(DEFAULTS)) t[k] ??= Array.isArray(v) ? [] : v;
     t.targets ??= [defaultBase];
@@ -25,6 +29,7 @@ export function createTasks({ store, bus, defaultBase = 'main' }) {
 
   function emit(task) {
     task.updatedAt = Date.now();
+    task.suggestedWorkspaceId = !task.workspaceId && suggest ? suggest(task) ?? null : null;
     store.save();
     bus.send({ t: 'task', task });
     return task;
@@ -131,7 +136,7 @@ export function createTasks({ store, bus, defaultBase = 'main' }) {
         pr: null,
         agentState: null,
         review: null,
-        log: [{ at: now, by, text: 'created' }],
+        log: [f.source ? { at: now, by, type: 'imported', text: 'Импортирована из трекера' } : { at: now, by, type: 'created', text: 'Создана' }],
         createdAt: now,
         updatedAt: now,
       };
@@ -147,15 +152,19 @@ export function createTasks({ store, bus, defaultBase = 'main' }) {
       const statusChanged = 'status' in f && f.status !== task.status;
       for (const k of EDITABLE) if (k in f) task[k] = k === 'title' ? f.title.trim() : f[k];
       if (statusChanged && !('order' in f)) task.order = endOrder(task.status, id);
-      if (statusChanged) task.log.push({ at: Date.now(), by, text: `status -> ${task.status}` });
-      if (f.comment) task.log.push({ at: Date.now(), by, text: f.comment });
+      if (statusChanged) task.log.push({ at: Date.now(), by, type: 'status', text: `Статус: ${STATUS_LABEL[task.status] ?? task.status}`, data: { to: task.status } });
+      if (f.comment) task.log.push({ at: Date.now(), by, type: 'comment', text: f.comment });
       return emit(task);
     },
 
-    addLog(id, by, text) {
+    /** A typed log entry: `text` is for people (Russian, no session ids or paths), `data` for the UI. */
+    addLog(id, by, text, type = 'comment', data) {
       const task = get(id);
-      task.log.push({ at: Date.now(), by, text });
+      task.log.push({ at: Date.now(), by, type, text, ...(data ? { data } : {}) });
       return emit(task);
+    },
+    setSuggester(fn) {
+      suggest = fn;
     },
 
     /** Drag and drop: put the task into `status` before `beforeId`, or at the end of the column. */

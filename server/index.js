@@ -24,7 +24,7 @@ import { readSdd } from './sdd.js';
 import { runJob, jobStep, JOB_ID_RE } from './jobs.js';
 import { DEMO_PORT, demoOverrides, seedDemoRepos, seedDemoTasks } from './demo.js';
 import { importTasks, importIssue, transitionTask, getExternal, getTransitions, importChildren, syncColumn } from './integrations/tasks.js';
-import { createPullRequest, prStatus, refreshTaskPr } from './integrations/pr.js';
+import { createPullRequest, prStatus, refreshTaskPr, declinePullRequest } from './integrations/pr.js';
 
 const MAX_BODY = 1024 * 1024;
 const MIME = {
@@ -37,7 +37,7 @@ const NO_BUILD_HTML = '<!doctype html><meta charset="utf-8"><title>Harness</titl
 const GRADES = ['default', 'fast', 'review', 'explore'];
 // optional API groups this server implements (docs/ARCHITECTURE.md "Feature flags"); a flag ships with its route
 export const FEATURES = ['branches', 'fs-search', 'pr-status', 'agent-info', 'models-refresh', 'tracker-links', 'board-columns', 'review-loop',
-  'subagents', 'virtual-sessions', 'worker-run', 'skills-install', 'demo', 'worktree-meta', 'open', 'sdd', 'health', 'folders', 'include-dirs', 'questions', 'permissions', 'activity', 'rework', 'fs-raw', 'tracker-import'];
+  'subagents', 'virtual-sessions', 'worker-run', 'skills-install', 'demo', 'worktree-meta', 'open', 'sdd', 'health', 'folders', 'include-dirs', 'questions', 'permissions', 'activity', 'rework', 'fs-raw', 'tracker-import', 'pr-decline', 'task-suggest'];
 // titles of operations the UI may follow by sending x-job-id (WS { t: 'job' } frames)
 const JOB_TITLES = {
   'POST /api/tasks/sync': 'Синхронизация с трекером',
@@ -141,6 +141,25 @@ export async function startServer(opts = {}) {
   const tokenOk = (t) => typeof t === 'string' && t.length === store.token.length && timingSafeEqual(Buffer.from(t), tokenBuf);
   const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_BODY });
 
+  // ---- repository auto-fill: task.suggestedWorkspaceId while workspaceId is empty ----
+  const tokensOf = (text) => new Set(String(text || '').toLowerCase().split(/[^\p{L}\p{N}_-]+/u).filter(Boolean));
+  tasks.setSuggester((task) => {
+    const repos = db.workspaces.filter((w) => !w.kind);
+    if (repos.length <= 1) return repos[0]?.id ?? null;
+    const f = task.externalFields || {};
+    const attrs = ['Component', 'Компонент', 'Repository', 'Репозиторий', 'Сервис', 'Service'].map((k) => f[k]).filter(Boolean);
+    const words = tokensOf([task.title, task.description, ...attrs].join(' '));
+    const stem = (n) => n.replace(/-service$/, '');
+    const names = (w) => [...new Set([w.name, path.basename(w.path)].map((n) => n.toLowerCase()))];
+    const exact = repos.find((w) => names(w).some((n) => words.has(n)));
+    // "payments" in the text <-> repo payments-service, and "ledger-service" <-> repo ledger
+    const stemmed = exact || repos.find((w) => names(w).some((n) => [...words].some((t) => stem(t) === stem(n) && (t !== n) && (t.endsWith('-service') || n.endsWith('-service')))));
+    if (stemmed) return stemmed.id;
+    const prefix = String(task.externalId || '').match(/^([A-Z][A-Z0-9_]*)-\d+$/)?.[1];
+    const last = prefix && db.prefs?.lastWorkspaceBySpace?.[prefix];
+    return last && repos.some((w) => w.id === last) ? last : null;
+  });
+
   // ---- tracker sync ----
   let tasksProblem = null;
   let syncing = null;
@@ -172,7 +191,7 @@ export async function startServer(opts = {}) {
     try {
       await fn();
     } catch (e) {
-      tasks.addLog(task.id, 'harness', `⚠ tracker ${what} failed: ${e.message}`);
+      tasks.addLog(task.id, 'harness', `⚠ Трекер: не удалось (${what}): ${e.message}`, 'tracker_transition', { error: e.message });
       orch.notify({ kind: 'error', taskId: task.id, text: `${tasks.key(task)}: tracker ${what} failed: ${e.message}` });
     }
   }
@@ -899,10 +918,25 @@ export async function startServer(opts = {}) {
     check(body, { cwd: 'string', title: 'string', body: 'string?', base: 'string?' });
     if (!config.integrations.pr?.enabled) fail(501, 'PR creation is disabled (integrations.pr.enabled)');
     const branch = (await git.currentBranch(body.cwd)) || fail(400, 'cwd is not on a branch');
-    return createPullRequest({
-      config, mcp, cwd: body.cwd, branch, base: body.base || config.git.defaultBase,
+    const base = body.base || config.git.defaultBase;
+    const r = await createPullRequest({
+      config, mcp, cwd: body.cwd, branch, base,
       title: body.title, body: body.body || '', ...(await git.remoteInfo(body.cwd)),
     });
+    const task = db.tasks.find((t) => t.branch === branch);
+    if (task) {
+      const n = String(r.url).match(/(\d+)\/?(?:overview)?$/)?.[1];
+      tasks.addLog(task.id, 'user', r.existing ? `PR${n ? ` #${n}` : ''} в ${base} уже открыт` : `PR${n ? ` #${n}` : ''} в ${base} создан`, 'pr_created', { url: r.url, base, existing: !!r.existing });
+    }
+    return r;
+  });
+  route('POST', '/api/git/pr/decline', async ({ body }) => {
+    check(body, { cwd: 'string' });
+    const r = await declinePullRequest({ config, mcp, cwd: body.cwd, index: body.index });
+    const branch = await git.currentBranch(body.cwd);
+    const task = branch && db.tasks.find((t) => t.branch === branch);
+    if (task) await refreshTaskPr({ config, mcp, tasks, task, cwd: body.cwd }).catch(() => {});
+    return r;
   });
 
   // files

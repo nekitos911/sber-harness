@@ -270,7 +270,8 @@ export async function getExternal({ config, mcp, tasks, task }) {
   if (!markdown(cfg)) throw disabled('Issue details are only available for the onework-markdown tracker');
   const key = trackerKey(task);
   const issue = parseIssue(await callText(mcp, cfg, toolOf(cfg, 'get'), { key }));
-  if (!task.description && issue.description) tasks.update(task.id, { description: issue.description }, 'harness');
+  // cached attributes (Component, Repository, ...) also feed the repository auto-fill
+  tasks.update(task.id, { ...(!task.description && issue.description ? { description: issue.description } : {}), externalFields: issue.fields }, 'harness');
   return { ...issue, links: await fetchLinks(mcp, cfg, key) };
 }
 
@@ -325,7 +326,7 @@ export async function transitionTask({ config, mcp, tasks, task, transition, sta
   if (markdown(cfg)) {
     if (!transition) throw Object.assign(new Error('transition is required (an id from GET /api/tasks/:id/transitions)'), { status: 400 });
     await callText(mcp, cfg, toolOf(cfg, 'transition'), { key, transition, ...(comment ? { comment } : {}) });
-    tasks.addLog(task.id, 'user', `tracker transition ${transition}${comment ? `: ${comment}` : ''}`);
+    tasks.addLog(task.id, 'user', `Статус в трекере: ${status || transition}${comment ? ` (${comment})` : ''}`, 'tracker_transition', { transition, status: status ?? null });
     await getTransitions({ config, mcp, tasks, task }); // refresh externalStatus from the tracker
     return tasks.get(task.id);
   }

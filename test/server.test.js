@@ -103,7 +103,7 @@ test('coordinator spawns a worker; worker_done moves the task to review and wake
   const task = await waitFor(async () => (await state()).tasks.find((t) => t.id === worker.taskId && t.agentState === 'done'), { what: 'worker done badge' });
   assert.equal(task.status, 'in_progress', 'the card stays in its column');
   assert.equal(task.assigneeSessionId, worker.id);
-  assert.ok(task.log.some((l) => /^Worker report \(done\)/.test(l.text)));
+  assert.ok(task.log.some((l) => l.type === 'agent_done' && l.text === 'Агент закончил' && l.data.summary));
   const delivered = await waitFor(async () => (await messages(coord.id)).find((m) => m.kind === 'user' && m.from === worker.id), { what: 'delivery to parent' });
   assert.match(delivered.text, /^\[harness\] Message from .*finished task/s);
   assert.ok((await state()).notifications.some((n) => n.kind === 'done' && n.sessionId === worker.id));

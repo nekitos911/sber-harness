@@ -118,3 +118,17 @@ export async function refreshTaskPr({ config, mcp, tasks, task, cwd }) {
   tasks.update(task.id, { pr: next ?? null }, 'harness');
   return true;
 }
+
+const DECLINE_ARGS = { project: '{project}', repository: '{repository}', pullRequestIndex: '{index}' };
+
+/** Declines (closes without merging) pull request `index` of the repository at cwd: integrations.pr.declineTool. */
+export async function declinePullRequest({ config, mcp, cwd, index }) {
+  const cfg = config.integrations?.pr;
+  if (!cfg?.enabled) throw Object.assign(new Error('PR integration is disabled (integrations.pr.enabled)'), { status: 501 });
+  if (!Number.isInteger(index) || index <= 0) throw Object.assign(new Error('index must be a positive integer'), { status: 400 });
+  const { project, repository } = await remoteInfo(cwd);
+  if (!project || !repository) throw Object.assign(new Error(`cannot tell project/repository from the origin remote of ${cwd}`), { status: 400 });
+  jobStep('Отклонение PR');
+  const value = toolResultValue(await mcp.callTool(cfg.server, cfg.declineTool || 'git_decline_pull_request', fillTemplate(cfg.declineArgs || DECLINE_ARGS, { project, repository, index })));
+  return { ok: true, index, result: typeof value === 'string' ? value : JSON.stringify(value) };
+}

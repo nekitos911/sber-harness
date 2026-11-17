@@ -10,7 +10,7 @@ import { createStore } from '../server/store.js';
 import { createBus } from '../server/bus.js';
 import { createTasks } from '../server/tasks.js';
 import { importTasks, importIssue, getExternal, getTransitions, transitionTask, importChildren, parseFindIssues, parseIssueMeta } from '../server/integrations/tasks.js';
-import { createPullRequest, prStatus, refreshTaskPr } from '../server/integrations/pr.js';
+import { createPullRequest, prStatus, refreshTaskPr, declinePullRequest } from '../server/integrations/pr.js';
 import { sessionSettings } from '../server/launchers.js';
 import * as git from '../server/git.js';
 import { tmpDir, rmrf, makeRepo, gitIn, startTestServer } from './helpers.js';
@@ -91,6 +91,7 @@ test('onework import: pages while has_next, closed skipped locally, statuses/pri
   assert.equal(byKey['PROJ-15430'].externalUrl, 'https://tracker.example/swtr/units/all/unit/PROJ-15430');
   assert.equal(byKey['PROJ-14904'].title, 'BACK. S54. Оптимизация расчёта');
   assert.equal(tasks.key(byKey['PROJ-14904']), 'PROJ-14904');
+  assert.deepEqual([byKey['PROJ-14904'].log[0].type, byKey['PROJ-14904'].log[0].text], ['imported', 'Импортирована из трекера']);
 
   fs.rmSync(log, { force: true });
   assert.deepEqual(await importTasks({ config: cfg, mcp, tasks }), { imported: 0, updated: 0 }, 'nothing changed');
@@ -326,10 +327,23 @@ test('onStartTransition: tracker transition after take-into-work, best effort', 
     const r = await h.api('POST', `/api/tasks/${bad.id}/start`, { agent: 'mock' });
     assert.equal(r.status, 200, 'a tracker failure never fails the start');
     const st = (await h.api('GET', '/api/state')).body;
-    assert.ok(st.tasks.find((t) => t.id === bad.id).log.some((l) => /^⚠ tracker transition "development" failed: .*not found \(404\)/.test(l.text)));
+    assert.ok(st.tasks.find((t) => t.id === bad.id).log.some((l) => /^⚠ Трекер: не удалось \(transition "development"\): .*not found \(404\)/.test(l.text)));
     assert.ok(st.notifications.some((n) => n.taskId === bad.id && n.kind === 'error'));
     await h.api('POST', `/api/sessions/${r.body.id}/stop`);
   } finally {
     await h.close();
   }
+});
+
+test('decline a pull request through sourcecontrol (declineTool, {project, repository, pullRequestIndex})', async () => {
+  const repo = makeRepo(path.join(dir, 'decline repo'));
+  gitIn(repo, 'remote', 'add', 'origin', 'https://code.example/PROJ/demo-service.git');
+  fs.writeFileSync(path.join(fixtures, 'sourcecontrol.git_decline_pull_request.json'), text('Pull request 562 declined'));
+  fs.rmSync(log, { force: true });
+  const cfg = config();
+  const r = await declinePullRequest({ config: cfg, mcp: createMcpManager(cfg), cwd: repo, index: 562 });
+  assert.deepEqual([r.ok, r.index, r.result], [true, 562, 'Pull request 562 declined']);
+  const call = calls().find((c) => c.tool === 'git_decline_pull_request' || c.name === 'git_decline_pull_request');
+  assert.deepEqual(call.args, { project: 'PROJ', repository: 'demo-service', pullRequestIndex: 562 });
+  await assert.rejects(declinePullRequest({ config: cfg, mcp: createMcpManager(cfg), cwd: repo, index: 0 }), (e) => e.status === 400);
 });
