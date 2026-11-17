@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react'
-import type { AgentInfo, GitStatus, Integrations, Message, Notification, Session, SubAgent, Task, Workspace, Worktree } from './types'
+import type { AgentInfo, AgentMeta, GitStatus, Settings, Integrations, Message, Notification, Session, SubAgent, Task, Workspace, Worktree } from './types'
 import type { DiffFile } from './lib/diff'
 import { normPath } from './lib/format'
 
@@ -62,6 +62,8 @@ export interface State extends Prefs {
   subagents: Record<string, { items: SubAgent[]; problems: string[] }>
   worktrees: Record<string, Worktree[]>
   git: Record<string, GitInfo> // key = normPath(cwd)
+  agentMeta: Record<string, AgentMeta | null> // null = this server has no /agents/:id/info
+  settings: Settings | null // loaded on demand (pickers need grades; the settings screen edits it)
   dirty: Record<string, boolean>
   toasts: Toast[]
   focusTaskId: string | null
@@ -114,7 +116,7 @@ let state: State = {
   conn: 'connecting', loaded: false, authExpired: false, scheme: resolveScheme(prefs.theme),
   tasks: [], sessions: [], workspaces: [], notifications: [], agents: [], defaultAgent: null, shell: '',
   integrations: { tasks: false, pr: false },
-  messages: {}, subagents: {}, worktrees: {}, git: {}, dirty: {}, toasts: [], focusTaskId: null, dialog: null, back: [], forward: [],
+  messages: {}, subagents: {}, worktrees: {}, git: {}, agentMeta: {}, settings: null, dirty: {}, toasts: [], focusTaskId: null, dialog: null, back: [], forward: [],
 }
 
 const listeners = new Set<() => void>()

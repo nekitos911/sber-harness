@@ -112,15 +112,36 @@ export interface Notification {
   options?: string[] | null
 }
 
+/** A model in an agent's catalog (config may give a plain string; servers normalize it to {id}). */
+export interface ModelEntry { id: string; label?: string; context?: string; description?: string }
+
 export interface AgentInfo {
   id: string
   label: string
   launcher: string
   approvalModes: string[]
   approvalMode: string | null
+  approvalModeLabels?: Record<string, string>
   enabled: boolean
-  models?: string[] // newer servers: models the agent offers (suggestions; free text stays allowed)
+  models?: (ModelEntry | string)[]
 }
+
+/** GET /api/agents/:id/info: how the CLI resolves and what the last session reported (system/init). */
+export interface AgentMeta {
+  id: string
+  resolved: { ok: boolean; command?: string; node?: string; entry?: string; identity: boolean; error?: string }
+  seen: {
+    models: string[]
+    slashCommands: string[]
+    mcpServers: { name: string; status: string }[]
+    agents: string[]
+    version: string | null
+    at: number
+  } | null
+}
+
+export interface GitBranch { name: string; remote: boolean; current: boolean; upstream: string | null; lastCommitAt: number; worktree: string | null }
+export interface GitBranches { current: string | null; branches: GitBranch[] }
 
 export interface Integrations {
   tasks: boolean
@@ -159,14 +180,21 @@ export interface SubAgent {
   settledAt?: number | null
 }
 
+export type Grade = 'default' | 'fast' | 'review' | 'explore'
+
 export interface AgentSettings {
   approvalMode: string | null
   approvalModes: string[]
-  models?: string[] // newer servers: models this agent offers (suggestions for the model fields)
+  approvalModeLabels?: Record<string, string>
+  models?: (ModelEntry | string)[]
   model: string | null
-  modelGrades: { default?: string; fast?: string; review?: string; explore?: string }
+  modelGrades: Partial<Record<Grade, string>>
   allowedGrades: string[]
   taskPromptTemplate: string | null
+  taskPromptPresets?: string[]
+  firstEventTimeoutMs?: number
+  inheritUserMcp?: boolean
+  enabled?: boolean
 }
 
 export interface Settings {
@@ -180,6 +208,10 @@ export interface Settings {
     prTitleTemplate?: string
   }
   tasks: { refreshSec: number }
+  integrations?: {
+    tasks?: { enabled?: boolean; space?: string; urlTemplate?: string; statusMap?: Record<string, string>; closedStatuses?: string[] }
+    pr?: { enabled?: boolean; limits?: { titleBytes?: number; bodyBytes?: number } }
+  }
 }
 
 export interface GitFile { path: string; x: string; y: string; status: 'M' | 'A' | 'D' | 'R' | '?' | 'U' }

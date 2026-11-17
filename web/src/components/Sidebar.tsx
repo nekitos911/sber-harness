@@ -7,6 +7,7 @@ import { basename, normPath, relTime, tokens } from '../lib/format'
 import { newChat, newTerminal } from '../lib/actions'
 import type { Session, Workspace, Worktree } from '../types'
 import { StatusIcon, SubStateIcon, subStateLabel } from './bits'
+import { BranchPicker } from './pickers/BranchPicker'
 import { useNow } from '../lib/useNow'
 
 const depth = (d: number) => ({ '--depth': d }) as CSSProperties
@@ -43,15 +44,15 @@ export function Sidebar() {
           icon={<Bot />}
           label="Агенты"
           end={running > 0
-            ? <span className="count count-run" title={`Работают: ${running} из ${chats}`}>{running}</span>
-            : chats > 0 && <span className="count" title={`Чатов: ${chats}`}>{chats}</span>}
+            ? <span className="count count-run" data-tip={`Работают: ${running} из ${chats}`}>{running}</span>
+            : chats > 0 && <span className="count" data-tip={`Чатов: ${chats}`}>{chats}</span>}
         />
         <NavItem screen="inbox" icon={<Inbox />} label="Входящие" end={unread > 0 && <span className="count count-signal" aria-label={`непрочитанных: ${unread}`}>{unread}</span>} />
       </div>
 
       <div className="sb-head">
         <span>Проекты</span>
-        <button type="button" className="icon-btn icon-btn-sm" title="Добавить проект" aria-label="Добавить проект" onClick={() => openDialog({ kind: 'workspace' })}>
+        <button type="button" className="icon-btn icon-btn-sm" data-tip="Добавить проект" aria-label="Добавить проект" onClick={() => openDialog({ kind: 'workspace' })}>
           <FolderPlus />
         </button>
       </div>
@@ -83,7 +84,7 @@ export function Sidebar() {
         <button
           type="button"
           className="icon-btn"
-          title={scheme === 'dark' ? 'Светлая тема' : 'Тёмная тема'}
+          data-tip={scheme === 'dark' ? 'Светлая тема' : 'Тёмная тема'}
           aria-label={scheme === 'dark' ? 'Включить светлую тему' : 'Включить тёмную тему'}
           onClick={() => setState({ theme: scheme === 'dark' ? 'light' : 'dark' })}
         >
@@ -95,7 +96,7 @@ export function Sidebar() {
         type="button"
         className="sb-resize"
         aria-label="Ширина боковой панели"
-        title="Потяните, чтобы изменить ширину"
+        data-tip="Потяните, чтобы изменить ширину"
         onPointerDown={(e) => {
           const startX = e.clientX
           const el = e.currentTarget
@@ -178,7 +179,7 @@ function ProjectNode({ ws, tree, filtering }: { ws: Workspace; tree: Tree; filte
 
   return (
     <div className="tree-group">
-      <div className="tree-row tree-project" role="button" tabIndex={0} aria-expanded={expanded} title={ws.path} onClick={toggle} onKeyDown={activate(toggle)}>
+      <div className="tree-row tree-project" role="button" tabIndex={0} aria-expanded={expanded} data-tip={ws.path} onClick={toggle} onKeyDown={activate(toggle)}>
         <ChevronRight className="chev" aria-hidden />
         <FolderGit2 aria-hidden />
         <span className="label">{ws.name}</span>
@@ -204,13 +205,18 @@ function WorktreeNode({ ws, wt, sessions, kids, active }: { ws: Workspace; wt: W
   const where = { workspaceId: ws.id, cwd: wt.path }
   return (
     <div className="wt" data-active={active}>
-      <div className="tree-row tree-wt" role="button" tabIndex={0} title={`${wt.main ? 'Основная рабочая копия' : 'Рабочее дерево'}\n${wt.path}`} aria-current={active ? 'location' : undefined} onClick={pick} onKeyDown={activate(pick)}>
+      <div className="tree-row tree-wt" role="button" tabIndex={0} data-tip={`${wt.main ? 'Основная рабочая копия' : 'Рабочее дерево'}\n${wt.path}`} aria-current={active ? 'location' : undefined} onClick={pick} onKeyDown={activate(pick)}>
         {wt.main ? <House aria-label="основная копия" /> : <GitBranch aria-hidden />}
         <span className="label">{name}</span>
-        {changed > 0 && <span className="wt-changes num" title={`Изменённых файлов: ${changed}`}>{changed}</span>}
+        {changed > 0 && <span className="wt-changes num" data-tip={`Изменённых файлов: ${changed}`}>{changed}</span>}
         <span className="actions">
           <RowAction label="Новый чат в этом дереве" icon={<MessageSquarePlus />} onClick={() => void newChat(where)} />
           <RowAction label="Новый терминал в этом дереве" icon={<SquareTerminal />} onClick={() => void newTerminal(where)} />
+          {ws.isGit && (
+            <BranchPicker cwd={wt.path} branch={wt.branch} placement="bottom-start" className="icon-btn icon-btn-sm">
+              <GitBranch />
+            </BranchPicker>
+          )}
         </span>
       </div>
       {sessions.map((s) => <SessionNode key={s.id} s={s} kids={kids} />)}
@@ -234,7 +240,7 @@ function SessionNode({ s, kids }: { s: Session; kids: Map<string, Session[]> }) 
             <div
               key={a.id}
               className="tree-row tree-sess tree-sub"
-              title={`${a.name}: ${subStateLabel(a.state)} (внутренний агент, только просмотр)${a.lastText ? `\n${a.lastText}` : ''}`}
+              data-tip={`${a.name}: ${subStateLabel(a.state)} (внутренний агент, только просмотр)${a.lastText ? `\n${a.lastText}` : ''}`}
             >
               <SubStateIcon state={a.state} />
               <span className="label">
@@ -268,7 +274,7 @@ function SessionRow({ s, nested, caret }: { s: Session; nested: boolean; caret?:
       data-enter={s.createdAt > APP_START || undefined}
       tabIndex={0}
       aria-current={current ? 'true' : undefined}
-      title={`${s.title}${preview ? `\n${preview}` : ''}\n${s.cwd}`}
+      data-tip={`${s.title}${preview ? `\n${preview}` : ''}\n${s.cwd}`}
       onClick={open}
       onKeyDown={activate(open)}
       style={depth(0)}
@@ -303,7 +309,7 @@ function RowAction({ label, icon, onClick }: { label: string; icon: ReactNode; o
       type="button"
       className="icon-btn icon-btn-sm"
       aria-label={label}
-      title={label}
+      data-tip={label}
       onClick={(e) => { e.stopPropagation(); onClick() }}
       onKeyDown={(e) => e.stopPropagation()}
     >

@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { ArrowDown, ChevronRight, Ellipsis, GitCompareArrows, LoaderCircle, MessageSquare, RotateCcw, ScrollText, Square, Trash2 } from 'lucide-react'
+import { ArrowDown, Ellipsis, GitCompareArrows, LoaderCircle, MessageSquare, RotateCcw, ScrollText, Square, Trash2 } from 'lucide-react'
 import { api, errorText, tryApi } from '../api'
 import { openTab, openTask, setState, showPanel, upsert, useStore, without } from '../store'
 import { loadMessages, loadSubagents } from '../ws'
@@ -9,7 +9,9 @@ import { useGit } from '../lib/git'
 import { useStartingLabel } from '../lib/live'
 import type { Message, Session } from '../types'
 import { Branch, Loading, Skeleton, StatusIcon, statusText } from '../components/bits'
-import { MenuButton } from '../components/Menu'
+import { MenuButton } from '../components/ui/Menu'
+import { BranchPicker } from '../components/pickers/BranchPicker'
+import { Disclosure } from '../components/ui'
 import { MessageItem } from '../components/chat/MessageItem'
 import { Composer } from '../components/chat/Composer'
 import { WorkersPanel } from '../components/chat/WorkersPanel'
@@ -173,7 +175,7 @@ function ChatHeader({ session, onLog, onReset, onDelete }: { session: Session; o
       {session.role !== 'solo' && <span className="role" data-role={session.role}>{ROLE[session.role]}</span>}
       <span className="muted nowrap">{statusText(session)}</span>
       {task && (
-        <button type="button" className="chip chip-mono" onClick={() => openTask(task.id)} title={task.title}>
+        <button type="button" className="chip chip-mono" onClick={() => openTask(task.id)} data-tip={task.title}>
           {task.externalId ?? task.id}
         </button>
       )}
@@ -184,7 +186,7 @@ function ChatHeader({ session, onLog, onReset, onDelete }: { session: Session; o
           Стоп
         </button>
       )}
-      <button type="button" className="btn btn-sm" onClick={() => showPanel('changes')} title="Изменения в этом рабочем дереве">
+      <button type="button" className="btn btn-sm" onClick={() => showPanel('changes')} data-tip="Изменения в этом рабочем дереве">
         <GitCompareArrows />
         Изменения
         {changed > 0 && <span className="count count-run">{changed}</span>}
@@ -209,12 +211,12 @@ function WhereLine({ session }: { session: Session }) {
   const agent = useStore((s) => s.agents.find((a) => a.id === session.agent))
   const main = ws && normPath(ws.path) === normPath(session.cwd)
   return (
-    <div className="chat-meta" title={session.cwd}>
+    <div className="chat-meta" data-tip={session.cwd}>
       <span>{agent?.label ?? session.agent}</span>
       {ws && <span>{ws.name}</span>}
       <span className="mono">{basename(session.cwd)}</span>
       <span>{main ? 'основная копия' : 'рабочее дерево'}</span>
-      <Branch name={session.branch} />
+      {session.branch && <BranchPicker cwd={session.cwd} branch={session.branch}><Branch name={session.branch} /></BranchPicker>}
     </div>
   )
 }
@@ -241,18 +243,14 @@ function TurnFiles({ messages, cwd }: { messages: Message[]; cwd: string }) {
     return a.startsWith(`${root}/`) ? f.slice(cwd.replace(/[\\/]+$/, '').length + 1) : f
   }
   return (
-    <details className="turn-files">
-      <summary>
-        <ChevronRight className="chev" aria-hidden />
-        Изменено файлов: {files.length}
-      </summary>
+    <Disclosure className="turn-files" summary={<>Изменено файлов: {files.length}</>}>
       {files.map(([f, c]) => (
-        <button key={f} type="button" className="turn-file" onClick={() => openTab({ kind: 'diff', cwd, path: rel(f) })} title={f}>
+        <button key={f} type="button" className="turn-file" onClick={() => openTab({ kind: 'diff', cwd, path: rel(f) })} data-tip={f}>
           <span className="ellipsis">{basename(f)}</span>
           <span className="muted ellipsis turn-file-dir">{rel(f)}</span>
           <span className="diff-stat num"><span className="add">+{c.added}</span> <span className="del">−{c.removed}</span></span>
         </button>
       ))}
-    </details>
+    </Disclosure>
   )
 }

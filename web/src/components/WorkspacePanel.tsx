@@ -4,6 +4,7 @@ import { setState, useActiveCwd, useStore } from '../store'
 import { basename, normPath } from '../lib/format'
 import { refreshGit, useGit } from '../lib/git'
 import { Branch } from './bits'
+import { BranchPicker } from './pickers/BranchPicker'
 import { FilesTab } from './panel/FilesTab'
 import { ChangesTab } from './panel/ChangesTab'
 
@@ -36,16 +37,16 @@ export function WorkspacePanel() {
           {changed > 0 && <span className="count count-run" aria-label={`изменённых файлов: ${changed}`}>{changed}</span>}
         </button>
         <span className="grow" />
-        <button type="button" className="icon-btn" title="Обновить" aria-label="Обновить git-статус" onClick={() => refreshGit(cwd)}>
+        <button type="button" className="icon-btn" data-tip="Обновить" aria-label="Обновить git-статус" onClick={() => refreshGit(cwd)}>
           <RefreshCw />
         </button>
-        <button type="button" className="icon-btn" title="Скрыть панель" aria-label="Скрыть панель" onClick={() => setState({ panel: false })}>
+        <button type="button" className="icon-btn" data-tip="Скрыть панель" aria-label="Скрыть панель" onClick={() => setState({ panel: false })}>
           <X />
         </button>
       </div>
-      <div className="wpanel-where" title={cwd}>
+      <div className="wpanel-where" data-tip={cwd}>
         <strong className="ellipsis">{name}</strong>
-        <Branch name={git?.status?.branch} />
+        {git?.status?.branch && <BranchPicker cwd={cwd} branch={git.status.branch} placement="bottom-start"><Branch name={git.status.branch} /></BranchPicker>}
       </div>
       <div className="wpanel-body" key={`${cwd}|${tab}`}>
         {tab === 'files' ? <FilesTab key={cwd} cwd={cwd} status={git?.status ?? null} /> : <ChangesTab key={cwd} cwd={cwd} />}

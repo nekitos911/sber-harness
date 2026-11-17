@@ -1,17 +1,11 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
+import { useLayoutEffect, useRef, useState } from 'react'
 import { ArrowUp, AtSign, Plus, Slash, Square } from 'lucide-react'
 import { tryApi } from '../../api'
 import { setDraft, setState, toast, upsert, useStore } from '../../store'
 import type { Session } from '../../types'
-import { MenuButton } from '../Menu'
-
-const FULL_ACCESS = new Set(['auto', 'yolo', 'bypassPermissions'])
-const MODE_LABEL: Record<string, string> = {
-  auto: 'Полный доступ', yolo: 'Полный доступ', bypassPermissions: 'Полный доступ',
-  'auto-edit': 'Авто-правки', acceptEdits: 'Авто-правки',
-  plan: 'Только план', default: 'С подтверждением',
-}
-const modeLabel = (m: string) => MODE_LABEL[m] ?? m
+import { MenuButton, Select } from '../ui'
+import { ModelPicker } from '../pickers/ModelPicker'
+import { FULL_ACCESS, modeShort } from '../../lib/agents'
 
 export function Composer({ session, active }: { session: Session; active: boolean }) {
   const agent = useStore((s) => s.agents.find((a) => a.id === session.agent))
@@ -59,10 +53,11 @@ export function Composer({ session, active }: { session: Session; active: boolea
 
   const stop = () => void tryApi('POST', `/sessions/${session.id}/stop`)
 
-  const setMode = async (approvalMode: string) => {
-    const s = await tryApi<Session>('PATCH', `/sessions/${session.id}`, { approvalMode })
+  const patch = async (fields: Partial<Pick<Session, 'model' | 'approvalMode'>>) => {
+    const s = await tryApi<Session>('PATCH', `/sessions/${session.id}`, fields)
     if (s) setState((st) => ({ sessions: upsert(st.sessions, s) }))
   }
+  const setMode = (approvalMode: string) => patch({ approvalMode })
 
   const mode = session.approvalMode ?? agent?.approvalMode ?? ''
   const modes = agent?.approvalModes ?? (mode ? [mode] : [])
@@ -92,55 +87,36 @@ export function Composer({ session, active }: { session: Session; active: boolea
           ]}
         />
         {modes.length > 0 && (
-          <label className={FULL_ACCESS.has(mode) ? 'mode-chip chip-access' : 'mode-chip'} title="Режим подтверждений агента">
-            <span aria-hidden>{modeLabel(mode)}</span>
-            <select aria-label="Режим подтверждений" value={mode} onChange={(e) => void setMode(e.target.value)}>
-              {modes.map((m) => <option key={m} value={m}>{modeLabel(m)} ({m})</option>)}
-            </select>
-          </label>
+          <Select
+            size="sm"
+            label="Режим подтверждений"
+            className={FULL_ACCESS.has(mode) ? 'mode-select mode-access' : 'mode-select'}
+            placement="top-start"
+            value={mode}
+            onChange={(m) => void setMode(m)}
+            display={modeShort(mode)}
+            options={modes.map((m) => ({ value: m, label: modeShort(m), text: modeShort(m), hint: agent?.approvalModeLabels?.[m] ?? m }))}
+          />
         )}
         {session.queued > 0 && <span className="chip chip-run">в очереди: {session.queued}</span>}
         <span className="grow" />
-        <ModelField session={session} placeholder="модель" models={agent?.models ?? []} />
+        <ModelPicker
+          agentId={session.agent}
+          label="Модель"
+          value={session.model}
+          onChange={(model) => void patch({ model })}
+          mode={mode || null}
+          onMode={(m) => void setMode(m)}
+        />
         {running && (
-          <button type="button" className="icon-btn composer-stop" onClick={stop} aria-label="Остановить агента" title="Остановить">
+          <button type="button" className="icon-btn composer-stop" onClick={stop} aria-label="Остановить агента" data-tip="Остановить">
             <Square />
           </button>
         )}
-        <button type="button" className="composer-send" onClick={() => void send()} disabled={!text.trim() || sending} aria-label={running ? 'Поставить в очередь' : 'Отправить'} title={running ? 'В очередь (Enter)' : 'Отправить (Enter)'}>
+        <button type="button" className="composer-send" onClick={() => void send()} disabled={!text.trim() || sending} aria-label={running ? 'Поставить в очередь' : 'Отправить'} data-tip={running ? 'В очередь (Enter)' : 'Отправить (Enter)'}>
           <ArrowUp />
         </button>
       </div>
     </div>
-  )
-}
-
-/** Model override for this chat (the agent's models as suggestions, free text allowed); empty = the agent's default. */
-function ModelField({ session, placeholder, models }: { session: Session; placeholder: string; models: string[] }) {
-  const listId = useId()
-  const [v, setV] = useState(session.model ?? '')
-  useEffect(() => setV(session.model ?? ''), [session.model])
-  const save = async () => {
-    const model = v.trim() || null
-    if (model === session.model) return
-    const s = await tryApi<Session>('PATCH', `/sessions/${session.id}`, { model })
-    if (s) setState((st) => ({ sessions: upsert(st.sessions, s) }))
-    else setV(session.model ?? '')
-  }
-  return (
-    <>
-    <input
-      className="composer-model"
-      list={models.length ? listId : undefined}
-      aria-label="Модель (пусто — по умолчанию агента)"
-      title="Модель (пусто — по умолчанию агента)"
-      placeholder={placeholder}
-      value={v}
-      onChange={(e) => setV(e.target.value)}
-      onBlur={() => void save()}
-      onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur() }}
-    />
-    {models.length > 0 && <datalist id={listId}>{models.map((m) => <option key={m} value={m} />)}</datalist>}
-    </>
   )
 }
