@@ -1,17 +1,24 @@
 import { memo, useState, type MouseEvent } from 'react'
-import { Check, ChevronRight, Copy, LoaderCircle, X } from 'lucide-react'
+import { Check, ChevronRight, Copy, GitCompare, LoaderCircle, TriangleAlert, X } from 'lucide-react'
 import { tryApi } from '../../api'
-import { openSession, useStore } from '../../store'
-import { basename, fullTime } from '../../lib/format'
+import { openSession, openTab, useStore } from '../../store'
+import { basename, fullTime, normPath } from '../../lib/format'
 import { fileEdit, summarizeInput, type FileEdit } from '../../lib/toolcall'
+import { parseDiff, type DiffFile, type DiffLine } from '../../lib/diff'
 import type { Message, ToolCall } from '../../types'
 import { Markdown } from '../Markdown'
+import { DiffLines } from '../DiffLines'
 
-export const MessageItem = memo(function MessageItem({ m }: { m: Message }) {
+export const MessageItem = memo(function MessageItem({ m, fresh = false }: { m: Message; fresh?: boolean }) {
   const body = <MessageBody m={m} />
-  if (!m.options?.length) return body
-  // `ask` from a worker arrives here with from = worker id: the click answers that worker.
-  return <>{body}<ReplyOptions options={m.options} to={m.from && m.from !== 'user' ? m.from : m.sessionId} /></>
+  // Messages that arrive while the chat is open fade in; the loaded history does not replay.
+  return (
+    <div className="msg-wrap" data-kind={m.kind} data-enter={fresh || undefined}>
+      {body}
+      {/* `ask` from a worker arrives here with from = worker id: the click answers that worker. */}
+      {!!m.options?.length && <ReplyOptions options={m.options} to={m.from && m.from !== 'user' ? m.from : m.sessionId} />}
+    </div>
+  )
 })
 
 function MessageBody({ m }: { m: Message }) {
@@ -19,9 +26,9 @@ function MessageBody({ m }: { m: Message }) {
     case 'user': return <UserMessage m={m} />
     case 'assistant': return <div className="msg msg-assistant"><Markdown text={m.text} /></div>
     case 'thought': return <Thought text={m.text} />
-    case 'tool': return m.tool ? <ToolCard tool={m.tool} /> : null
+    case 'tool': return m.tool ? <ToolCard tool={m.tool} sessionId={m.sessionId} /> : null
     case 'error': return <div className="msg msg-error" role="alert">{m.text}</div>
-    case 'system': return <div className="msg msg-system"><Markdown text={m.text} /></div>
+    case 'system': return <SystemNote text={m.text} />
   }
 }
 
@@ -78,11 +85,56 @@ function Thought({ text }: { text: string }) {
   )
 }
 
+/** System lines: "⚠ …" is a warning (amber, not an error); "MCP: a ✓, b ✗" is a compact status line. */
+function SystemNote({ text }: { text: string }) {
+  const t = text.trim()
+  if (t.startsWith('⚠')) {
+    return (
+      <div className="msg msg-warn" role="note">
+        <TriangleAlert aria-hidden />
+        <span>{t.replace(/^⚠️?\s*/, '')}</span>
+      </div>
+    )
+  }
+  const mcp = /^MCP:\s*(.+)$/.exec(t)
+  if (mcp && !t.includes('\n')) {
+    const items = mcp[1].split(',').map((x) => x.trim()).filter(Boolean)
+    return (
+      <div className="msg msg-mcp" aria-label="Состояние MCP-серверов">
+        <span className="muted">MCP</span>
+        {items.map((x) => {
+          const bad = /✗|×|fail/i.test(x)
+          return (
+            <span key={x} className="mcp-item" data-bad={bad || undefined} title={bad ? 'не запустился' : 'работает'}>
+              {bad ? <X aria-hidden /> : <Check aria-hidden />}
+              {x.replace(/\s*[✓✔✗×]\s*$/, '')}
+            </span>
+          )
+        })}
+      </div>
+    )
+  }
+  return <div className="msg msg-system"><Markdown text={text} /></div>
+}
+
 const OUTPUT_LIMIT = 20_000
 
-function ToolCard({ tool }: { tool: ToolCall }) {
+/** A unified diff printed by the tool itself (e.g. an apply_patch result). */
+function outputDiff(tool: ToolCall): DiffFile | null {
+  const out = tool.output
+  if (!out || !/^@@ -\d/m.test(out) || !/^(\+\+\+|---) /m.test(out)) return null
+  const [f] = parseDiff(out)
+  return f && f.lines.length ? f : null
+}
+
+const editLines = (e: FileEdit): DiffLine[] =>
+  e.lines.map((l) => ({ kind: l.kind === '+' ? 'add' : l.kind === '-' ? 'del' : 'ctx', text: l.text, old: null, new: null }))
+
+function ToolCard({ tool, sessionId }: { tool: ToolCall; sessionId: string }) {
   const edit = fileEdit(tool.input)
-  if (edit) return <EditBlock tool={tool} edit={edit} />
+  if (edit) return <EditBlock tool={tool} sessionId={sessionId} file={edit.file} created={edit.created} added={edit.added} removed={edit.removed} lines={editLines(edit)} />
+  const out = outputDiff(tool)
+  if (out) return <EditBlock tool={tool} sessionId={sessionId} file={out.path} created={out.status === 'added'} added={out.added} removed={out.removed} lines={out.lines} />
   return <GenericTool tool={tool} />
 }
 
@@ -92,16 +144,17 @@ function ToolStatus({ status }: { status: ToolCall['status'] }) {
   return <Check className="tool-st" data-s="ok" aria-label="готово" />
 }
 
+/** Any other tool: one muted line (name and what it was asked), details on demand. */
 function GenericTool({ tool }: { tool: ToolCall }) {
   const [full, setFull] = useState(false)
   const out = tool.output ?? ''
   return (
     <details className="msg tool" data-s={tool.status}>
       <summary>
-        <ChevronRight className="chev" aria-hidden />
         <ToolStatus status={tool.status} />
         <span className="tool-name">{tool.name}</span>
         <span className="tool-sum ellipsis">{summarizeInput(tool.input)}</span>
+        <ChevronRight className="chev" aria-hidden />
       </summary>
       <div className="tool-body">
         <div className="tool-label">Вход</div>
@@ -122,35 +175,52 @@ function GenericTool({ tool }: { tool: ToolCall }) {
   )
 }
 
-function EditBlock({ tool, edit }: { tool: ToolCall; edit: FileEdit }) {
+/** Path of a file inside the session folder (for the diff tab); null when the tool wrote outside it. */
+function relativeTo(cwd: string, file: string): string | null {
+  const f = file.replace(/\\/g, '/')
+  if (!/^([a-zA-Z]:\/|\/)/.test(f)) return f
+  const root = cwd.replace(/\\/g, '/').replace(/\/+$/, '')
+  return normPath(f).startsWith(`${normPath(root)}/`) ? f.slice(root.length + 1) : null
+}
+
+interface EditProps { tool: ToolCall; sessionId: string; file: string; created: boolean; added: number; removed: number; lines: DiffLine[] }
+
+/** A file edit as a compact diff block: «Изменён file +a −b», expand, copy, open the file's diff in the worktree. */
+function EditBlock({ tool, sessionId, file, created, added, removed, lines }: EditProps) {
+  const cwd = useStore((s) => s.sessions.find((x) => x.id === sessionId)?.cwd)
   const [copied, setCopied] = useState(false)
   const copy = async (e: MouseEvent) => {
     e.preventDefault()
     try {
-      await navigator.clipboard.writeText(edit.lines.filter((l) => l.kind !== '-').map((l) => l.text).join('\n'))
+      await navigator.clipboard.writeText(lines.filter((l) => l.kind === 'add' || l.kind === 'ctx').map((l) => l.text).join('\n'))
       setCopied(true)
       window.setTimeout(() => setCopied(false), 1400)
     } catch { /* clipboard blocked */ }
   }
+  const rel = cwd ? relativeTo(cwd, file) : null
+  const openDiff = (e: MouseEvent) => {
+    e.preventDefault()
+    if (cwd && rel) openTab({ kind: 'diff', cwd, path: rel })
+  }
   return (
-    <details className="msg tool tool-edit" data-s={tool.status} open={edit.lines.length <= 40}>
+    <details className="msg tool tool-edit" data-s={tool.status} open={lines.length <= 16}>
       <summary>
-        <ChevronRight className="chev" aria-hidden />
         <ToolStatus status={tool.status} />
-        <span>{edit.created ? 'Записан' : 'Изменён'}</span>
-        <span className="tool-name ellipsis" title={edit.file}>{basename(edit.file)}</span>
-        <span className="diff-stat num"><span className="add">+{edit.added}</span> <span className="del">−{edit.removed}</span></span>
+        <span className="tool-verb">{created ? 'Создан' : 'Изменён'}</span>
+        <span className="tool-file ellipsis" title={file}>{basename(file)}</span>
+        <span className="diff-stat num"><span className="add">+{added}</span> <span className="del">−{removed}</span></span>
         <span className="grow" />
-        <button type="button" className="icon-btn icon-btn-sm" onClick={copy} aria-label={copied ? 'Скопировано' : 'Копировать новый текст'}>
+        {rel && (
+          <button type="button" className="icon-btn icon-btn-sm" onClick={openDiff} aria-label={`Открыть diff ${basename(file)}`} title="Открыть diff файла">
+            <GitCompare />
+          </button>
+        )}
+        <button type="button" className="icon-btn icon-btn-sm" onClick={copy} aria-label={copied ? 'Скопировано' : 'Копировать новый текст'} title={copied ? 'Скопировано' : 'Копировать новый текст'}>
           {copied ? <Check /> : <Copy />}
         </button>
+        <ChevronRight className="chev" aria-hidden />
       </summary>
-      <div className="edit-lines">
-        {edit.lines.slice(0, 400).map((l, i) => (
-          <div key={i} className="dl" data-k={l.kind}><span className="dl-sign">{l.kind}</span>{l.text || ' '}</div>
-        ))}
-        {edit.lines.length > 400 && <div className="dl muted">… ещё {edit.lines.length - 400} строк</div>}
-      </div>
+      <DiffLines lines={lines} numbers={lines.some((l) => l.new !== null)} limit={400} label={`Изменения ${basename(file)}`} />
       {tool.status === 'error' && tool.output && <pre className="tool-err">{tool.output.slice(0, OUTPUT_LIMIT)}</pre>}
     </details>
   )

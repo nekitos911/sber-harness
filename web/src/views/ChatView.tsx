@@ -5,14 +5,17 @@ import { openTab, openTask, setState, showPanel, upsert, useStore, without } fro
 import { loadMessages, loadSubagents } from '../ws'
 import { basename, normPath, ROLE } from '../lib/format'
 import { fileEdit } from '../lib/toolcall'
+import { useGit } from '../lib/git'
+import { useStartingLabel } from '../lib/live'
 import type { Message, Session } from '../types'
-import { Branch, Loading, StatusIcon, statusText } from '../components/bits'
+import { Branch, Loading, Skeleton, StatusIcon, statusText } from '../components/bits'
 import { MenuButton } from '../components/Menu'
 import { MessageItem } from '../components/chat/MessageItem'
 import { Composer } from '../components/chat/Composer'
 import { WorkersPanel } from '../components/chat/WorkersPanel'
 
 const PAGE = 200
+const PLACEHOLDER = { status: 'idle', phase: null, lastActivityAt: 0 } as Session // hooks run before the session is known
 const EMPTY: Message[] = []
 
 export function ChatView({ id, active }: { id: string; active: boolean }) {
@@ -24,6 +27,8 @@ export function ChatView({ id, active }: { id: string; active: boolean }) {
   const [limit, setLimit] = useState(PAGE)
   const [log, setLog] = useState<string | null>(null)
 
+  const shownAt = useRef(0) // messages newer than the first render of the transcript fade in; history does not
+  if (messages && !shownAt.current) shownAt.current = Date.now()
   const scroller = useRef<HTMLDivElement>(null)
   const stick = useRef(true)
   const [atBottom, setAtBottom] = useState(true)
@@ -38,6 +43,7 @@ export function ChatView({ id, active }: { id: string; active: boolean }) {
 
   const list = messages ?? EMPTY
   const running = session?.status === 'running'
+  const starting = useStartingLabel(session ?? PLACEHOLDER)
   const lastText = list.length ? list[list.length - 1].text.length : 0
 
   // Follow new output unless the user scrolled up to read.
@@ -90,7 +96,7 @@ export function ChatView({ id, active }: { id: string; active: boolean }) {
 
       <div className="chat-scroll" ref={scroller} onScroll={onScroll}>
         <div className="chat-col" role="log" aria-live="polite" aria-relevant="additions">
-          {!messages && !loadError && <Loading label="Загрузка истории…" />}
+          {!messages && !loadError && <Skeleton rows={6} label="Загрузка истории…" />}
           {loadError && (
             <div className="empty">
               <p>Не удалось загрузить историю: {loadError}</p>
@@ -109,8 +115,8 @@ export function ChatView({ id, active }: { id: string; active: boolean }) {
               Показать ранние ({hidden})
             </button>
           )}
-          {visible.map((m) => <MessageItem key={m.id} m={m} />)}
-          {running && <div className="chat-working"><LoaderCircle className="spinner" aria-hidden />Работает…</div>}
+          {visible.map((m) => <MessageItem key={m.id} m={m} fresh={m.at > shownAt.current} />)}
+          {running && <div className="chat-working" role="status"><LoaderCircle className="spinner" aria-hidden />{starting || 'Работает…'}</div>}
           {!running && <TurnFiles messages={list} cwd={session.cwd} />}
         </div>
       </div>
@@ -141,7 +147,7 @@ export function ChatView({ id, active }: { id: string; active: boolean }) {
 }
 
 function ChatHeader({ session, onLog, onReset, onDelete }: { session: Session; onLog: () => void; onReset: () => void; onDelete: () => void }) {
-  const agent = useStore((s) => s.agents.find((a) => a.id === session.agent))
+  const changed = useGit(session.cwd)?.status?.files.length ?? 0
   const task = useStore((s) => (session.taskId ? s.tasks.find((t) => t.id === session.taskId) : undefined))
   const [title, setTitle] = useState(session.title)
   useEffect(() => setTitle(session.title), [session.title])
@@ -164,27 +170,24 @@ function ChatHeader({ session, onLog, onReset, onDelete }: { session: Session; o
         onBlur={() => void saveTitle()}
         onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') { setTitle(session.title); e.currentTarget.blur() } }}
       />
-      <span className="role" data-role={session.role}>{ROLE[session.role]}</span>
-      <span className="muted">{statusText(session)}</span>
+      {session.role !== 'solo' && <span className="role" data-role={session.role}>{ROLE[session.role]}</span>}
+      <span className="muted nowrap">{statusText(session)}</span>
       {task && (
         <button type="button" className="chip chip-mono" onClick={() => openTask(task.id)} title={task.title}>
           {task.externalId ?? task.id}
         </button>
       )}
       <span className="grow" />
-      <span className="chat-head-where" title={session.cwd}>
-        <span className="mono muted">{agent?.label ?? session.agent}</span>
-        <Branch name={session.branch} />
-      </span>
       {session.status === 'running' && (
         <button type="button" className="btn btn-sm" onClick={() => void tryApi('POST', `/sessions/${session.id}/stop`)}>
           <Square />
           Стоп
         </button>
       )}
-      <button type="button" className="btn btn-sm" onClick={() => showPanel('changes')} title="Показать изменения в рабочей копии">
+      <button type="button" className="btn btn-sm" onClick={() => showPanel('changes')} title="Изменения в этом рабочем дереве">
         <GitCompareArrows />
         Изменения
+        {changed > 0 && <span className="count count-run">{changed}</span>}
       </button>
       <MenuButton
         label="Ещё"
@@ -200,13 +203,17 @@ function ChatHeader({ session, onLog, onReset, onDelete }: { session: Session; o
   )
 }
 
+/** Under the composer: where this chat runs. */
 function WhereLine({ session }: { session: Session }) {
   const ws = useStore((s) => s.workspaces.find((w) => w.id === session.workspaceId))
+  const agent = useStore((s) => s.agents.find((a) => a.id === session.agent))
   const main = ws && normPath(ws.path) === normPath(session.cwd)
   return (
     <div className="chat-meta" title={session.cwd}>
+      <span>{agent?.label ?? session.agent}</span>
       {ws && <span>{ws.name}</span>}
-      <span>{main ? 'Основная рабочая копия' : `рабочая копия ${basename(session.cwd)}`}</span>
+      <span className="mono">{basename(session.cwd)}</span>
+      <span>{main ? 'основная копия' : 'рабочее дерево'}</span>
       <Branch name={session.branch} />
     </div>
   )

@@ -15,7 +15,7 @@ import { sql } from '@codemirror/lang-sql'
 import { yaml } from '@codemirror/lang-yaml'
 import { FileWarning, Save } from 'lucide-react'
 import { api, errorText, qs, tryApi } from '../api'
-import { setDirty, tabKey, toast } from '../store'
+import { dirtyKey, setDirty, tabKey, toast } from '../store'
 import type { FsFile } from '../types'
 import { Loading } from '../components/bits'
 
@@ -74,7 +74,7 @@ const theme = EditorView.theme({
 type Load = { state: 'loading' } | { state: 'error'; error: string } | { state: 'binary'; size: number } | { state: 'ready'; content: string }
 
 export default function FileView({ cwd, path }: { cwd: string; path: string }) {
-  const key = tabKey({ kind: 'file', cwd, path })
+  const key = dirtyKey(cwd, tabKey({ kind: 'file', cwd, path }))
   const [load, setLoad] = useState<Load>({ state: 'loading' })
   const [dirty, setLocalDirty] = useState(false)
   const [saving, setSaving] = useState(false)

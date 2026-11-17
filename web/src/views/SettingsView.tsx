@@ -25,10 +25,13 @@ export function SettingsView() {
 
   useEffect(() => {
     if (conn !== 'open' || dirty) return
-    api<Settings>('GET', '/settings').then((s) => { setForm(s); setLoadError(null) }, (e) => setLoadError(errorText(e)))
+    api<Settings>('GET', '/settings').then(
+      (s) => { setForm(s); setLoadError(null) },
+      (e) => setLoadError(e instanceof ApiError && e.status === 404 ? 'Этот сервер ещё не умеет редактировать настройки из интерфейса. Обновите harness или правьте harness.config.local.json.' : errorText(e)),
+    )
   }, [conn, dirty])
 
-  if (loadError) return <div className="empty"><h2>Настройки недоступны</h2><p className="mono">{loadError}</p></div>
+  if (loadError) return <div className="settings-view"><header className="view-head"><h1>Настройки</h1></header><div className="empty"><h2>Настройки недоступны</h2><p>{loadError}</p></div></div>
   if (!form) return <Loading label="Загрузка настроек…" />
 
   const update = (next: Settings) => { setForm(next); setDirty(true); setSaveError(null) }

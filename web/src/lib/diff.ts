@@ -71,3 +71,35 @@ export function parseDiff(text: string): DiffFile[] {
   }
   return files
 }
+
+/**
+ * Word-level emphasis: a block of N removed lines followed by N added lines is read as N edited lines,
+ * and the changed middle of each pair (between the common prefix and suffix) is highlighted.
+ */
+export function emphasis(lines: DiffLine[]): Map<number, [number, number]> {
+  const out = new Map<number, [number, number]>()
+  for (let i = 0; i < lines.length;) {
+    if (lines[i].kind !== 'del') { i++; continue }
+    let j = i
+    while (j < lines.length && lines[j].kind === 'del') j++
+    let k = j
+    while (k < lines.length && lines[k].kind === 'add') k++
+    const n = j - i
+    if (n > 0 && n === k - j && n <= 40) {
+      for (let p = 0; p < n; p++) {
+        const a = lines[i + p].text
+        const b = lines[j + p].text
+        let pre = 0
+        while (pre < a.length && pre < b.length && a[pre] === b[pre]) pre++
+        let suf = 0
+        while (suf < a.length - pre && suf < b.length - pre && a[a.length - 1 - suf] === b[b.length - 1 - suf]) suf++
+        // A pair that changed almost entirely is a rewrite, not an edit: no emphasis.
+        if (pre + suf < Math.min(a.length, b.length) * 0.3) continue
+        if (a.length - suf > pre) out.set(i + p, [pre, a.length - suf])
+        if (b.length - suf > pre) out.set(j + p, [pre, b.length - suf])
+      }
+    }
+    i = k > j ? k : j
+  }
+  return out
+}

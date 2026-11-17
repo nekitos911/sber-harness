@@ -61,6 +61,7 @@ export interface Session {
   parentId: string | null
   taskId: string | null
   status: SessionStatus
+  phase?: 'starting' | 'streaming' | null // newer servers: 'starting' = process up, no event yet (cold start)
   externalSessionId: string | null
   settingsPath: string | null
   model: string | null
@@ -118,6 +119,7 @@ export interface AgentInfo {
   approvalModes: string[]
   approvalMode: string | null
   enabled: boolean
+  models?: string[] // newer servers: models the agent offers (suggestions; free text stays allowed)
 }
 
 export interface Integrations {

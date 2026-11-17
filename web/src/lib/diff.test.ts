@@ -1,7 +1,7 @@
 // Run: node --test web/src/lib/diff.test.ts  (Node 22.6+ strips the types)
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { parseDiff } from './diff.ts'
+import { emphasis, parseDiff } from './diff.ts'
 
 const sample = [
   'diff --git a/src/app.js b/src/app.js',
@@ -45,4 +45,24 @@ test('parses files, hunks, line numbers and tricky lines', () => {
   assert.deepEqual(added.lines.filter((l) => l.kind === 'add').map((l) => [l.text, l.new]), [['hello', 1]])
 
   assert.equal(bin.status, 'binary')
+})
+
+test('emphasis marks the changed middle of paired edit lines only', () => {
+  const [f] = parseDiff([
+    'diff --git a/x.js b/x.js',
+    '--- a/x.js',
+    '+++ b/x.js',
+    '@@ -1,3 +1,3 @@',
+    '-const limit = 1;',
+    '+const limit = 42;',
+    ' keep',
+    '-old line entirely',
+    '+zzz',
+  ].join('\n'))
+  const m = emphasis(f.lines)
+  // lines: 0 hunk, 1 del, 2 add, 3 ctx, 4 del, 5 add
+  assert.equal(f.lines[1].text.slice(...m.get(1)!), '1')
+  assert.equal(f.lines[2].text.slice(...m.get(2)!), '42')
+  assert.equal(m.has(4), false) // a full rewrite gets no emphasis
+  assert.equal(m.has(5), false)
 })

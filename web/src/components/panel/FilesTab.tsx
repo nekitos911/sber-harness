@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from
 import { ChevronRight, File, Folder, FolderOpen, Search } from 'lucide-react'
 import { api, errorText, qs } from '../../api'
 import { openTab } from '../../store'
+import { gsLetter } from '../../lib/git'
 import type { FsEntry, GitStatus } from '../../types'
 
 type Dir = FsEntry[] | 'loading' | { error: string }
@@ -69,7 +70,7 @@ export function FilesTab({ cwd, status }: { cwd: string; status: GitStatus | nul
         <span className="chev" aria-hidden />
         <File aria-hidden />
         <span className="ellipsis grow">{e.name}</span>
-        {st && <span className="gs" data-s={st}>{st}</span>}
+        {st && <span className="gs" data-s={st}>{gsLetter(st)}</span>}
       </button>
     )
   }

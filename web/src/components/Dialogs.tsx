@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api, errorText, qs, tryApi } from '../api'
-import { closeDialog, setState, toast, useStore, type DialogRequest } from '../store'
+import { closeDialog, openWorktree, setState, toast, useStore, type DialogRequest } from '../store'
 import { adoptSession } from '../lib/actions'
 import { loadWorktrees } from '../ws'
 import { basename, isAbsolutePath } from '../lib/format'
@@ -51,7 +51,8 @@ function WorkspaceDialog() {
       onSubmit={() => run(async () => {
         const ws = await tryApi<Workspace>('POST', '/workspaces', { path: path.trim(), name: name.trim() || undefined })
         if (!ws) return
-        setState((s) => ({ workspaces: s.workspaces.some((w) => w.id === ws.id) ? s.workspaces : [...s.workspaces, ws], cwd: ws.path }))
+        setState((s) => ({ workspaces: s.workspaces.some((w) => w.id === ws.id) ? s.workspaces : [...s.workspaces, ws] }))
+        openWorktree(ws.path)
         toast(`Проект «${ws.name}» добавлен`, 'ok')
         closeDialog()
       })}
@@ -258,7 +259,7 @@ function WorktreeDialog({ workspaceId }: { workspaceId?: string }) {
         const wt = await tryApi<Worktree>('POST', `/workspaces/${encodeURIComponent(repo)}/worktrees`, { name: name.trim(), base: base.trim() || undefined })
         if (!wt) return
         await loadWorktrees(repo)
-        setState({ cwd: wt.path })
+        openWorktree(wt.path)
         toast(`Рабочее дерево ${wt.branch ?? name} создано`, 'ok')
         closeDialog()
       })}
