@@ -33,6 +33,7 @@ export type DialogRequest =
   | { kind: 'wt-cleanup'; workspaceId: string }
   | { kind: 'folder-chat' }
   | { kind: 'recovery' }
+  | { kind: 'session-delete'; id: string }
 
 export interface Toast { id: number; text: string; tone: 'info' | 'ok' | 'error'; href?: string; leaving?: boolean }
 

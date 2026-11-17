@@ -801,6 +801,13 @@ function GeneralSection({ form, update }: Omit<SectionProps, 'fieldError'>) {
             <ProjectsFolder value={form.workspaces?.root ?? null} onChange={(root) => update({ ...form, workspaces: { ...form.workspaces, root } })} />
           </Row>
         )}
+        {form.sessions !== undefined && (
+          <Row label="Автоархив неактивных чатов через" hint="Чаты без активности дольше этого уходят в архив (история сохраняется, вернуть — на экране «Агенты»).">
+            <Select label="Автоархив неактивных чатов" value={form.sessions.autoArchiveDays == null ? 'off' : String(form.sessions.autoArchiveDays)}
+              onChange={(v) => update({ ...form, sessions: { ...form.sessions, autoArchiveDays: v === 'off' ? null : Number(v) } })}
+              options={[{ value: 'off', label: 'выкл' }, { value: '1', label: '1 день' }, { value: '3', label: '3 дня' }, { value: '7', label: '7 дней' }, { value: '30', label: '30 дней' }]} />
+          </Row>
+        )}
         {form.recovery !== undefined && (
           <>
             <Row label="Продолжать прерванные сессии автоматически" hint="После перезапуска harness или ПК прерванные ходы продолжаются сами (координаторы — после своих исполнителей). Иначе — окно «Восстановление сессий».">

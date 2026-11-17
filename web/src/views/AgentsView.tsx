@@ -1,13 +1,14 @@
 import { useMemo, useState } from 'react'
-import { Bot, Ellipsis, ListPlus, MessageSquarePlus, Send, Square, Trash2 } from 'lucide-react'
+import { ArchiveRestore, Bot, Ellipsis, ListPlus, MessageSquarePlus, Send } from 'lucide-react'
 import { tryApi } from '../api'
-import { openDialog, openSession, openTask, setState, useStore, without } from '../store'
+import { openDialog, openSession, openTask, useStore } from '../store'
 import { relTime, ROLE, tokens } from '../lib/format'
 import { useNow } from '../lib/useNow'
 import type { Session } from '../types'
 import { Branch, StateLegend, StatusIcon, statusText } from '../components/bits'
 import { useStateLine } from '../lib/live'
 import { sessionVisualState, type VisualState } from '../lib/sessionState'
+import { archiveSession, renameSession, sessionMenu } from '../lib/sessionActions'
 import { MenuButton, Select } from '../components/ui'
 
 /** Lanes by visual state; «Ждут вас» shows only when someone does. */
@@ -33,7 +34,9 @@ function ordered(list: Session[]) {
 
 export function AgentsView() {
   const sessions = useStore((s) => s.sessions)
-  const chats = useMemo(() => sessions.filter((s) => s.kind === 'chat' && !s.virtual && !s.archived).sort((a, b) => b.lastActivityAt - a.lastActivityAt), [sessions])
+  const [archive, setArchive] = useState(false)
+  const chats = useMemo(() => sessions.filter((s) => s.kind === 'chat' && !s.virtual && !!s.archived === archive).sort((a, b) => b.lastActivityAt - a.lastActivityAt), [sessions, archive])
+  const archivedCount = useMemo(() => sessions.filter((s) => s.kind === 'chat' && !s.virtual && s.archived).length, [sessions])
   const byId = useMemo(() => new Map(sessions.map((s) => [s.id, s])), [sessions])
 
   return (
@@ -41,7 +44,11 @@ export function AgentsView() {
       <header className="view-head">
         <h1>Агенты</h1>
         <span className="count">{chats.length}</span>
-        <StateLegend />
+        <span className="sb-scope" role="group" aria-label="Какие чаты показывать">
+          <button type="button" aria-pressed={!archive} onClick={() => setArchive(false)}>Активные</button>
+          <button type="button" aria-pressed={archive} onClick={() => setArchive(true)}>Архив{archivedCount > 0 && <span className="num"> {archivedCount}</span>}</button>
+        </span>
+        {!archive && <StateLegend />}
         <span className="grow" />
         <button type="button" className="btn" onClick={() => openDialog({ kind: 'chat' })}>
           <MessageSquarePlus />
@@ -87,7 +94,8 @@ function AgentCard({ s, nested, parent }: { s: Session; nested: boolean; parent?
   const tasks = useStore((st) => st.tasks)
   const now = useNow()
   const line = useStateLine(s)
-  const [mode, setMode] = useState<'message' | 'assign' | 'delete' | null>(null)
+  const [mode, setMode] = useState<'message' | 'assign' | null>(null)
+  const [editing, setEditing] = useState(false)
   const [text, setText] = useState('')
   const task = s.taskId ? tasks.find((t) => t.id === s.taskId) : undefined
   const free = tasks.filter((t) => t.status === 'todo' || t.status === 'backlog')
@@ -103,17 +111,16 @@ function AgentCard({ s, nested, parent }: { s: Session; nested: boolean; parent?
     const res = await tryApi<Session>('POST', `/tasks/${encodeURIComponent(taskId)}/assign`, { sessionId: s.id })
     if (res) setMode(null)
   }
-  const stop = () => void tryApi('POST', `/sessions/${s.id}/stop`)
-  const remove = async () => {
-    if ((await tryApi<unknown>('DELETE', `/sessions/${s.id}`)) === undefined) return
-    setState((st) => ({ sessions: without(st.sessions, s.id) }))
-  }
 
   return (
     <article className="agent-card" data-nested={nested} data-s={sessionVisualState(s)}>
       <div className="agent-top">
         <StatusIcon session={s} />
-        <button type="button" className="agent-title ellipsis" onClick={() => openSession(s.id)} data-tip={s.title || s.id} data-tip-trunc>{s.title || s.id}</button>
+        {editing
+          ? <input className="input agent-rename" autoFocus defaultValue={s.title} aria-label="Название чата"
+              onBlur={(e) => { setEditing(false); void renameSession(s, e.currentTarget.value) }}
+              onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') { e.currentTarget.value = s.title; setEditing(false) } }} />
+          : <button type="button" className="agent-title ellipsis" onClick={() => openSession(s.id)} data-tip={s.title || s.id} data-tip-trunc>{s.title || s.id}</button>}
         {s.role !== 'solo' && <span className="role" data-role={s.role}>{ROLE[s.role]}</span>}
       </div>
       <div className="agent-meta">
@@ -140,10 +147,10 @@ function AgentCard({ s, nested, parent }: { s: Session; nested: boolean; parent?
         <span className="muted num">{relTime(s.lastActivityAt, now)}</span>
         <span className="grow" />
         <button type="button" className="icon-btn icon-btn-sm" aria-label="Написать агенту" data-tip="Написать" aria-pressed={mode === 'message'} onClick={() => setMode(mode === 'message' ? null : 'message')}><Send /></button>
+        {s.archived && <button type="button" className="btn btn-sm" onClick={() => void archiveSession(s, false)}><ArchiveRestore />Вернуть</button>}
         <MenuButton label="Ещё действия" icon={<Ellipsis />} align="right" className="icon-btn-sm" items={[
-          { label: 'Дать задачу…', icon: <ListPlus />, onSelect: () => setMode('assign') },
-          ...(s.status === 'running' ? [{ label: 'Остановить', icon: <Square />, onSelect: stop }] : []),
-          { label: 'Удалить сессию', icon: <Trash2 />, danger: true, divider: true, onSelect: () => setMode('delete') },
+          ...(!s.archived ? [{ label: 'Дать задачу…', icon: <ListPlus />, onSelect: () => setMode('assign') }] : []),
+          ...sessionMenu(s, () => setEditing(true)),
         ]} />
       </div>
       {mode === 'message' && (
@@ -157,13 +164,6 @@ function AgentCard({ s, nested, parent }: { s: Session; nested: boolean; parent?
           <Select autoFocus label="Задача для агента" value="" onChange={(id) => void assign(id)} disabled={!free.length}
             placeholder={free.length ? 'Выберите задачу…' : 'Нет задач в «Бэклог» и «К работе»'}
             options={free.map((t) => ({ value: t.id, label: t.title, text: `${t.externalId ?? t.id} ${t.title}`, hint: t.externalId ?? t.id }))} />
-        </div>
-      )}
-      {mode === 'delete' && (
-        <div className="agent-inline">
-          <span className="grow">Остановить и удалить вместе с историей?</span>
-          <button type="button" className="btn btn-sm btn-danger" onClick={() => void remove()}>Удалить</button>
-          <button type="button" className="btn btn-sm" onClick={() => setMode(null)}>Отмена</button>
         </div>
       )}
     </article>

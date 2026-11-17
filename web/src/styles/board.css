@@ -316,3 +316,4 @@
 .import-form .input { flex: 1; min-width: 0; }
 .board-empty { display: grid; justify-items: center; gap: 10px; margin: 8px auto 0; max-width: 560px; padding: 20px 16px 4px; text-align: center; color: var(--ink-2); }
 .board-empty p { margin: 0; line-height: 1.5; }
+.agent-rename { flex: 1; min-width: 0; height: 24px; }

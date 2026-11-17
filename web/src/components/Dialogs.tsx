@@ -15,6 +15,7 @@ import { pendingDeps, taskKey } from '../lib/tasks'
 import { loadPr } from '../lib/pr'
 import { FolderPicker } from './FolderPicker'
 import { RecoveryDialog } from './RecoveryDialog'
+import { deleteSession } from '../lib/sessionActions'
 import { endJob, startJob, useJobStep } from '../lib/jobs'
 import { Markdown } from './Markdown'
 
@@ -36,6 +37,7 @@ function DialogSwitch({ d }: { d: DialogRequest }) {
     case 'wt-info': return <WorktreeInfoDialog workspaceId={d.workspaceId} path={d.path} />
     case 'wt-cleanup': return <CleanupDialog workspaceId={d.workspaceId} />
     case 'recovery': return <RecoveryDialog />
+    case 'session-delete': return <SessionDeleteDialog id={d.id} />
     case 'folder-chat': return <FolderPicker title="Новый чат в папке" submitLabel="Начать чат здесь" onClose={closeDialog} onPick={(p) => { closeDialog(); void newChatInFolder(p) }} />
   }
 }
@@ -545,6 +547,20 @@ function PrDialog({ cwd, base: initBase }: { cwd: string; base?: string }) {
           <SuggestInput mono label="Целевая ветка PR" value={base} onChange={(v) => edit({ base: v })} suggestions={[...new Set([suggest?.pr.base, ...targets].filter((t): t is string => !!t))]} />
         </label>
       </Disclosure>
+    </Modal>
+  )
+}
+
+/** «Удалить «…»?» — the chat's history goes with it; a running agent is stopped first. */
+function SessionDeleteDialog({ id }: { id: string }) {
+  const s = useStore((st) => st.sessions.find((x) => x.id === id))
+  const [busy, run, step] = useBusy()
+  if (!s) return null
+  const running = s.status === 'running'
+  return (
+    <Modal title={`Удалить «${s.title || s.id}»?`} submitLabel={running ? 'Остановить и удалить' : 'Удалить'} danger busy={busy} progress={step}
+      onClose={closeDialog} onSubmit={() => run(async () => { if (await deleteSession(s)) closeDialog() })}>
+      <p>История чата будет удалена. {running ? 'Агент сейчас работает — он будет остановлен.' : 'Если она ещё понадобится, лучше убрать чат в архив.'}</p>
     </Modal>
   )
 }

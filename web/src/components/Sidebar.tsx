@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties, type Keyboard
 import { ArrowUp, Bot, ChevronDown, Ellipsis, Folder, GitPullRequest, Pin, ChevronRight, FolderGit2, FolderPlus, GitBranch, GitBranchPlus, House, Inbox, MessageSquarePlus, Moon, Search, Settings, SquareKanban, SquareTerminal, Sun } from 'lucide-react'
 import { openDialog, openScreen, openSession, openWorktree, setState, showPanel, useActiveCwd, useStore, type Screen } from '../store'
 import { useHistory } from '../lib/history'
+import { archiveSession, renameSession, sessionMenu } from '../lib/sessionActions'
 import { loadWorktrees } from '../ws'
 import { useCurrentTool, useStateLine } from '../lib/live'
 import { sessionVisualState, stateSummary } from '../lib/sessionState'
@@ -344,14 +345,22 @@ function WorktreeNode({ ws, wt, sessions, kids, active }: { ws: Workspace; wt: W
 }
 
 /** A top-level session and, under it, its workers (harness chats) and the agent's own internal sub-agents. */
+/** A sub-agent (built-in, or a worker_run child) whose run is over: folded under its parent. */
+const isFinishedSub = (c: Session) => (c.virtual || c.role === 'subagent') && c.status !== 'running' && !c.waitingFor
+
 function SessionNode({ s, kids, level = 0, base = 2 }: { s: Session; kids: Map<string, Session[]>; level?: number; base?: number }) {
-  const children = kids.get(s.id) ?? []
+  const all = kids.get(s.id) ?? []
+  const finished = all.filter(isFinishedSub)
+  const [showFinished, setShowFinished] = useState(false)
+  const children = showFinished ? all : all.filter((c) => !isFinishedSub(c))
   const internal = useStore((st) => st.subagents[s.id])
   const [open, setOpen] = useState(true)
   const has = children.length > 0 || !!internal?.items.length
+  const ok = finished.filter((c) => c.status === 'done' || c.status === 'idle').length
+  const subs = finished.length ? { ok, bad: finished.length - ok, open: showFinished, toggle: () => setShowFinished(!showFinished) } : undefined
   return (
     <>
-      <SessionRow s={s} nested={level > 0} level={base + level} caret={has ? { open, toggle: () => setOpen(!open) } : undefined} />
+      <SessionRow s={s} nested={level > 0} level={base + level} caret={has ? { open, toggle: () => setOpen(!open) } : undefined} subs={subs} />
       {has && open && (
         <div className="tree-kids" role="group" aria-label={`Агенты сессии ${s.title}`}>
           {children.map((c) => <SessionNode key={c.id} s={c} kids={kids} level={level + 1} base={base} />)}
@@ -377,7 +386,17 @@ function SessionNode({ s, kids, level = 0, base = 2 }: { s: Session; kids: Map<s
   )
 }
 
-function SessionRow({ s, nested, level = 0, caret }: { s: Session; nested: boolean; level?: number; caret?: { open: boolean; toggle: () => void } }) {
+function SessionRow({ s, nested, level = 0, caret, subs }: {
+  s: Session; nested: boolean; level?: number; caret?: { open: boolean; toggle: () => void }
+  subs?: { ok: number; bad: number; open: boolean; toggle: () => void }
+}) {
+  const [menu, setMenu] = useState(false)
+  const [editing, setEditing] = useState(false)
+  const [leaving, setLeaving] = useState(false)
+  const row = useRef<HTMLDivElement>(null)
+  const items = sessionMenu(s, () => setEditing(true)).map((it) =>
+    // «В архив» from the sidebar: the row slides out first, then goes.
+    it.label === 'В архив' ? { ...it, onSelect: () => { setLeaving(true); window.setTimeout(() => void archiveSession(s).then((ok) => { if (!ok) setLeaving(false) }), 160) } } : it)
   const current = useStore((st) => st.view.kind === 'wt' && st.wt[normPath(st.view.cwd)]?.active === `s:${s.id}`)
   const now = useNow()
   const tool = useCurrentTool(s)
@@ -388,25 +407,42 @@ function SessionRow({ s, nested, level = 0, caret }: { s: Session; nested: boole
   // Running: the tool in use; calm top-level rows: the last line of the answer.
   const doing = v === 'running' ? tool : !nested && (v === 'idle' || v === 'done') ? preview : ''
   return (
+    <>
     <div
+      ref={row}
       className="tree-row tree-sess"
       role="button"
       data-s={v}
       data-nested={nested || undefined}
       data-enter={s.createdAt > APP_START || undefined}
+      data-leaving={leaving || undefined}
       tabIndex={0}
       aria-current={current ? 'true' : undefined}
-      data-tip={s.title || s.id} data-tip-trunc
-      onClick={open}
-      onKeyDown={activate(open)}
+      data-tip={editing ? undefined : s.title || s.id} data-tip-trunc
+      onClick={editing ? undefined : open}
+      onKeyDown={editing ? undefined : activate(open)}
+      onContextMenu={(e) => { e.preventDefault(); setMenu(true) }}
       style={depth(level)}
     >
       <StatusIcon session={s} />
-      <span className="label">
-        {(s.role === 'reviewer' || s.role === 'subagent') && <span className="role-tag">{s.role === 'reviewer' ? 'ревью' : 'субагент'}</span>}
-        {s.title || s.id}
-        {doing && <span className="sess-doing"> · {doing}</span>}
-      </span>
+      {editing ? (
+        <input className="input tree-rename" autoFocus defaultValue={s.title} aria-label="Название чата"
+          onClick={(e) => e.stopPropagation()}
+          onBlur={(e) => { setEditing(false); void renameSession(s, e.currentTarget.value) }}
+          onKeyDown={(e) => { e.stopPropagation(); if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') { e.currentTarget.value = s.title; setEditing(false) } }} />
+      ) : (
+        <span className="label">
+          {(s.role === 'reviewer' || s.role === 'subagent') && <span className="role-tag">{s.role === 'reviewer' ? 'ревью' : 'субагент'}</span>}
+          {s.title || s.id}
+          {doing && <span className="sess-doing"> · {doing}</span>}
+        </span>
+      )}
+      {subs && (
+        <button type="button" className="sess-subs" aria-expanded={subs.open} data-tip={subs.open ? 'Свернуть завершённых субагентов' : 'Показать завершённых субагентов'}
+          onClick={(e) => { e.stopPropagation(); subs.toggle() }} onKeyDown={(e) => e.stopPropagation()}>
+          субагенты: {subs.ok > 0 && <>{subs.ok} ✓</>}{subs.bad > 0 && <> {subs.bad} ✗</>}
+        </button>
+      )}
       {s.interrupted && <span className="badge-interrupted" data-tip={s.interrupted.lastActivity ? `Прервана на: ${s.interrupted.lastActivity}` : 'Перезапуск прервал ход'}>прервана</span>}
       {s.warm !== undefined && <span className="sess-warm" data-warm={s.warm || undefined} aria-label={s.warm ? 'процесс запущен' : 'процесс выгружен'}>{s.warm ? '●' : '○'}</span>}
       <span className="sess-state" data-s={v}>
@@ -424,7 +460,12 @@ function SessionRow({ s, nested, level = 0, caret }: { s: Session; nested: boole
           <ChevronDown />
         </button>
       )}
+      <span className="actions">
+        <RowAction label="Действия с чатом" icon={<Ellipsis />} onClick={() => setMenu(true)} />
+      </span>
     </div>
+    <Menu anchor={row} open={menu} onClose={() => setMenu(false)} items={items} label={`Чат ${s.title}`} placement="bottom-end" />
+    </>
   )
 }
 

@@ -279,6 +279,7 @@ export interface Settings {
   workspaces?: { root?: string | null } // projects folder; null = auto (deepest common parent)
   session?: { stallSec?: number } // «нет вывода» after this many seconds of silence (≥ 30)
   recovery?: { autoResume?: boolean; message?: string } // interrupted sessions after a restart
+  sessions?: { autoArchiveDays?: number | null } // archive chats idle longer than this (null = never)
   agents: Record<string, AgentSettings>
   defaultAgent: string
   git: {

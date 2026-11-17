@@ -1,7 +1,8 @@
 import { useLayoutEffect, useRef, useState } from 'react'
-import { ArrowLeft, ArrowRight, ClipboardCopy, Command, FileText, FolderOpen, History, GitCompare, MessageSquare, MessageSquarePlus, PanelLeft, PanelRight, Plus, SquareTerminal, X } from 'lucide-react'
+import { Archive, ArrowLeft, ArrowRight, ClipboardCopy, Command, FileText, FolderOpen, History, GitCompare, MessageSquare, MessageSquarePlus, PanelLeft, PanelRight, Plus, SquareTerminal, X } from 'lucide-react'
 import { activateTab, closeTab, dirtyKey, hasFeature, navigate, openDialog, setState, tabKey, toast, useStore, wtKey, type Tab } from '../store'
 import { loadDraft, saveDraft } from '../lib/draft'
+import { archiveSession } from '../lib/sessionActions'
 import { basename } from '../lib/format'
 import { useGit } from '../lib/git'
 import type { GitStatus, Session } from '../types'
@@ -102,6 +103,9 @@ function TabBar({ cwd }: { cwd: string }) {
       { label: 'Закрыть другие', disabled: keys.length < 2, onSelect: () => closeMany(keys.filter((x) => x !== key)) },
       { label: 'Закрыть справа', disabled: i === keys.length - 1, onSelect: () => closeMany(keys.slice(i + 1)) },
       { label: 'Закрыть все', onSelect: () => closeMany(keys) },
+      ...(t?.kind === 'session' && sessions.find((x) => x.id === t.id)?.kind === 'chat' ? [{
+        label: 'Закрыть и в архив', icon: <Archive />, onSelect: () => { const ss = sessions.find((x) => x.id === t.id); if (ss) void archiveSession(ss) },
+      }] : []),
       ...(path ? [{ label: 'Копировать путь', icon: <ClipboardCopy />, divider: true, onSelect: () => void navigator.clipboard.writeText(path).then(() => toast(`Скопировано: ${path}`, 'ok'), () => toast('Буфер обмена недоступен', 'error')) }] : []),
     ]
   }
