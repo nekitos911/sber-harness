@@ -350,7 +350,7 @@ test('settings: model catalogue objects, labels, presets, timeouts, flags and tr
   assert.equal(typeof giga.approvalModeLabels.auto, 'string');
   assert.ok(giga.taskPromptPresets.length > 0);
   assert.deepEqual([giga.firstEventTimeoutMs, giga.inheritUserMcp, giga.enabled], [120000, false, true]);
-  assert.deepEqual(Object.keys(s.integrations.tasks).sort(), ['closedStatuses', 'enabled', 'space', 'statusMap', 'urlTemplate']);
+  assert.deepEqual(Object.keys(s.integrations.tasks).sort(), ['closedStatuses', 'enabled', 'onStartTransition', 'space', 'statusMap', 'urlTemplate']);
   assert.deepEqual(s.integrations.pr, { enabled: false, limits: { titleBytes: 100, bodyBytes: 512 } });
   assert.ok(!JSON.stringify(s).match(/secret|token/i));
 

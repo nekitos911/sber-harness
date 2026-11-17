@@ -235,3 +235,37 @@ test('port to release/x.y.z: rel slug branch, only the commits the target lacks;
   assert.ok(Buffer.byteLength(sg.pr.body) <= 512);
   assert.ok(!sg.pr.title.includes('�'));
 });
+
+test('take into work on a parent task starts a coordinator with the plan of its subtasks', async () => {
+  const parent = (await h.api('POST', '/api/tasks', { title: 'Multi-repo feature', targets: ['develop'] })).body;
+  const subA = (await h.api('POST', '/api/agent/task_create', { title: 'A side', parent_id: parent.id, workspace: 'svc-a' })).body;
+  const subB = (await h.api('POST', '/api/agent/task_create', { title: 'B side', parent_id: parent.id, workspace: wsB.id, deps: [subA.id] })).body;
+  const s = (await h.api('POST', `/api/tasks/${parent.id}/start`, { agent: 'mock' })).body;
+  assert.equal(s.role, 'coordinator');
+  assert.equal(s.taskId, parent.id);
+  assert.equal(path.resolve(s.cwd), path.resolve(root), 'common parent folder of the subtask repositories');
+  assert.equal(s.title, `${parent.id}: Multi-repo feature`);
+  const t = await task(parent.id);
+  assert.deepEqual([t.status, t.assigneeSessionId, !!t.takenAt], ['in_progress', s.id, true]);
+  assert.deepEqual([(await h.api('POST', `/api/tasks/${parent.id}/start`, {})).body.id, (await h.api('POST', `/api/tasks/${parent.id}/start`, {})).body.jumped], [s.id, true]);
+
+  const run = await waitFor(() => {
+    try {
+      return fs.readFileSync(argvFile, 'utf8').trim().split('\n').map((l) => JSON.parse(l)).find((x) => x.env.HARNESS_SESSION_ID === s.id);
+    } catch {
+      return null;
+    }
+  }, { what: 'coordinator argv' });
+  const prompt = run.argv[run.argv.indexOf('-p') + 1];
+  assert.ok(prompt.startsWith(`/full-task ${parent.id} on  -> develop`), prompt.slice(0, 80));
+  assert.match(prompt, /You are the COORDINATOR/);
+  assert.match(prompt, new RegExp(`- ${subA.id} "A side" - workspace: svc-a - deps: none`));
+  assert.match(prompt, new RegExp(`- ${subB.id} "B side" - workspace: svc-b - deps: ${subA.id}`));
+  assert.match(prompt, new RegExp(`worker_start\\(\\{ task_id, worktree: "new" \\}\\).*feature/${parent.id}`));
+  await h.api('POST', `/api/sessions/${s.id}/stop`);
+
+  const loose = (await h.api('POST', '/api/tasks', { title: 'No repo yet' })).body;
+  const c2 = (await h.api('POST', `/api/tasks/${loose.id}/start`, { agent: 'mock' })).body;
+  assert.equal(c2.role, 'coordinator', 'no workspace while several exist -> coordinate');
+  await h.api('POST', `/api/sessions/${c2.id}/stop`);
+});

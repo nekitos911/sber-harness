@@ -1,5 +1,6 @@
 // Agent-facing orchestration API (tools for coordinator/worker agents), worker start (shared with the UI's
 // assign/start), ports into extra target branches, preambles, escalation, notifications, commit/PR prefill.
+import fs from 'node:fs';
 import path from 'node:path';
 import { CODE_ROOT } from './config.js';
 import * as git from './git.js';
@@ -229,6 +230,65 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
     return rec;
   }
 
+  /** Plan of a parent task for its coordinator: the subtasks (one per repository) and how to run them. */
+  function planSection(task) {
+    const key = tasks.key(task);
+    const branch = git.sanitizeBranch(render(gitCfg().branchTemplate, { key, id: task.id }));
+    const subs = db.tasks.filter((t) => t.parentId === task.id && !t.hidden);
+    const line = (t) => `- ${t.id}${t.externalId ? ` (${t.externalId})` : ''} "${t.title}" - workspace: ${findWs(t.workspaceId)?.name ?? 'none'} - deps: ${t.deps.length ? t.deps.join(', ') : 'none'} - status: ${t.status}${tasks.isReady(t) ? ' (ready)' : ''}`;
+    return [
+      '',
+      `Plan for ${key} "${task.title}" (task id ${task.id}). Subtasks:`,
+      ...(subs.length ? subs.map(line) : ['- (none yet)']),
+      `Start a worker for every READY subtask with worker_start({ task_id, worktree: "new" }): each subtask runs in its own repository on the same branch name ${branch}.`,
+      `If the spec needs more repositories, call workspace_list and create the missing subtasks with task_create({ parent_id: "${task.id}", workspace, title, description }), then start them. End your turn after starting workers.`,
+    ].join('\n');
+  }
+
+  /** Common parent folder of the given absolute paths (null when there is none, e.g. different drives). */
+  function commonDir(paths) {
+    if (!paths.length) return null;
+    const split = (p) => path.resolve(p).split(path.sep);
+    let common = split(paths[0]);
+    for (const p of paths.slice(1)) {
+      const parts = split(p);
+      let i = 0;
+      while (i < common.length && i < parts.length && (process.platform === 'win32' ? common[i].toLowerCase() === parts[i].toLowerCase() : common[i] === parts[i])) i++;
+      common = common.slice(0, i);
+    }
+    return common.length > 1 && common.join('') ? common.join(path.sep) : null; // never a drive/filesystem root
+  }
+
+  /** "Take into work" for a parent task: a coordinator that starts one worker per subtask/repository. */
+  async function startCoordinator(task, { agent, notes }) {
+    agent = agent || config.defaultAgent;
+    sessions.resolveAgent(agent);
+    promptTemplate(agent);
+    const subs = db.tasks.filter((t) => t.parentId === task.id);
+    const wsPaths = [...new Set(subs.map((t) => findWs(t.workspaceId)?.path).filter(Boolean))];
+    const root = config.workspaces?.root;
+    let cwd = root && fs.existsSync(root) ? root : commonDir(wsPaths.length > 1 ? wsPaths : wsPaths.map((p) => path.dirname(p)));
+    if (cwd && !fs.existsSync(cwd)) cwd = null;
+    const run = (async () => {
+      const s = await sessions.create({ kind: 'chat', agent, cwd: cwd ?? undefined, title: `${tasks.key(task)}: ${task.title}`, role: 'coordinator', taskId: task.id });
+      const patch = { status: 'in_progress', assigneeSessionId: s.id };
+      if (!task.takenAt) {
+        patch.takenAt = Date.now();
+        patch.snapshot = { title: task.title, description: task.description, externalStatus: task.externalStatus ?? null, at: patch.takenAt };
+      }
+      tasks.update(task.id, patch, 'user');
+      tasks.addLog(task.id, 'user', `coordinator ${s.id} started (${agent}) for ${subs.length} subtask(s)`);
+      sessions.deliver(s.id, { from: 'user', text: taskPrompt(task, s, { notes }) });
+      return s;
+    })();
+    starting.set(task.id, run);
+    try {
+      return await run;
+    } finally {
+      starting.delete(task.id);
+    }
+  }
+
   // ---- preambles ----
 
   function preamble(s) {
@@ -236,6 +296,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
     const registry = `Registry dir: ${sessions.registryDir(s.id)} - if you start built-in helper sub-agents (agent tool), record them there per your orchestration skill (<id>/agent.json + log.jsonl).`;
     const helpers = '- The built-in agent tool is fine for internal helpers (review, exploration); parallel task work the user should see goes through worker_start (each worker gets its own chat).';
     if (s.role === 'coordinator') {
+      const parentTask = s.taskId && tasks.find(s.taskId);
       return [
         `[harness] You are the COORDINATOR session ${s.id} ("${s.title}") in a local multi-agent harness. Working directory: ${s.cwd}.`,
         tools,
@@ -248,6 +309,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
         '- Answer worker questions with send_message(to: <worker session id>, body); ask the user with send_message(to: "user") when needed.',
         '- Several repositories: one task per repository. Call workspace_list, then create one subtask per repo with task_create({ parent_id, workspace, ... }). Subtasks share the parent key, so every repo gets the same branch.',
         '- Several target branches (task.targets): the work happens on targets[0]; once its commits exist call task_port({ task_id, target }) for every other target. One PR per repo per target.',
+        ...(parentTask ? [planSection(parentTask)] : []),
       ].join('\n');
     }
     if (s.role !== 'worker') return '';
@@ -570,6 +632,9 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
       const live = activeWorker(task);
       if (live) return { ...live, jumped: true };
       if (starting.has(task.id)) return { ...(await starting.get(task.id)), jumped: true };
+      // a parent of subtasks (or a task without a repo while there are several) is coordinated, not worked on
+      const hasChildren = db.tasks.some((t) => t.parentId === task.id && !t.hidden);
+      if (hasChildren || (!task.workspaceId && db.workspaces.length >= 2)) return startCoordinator(task, { agent, notes });
       const ws = findWs(task.workspaceId) || (db.workspaces.length === 1 ? db.workspaces[0] : null);
       if (!ws) fail(400, `task ${task.id} has no workspace; set its workspace first`);
       return startWorker(task, { agent: agent || config.defaultAgent, workspaceId: ws.id, worktree: ws.isGit ? 'new' : 'current', notes }, null);

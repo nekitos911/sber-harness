@@ -345,6 +345,16 @@ POST   /api/tasks/:id/assign    {agent?, workspaceId?, cwd?, worktree?: 'current
                                  (sessionId given => deliver the task to that existing session instead of creating one)
 POST   /api/tasks/:id/start     {agent?, notes?} -> Session (+ jumped: true when the task already had a live worker)
                                  ("Взять в работу": default agent, worktree 'new' in task's workspace, task prompt template)
+                                 A parent task (has subtasks), or a task without a workspace while ≥ 2 workspaces exist,
+                                 starts a COORDINATOR instead (role 'coordinator', taskId = the task, cwd =
+                                 workspaces.root, else the common parent folder of the subtasks' repos, else
+                                 <dataDir>/chats/<sid>); its preamble carries a plan: the subtasks (id, key, title,
+                                 workspace, deps, ready) and "worker_start({task_id, worktree: 'new'}) per ready subtask,
+                                 same branch feature/<KEY> in every repo; create missing ones via workspace_list +
+                                 task_create({parent_id, workspace})". The task gets in_progress/assignee/takenAt as usual.
+                                 integrations.tasks.onStartTransition (transition id, default null): after a new session
+                                 for an imported task, transitionTask(…, comment "Взято в работу через harness") — best
+                                 effort: a failure adds a ⚠ line to the task log + an error notification, never fails.
 POST   /api/tasks/:id/port      {target, agent?} -> { target, branch, cwd, status, sessionId }
 POST   /api/tasks/sync                                   -> { imported, updated }   (integrations.tasks)
 GET    /api/tasks/:id/external                           -> { key, title, fields: {Status, Priority, …}, description, attributes }

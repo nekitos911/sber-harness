@@ -270,3 +270,36 @@ test('routes: /api/git/pr-status for the current branch (501 when disabled), /ap
     await off.close();
   }
 });
+
+test('onStartTransition: tracker transition after take-into-work, best effort', async () => {
+  fs.copyFileSync(path.join(FIX, 'onework.tool-error.json'), path.join(fixtures, 'onework.sbertrack_updateIssueStatus.PROJ-99001.json'));
+  const repo = makeRepo(path.join(dir, 'start repo'));
+  const h = await startTestServer({
+    mcpServers: { onework: stub('onework') },
+    integrations: { tasks: { ...committed.integrations.tasks, enabled: true, onStartTransition: 'development' } },
+  });
+  try {
+    const ws = (await h.api('POST', '/api/workspaces', { path: repo })).body;
+    const mk = async (key) => {
+      const t = (await h.api('POST', '/api/tasks', { title: key, workspaceId: ws.id })).body;
+      await h.api('PATCH', `/api/tasks/${t.id}`, { externalId: key, source: 'onework' });
+      return t;
+    };
+    const ok = await mk('PROJ-14904');
+    fs.rmSync(log, { force: true });
+    const s = (await h.api('POST', `/api/tasks/${ok.id}/start`, { agent: 'mock' })).body;
+    assert.ok(s.id);
+    assert.deepEqual(calls().find((c) => c.tool === 'sbertrack_updateIssueStatus').args, { key: 'PROJ-14904', transition: 'development', comment: 'Взято в работу через harness' });
+    await h.api('POST', `/api/sessions/${s.id}/stop`);
+
+    const bad = await mk('PROJ-99001');
+    const r = await h.api('POST', `/api/tasks/${bad.id}/start`, { agent: 'mock' });
+    assert.equal(r.status, 200, 'a tracker failure never fails the start');
+    const st = (await h.api('GET', '/api/state')).body;
+    assert.ok(st.tasks.find((t) => t.id === bad.id).log.some((l) => /^⚠ tracker transition "development" failed: .*not found \(404\)/.test(l.text)));
+    assert.ok(st.notifications.some((n) => n.taskId === bad.id && n.kind === 'error'));
+    await h.api('POST', `/api/sessions/${r.body.id}/stop`);
+  } finally {
+    await h.close();
+  }
+});

@@ -135,6 +135,19 @@ export async function startServer(opts = {}) {
     syncTimer.unref?.();
   }
 
+  /** integrations.tasks.onStartTransition: best effort, a failure is logged on the task and notified, never fatal. */
+  async function trackerOnStart(task) {
+    const cfg = config.integrations.tasks;
+    const transition = cfg?.onStartTransition;
+    if (!transition || !cfg.enabled || !task.externalId) return;
+    try {
+      await transitionTask({ config, mcp, tasks, task, transition, status: transition, comment: 'Взято в работу через harness' });
+    } catch (e) {
+      tasks.addLog(task.id, 'harness', `⚠ tracker transition "${transition}" failed: ${e.message}`);
+      orch.notify({ kind: 'error', taskId: task.id, text: `${tasks.key(task)}: tracker transition "${transition}" failed: ${e.message}` });
+    }
+  }
+
   // ---- PR status of tasks (observe-only) ----
   let prTimer = null;
   let prRefreshing = false;
@@ -183,7 +196,7 @@ export async function startServer(opts = {}) {
       git: pick(config.git, GIT_KEYS),
       tasks: { refreshSec: t.refreshSec ?? 0 },
       integrations: {
-        tasks: { enabled: !!t.enabled, space: t.space ?? null, urlTemplate: t.urlTemplate ?? '', statusMap: t.statusMap || {}, closedStatuses: t.closedStatuses || [] },
+        tasks: { enabled: !!t.enabled, space: t.space ?? null, urlTemplate: t.urlTemplate ?? '', statusMap: t.statusMap || {}, closedStatuses: t.closedStatuses || [], onStartTransition: t.onStartTransition ?? null },
         pr: { enabled: !!pr.enabled, limits: pr.limits || null },
       },
     };
@@ -274,6 +287,10 @@ export async function startServer(opts = {}) {
       if ('statusMap' in t) {
         if (!isObj(t.statusMap) || Object.values(t.statusMap).some((v) => !STATUSES.includes(v))) fail(400, `integrations.tasks.statusMap values must be one of ${STATUSES.join(', ')}`);
         p.statusMap = t.statusMap;
+      }
+      if ('onStartTransition' in t) {
+        if (t.onStartTransition !== null && typeof t.onStartTransition !== 'string') fail(400, 'integrations.tasks.onStartTransition must be a transition id or null');
+        p.onStartTransition = t.onStartTransition?.trim() || null;
       }
       if ('closedStatuses' in t) {
         if (!isStrList(t.closedStatuses)) fail(400, 'integrations.tasks.closedStatuses must be an array of strings');
@@ -410,7 +427,11 @@ export async function startServer(opts = {}) {
     check(body, { agent: 'string?', workspaceId: 'string?', cwd: 'string?', worktree: 'string?', sessionId: 'string?' });
     return orch.assign(params.id, body);
   });
-  route('POST', '/api/tasks/:id/start', ({ params, body }) => orch.start(params.id, check(body, { agent: 'string?', notes: 'string?' })));
+  route('POST', '/api/tasks/:id/start', async ({ params, body }) => {
+    const s = await orch.start(params.id, check(body, { agent: 'string?', notes: 'string?' }));
+    if (!s.jumped) await trackerOnStart(tasks.get(params.id));
+    return s;
+  });
   route('POST', '/api/tasks/:id/port', ({ params, body }) => {
     check(body, { target: 'string', agent: 'string?' });
     return orch.port(params.id, body.target, { agent: body.agent });

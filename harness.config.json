@@ -122,7 +122,8 @@
         "done": "done"
       },
       "priorityMap": { "low": "low", "mid": "medium", "medium": "medium", "high": "high" },
-      "closedStatuses": ["done", "cancelled", "declined"]
+      "closedStatuses": ["done", "cancelled", "declined"],
+      "onStartTransition": null
     },
     "pr": {
       "enabled": false,
