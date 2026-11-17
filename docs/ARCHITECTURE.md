@@ -586,10 +586,31 @@ first `user` message and the tool_result as the final assistant message; `GET /a
 WS `msg` events are emitted for it. `POST …/messages` to a virtual session → 409 «внутренний субагент — писать можно
 только в родительский чат». The parent's tool card keeps a link to it (`tool.subSessionId`).
 
-### Level 2 — real sub-agent sessions via `worker_run` ("Orca mode")
+### Automatic: the orchestrator uses harness sub-agents by itself (no manual command)
+`orchestration.subagents: "harness" | "builtin"` (default `"harness"`, exposed in /api/settings). In `"harness"` mode:
+- The harness MCP server exposes a tool named **`agent`** with the SAME input schema as GigaCode's built-in `agent`
+  (`subagent_type`, `prompt`, `model?`, `description?`, plus optional `approvalMode`, `worktree`, `timeoutMin`), so the
+  model calls `mcp__harness__agent` exactly like the built-in one. It is `worker_run` with
+  `profile = subagent_type`, `spec = prompt` (both names stay as aliases).
+- EVERY gigacode/qwen/gemini session in the harness (solo, coordinator, worker, reviewer) gets a short context block in its
+  first prompt (after a leading slash command, before otherwise): «Ты работаешь внутри harness. Субагентов запускай
+  инструментом mcp__harness__agent с теми же аргументами, что у встроенного agent (subagent_type, prompt, model) —
+  встроенный agent не используй: harness откроет каждого субагента отдельным чатом и вернёт тебе его результат так же.»
+- The skill `skills/harness-orchestration/SKILL.md` is written so it also works as a GigaCode skill (frontmatter
+  `name`/`description` with the trigger "starting a sub-agent inside the harness"); `POST /api/agents/:id/skills/install`
+  copies it to `~/.gigacode/skills/harness-orchestration/SKILL.md` only on explicit request; `/api/agents/:id/info` reports
+  `skills: { 'harness-orchestration': 'installed' | 'missing' | 'different' }`. The setup prompt asks the target-machine
+  agent to install it (with the user's consent).
+- If the model still calls the built-in `agent`, Level 1 shows it as a read-only chat — nothing is lost.
+- VERIFY on the target: if GigaCode supports PreToolUse-style hooks in settings, `agents.gigacode.agentToolHook` (null by
+  default) holds the hook config the harness writes into the run settings.json to deny the built-in `agent` with the hint
+  «use mcp__harness__agent» (hard enforcement). Format unknown → not implemented until verified.
+`"builtin"` mode: no context block, no harness `agent` tool advertised (worker_run still available).
+
+### Level 2 — real sub-agent sessions via `worker_run` / harness `agent` ("Orca mode")
 Agent tool `worker_run { profile?: string, spec: string, model?: string, approvalMode?: string, title?: string,
-worktree?: 'current' (default) | 'new', timeoutMin?: number (default 60) }`: synchronous drop-in for GigaCode's `agent`
-tool. Creates an EPHEMERAL worker session (child of the caller, its own chat, no board task); when `profile` is set, reads
+worktree?: 'current' (default) | 'new', timeoutMin?: number (default 60) }` (and its built-in-compatible alias `agent`):
+synchronous drop-in for GigaCode's `agent` tool. Creates an EPHEMERAL worker session (child of the caller, its own chat, no board task); when `profile` is set, reads
 `~/.gigacode/agents/<profile>.md` (YAML frontmatter `model`, `approvalMode`, `tools`, `description`; body = role prompt):
 model/approvalMode default from the frontmatter (explicit args win), first prompt = role body + «\n\n## Задание\n» + spec +
 the short worker preamble (report with worker_done). Returns when the worker calls `worker_done`
