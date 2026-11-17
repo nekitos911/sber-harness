@@ -46,7 +46,7 @@ the parent's key, so every repo gets the same branch `feature/<KEY>`. Use `deps`
 must change first (for example API before its consumer).
 
 **Several target branches (hotfix into a release and develop).** `task.targets[0]` is where the work happens
-(for example `release-1.54.0`); the rest receive ports. After the worker's `worker_done`, call
+(usually `develop`); the rest (for example `release/1.54.0`) receive ports. After the worker's `worker_done`, call
 `task_port({ task_id, target })` for each other target. A clean cherry-pick needs nothing more; a conflict starts a
 worker that resolves it and reports like any other worker. One PR per repo per target.
 

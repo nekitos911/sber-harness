@@ -1,133 +1,99 @@
-# Integration: GigaCode CLI, task tracker, PR service
+# Integration on the target machine: GigaCode, onework, sourcecontrol
 
-This document is for the agent finishing integration on the target machine. Everything else (UI, orchestration,
-board, git, terminals) already works and is covered by tests on mocks. You need to connect three things, and each
-lives in its own seam:
+Everything else (UI, orchestration, board, git, terminals) already works and is covered by tests on mocks
+(`npm test`). The facts about GigaCode and the MCP servers have already been implemented from `docs/GIGACODE-FACTS.md`.
+What is left is to **verify them live** and fill in the local configuration. Each part has its own seam:
 
-| # | What | Code (the only place to edit) | Config (`harness.config.local.json`) | How to verify |
-|---|---|---|---|---|
-| 1 | GigaCode CLI as an agent | `server/launchers.js` (launcher `gigacode`) | `agents.gigacode.*` | `npm test` + a chat with GigaCode in the UI |
-| 2 | Importing tasks from the tracker (onework) | `server/integrations/tasks.js` | `mcpServers.<name>`, `integrations.tasks` | "Sync" button on the board |
-| 3 | Creating PRs (sourcecontrol) | `server/integrations/pr.js` | `mcpServers.<name>`, `integrations.pr` | "Create PR" button in the Changes panel |
+| What | Code (if anything needs fixing) | Config | How to verify |
+|---|---|---|---|
+| GigaCode CLI | `server/launchers.js` (launcher `gigacode`) | `agents.gigacode.*` | `--print-config`, a chat in the UI |
+| Tasks from onework | `server/integrations/tasks.js` (`format: "onework-markdown"`) | `integrations.tasks.*` | "Sync" on the board |
+| PRs to sourcecontrol | `server/integrations/pr.js` | `integrations.pr.*` | "Create PR" in the Changes panel |
 
-General rules: do not edit `harness.config.json` (those are the committed defaults); put everything
-machine-specific in `harness.config.local.json` (gitignored, deep-merged on top). Put secrets (tokens, passwords)
-only in the secrets file `data/mcp-secrets.json` or the file named by `HARNESS_MCP_SECRETS`, in the format
-`{ "<server>": { "env": {...}, "headers": {...} } }`. Never put them in the config or the repo.
+Rules: do not edit `harness.config.json`; put machine-specific settings in `harness.config.local.json` (gitignored)
+or edit them on the "Settings" screen. Secrets go only in the secrets file (`CONSOLE_MCP_SECRETS` / `HARNESS_MCP_SECRETS`;
+format: `server/Name=value` lines or one bare value = `onework/Authorization`). Internal hostnames and project codes
+go only in the local config, not in the repo.
 
-Wherever the existing console on this machine already solves a problem (how it launches GigaCode, which env var
-the settings path goes in, how it calls onework/sourcecontrol), **take the working solution from there** instead of guessing.
+## 0. Preparation
 
----
+```powershell
+node -v                      # >= 22
+npm install                  # through the internal npm mirror
+npm test; npm run build      # everything green
+node server/index.js --print-config
+```
+`--print-config` shows the resolved `node.exe` / `cli-entry.js` of GigaCode, the MCP servers (from `~/.gigacode/settings.json`)
+and which secrets exist (names only).
 
-## 1. GigaCode CLI
+## 1. Fixtures: replace the reconstructions with real samples
 
-Already implemented from the facts about the old console (`server/launchers.js`, its header comment holds the
-details): each chat turn is a separate process, without a shell:
-`<shimDir>/runtime/node/node.exe --max-old-space-size=6144 <shimDir>/lib/cli-entry.js [--resume <id>] -p <prompt> --approval-mode <mode> --output-format stream-json [--model <m>]`
-with env `GIGACODE_PACKAGE_IDENTITY` (read from the text of `gigacode.cmd`), `GIGACODE_PACKAGE_LAUNCHER` (path to
-the shim), `GIGACODE_SYSTEM_SETTINGS_PATH = data/runs/<sessionId>/settings.json`
-(`agents.modelGrades/allowedGrades` + `chatRecording: true` + `mcpServers.harness`, never `permissions`).
-The CLI session id is taken from the stream and stored in `session.externalSessionId`; the next turn goes out with `--resume`.
+`test/fixtures/gigacode.*`, `onework.*`, `sourcecontrol.*` are reconstructed from facts (see `test/fixtures/README.md`).
+If you have the folder with raw samples (`…\IdeaProjects\.gigacode-facts\`), copy the matching files into `test/fixtures/`
+(masking internal hosts, logins and project codes) and run `npm test`. If a test fails, the real format differs from the
+reconstruction: fix the normalizer in `server/launchers.js` (stream) or the parsers in `server/integrations/tasks.js`
+(markdown from onework) until green. Expected values in the tests may be updated only to match real data.
 
-Steps (verify, do not rewrite):
+## 2. GigaCode
 
-1. **Executable.** `agents.gigacode.command` defaults to `C:/Program Files/.gigacode/bin/gigacode.cmd`.
-   Check with `node server/index.js --print-config` (it shows the resolved node.exe/cli-entry.js and whether they
-   exist). If the layout of `bin\` is different, set the pair `agents.gigacode.node` + `agents.gigacode.cliEntry`.
-2. **Flags.** `gigacode --help`: compare with the argv above and with `approvalModes` (`plan|default|auto-edit|auto`).
-   Differences go only into `buildArgs` of the `gigacode` launcher.
-3. **Model grades.** Fill in `modelGrades`/`allowedGrades` on the Settings screen in the UI (or in
-   `agents.gigacode.settings.agents` in `harness.config.local.json`), the same values the old console uses.
-   Check: in a chat, ask the agent to list its MCP tools; the `harness` tools (`task_list`, `worker_start`, ...)
-   must be among them.
-4. **Stream format.** Capture real output, including a tool call:
-   ```powershell
-   & "C:\Program Files\.gigacode\bin\gigacode.cmd" -p "List the files in the current folder with a tool and answer OK" --approval-mode auto --output-format stream-json > test/fixtures/gigacode.stream.ndjson
-   ```
-   The fixture currently holds an **assumed** format. Replace it with the real one, update the expectations in the
-   normalizer test (`test/`, search for `gigacode.stream.ndjson`) and fix the `parse` of the launcher in
-   `server/launchers.js` until `npm test` is green. Events must normalize into
-   `session | text | thought | tool_call | tool_result | error | result` (see `docs/ARCHITECTURE.md`).
-5. **Continuation.** In a UI chat, send two messages. The second turn must continue the same CLI session (the agent
-   remembers the context). If not, check `chatRecording`, that the settings path is the same, and the session id
-   capture (`data/runs/<sessionId>/stderr.log`, `externalSessionId` field in `GET /api/state`).
-6. **Built-in sub-agents off.** Sub-agents are allowed only through `worker_start`. Find out the name of
-   GigaCode's built-in sub-agent tool and the settings key that disables tools (in Qwen Code/Gemini CLI forks it is
-   `tools.exclude` / `excludeTools`), and add it to `agents.gigacode.settings`.
-7. **First-event timeout.** If GigaCode starts slowly, raise `agents.gigacode.firstEventTimeoutMs`.
-8. **Orchestration check.** Create a chat with role "coordinator": "Create two tasks on the board and start a
-   worker for each one; the workers should create files a.txt and b.txt and report back." Expected: two worker
-   chats nested under the coordinator; after `worker_done` the tasks are in Review and the coordinator wakes with
-   the reports.
+1. `agents.gigacode.command` = `C:/Program Files/.gigacode/bin/gigacode.cmd` (the default). The harness reads `ROOT=%~dp0..`
+   and the identity from the shim and starts `ROOT\runtime\node\node.exe --max-old-space-size=6144 ROOT\lib\cli-entry.js …`
+   without a shell. If the layout is different, set the explicit pair `agents.gigacode.node` + `agents.gigacode.cliEntry`.
+2. Models: in Settings (or in `agents.gigacode` locally) fill in `models` (the catalog from `/models`) and the grades
+   `settings.agents.modelGrades` (`default/fast/review/explore`) + `allowedGrades`, the same values as in the old console.
+3. Check in the UI: New chat → GigaCode → "Hi, which MCP tools do you have?". Expected:
+   - while the CLI is starting (30–60 s), the chat shows "Starting… waiting for MCP";
+   - a "MCP: …" line with server statuses;
+   - the `harness` tools (`task_list`, `worker_start`, …) are among the agent's tools;
+   - the second message continues the same session (`--resume`): the agent remembers the context.
+4. **Merging `mcpServers`** (not confirmed): if the agent sees `harness` but NOT onework/sourcecontrol (or the reverse),
+   the CLI replaces `mcpServers` from the run file. Turn on `agents.gigacode.inheritUserMcp: true` (it copies the user's
+   servers into the run file next to `harness`) and check again.
+5. Task command: the default is `taskPromptTemplate: "/full-task {taskUrl}{notes}"` (a user-level command,
+   `~/.gigacode/commands/full-task.md`). If you need `/full-task-ui` from the old console, copy its
+   `commands/full-task-ui.md` to `~/.gigacode/commands/` and change the template. The slash command always goes as the
+   first word of the prompt, and the harness preamble follows it (it reaches the command as part of `$ARGUMENTS`).
+6. Error checks: a nonexistent model in the session settings must give a red error with the stderr text; a broken path
+   to the shim must give a clear startup error, not hang.
 
-9. **The `full-task` command.** When a task is taken into work ("Take into work" on the board or `worker_start`),
-   the worker's first prompt is built from the template `agents.gigacode.taskPromptTemplate` (falling back to
-   `tasks.promptTemplate`). To run your command, which takes the task and its SDD, set
-   `"taskPromptTemplate": "/full-task-ui {taskUrl}{notes}"` (variables: `{key} {id} {title} {description} {url}
-   {taskUrl} {targets} {branch} {repo} {notes} {runId} {registryDir} {settingsPath} {approvalMode}`; `{notes}`
-   = a space + the notes from the "Take into work" dialog). If the command writes a registry of internal
-   sub-agents to `{registryDir}`, the UI shows them nested under the session (read-only).
-   **Check** that GigaCode runs custom slash commands in headless mode (`gigacode -p "/full-task-ui <url>"`). If it does
-   not, put the expanded text of the command in the template (or have the command text read from its file:
-   find where custom commands are stored and add that substitution to the `gigacode` launcher's `buildArgs` in
-   `server/launchers.js`).
+## 3. Tasks from onework
 
-Interactive mode (a TUI in a terminal) needs nothing: "New terminal" → command `gigacode`. For a terminal agent to
-see the `harness` tools, add the server to `~/.gigacode/settings.json` once:
-`"harness": { "command": "node", "args": ["<repo>/mcp/harness-mcp.js"] }`. It reads the URL and token from
-`data/server.json` and `data/token`, and the session id from `HARNESS_SESSION_ID`, which the harness sets in its terminals.
+1. The `onework` server is picked up from `~/.gigacode/settings.json` (`mcpServersFrom`); the `Authorization` secret comes
+   from the secrets file. Check: `node scripts/mcp-call.js onework --list`.
+2. Locally: `integrations.tasks.enabled: true`, `space` = the space code (e.g. what goes before `-` in task keys),
+   `urlTemplate` = `https://<tracker-host>/swtr/units/all/unit/{key}`, if needed `refreshSec` (≥ 10) and `statusMap`.
+3. Raw response by hand: `node scripts/mcp-call.js onework sbertrack_findIssues '{"space_code":"<SPACE>","assignee":"me","page_size":5}'`.
+4. UI: "Sync" on the board → the tasks you are assigned show up, without closed ones. The task drawer loads the
+   description (`getIssue`) and the list of tracker transitions (`getIssueMeta`). Change a tracker status only on a test
+   task: it is an entry in the tracker.
+5. Subtasks from `decomposition` links (`sbertrack_listLinks`) are not imported automatically yet; if you need them, add
+   them in `importTasks()` (parentId) with a test.
 
-## 2. Tasks from the tracker (onework)
+## 4. PRs to sourcecontrol
 
-1. Add the server to `mcpServers` (the same command or URL the existing console uses):
-   ```jsonc
-   "mcpServers": { "onework": { "enabled": true, "transport": "stdio", "command": "...", "args": [], "timeoutMs": 15000 } }
-   // or { "transport": "http", "url": "https://...", "headers": {} }; secrets go in the secrets file
-   ```
-2. Check the connection and list the tools:
-   `node scripts/mcp-call.js onework --list`
-3. Call the issue-list tool by hand and look at the raw response:
-   `node scripts/mcp-call.js onework <tool> '{"assignee":"me"}'`
-4. Fill in `integrations.tasks`: `server`, `tool`, `args`, `itemsPath` (path to the array in the response),
-   `map` (task field to dot-path in an item), `statusMap` (tracker status to `backlog|todo|in_progress|review|done`),
-   `enabled: true`.
-5. If the response cannot be described declaratively (pagination, several calls, a non-JSON response), edit
-   `importTasks()` in `server/integrations/tasks.js`. Its contract is in the file header. Deduplication by
-   `source + externalId` is already done.
-6. Test: save the real response to `test/fixtures/` and add a case modeled on the existing integrations test
-   (it uses `scripts/mock-mcp.js`).
-7. UI: the "Sync" button on the board.
+1. `node scripts/mcp-call.js sourcecontrol --list`; the `SC_TOKEN` secret is in the secrets file or in the server's env.
+2. `integrations.pr.enabled: true`. `project/repository` are derived from `git remote get-url origin` (the last two segments).
+3. On a test branch: Changes → Push → "Create PR". Expected: the dialog with title/description pre-filled (with byte
+   counters 100/512), a link to `html_url`. A repeated "Create PR" for the same branch returns the existing PR and does
+   not create a second one (a second one would close the first).
 
-## 3. PRs (sourcecontrol)
+## 5. Branches and releases (check against the team conventions)
 
-1. Server in `mcpServers` (as above) → `node scripts/mcp-call.js sourcecontrol --list`.
-2. Fill in `integrations.pr`: `tool`, `args` with the templates `{repo} {branch} {base} {title} {body}`
-   (`{repo}` comes from `git remote get-url origin`; if the service needs a different repo identifier, change
-   how it is computed in `server/integrations/pr.js`), `urlPath` (path to the PR link in the response),
-   `defaultBase`, `enabled: true`.
-3. UI: Changes panel → "Push" → "Create PR". Expected: a toast with the PR link.
-
-## 4. Branches, releases, multiple repositories (already implemented, only check config and conventions)
-
-- `git.defaultBase` = `develop`; auto-created branches are `feature/{key}`, where `{key}` is the tracker task key
-  (`externalId`, e.g. `JIRA-1234`). If the team uses other prefixes (`bugfix/`, `hotfix/`), change
-  `git.branchTemplate` / `git.portBranchTemplate`.
-- Fix in a release and develop: the task's `targets` = `["release-1.54.0", "develop"]`. The work happens on
-  the first one, and the others get a cherry-pick port ("Port to …" button / the `task_port` tool). If the team
-  ports the other way (develop to release), just change the order of `targets`.
-- Microservices: one task per repository, subtasks through `parentId`, all with one key and one branch name.
-  When importing from the tracker, if the issue already lists repositories/components, you can create subtasks
-  right away in `importTasks()` (the `map` field plus a small piece of code that creates subtasks with the right
-  `workspaceId`).
-- Commit/PR templates: `git.commitTitleTemplate`, `git.prTitleTemplate` (default `{key}: {title}`). Check them
-  against the commit message format the hooks/CI of your repositories expect.
+- `git.defaultBase = develop`, branch `feature/{key}`, commit and PR title `{key} {title}` (no colon).
+- Fix in a release: the task's targets are `["develop", "release/1.54.0"]` → the work happens on `feature/<KEY>`, and
+  "Port to release/1.54.0" creates `feature/<KEY>-rel154` from the release branch and cherry-picks only the missing commits;
+  a conflict is resolved by a separate agent. One PR per target branch.
+- Microservices: one task = one repository; subtasks with `workspaceId` for each repository; the same key and branch in all.
+  `workspaces.root` = the folder with the repositories (e.g. `C:/Users/<you>/IdeaProjects`), `repos` = the list of names
+  (empty = all git repositories in the folder).
 
 ## Done when
 
-- [ ] `npm test` and `npm run build` are green; the fixture `test/fixtures/gigacode.stream.ndjson` holds real output.
-- [ ] A GigaCode chat answers, shows tool calls, and the second message continues the context.
-- [ ] A coordinator starts workers through `worker_start`, each worker has its own chat, and reports wake the coordinator.
-- [ ] "Sync" pulls tasks from onework onto the board without duplicates.
-- [ ] "Create PR" creates a PR in sourcecontrol and shows the link.
+- [ ] `npm test` and `npm run build` are green; the fixtures are replaced with real ones (or the differences are fixed in parsers).
+- [ ] A GigaCode chat answers, shows tools and "MCP: …", and the second message continues the context.
+- [ ] A "coordinator" role chat creates tasks and starts workers through `worker_start`; each worker has its own chat in
+      the sidebar; reports (`worker_done`) wake the coordinator.
+- [ ] "Take into work" on a task card starts `/full-task <url>` in a new worktree `<repo>-worktrees/<KEY>`.
+- [ ] "Sync" pulls your tasks from onework; the description and transitions load in the drawer.
+- [ ] "Create PR" creates a PR in sourcecontrol and shows the link; a repeat does not create a duplicate.
 - [ ] Secrets live only in the secrets file; `git status` is clean of local configs and `data/`.

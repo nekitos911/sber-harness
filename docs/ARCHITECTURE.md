@@ -121,7 +121,7 @@ interface Task {
   workspaceId: string | null         // the repository this task is done in (one repo per task; multi-repo = subtasks)
   parentId: string | null            // subtask of another task (e.g. one subtask per microservice repo)
   targets: string[]                  // base branches to deliver into; [0] = primary (work happens here), rest = ports
-                                     // default [git.defaultBase]; hotfix example: ["release-1.54.0", "develop"]
+                                     // default [git.defaultBase]; hotfix example: ["develop", "release/1.54.0"] (ports pick only missing commits)
   branch: string | null              // work branch of this task (set when a worktree/branch is created or on assign)
   ports: { target: string, branch: string, cwd: string, status: 'clean' | 'conflict' | 'done' | 'failed',
            sessionId: string | null }[]   // deliveries into targets[1..] (cherry-pick)
