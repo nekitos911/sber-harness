@@ -544,6 +544,20 @@ none. `{notes}` = `" " + notes` when the user typed notes at start, else `""`.
 - Startup: sessions left `running` become `idle` with a system message ("harness restarted, the turn was interrupted;
   send a message to continue — context is kept by --resume"); orphan locks are cleared.
 
+## GigaCode authorization (first run on a machine)
+
+GigaCode asks to log in through the browser / a link on first use. Behaviour of headless `-p` when not logged in is
+NOT confirmed (it may print a URL / device code and wait for the browser callback, or fail). The runner therefore:
+- scans stdout non-JSON lines and stderr (before the first JSON event) for an URL on a line that also matches
+  `/auth|login|oauth|device|verif|sign.?in|авториз|войд|вход/i` (or the next line has a short code like `ABCD-EFGH`);
+- on detection: `session.phase = 'auth'`, a system message `{ kind: 'system', text: '🔑 GigaCode ждёт авторизацию…', link: <url> }`
+  (field `link` on Message), a notification `{ kind: 'info', text, sessionId, link }`, `db.agentMeta[agent].auth = 'required'`;
+  the first-event timeout is suspended and replaced by `agents.<id>.authTimeoutMs` (default 600000) — after login the run
+  continues by itself; a later `system/init` sets `auth = 'ok'`.
+- `GET /api/agents/:id/info` adds `auth: 'ok' | 'required' | 'unknown'`.
+- Login from the UI: Settings → «Войти в GigaCode» = `POST /api/sessions { kind: 'terminal', agent: 'gigacode', title:
+  'Вход в GigaCode', cwd: <dataDir>/chats/login }` — the interactive CLI in a PTY (links clickable via xterm web-links).
+
 ## Runs survive a harness restart
 
 An agent turn is spawned detached (`detached: true`, `windowsHide: true`) with stdout/stderr redirected to files
