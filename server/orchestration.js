@@ -8,7 +8,7 @@ import { jobStep } from './jobs.js';
 import { FULL_ACCESS_MODES, newId, subagentTitle } from './sessions.js';
 import { launchers } from './launchers.js';
 import { runCheck } from './checks.js';
-import { codeHints, hintsLine } from './hints.js';
+import { codeHints, hintsLine, localCopyOf } from './hints.js';
 
 const GENERIC_REWORK = '{key} {title}: нужны правки: {notes}'; // agents without a task command (/full-task)
 
@@ -108,6 +108,18 @@ export function createOrchestration({ config, store, bus, tasks, sessions, addWo
 
   // orphan locks: assignees whose session no longer exists
   for (const t of db.tasks) if (t.assigneeSessionId && !sessions.find(t.assigneeSessionId)) t.assigneeSessionId = null;
+
+  /**
+   * A link into a repository that is cloned here (its name in the URL path) → its local folder, and the file the link
+   * points at when the URL says it (…/browse/<path>, …/blob/<ref>/<path>, …/-/blob/<ref>/<path>, …/src/<ref>/<path>).
+   */
+  const localCopy = (url) => localCopyOf(url, db.workspaces.filter((w) => w.isGit && !w.kind));
+  /** «Ссылки из полей задачи»: for the agent's preamble — each link, and its local copy when it is cloned here. */
+  function linksLine(task) {
+    const list = task?.externalLinks || [];
+    if (!list.length) return null;
+    return `Ссылки из полей задачи (спецификации и т. п.): ${list.slice(0, 10).map((l) => { const here = localCopy(l.url); return `«${l.name}»: ${l.url}${here ? ` — локальная копия: ${here}` : ''}`; }).join('; ')}. Прочитай их до начала работы; локальную копию — с диска.`;
+  }
 
   /** Git repositories right inside the projects folder (names): what an agent there can pass as `workspace`. */
   function rootRepos() {
@@ -793,7 +805,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions, addWo
   function preamble(s) {
     const context = s.ephemeral && atDepthLimit(s) ? `${NO_SUBAGENTS}.` : SUBAGENT_CONTEXT;
     const block = config.orchestration?.subagents !== 'builtin' && CONTEXT_LAUNCHERS.has(s.launcherId) ? context : '';
-    return [block, rolePreamble(s), s.atRoot ? hintsLine(s.repoHints) : null].filter(Boolean).join('\n\n');
+    return [block, rolePreamble(s), s.atRoot ? hintsLine(s.repoHints) : null, s.taskId ? linksLine(tasks.find(s.taskId)) : null].filter(Boolean).join('\n\n');
   }
 
   function rolePreamble(s) {

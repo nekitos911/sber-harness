@@ -44,6 +44,7 @@ export interface Task {
   pr?: TaskPr | null // newer servers: PR of task.branch, refreshed in the background
   agentState?: AgentState | null // what the assigned agent (and the harness review) is doing
   checks?: { round: number; state: 'running' | 'passed' | 'failed'; workerSessionId: string; at?: number } | null // «Проверка перед готово»
+  externalLinks?: { name: string; url: string }[] // addresses in the tracker task's fields («Внешние ссылки»): the agent reads them first
   createdAt: number
   updatedAt: number
 }

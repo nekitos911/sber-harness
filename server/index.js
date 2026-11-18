@@ -1354,6 +1354,8 @@ export async function startServer(opts = {}) {
       jobStep('Ищу задачу в трекере');
       // not in the tracker / tracker down: the agent still gets the text as is (it can read the link itself)
       task = await importIssue({ config, mcp, tasks, ref }).catch((e) => { trackerError = e.message; return null; });
+      // its fields and links (a specification in «Внешние ссылки») reach the agent's task — details are lazy otherwise
+      if (task && !task.externalLinks) task = (await getExternal({ config, mcp, tasks, task }).then(() => tasks.get(task.id)).catch(() => task));
     }
     jobStep('Запускаю агента');
     if (task) {

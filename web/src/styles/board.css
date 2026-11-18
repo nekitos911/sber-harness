@@ -368,3 +368,5 @@
 .agent-ask { all: unset; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; cursor: pointer; color: var(--ink-2); font-size: 12px; overflow-wrap: anywhere; border-left: 2px solid var(--lamp-ask); padding-left: 6px; }
 .agent-ask:hover { color: var(--ink); }
 .agent-ask:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+/* the tracker task's links (a specification in «Внешние ссылки») */
+.drawer-links { display: grid; gap: 4px; margin: 8px 0 0; padding: 0; list-style: none; font-size: 12.5px; overflow-wrap: anywhere; }

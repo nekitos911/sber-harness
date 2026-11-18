@@ -170,6 +170,11 @@ export function TaskDrawer({ task, ctx, onClose }: { task: Task; ctx: BoardCtx; 
         )}
 
         {imported ? (task.description.trim() ? <div className="md-preview drawer-desc"><Markdown text={task.description} /></div> : <ExternalCard task={task} full />) : <DescriptionField task={task} />}
+        {(task.externalLinks?.length ?? 0) > 0 && (
+          <ul className="drawer-links" aria-label="Ссылки из полей задачи">
+            {task.externalLinks!.map((l) => <li key={l.url}><span className="muted">{l.name}: </span><a href={l.url} target="_blank" rel="noreferrer noopener">{l.url}</a></li>)}
+          </ul>
+        )}
         <TaskWorktrees task={task} />
         <TaskPrs task={task} />
         {task.targets.length > 1 && <Ports task={task} />}

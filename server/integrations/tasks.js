@@ -307,13 +307,39 @@ async function fetchLinks(mcp, cfg, key) {
   return [...seen.values()];
 }
 
+/** Every http(s) address in a text, in order, once — whatever shape the tracker's answer has. */
+export const urlsIn = (text) => [...new Set([...String(text ?? '').matchAll(/https?:\/\/[^\s)>\]"',;]+/g)].map((m) => m[0].replace(/[.:]+$/, '')))];
+
+/**
+ * The task's «Внешние ссылки» (onework shows them on their own tab, not as a field): integrations.tasks.tools.externalLinks,
+ * else a tool of the tracker's server named like external/remote/web links. Its addresses, whatever the answer looks like.
+ */
+async function fetchExternalLinks(mcp, cfg, key) {
+  let tool = cfg.tools?.externalLinks;
+  if (tool === false) return [];
+  if (!tool) tool = (await mcp.listTools(cfg.server).catch(() => [])).map((t) => t.name).find((n) => /(external|remote|web)[_-]?links?/i.test(n)) || null;
+  if (!tool) return [];
+  return urlsIn(await callText(mcp, cfg, tool, { key }).catch(() => '')).map((url) => ({ name: 'Внешние ссылки', url }));
+}
+
+/** Addresses in an issue's fields and attributes (e.g. «Внешние ссылки» → a repository with the specification). */
+export function fieldLinks(issue) {
+  const out = [];
+  for (const [name, value] of Object.entries({ ...issue.fields, ...issue.attributes })) {
+    for (const [url] of String(value ?? '').matchAll(/https?:\/\/[^\s)>\]"',]+/g)) if (!out.some((l) => l.url === url)) out.push({ name, url });
+  }
+  return out;
+}
+
 export async function getExternal({ config, mcp, tasks, task }) {
   const cfg = settings(config);
   if (!markdown(cfg)) throw disabled('Подробности задачи доступны только для трекера onework-markdown');
   const key = trackerKey(task);
   const issue = parseIssue(await callText(mcp, cfg, toolOf(cfg, 'get'), { key }));
   // cached attributes (Component, Repository, ...) also feed the repository auto-fill
-  tasks.update(task.id, { ...(!task.description && issue.description ? { description: issue.description } : {}), externalFields: issue.fields }, 'harness');
+  const external = await fetchExternalLinks(mcp, cfg, key);
+  const links = [...fieldLinks(issue), ...external.filter((e) => !fieldLinks(issue).some((l) => l.url === e.url))];
+  tasks.update(task.id, { ...(!task.description && issue.description ? { description: issue.description } : {}), externalFields: issue.fields, externalLinks: links }, 'harness');
   return { ...issue, links: await fetchLinks(mcp, cfg, key) };
 }
 
