@@ -241,6 +241,7 @@ type NormalizedEvent =
   | { type: 'tool_result', id: string, output: string, isError: boolean }
   | { type: 'error', text: string }
   | { type: 'init', model: string | null, mcpServers: { name, status }[] }   // CLI start (system/init)
+  | { type: 'usage', contextTokens, input, output, cacheRead }   // the context after one model step (assistant.message.usage)
   | { type: 'result', text: string | null, isError: boolean, tokensIn?, tokensOut? }   // end of turn; usage of the whole run
   | { type: 'meta', raw: unknown }                       // anything unknown; kept in stderr.log only
 // text/thought/tool_call/tool_result/error may carry parentToolId: the event belongs to a built-in sub-agent started by
@@ -1164,6 +1165,14 @@ clears `stalled`; `lastEventAt` is not broadcast on its own (it rides on the nex
   status `error`) when the process exits.
 - `lastEventKind`: `text_delta` | `assistant_final` | `thought` | `tool_running` | `tool_done` | `result` (session frames
   are sent when it changes) — the UI says «Завершает ход…» instead of «Пишет ответ».
+- Context ring: `session.context = { tokens, at, lastTurn: { input, output, cacheRead } }` from the latest main-agent
+  step's usage (overwritten per step, persisted, session frame at most once a second; a built-in sub-agent's steps are
+  not counted). tokens: GigaCode/Qwen/Gemini (OpenAI style, cache_read inside input) = input + output; claude
+  (Anthropic style) = input + cache_read + cache_creation + output; ACP: the prompt result's `usage` when present
+  (VERIFY). `session.contextLimit`: the model's `context` from the merged catalogue ("262k" → 262000, "1M"), model =
+  session.model || the model the CLI reported at init (`session.cliModel`) || the agent default (a `-262k` id suffix
+  also counts); null when unknown. `/api/state` agents carry `compressCommand` (gigacode default "/compress") and
+  `contextCommand` ("/context", not used yet) — both VERIFY (GIGACODE-FACTS q.15).
 
 ## Nothing is lost on restart (harness, browser, PC)
 

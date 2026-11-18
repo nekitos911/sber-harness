@@ -224,6 +224,11 @@ others work. Transport per call. GigaCode's own encrypted store (`~/.gigacode/mc
 11. `--acp` mode: does it work with the identity env + per-session settings; `initialize` capabilities (loadSession?),
     `session/request_permission` for tool confirmations, MCP servers passed in `session/new`, auth behaviour
     (→ `transport: "acp"` for real interactive permissions).
+15. Context commands in headless mode: does `--resume <id> -p "/compress"` compress that session (and what does the
+    stream-json show: a result text, new usage?), and does `-p "/context"` print a token breakdown WITHOUT adding a
+    turn to the chat history? (→ `agents.gigacode.compressCommand` / `contextCommand`, the context ring's actions.)
+    Also: is `assistant.message.usage.input_tokens` the whole prompt incl. the cached part (the ring uses
+    input + output per step), and does ACP's `session/prompt` result carry `usage`?
 
 ## 9. Machine pitfalls
 

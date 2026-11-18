@@ -70,6 +70,19 @@ function tokens(o) {
   return tokensIn || tokensOut ? { tokensIn, tokensOut } : {};
 }
 
+/**
+ * Context size after one model step, from that step's usage. OpenAI style (GigaCode/Qwen/Gemini: input_tokens already
+ * contains the cached part): input + output; Anthropic style (claude: cache reported separately): input + cache_read +
+ * cache_creation + output.
+ */
+export function contextUsage(u, anthropic = false) {
+  const input = num(u.input_tokens ?? u.prompt_token_count);
+  const output = num(u.output_tokens ?? u.candidates_token_count);
+  const cacheRead = num(u.cache_read_input_tokens);
+  const contextTokens = anthropic ? input + cacheRead + num(u.cache_creation_input_tokens) + output : input + output;
+  return { type: 'usage', contextTokens, input, output, cacheRead };
+}
+
 /** @returns {Array<object>} NormalizedEvents for one parsed stdout object. `state` lives for one turn. */
 export function normalize(o, state = {}) {
   if (!o || typeof o !== 'object') return [{ type: 'meta', raw: o }];
@@ -102,6 +115,8 @@ export function normalize(o, state = {}) {
         else if (b?.type === 'thinking' && b.thinking && !state.streamedText) body.push({ type: 'thought', text: b.thinking, delta: false });
         else if (b?.type === 'tool_use') body.push({ type: 'tool_call', id: String(b.id ?? ''), name: String(b.name ?? 'tool'), input: b.input ?? {} });
       }
+      // the main agent's context after this step (a built-in sub-agent's steps are its own context)
+      if (o.message?.usage && !o.parent_tool_use_id) body.push(contextUsage(o.message.usage, state.usageStyle === 'anthropic'));
       break;
     }
     case 'user':
@@ -448,12 +463,12 @@ const claude = {
   prepare({ mcpConfigPath, harnessMcp, agentMcpServers }) {
     writeAtomic(mcpConfigPath, JSON.stringify({ mcpServers: { ...agentMcpServers, harness: harnessMcp } }, null, 2));
   },
-  parse: normalize,
+  parse: (o, state = {}) => normalize(o, Object.assign(state, { usageStyle: 'anthropic' })),
 };
 
 export const launchers = {
   // cold start (hundreds of tools, ~9 MCP servers) can take 30-60 s before system/init
-  gigacode: geminiFamily('gigacode', { command: 'gigacode', settingsEnv: 'GIGACODE_SYSTEM_SETTINGS_PATH', firstEventTimeoutMs: 120000, continueArgs: ['-c'], approvalModeMap: { auto: 'auto-edit' }, allowedToolsFlag: '--allowed-tools', allowedTools: DEFAULT_ALLOWED_TOOLS, autoSandbox: null, reworkPromptTemplate: '/full-task {taskUrl} Задача готова, но нужны правки: {notes}' }, (cfg) => resolveGigacode(cfg)),
+  gigacode: geminiFamily('gigacode', { compressCommand: '/compress', contextCommand: '/context', command: 'gigacode', settingsEnv: 'GIGACODE_SYSTEM_SETTINGS_PATH', firstEventTimeoutMs: 120000, continueArgs: ['-c'], approvalModeMap: { auto: 'auto-edit' }, allowedToolsFlag: '--allowed-tools', allowedTools: DEFAULT_ALLOWED_TOOLS, autoSandbox: null, reworkPromptTemplate: '/full-task {taskUrl} Задача готова, но нужны правки: {notes}' }, (cfg) => resolveGigacode(cfg)),
   qwen: geminiFamily('qwen', { command: 'qwen', settingsEnv: 'QWEN_CODE_SYSTEM_SETTINGS_PATH', firstEventTimeoutMs: 30000, approvalModeMap: { auto: 'auto-edit' }, allowedToolsFlag: '--allowed-tools', allowedTools: DEFAULT_ALLOWED_TOOLS }),
   gemini: geminiFamily('gemini', { command: 'gemini', settingsEnv: 'GEMINI_CLI_SYSTEM_SETTINGS_PATH', firstEventTimeoutMs: 30000 }),
   claude,

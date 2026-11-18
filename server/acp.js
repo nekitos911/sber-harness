@@ -277,6 +277,10 @@ export function createAcp({ onWarm = () => {} } = {}) {
         // before the result event: the turn closes at result, an error stop reason must already be known then
         if (r?.stopReason === 'cancelled') res.stopped = true;
         else if (r?.stopReason && !['end_turn', 'max_turn_requests'].includes(r.stopReason)) res.error = `Агент остановился: ${r.stopReason}`;
+        // VERIFY: GigaCode's PromptResponse.usage fields (ACP unstable: inputTokens, outputTokens, cachedReadTokens)
+        if (r?.usage && Number.isFinite(r.usage.inputTokens)) {
+          emit({ type: 'usage', contextTokens: (r.usage.inputTokens || 0) + (r.usage.outputTokens || 0), input: r.usage.inputTokens || 0, output: r.usage.outputTokens || 0, cacheRead: r.usage.cachedReadTokens || 0 });
+        }
         emit({ type: 'result', tokensIn: r?.usage?.inputTokens || 0, tokensOut: r?.usage?.outputTokens || 0 });
       } catch (e) {
         if (stop || e.stopped) res.stopped = true;

@@ -941,6 +941,9 @@ export async function startServer(opts = {}) {
       return {
         id, label: a.label || id, launcher: a.launcher, approvalModes: a.approvalModes || [], approvalMode: a.approvalMode || null, enabled: a.enabled !== false,
         models: catalog.merged(id), model: a.model ?? null,
+        // slash commands of the CLI (gigacode defaults; VERIFY, GIGACODE-FACTS q.15): «Сжать контекст» / breakdown (unused yet)
+        compressCommand: a.compressCommand ?? launchers[a.launcher]?.defaults.compressCommand ?? null,
+        contextCommand: a.contextCommand ?? launchers[a.launcher]?.defaults.contextCommand ?? null,
       };
     }),
     defaultAgent: config.agents[config.defaultAgent] && config.agents[config.defaultAgent].enabled !== false

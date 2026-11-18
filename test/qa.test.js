@@ -203,3 +203,15 @@ test('a turn in a sleeping worktree wakes it', async () => {
   assert.equal(main.meta.sleeping, false);
   await settled(s.id);
 });
+
+test('context ring: session.context from the latest step, contextLimit from the model context (262k); compress command in /api/state', async () => {
+  const s = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', cwd: repo, prompt: '#usage' })).body;
+  await settled(s.id);
+  const x = await session(s.id);
+  assert.equal(x.context.tokens, 120500);
+  assert.deepEqual(x.context.lastTurn, { input: 120000, output: 500, cacheRead: 100000 });
+  assert.equal(x.contextLimit, 262000);
+  const agents = (await state()).agents;
+  assert.deepEqual([agents.find((a) => a.id === 'gigacode').compressCommand, agents.find((a) => a.id === 'gigacode').contextCommand], ['/compress', '/context']);
+  assert.equal(agents.find((a) => a.id === 'mock').compressCommand, null);
+});

@@ -9,7 +9,7 @@
 //   #auth [ms]      login link on stderr, a wait (default 2000 ms), then a normal run
 //   #run <profile> <spec>   worker_run (a sub-agent in its own chat); waits, then says "worker_run result: <summary>"
 //   #runwt <profile> <spec> the same in a new worktree (a persistent child)
-//   #deny <tool>    a tool call the CLI denies in headless mode   #question <q> | <option> | ...   its own question tool
+//   #usage          an assistant step with usage   #deny <tool>    a tool call the CLI denies in headless mode   #question <q> | <option> | ...   its own question tool
 // "/models" answers with test/fixtures/gigacode.models.txt; --model outside that list fails like GigaCode (stderr, exit 1).
 // MOCK_AGENT_ARGV_FILE: appends { argv (incl. node flags), env (GIGACODE_*, settings path, MCP_SECRET_*) } per run.
 // Harness API through mcp/harness-mcp.js (env HARNESS_*; retries while the harness restarts). Turn counts per session id live in
@@ -183,6 +183,8 @@ if (question) {
   emit({ type: 'tool_use', tool_name: 'ask_user_question', tool_id: 'q_1', parameters: { questions: [{ question: q, options: options.map((label) => ({ label })), multiSelect: false }] } });
   emit({ type: 'tool_result', tool_id: 'q_1', status: 'error', output: 'question tool is not available in non-interactive mode' });
 }
+// GigaCode reports usage per model step on its assistant events (input includes the cached part)
+if (has(/#usage\b/)) emit({ type: 'assistant', message: { role: 'assistant', content: [], usage: { input_tokens: 120000, output_tokens: 500, cache_read_input_tokens: 100000, total_tokens: 120500 } } });
 if (has(/#raw\b/)) process.stdout.write('plain line 1\nplain line 2\n');
 if (has(/#slow\b/)) await say('slow '.repeat(20), 250);
 

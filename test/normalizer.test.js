@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { normalize } from '../server/launchers.js';
+import { normalize, contextUsage } from '../server/launchers.js';
 
 const fixture = (name) => fs.readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
 const run = (objs) => {
@@ -15,11 +15,12 @@ const init = {
 };
 
 // GigaCode (Qwen-Code / Claude style), reconstructed from the target machine: test/fixtures/README.md
-test('gigacode: init note, text, usage from result only (not the per-step assistant usage)', () => {
+test('gigacode: init note, text, the context after each step (usage), run tokens from the result only', () => {
   assert.deepEqual(run(fixture('gigacode.stream.ndjson')), [
     { type: 'session', id: '7d1e2a40-5b6c-4f1d-9a3e-0c8b2f6e1a11' },
     init,
     { type: 'text', text: 'OK', delta: false },
+    { type: 'usage', contextTokens: 54991, input: 54989, output: 2, cacheRead: 0 },
     { type: 'result', text: 'OK', isError: false, tokensIn: 124394, tokensOut: 133 },
   ]);
 });
@@ -29,8 +30,10 @@ test('gigacode: tool call and result', () => {
     { type: 'session', id: '4f416018-e66e-4a22-bca3-bee0f23c7e39' },
     init,
     { type: 'tool_call', id: 'call_f66cd08f988b4093ad36d4dd', name: 'read_file', input: { absolute_path: 'C:\\Users\\dev\\projects\\demo\\probe.txt' } },
+    { type: 'usage', contextTokens: 54140, input: 54100, output: 40, cacheRead: 0 },
     { type: 'tool_result', id: 'call_f66cd08f988b4093ad36d4dd', output: 'OK\n', isError: false },
     { type: 'text', text: 'Файл содержит: OK', delta: false },
+    { type: 'usage', contextTokens: 54309, input: 54300, output: 9, cacheRead: 35328 }, // cache_read is part of input here
     { type: 'result', text: 'Файл содержит: OK', isError: false, tokensIn: 108400, tokensOut: 49 },
   ]);
 });
@@ -40,6 +43,7 @@ test('gigacode: --resume keeps the session id', () => {
     { type: 'session', id: '7d1e2a40-5b6c-4f1d-9a3e-0c8b2f6e1a11' },
     init,
     { type: 'text', text: 'Ты просил ответить OK.', delta: false },
+    { type: 'usage', contextTokens: 55208, input: 55200, output: 8, cacheRead: 37888 },
     { type: 'result', text: 'Ты просил ответить OK.', isError: false, tokensIn: 55200, tokensOut: 8 },
   ]);
 });
@@ -128,4 +132,13 @@ test('error results from both shapes; Claude usage adds the cache', () => {
   assert.deepEqual(normalize({ type: 'result', result: 'x', usage: { input_tokens: 4, cache_read_input_tokens: 10, output_tokens: 2 } }, {}), [{ type: 'result', text: 'x', isError: false, tokensIn: 14, tokensOut: 2 }]);
   assert.deepEqual(normalize({ type: 'stream_event', event: { type: 'goal_state' } }, {}), []);
   assert.deepEqual(normalize({ type: 'whatever', x: 1 }, {}), [{ type: 'meta', raw: { type: 'whatever', x: 1 } }]);
+});
+
+test('context usage: OpenAI style (cache inside input) vs Anthropic style (cache reported separately)', () => {
+  const u = { input_tokens: 1000, output_tokens: 50, cache_read_input_tokens: 800, cache_creation_input_tokens: 100 };
+  assert.equal(contextUsage(u).contextTokens, 1050);
+  assert.equal(contextUsage(u, true).contextTokens, 1950);
+  const claude = { type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'x' }], usage: u } };
+  assert.equal(normalize(claude, { usageStyle: 'anthropic' }).find((e) => e.type === 'usage').contextTokens, 1950);
+  assert.ok(!normalize({ ...claude, parent_tool_use_id: 'call_1' }, {}).some((e) => e.type === 'usage'), 'a sub-agent step is its own context');
 });

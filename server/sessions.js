@@ -7,6 +7,7 @@ import { randomBytes } from 'node:crypto';
 import { CODE_ROOT } from './config.js';
 import { launchers } from './launchers.js';
 import { runTurn, isAlive, sameProcess } from './runner.js';
+import { baseId } from './models.js';
 import { secretEnv } from './mcp-client.js';
 import { readRegistry } from './registry.js';
 import { createAcp } from './acp.js';
@@ -73,6 +74,11 @@ export const PERMISSION_OPTIONS = [
 export const titleFrom = (text) => String(text).split('\n').map((l) => l.trim()).find(Boolean)?.replace(/^\//, '').replace(/\s+/g, ' ').slice(0, 60) || null;
 /** «<profile> · <first line of the assignment, ≤ 50>» for a sub-agent's chat. */
 export const subagentTitle = (profile, spec) => [profile, titleFrom(spec || '')?.slice(0, 50)].filter(Boolean).join(' · ');
+/** "262k" → 262000, "1M" → 1000000, "128000" → 128000; null when not a size. */
+export const contextSize = (v) => {
+  const m = String(v ?? '').trim().match(/^(\d+(?:\.\d+)?)\s*([kKmM])?$/);
+  return m ? Math.round(Number(m[1]) * ({ k: 1e3, m: 1e6 }[m[2]?.toLowerCase()] ?? 1)) : null;
+};
 /** Exit codes as signed numbers: Windows reports a forced end as 4294967295 (= -1). */
 export const signedCode = (code) => (Number.isInteger(code) && code > 0x7fffffff ? code - 0x100000000 : code);
 
@@ -496,6 +502,8 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     switch (ev.type) {
       case 'init': {
         s.mcpStatus = ev.mcpServers.map((m) => ({ name: m.name, status: m.status }));
+        if (ev.model) s.cliModel = ev.model; // what the CLI really runs (for the context limit)
+        s.contextLimit = contextLimit(s);
         const mcp = ev.mcpServers.map((m) => `${m.name} ${/^connected$/i.test(m.status) ? '✓' : '✗'}`).join(', ');
         const note = [ev.model && `Модель: ${ev.model}`, mcp && `MCP: ${mcp}`].filter(Boolean).join(' · ');
         // once per session (again only when it changes, e.g. an MCP server went down)
@@ -513,6 +521,16 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
           at: Date.now(),
         };
         store.save();
+        break;
+      }
+      case 'usage': {
+        // the context after the latest step (overwritten per step); the session frame is throttled to 1/s
+        s.context = { tokens: ev.contextTokens, at: Date.now(), lastTurn: { input: ev.input, output: ev.output, cacheRead: ev.cacheRead } };
+        s.contextLimit ??= contextLimit(s);
+        if (Date.now() - (r.contextAt || 0) >= 1000) {
+          r.contextAt = Date.now();
+          emit(s);
+        } else store.save();
         break;
       }
       case 'note': // ACP: e.g. the agent's previous session could not be loaded
@@ -811,6 +829,14 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
       res.error += `\nСообщений в очереди: ${s.queue.length} — уйдут со следующим сообщением или после смены модели.`;
     }
     if (!res.detached) finishTurn(s, res);
+  }
+
+  /** The model's context size from the merged catalogue: session model, else what the CLI reported, else the agent default. */
+  function contextLimit(s) {
+    const model = s.model || s.cliModel || config.agents[s.agent]?.model;
+    if (!model || !catalog) return null;
+    const entry = catalog.merged(s.agent).find((e) => baseId(e.id) === baseId(model));
+    return contextSize(entry?.context ?? String(model).match(/-(\d+[km])$/i)?.[1]);
   }
 
   function turnFiles(s, n) {
@@ -1458,7 +1484,10 @@ ${note.trim()}` : text });
         delete s.autoTitle;
       }
       if ('approvalMode' in p) s.approvalMode = p.approvalMode || null;
-      if ('model' in p) s.model = p.model || null;
+      if ('model' in p) {
+        s.model = p.model || null;
+        s.contextLimit = contextLimit(s);
+      }
       if ('autoReport' in p) s.autoReport = p.autoReport;
       if ('includeDirs' in p) s.includeDirs = normalizeIncludeDirs(p.includeDirs, s.cwd, strict); // applies from the next turn
       if ('allowedTools' in p) {
