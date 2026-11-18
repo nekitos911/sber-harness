@@ -99,9 +99,9 @@ export const TaskCard = memo(function TaskCard({ task, ctx }: { task: Task; ctx:
         </span>
       )}
       {ctx.trackerSync[task.id] && <span className="card-sync" role="status">{ctx.trackerSync[task.id].text}</span>}
-      {(session || task.externalUrl || task.assigneeSessionId) && (
+      {(session || task.externalUrl || task.assigneeSessionId || goneOf(task)) && (
         <div className="card-foot">
-          {!session && task.assigneeSessionId && <span className="card-agent muted" data-tip="Сессия агента удалена — задачу можно взять в работу снова">агент удалён</span>}
+          {!session && <AgentGone task={task} ctx={ctx} />}
           {session && (REVIEW.has(task.agentState ?? '') ? <AgentBadge task={task} session={session} ctx={ctx} /> : <CardLive task={task} session={session} />)}
           <span className="grow" />
           {task.externalUrl && (
@@ -138,6 +138,32 @@ const AGENT_STATE: Record<NonNullable<Task['agentState']>, { text: string; tone:
 }
 
 const REVIEW = new Set(['reviewing', 'approved', 'changes_requested'])
+
+/** The task's agent went away (task log agent_gone) and no agent took the task since. */
+function goneOf(task: Task): { how: string; sessionId?: string } | null {
+  for (let i = task.log.length - 1; i >= 0; i--) {
+    const e = task.log[i]
+    if (e.type === 'agent_gone') return { how: String(e.data?.how ?? 'removed'), sessionId: e.data?.sessionId as string | undefined }
+    if (e.type === 'started' || e.type === 'rework') return null
+  }
+  return null
+}
+
+/** «агент удалён» / «агент в архиве» (+ «Открыть из архива»: the chat opens read-only, with «Вернуть»). */
+function AgentGone({ task, ctx }: { task: Task; ctx: BoardCtx }) {
+  const gone = goneOf(task)
+  if (!gone) return task.assigneeSessionId ? <span className="card-agent muted">агент удалён</span> : null // older servers: a dangling assignee
+  const archived = gone.how !== 'removed' && !!gone.sessionId && ctx.sessions.has(gone.sessionId)
+  return (
+    <span className="card-agent muted">
+      {archived ? 'агент в архиве' : 'агент удалён'}
+      {archived && (
+        <button type="button" className="btn btn-ghost btn-xs" onPointerDown={stop} onKeyDown={stop}
+          onClick={(e) => { e.stopPropagation(); openSession(gone.sessionId!) }}>Открыть из архива</button>
+      )}
+    </span>
+  )
+}
 const WAITS = new Set(['waiting_answer', 'waiting_permission', 'auth', 'stalled'])
 
 /**

@@ -8,7 +8,7 @@ import { api } from '../api'
 import { runJob } from '../lib/jobs'
 import { useCurrentTool, useStateLine } from '../lib/live'
 import { dur, sessionVisualState } from '../lib/sessionState'
-import { basename, normPath, plural, relTime, tokens } from '../lib/format'
+import { basename, normPath, plural, relTime, subTitle, tokens } from '../lib/format'
 import { loadDraft, saveDraft } from '../lib/draft'
 import { newChat, newTerminal } from '../lib/actions'
 import type { Session, Task, Workspace, Worktree } from '../types'
@@ -647,7 +647,7 @@ function WorktreeRow({ ws, wt, sessions, terminals, dup, kids, active, fromOf, p
 const isFinishedSub = (c: Session) => (c.virtual || c.role === 'subagent') && !c.persistent && c.status !== 'running' && !c.waitingFor
 
 const isSub = (c: Session) => !!c.virtual || c.role === 'subagent'
-const profileOf = (c: Session) => /^([\w.-]{2,40}):/.exec(c.title)?.[1] ?? c.title
+const profileOf = (c: Session) => subTitle(c.title)?.[0] ?? c.title
 
 /**
  * Direct children, with sub-agents of sub-agents (older data: chains deeper than one) lifted to this level; `via`
@@ -728,7 +728,7 @@ function SessionRow({ s, nested, level = 0, caret, subs, via, from }: {
   const open = () => openSession(s.id)
   const preview = s.preview.split('\n').map((l) => l.trim()).filter(Boolean).pop()
   // A sub-agent's title «profile: task» reads as the profile with the task muted.
-  const sub = (s.role === 'subagent' || s.virtual) ? /^([\w.-]{2,40}):\s+(.+)$/.exec(s.title)?.slice(1, 3) : undefined
+  const sub = (s.role === 'subagent' || s.virtual) ? subTitle(s.title) : undefined
   // What it is doing: the tool in use («Выполняет: Edit»), a coordinator watching its workers, else the last line.
   const watching = s.role === 'coordinator' && v === 'running' && !tool
   const cards = useSbPrefs() // «Отображение карточек»
@@ -767,7 +767,7 @@ function SessionRow({ s, nested, level = 0, caret, subs, via, from }: {
           <span className="sess-l1">
             {nested && <span className="sub-glyph" aria-hidden>↳ </span>}
             {s.role === 'reviewer' && <span className="sess-doing">ревью · </span>}
-            {sub ? <>{sub[0]}<span className="sess-doing">: {sub[1]}</span></> : <span className="sess-title">{s.title || s.id}</span>}
+            {sub ? <>{sub[0]}<span className="sess-doing"> · {sub[1]}</span></> : <span className="sess-title">{s.title || s.id}</span>}
             {via && <span className="sess-doing"> · через {via}</span>}
             {from && <span className="sess-doing"> · от: <button type="button" className="sess-from" onClick={(e) => { e.stopPropagation(); openSession(from.id) }}>{from.title}</button></span>}
             {doing && !detailed && <span className="sess-doing"> - {doing}</span>}

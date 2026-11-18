@@ -55,6 +55,12 @@ export function tokens(n: number) {
   return `${+(n / 1_000_000).toFixed(1)}M`
 }
 
+/** A sub-agent's title «<profile> · <task>» (older: «<profile>: <task>») → [profile, task]. */
+export const subTitle = (title: string): [string, string] | undefined => {
+  const m = /^([\w.-]{2,40})(?: ·|:)\s+(.+)$/.exec(title)
+  return m ? [m[1], m[2]] : undefined
+}
+
 /** «только что» · «5 мин назад» · «3 ч назад» */
 export function ago(at: number, now = Date.now()) {
   const r = relTime(at, now)

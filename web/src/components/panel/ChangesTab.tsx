@@ -29,6 +29,7 @@ export function ChangesTab({ cwd }: { cwd: string }) {
   const [body, setBody] = useState(saved?.body ?? '')
   const touched = useRef(!!saved) // once the user edits, prefill never overwrites their text
   const [busy, setBusy] = useState<'commit' | 'push' | null>(null)
+  const [pushOutput, setPushOutput] = useState<string | null>(null)
   const [open, setOpen] = useState<Set<string>>(() => new Set())
 
   const status = git?.status ?? null
@@ -81,10 +82,12 @@ export function ChangesTab({ cwd }: { cwd: string }) {
 
   const push = async () => {
     setBusy('push')
-    const res = await runJob('Push', (jobId) => api<{ output: string }>('POST', '/git/push', { cwd }, { jobId }))
+    const res = await runJob('Push', (jobId) => api<{ summary?: string; output?: string }>('POST', '/git/push', { cwd }, { jobId }))
     setBusy(null)
     if (!res) return
-    toast(res.output?.trim().split('\n').pop() || 'Отправлено', 'ok')
+    // «Новая ветка feature/T-2 в origin»; git's own words only on request
+    toast(res.summary || res.output?.trim().split('\n').pop() || 'Отправлено', 'ok')
+    setPushOutput(res.output?.trim() || null)
     refreshGit(cwd)
   }
 
@@ -161,8 +164,8 @@ export function ChangesTab({ cwd }: { cwd: string }) {
             <Button icon={<Upload />} busy={busy === 'push'} disabled={!!busy} onClick={push} tip={status.upstream ? `в ${status.upstream}` : 'Опубликовать ветку'}>
               {busy === 'push' ? 'Push…' : 'Push'}
             </Button>
-
           </div>
+          {pushOutput && <Disclosure className="cli-raw" summary={<span className="muted">Подробности push</span>}><pre className="mono">{pushOutput}</pre></Disclosure>}
         </div>
       </section>
 

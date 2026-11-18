@@ -3,7 +3,7 @@
 export type TaskStatus = 'backlog' | 'todo' | 'in_progress' | 'review' | 'done'
 export type Priority = 'low' | 'medium' | 'high'
 
-export interface TaskLogEntry { at: number; by: string; text: string }
+export interface TaskLogEntry { at: number; by: string; text: string; type?: string; data?: Record<string, unknown> }
 
 export interface TaskPort {
   target: string

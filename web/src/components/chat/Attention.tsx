@@ -1,4 +1,5 @@
 import { useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
+import { subTitle } from '../../lib/format'
 import { CircleHelp, Eye, Pencil, Plug, ShieldAlert, SquareTerminal, Wrench } from 'lucide-react'
 import { tryApi } from '../../api'
 import { openSession, useStore } from '../../store'
@@ -156,7 +157,7 @@ export function PermissionCard({ m }: { m: Message }) {
   const [note, setNote] = useState('')
   const rejectRef = useRef<HTMLButtonElement>(null)
   const { icon, text } = actionLine(p.tool, p.input)
-  const who = from ? `субагент ${(/^([\w.-]{2,40}):/.exec(from.title)?.[1]) ?? from.title}: ` : ''
+  const who = from ? `субагент ${subTitle(from.title)?.[0] ?? from.title}: ` : ''
   const options = p.options
   const primary = options.find(isOnce) ?? options.find((o) => !isReject(o))
   const choose = async (o: PermissionOption) => {
