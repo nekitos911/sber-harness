@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { ChipsInput } from '../components/ChipsInput'
 import { DEFAULT_REWORK } from '../components/board/Rework'
 import { FolderPicker } from '../components/FolderPicker'
-import { ArrowDown, ArrowUp, Check, CircleCheck, Pencil, CircleX, LogIn, Plus, RefreshCw, TriangleAlert, X } from 'lucide-react'
+import { ArrowDown, ArrowUp, Check, CircleCheck, Pencil, CircleX, LogIn, Plus, RefreshCw, Search, TriangleAlert, X } from 'lucide-react'
 import { api, ApiError, errorText, qs, tryApi } from '../api'
 import { setState, toast, useFeature, useStore } from '../store'
 import { adoptSession } from '../lib/actions'
@@ -98,13 +98,10 @@ export function SettingsView() {
   return (
     <Shell>
       <form className="settings" onSubmit={(e) => { e.preventDefault(); if (changes) void save() }}>
-        <div className="settings-layout">
-        <SectionNav sections={[
-          ['set-general', 'Общие'], ['set-gigacode', 'GigaCode'], ['set-orchestration', 'Оркестрация'],
-          ...(form.board ? [['set-board', 'Доска'] as [string, string]] : []), ['set-tracker', 'Трекер'], ['set-git', 'Git'],
-          ...(form.integrations?.pr ? [['set-pr', 'Pull requests'] as [string, string]] : []),
-        ]} />
+        <div className="settings-layout settings-single">
         <div className="settings-body" id="settings-scroll">
+          <BasicSettings form={form} update={update} fieldError={fieldError} main={main} />
+          <AdvancedSettings>
           <GeneralSection form={form} update={update} />
           <AgentSection id={main} form={form} update={update} fieldError={fieldError} primary />
           <OrchestrationSection form={form} update={update} />
@@ -121,6 +118,7 @@ export function SettingsView() {
               </Disclosure>
             </section>
           )}
+          </AdvancedSettings>
         </div>
         </div>
         {(changes > 0 || saveError) && (
@@ -152,6 +150,104 @@ function Shell({ children }: { children: ReactNode }) {
 }
 
 /** A settings row: label and one-line explanation on the left, the control on the right, error under it. */
+/**
+ * «Основное»: what most people set once: the agent (state, sign-in, model, mode), the projects folder, the tracker,
+ * and how the agent runs. Everything else is under «Расширенные настройки».
+ */
+function BasicSettings({ form, update, fieldError, main }: SectionProps & { main: string }) {
+  const labels = useStore((s) => s.agents)
+  const foldersOn = useFeature('folders')
+  const acpOn = useFeature('acp')
+  const a = form.agents[main]
+  const set = (patch: Partial<AgentSettings>) => update({ ...form, agents: { ...form.agents, [main]: { ...a, ...patch } } })
+  const t = form.integrations?.tasks
+  const setT = (patch: NonNullable<NonNullable<Settings['integrations']>['tasks']>) =>
+    update({ ...form, integrations: { ...form.integrations, tasks: { ...t, ...patch } } })
+  const spaces = Array.isArray(t?.space) ? t.space : t?.space ? [t.space] : []
+  const modeLabels = a?.approvalModeLabels ?? {}
+  if (!a) return null
+  return (
+    <section className="settings-section settings-basic" id="set-basic">
+      <h2>Основное</h2>
+      <div className="set-card">
+        <h3>{labels.find((x) => x.id === main)?.label ?? 'GigaCode'}</h3>
+        <AgentStatus id={main} />
+        <div className="set-rows">
+          <Row label="Модель">
+            <ModelPicker variant="field" agentId={main} label="Модель по умолчанию" value={a.model} onChange={(m) => set({ model: m })} placement="bottom-start" emptyText="как в CLI" />
+          </Row>
+          {a.approvalModes.length > 0 && (
+            <Row label="Режим" hint={modeLabels[a.approvalMode ?? '']} error={fieldError('mode')}>
+              <Segmented label="Режим подтверждений" value={a.approvalMode ?? ''} onChange={(m) => set({ approvalMode: m })}
+                options={a.approvalModes.map((m) => ({ value: m, label: modeShort(m), tone: FULL_ACCESS.has(m) ? 'access' : undefined }))} />
+            </Row>
+          )}
+        </div>
+      </div>
+      {foldersOn && form.workspaces !== undefined && (
+        <div className="set-card">
+          <div className="set-rows">
+            <Row label="Папка с проектами" hint="Здесь агент начинает задачу и сам выбирает проект.">
+              <ProjectsFolder value={form.workspaces?.root ?? null} onChange={(root) => update({ ...form, workspaces: { ...form.workspaces, root } })} />
+            </Row>
+          </div>
+        </div>
+      )}
+      {t && (
+        <div className="set-card">
+          <h3>Трекер</h3>
+          <div className="set-rows">
+            <Row label="Импорт задач"><Switch label="Импорт задач из трекера" checked={!!t.enabled} onChange={(v) => setT({ enabled: v })} /></Row>
+            <Row label="Пространства" hint="Enter или запятая: добавить." error={fieldError('space')}>
+              <ChipsInput label="пространство" values={spaces}
+                onChange={(v) => { const up = [...new Set(v.map((x) => x.trim().toUpperCase()).filter(Boolean))]; setT({ space: up.length === 1 ? up[0] : up }) }} />
+            </Row>
+          </div>
+        </div>
+      )}
+      {acpOn && (
+        <div className="set-card">
+          <h3>Как запускать агента</h3>
+          <div className="set-rows">
+            <Row label="Запуск" hint={a.transport === 'acp' ? 'Один процесс на чат: быстрее, ждёт ваших разрешений. Экспериментально.' : 'Новый запуск на каждое сообщение, как gigacode -p.'}>
+              <Segmented label="Как запускать агента" value={a.transport ?? 'headless'} onChange={(v) => set({ transport: v })}
+                options={[{ value: 'headless', label: 'На каждое сообщение' }, { value: 'acp', label: 'Процесс на чат' }]} />
+            </Row>
+          </div>
+        </div>
+      )}
+    </section>
+  )
+}
+
+/** One folded section with everything else, and a search over the row labels inside it. */
+function AdvancedSettings({ children }: { children: ReactNode }) {
+  const [q, setQ] = useState('')
+  const body = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const el = body.current
+    if (!el) return
+    const needle = q.trim().toLowerCase()
+    for (const row of el.querySelectorAll<HTMLElement>('.set-row')) {
+      row.hidden = !!needle && !(row.querySelector('.set-label > span:first-child')?.textContent ?? '').toLowerCase().includes(needle)
+    }
+    for (const sec of el.querySelectorAll<HTMLElement>('.settings-section')) {
+      sec.hidden = !!needle && !sec.querySelector('.set-row:not([hidden])')
+    }
+  }, [q])
+  return (
+    <Disclosure className="settings-advanced" summary={<h2>Расширенные настройки</h2>}>
+      <div ref={body} className="settings-advanced-body">
+        <div className="search settings-search">
+          <Search aria-hidden />
+          <input className="input" type="search" placeholder="Найти настройку" aria-label="Найти настройку" value={q} onChange={(e) => setQ(e.target.value)} />
+        </div>
+        {children}
+      </div>
+    </Disclosure>
+  )
+}
+
 function Row({ label, hint, error, children, wide }: { label: ReactNode; hint?: ReactNode; error?: string; children: ReactNode; wide?: boolean }) {
   return (
     <div className="set-row" data-wide={wide || undefined}>
@@ -958,29 +1054,6 @@ function InstallFile({ id, kind, name, target, title, action }: { id: string; ki
         </div>
       )}
     </div>
-  )
-}
-
-/** Sticky section index with scroll-spy (the section under the top of the scroll area is current). */
-function SectionNav({ sections }: { sections: [string, string][] }) {
-  const [current, setCurrent] = useState(sections[0]?.[0])
-  useEffect(() => {
-    const root = document.getElementById('settings-scroll')
-    if (!root) return
-    const io = new IntersectionObserver((entries) => {
-      const top = entries.filter((e) => e.isIntersecting).sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)[0]
-      if (top) setCurrent(top.target.id)
-    }, { root, rootMargin: '0px 0px -70% 0px' })
-    for (const [id] of sections) { const el = document.getElementById(id); if (el) io.observe(el) }
-    return () => io.disconnect()
-  }, [sections.map(([id]) => id).join()])
-  return (
-    <nav className="settings-nav" aria-label="Разделы настроек">
-      {sections.map(([id, label]) => (
-        <a key={id} href={`#${id}`} aria-current={current === id ? 'true' : undefined}
-          onClick={(e) => { e.preventDefault(); document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' }); setCurrent(id) }}>{label}</a>
-      ))}
-    </nav>
   )
 }
 

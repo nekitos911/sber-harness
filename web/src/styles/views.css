@@ -613,3 +613,17 @@ button.prs-group[aria-expanded="true"] .chev { transform: rotate(90deg); }
 .handoff-preview-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11.5px; color: var(--ink-2); }
 .handoff-preview-text[data-open] { white-space: pre-wrap; overflow-wrap: anywhere; }
 .handoff-preview:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 3px; }
+/* Settings: «Основное» in calm cards, the rest folded under «Расширенные настройки» */
+.settings-single { grid-template-columns: minmax(0, 1fr); }
+.settings-single .settings-body { width: min(820px, 100%); margin: 0 auto; }
+.settings-basic { display: grid; gap: 14px; }
+.set-card { padding: 14px 18px 6px; border: 1px solid var(--rule); border-radius: 12px; background: var(--deck); }
+.set-card > h3 { margin: 0 0 6px; font-size: 13.5px; font-weight: 600; color: var(--ink); }
+.set-card .status-card { margin: 6px 0 4px; }
+.set-card .set-row { border-top-color: var(--rule-soft); }
+.settings-advanced { margin-top: 28px; }
+.settings-advanced-body { display: grid; gap: 8px; padding-top: 8px; }
+.settings-search { width: min(360px, 100%); margin-bottom: 8px; }
+/* one line of hint; the whole of it while the row is hovered or focused */
+.set-hint { display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; }
+.set-row:hover .set-hint, .set-row:focus-within .set-hint { -webkit-line-clamp: unset; }
