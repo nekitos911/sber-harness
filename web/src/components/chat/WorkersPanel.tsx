@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { normPath } from '../../lib/format'
 import { ChevronDown } from 'lucide-react'
 import { tryApi } from '../../api'
 import { openSession, useStore } from '../../store'
@@ -20,7 +21,9 @@ export function WorkersPanel({ sessionId, workers }: { sessionId: string; worker
   const reviewers = all.filter((s) => s.role === 'reviewer' && workers.some((w) => w.id === s.parentId))
   const parent = all.find((s) => s.id === sessionId)
   // Children in another worktree (or persistent ones) are their own orchestrators: a separate group.
-  const elsewhere = workers.filter((w) => !w.virtual && (w.persistent || (!!parent && (w.worktreePath ?? w.cwd) !== (parent.worktreePath ?? parent.cwd))))
+  // its own orchestrator: a persistent child in ANOTHER worktree (one in the same worktree is an ordinary worker)
+  const place = (x: Session) => normPath(x.worktreePath ?? x.cwd)
+  const elsewhere = workers.filter((w) => !w.virtual && !!w.persistent && !!parent && place(w) !== place(parent))
   const own = workers.filter((w) => !w.virtual && !elsewhere.includes(w))
   const inner = workers.filter((w) => w.virtual)
   const [open, setOpen] = useState(true)

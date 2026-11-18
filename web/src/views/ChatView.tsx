@@ -54,6 +54,15 @@ export function ChatView({ id, active }: { id: string; active: boolean }) {
     setWasActive(active)
     if (active) { setMark({ since: loadDraft<number>(seenKey), at: Date.now() }); restored.current = false }
   }
+  // The panel above the composer (workers, banners) grows and shrinks: a chat that follows output stays at the bottom.
+  const bottomRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const el = bottomRef.current
+    if (!el) return
+    const ro = new ResizeObserver(() => { const sc = scroller.current; if (sc && stick.current) sc.scrollTop = sc.scrollHeight })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [session?.id])
   // Sending always goes to the bottom, wherever the user had scrolled.
   useEffect(() => {
     const on = (e: Event) => {
@@ -192,7 +201,7 @@ export function ChatView({ id, active }: { id: string; active: boolean }) {
         </div>
       </div>
 
-      <div className="chat-bottom">
+      <div className="chat-bottom" ref={bottomRef}>
         {!atBottom && (
           <button type="button" className="btn to-bottom" onClick={toBottom}>
             <ArrowDown />
