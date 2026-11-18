@@ -43,7 +43,8 @@ test('profile frontmatter: scalars and a tools list, body = role prompt', () => 
 });
 
 test('worker_run: a nested ephemeral chat with the profile, the caller gets the summary as the tool result', async () => {
-  const caller = await chat('#run java-reviewer Проверь diff #done всё чисто');
+  // a caller that asks (not «Полный доступ»): the plan profile keeps its read-only run
+  const caller = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', cwd: root, approvalMode: 'default', prompt: '#run java-reviewer Проверь diff #done всё чисто' })).body;
   const said = await waitFor(async () => (await messages(caller.id)).find((m) => m.kind === 'assistant' && m.text.includes('worker_run result:')), { timeout: 20000, what: 'tool result' });
   assert.match(said.text, /worker_run result: всё чисто/);
   const child = (await state()).sessions.find((s) => s.parentId === caller.id && s.ephemeral);
@@ -198,7 +199,7 @@ test('read-only sub-agents get a read-only allow-list; the harness marks its non
   assert.deepEqual(['worker_done', 'ask', 'send_message', 'worker_inspect', 'agent', 'worker_start'].map(hint), [true, true, true, true, false, false]);
 });
 
-test('a sub-agent without a mode of its own inherits the caller\'s («Полный доступ» helpers do not ask); a plan profile stays read-only', async () => {
+test('a sub-agent of a «Полный доступ» caller never asks: its own mode and a plan profile give way (read-only said in words)', async () => {
   const caller = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', cwd: root, approvalMode: 'auto', prompt: '#run helper посмотри #done ок' })).body;
   await waitFor(async () => (await messages(caller.id)).some((m) => m.kind === 'assistant' && m.text.includes('worker_run result:')), { timeout: 20000, what: 'helper done' });
   const helper = (await state()).sessions.find((s) => s.parentId === caller.id);
@@ -207,7 +208,9 @@ test('a sub-agent without a mode of its own inherits the caller\'s («Полны
   const strict = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', cwd: root, approvalMode: 'auto', prompt: '#run java-reviewer глянь #done ок' })).body;
   await waitFor(async () => (await messages(strict.id)).some((m) => m.kind === 'assistant' && m.text.includes('worker_run result:')), { timeout: 20000, what: 'reviewer done' });
   const reviewer = (await state()).sessions.find((s) => s.parentId === strict.id);
-  assert.deepEqual([reviewer.approvalMode, reviewer.readOnly], ['default', true], 'the profile\'s plan wins over the caller\'s full access');
+  // the caller's «Полный доступ» wins: no prompts for the person; the profile's «read only» is said in the task instead
+  assert.deepEqual([reviewer.approvalMode, !!reviewer.readOnly], ['auto', false]);
+  assert.match((await messages(reviewer.id)).find((m) => m.kind === 'user').text, /Работай только на чтение/);
 });
 
 test('first-run setup: the person\'s own commands and skills are found; setupDone and the free-text template are saved', async () => {

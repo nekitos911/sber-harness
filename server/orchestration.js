@@ -5,7 +5,7 @@ import path from 'node:path';
 import { CODE_ROOT, expandHome } from './config.js';
 import * as git from './git.js';
 import { jobStep } from './jobs.js';
-import { newId, subagentTitle } from './sessions.js';
+import { FULL_ACCESS_MODES, newId, subagentTitle } from './sessions.js';
 import { launchers } from './launchers.js';
 import { runCheck } from './checks.js';
 
@@ -496,7 +496,13 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
     if (model && grades[model]) model = grades[model]; // a grade name ("review") -> its model id
     if (model && sessions.unavailableModels(agent).has(model)) model = null; // the CLI default instead of a doomed run
     // no mode of its own (argument, profile): the caller's — a «Полный доступ» coordinator's helpers do not ask either
-    let mode = a.approvalMode ?? profile?.meta.approvalMode ?? caller.approvalMode ?? null;
+    // «Полный доступ» of the caller wins: its helpers never ask the person (a read-only profile is told so in words below);
+    // otherwise a mode of its own (argument, profile), else the caller's
+    const callerMode = caller.approvalMode ?? config.agents[caller.agent]?.approvalMode ?? null;
+    const callerFull = FULL_ACCESS_MODES.has(callerMode);
+    const asked = a.approvalMode ?? profile?.meta.approvalMode ?? null;
+    const readOnlyWanted = asked === 'plan';
+    let mode = callerFull ? callerMode : asked ?? callerMode;
     if (mode && agentCfg.approvalModes?.length && !agentCfg.approvalModes.includes(mode)) mode = null;
     // GigaCode's plan mode refuses the harness's own tools («Plan mode is active. The tool "mcp__harness__worker_done"
     // cannot be executed because it modifies the system»): such a sub-agent could never report or ask. «Read only» =
@@ -532,7 +538,8 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
       if (!persistent && (s.worktreePath ?? s.cwd) !== (caller.worktreePath ?? caller.cwd)) sessions.update(s.id, { persistent: true });
       // awaitedBy: the caller waits inside worker_run/agent — a question of this child must reach it there (ask, waitRun)
       sessions.update(s.id, { awaitedBy: caller.id, ...(readOnly ? { readOnly: true } : {}) });
-      sessions.deliver(s.id, { from: caller.id, text: [profile?.body, `## Задание\n${a.spec}`].filter(Boolean).join('\n\n') });
+      const readOnlyNote = callerFull && readOnlyWanted ? 'Работай только на чтение: ничего не создавай и не меняй (кроме отчёта через worker_done).' : null;
+      sessions.deliver(s.id, { from: caller.id, text: [profile?.body, readOnlyNote, `## Задание\n${a.spec}`].filter(Boolean).join('\n\n') });
     } catch (e) {
       // never an orphan: no sub-agent chat or worktree stays behind a failed start
       if (s) sessions.remove(s.id, { force: true });

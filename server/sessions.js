@@ -46,7 +46,7 @@ const tail = (text) => (text ? `\n\nstderr:\n${text.slice(-2000).trim()}` : '');
 const fence = (lines) => `\`\`\`text\n${lines.join('\n')}\n\`\`\``;
 const REGISTRY_POLL_MS = 2000;
 const QUESTION_TOOLS = ['ask_user_question', 'ask_user', 'AskUserQuestion']; // VERIFY the real GigaCode name
-const FULL_ACCESS_MODES = new Set(['auto', 'yolo', 'bypassPermissions']); // «Полный доступ» (as web/src/lib/agents.ts)
+export const FULL_ACCESS_MODES = new Set(['auto', 'yolo', 'bypassPermissions']); // «Полный доступ» (as web/src/lib/agents.ts)
 // confirmed: `GigaCode requires permission to use "run_shell_command", but that permission was declined (...)`
 // What a CLI writes when it refused a call for lack of permission (GigaCode: «requires permission to use "X", but that
 // permission was declined (non-interactive mode cannot prompt for confirmation)»). Never bare words such as «permission»
