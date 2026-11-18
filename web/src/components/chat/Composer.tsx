@@ -77,7 +77,7 @@ export function Composer({ session, active }: { session: Session; active: boolea
     if (!res) return
     update('')
     window.dispatchEvent(new CustomEvent('harness:sent', { detail: session.id })) // the chat scrolls to the bottom
-    if (res.queued) toast('Сообщение в очереди — агент получит его после текущего шага')
+    // queued: the list above the input says so (a toast here covered its «×» on a narrow window)
   }
 
   const stop = () => void tryApi('POST', `/sessions/${session.id}/stop`)

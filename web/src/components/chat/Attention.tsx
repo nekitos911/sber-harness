@@ -159,7 +159,7 @@ export function PermissionCard({ m }: { m: Message }) {
   const headless = p.transport !== 'acp'
   const [busy, setBusy] = useState<string | null>(null)
   const [note, setNote] = useState('')
-  const [rejecting, setRejecting] = useState(false) // the note field shows after the first «reject» click
+  const [noteOpen, setNoteOpen] = useState(false) // «Добавить пояснение»: before the decision, never instead of it
   const rejectRef = useRef<HTMLButtonElement>(null)
   const { icon, text } = actionLine(p.tool, p.input)
   const who = from ? `субагент ${subTitle(from.title)?.[0] ?? from.title}: ` : ''
@@ -222,13 +222,14 @@ export function PermissionCard({ m }: { m: Message }) {
             className={isReject(o) ? 'btn-outline' : undefined}
             busy={busy === o.id}
             disabled={busy !== null && busy !== o.id}
-            onClick={() => { if (isReject(o) && !rejecting) { setRejecting(true); return } void choose(o) }} // «why not» first, then it goes
+            onClick={() => void choose(o)}
           >
             {headless ? HEADLESS_LABEL(o) : optionLabel(o)}
           </Button>
         ))}
       </div>
-      {rejecting && (
+      {options.some(isReject) && !noteOpen && <button type="button" className="link-btn perm-note-open" onClick={() => setNoteOpen(true)}>Добавить пояснение к отказу</button>}
+      {noteOpen && (
         <input autoFocus className="input perm-note" aria-label="Комментарий к запрету" placeholder="Почему нет или что сделать вместо (необязательно)" value={note} onChange={(e) => setNote(e.target.value)} />
       )}
     </section>

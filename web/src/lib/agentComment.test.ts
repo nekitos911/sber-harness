@@ -1,7 +1,7 @@
 // Run: node --test web/src/lib/agentComment.test.ts
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { commentMessage, commentTargets, pathFor } from './agentComment.ts'
+import { commentMessage, commentTargets, pathFor, within } from './agentComment.ts'
 
 const chat = (id: string, cwd: string, lastActivityAt: number, extra = {}) => ({ id, kind: 'chat', cwd, lastActivityAt, ...extra })
 
@@ -19,6 +19,10 @@ test('targets: chats that see the file (their folder, an added folder, the proje
   ]
   assert.deepEqual(commentTargets(list, file, 'open').map((s) => s.id), ['open', 'extra', 'root', 'here'])
   assert.deepEqual(commentTargets(list, file, null).map((s) => s.id), ['extra', 'root', 'here', 'open'])
+  // from a worktree: its own chats before a projects-root one that happens to see the file
+  assert.deepEqual(commentTargets(list, file, null, 'C:\\Projects\\svc').map((s) => s.id), ['here', 'open', 'extra', 'root'])
+  assert.equal(within('C:\\Projects\\svc2', 'c:/projects/svc'), false, 'svc2 is not inside svc')
+  assert.equal(within('C:\\Projects\\svc\\a', 'c:/projects/svc/'), true)
 })
 
 test('path as the chat sees it: relative inside its folder (any case, any slash), absolute otherwise', () => {

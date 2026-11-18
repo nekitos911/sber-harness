@@ -17,7 +17,8 @@ export function flowState(f: FlowInput): { steps: { label: string; state: 'done'
   const all = [
     { label: 'Коммит', done: !f.changed },
     { label: 'Push', done: pushed },
-    ...(f.onBase ? [] : [{ label: 'PR', done: !!f.pr }, { label: 'Влит', done: f.pr?.state === 'merged' }]),
+    // an open PR is «На ревью» until the merge is confirmed: a lit «Влит» read as merged
+    ...(f.onBase ? [] : [{ label: 'PR', done: !!f.pr }, { label: f.pr?.state === 'open' ? 'На ревью' : 'Влит', done: f.pr?.state === 'merged' }]),
   ]
   const current = all.findIndex((s) => !s.done) // the first step not done yet
   const steps = all.map((s, i) => ({ label: s.label, state: (s.done ? 'done' : i === current ? 'now' : 'later') as 'done' | 'now' | 'later' }))

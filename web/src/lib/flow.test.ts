@@ -12,7 +12,7 @@ test('a feature branch walks Коммит → Push → PR → Влит; the firs
   assert.deepEqual(view({ ...base, upstream: false }), ['Коммит:done Push:now PR:later Влит:later', 'push'], 'never pushed')
   assert.deepEqual(view(base), ['Коммит:done Push:done PR:now Влит:later', 'create-pr'])
   assert.deepEqual(view({ ...base, prEnabled: false })?.[1], 'pr-off')
-  assert.deepEqual(view({ ...base, pr: { state: 'open' } }), ['Коммит:done Push:done PR:done Влит:now', 'review'])
+  assert.deepEqual(view({ ...base, pr: { state: 'open' } }), ['Коммит:done Push:done PR:done На ревью:now', 'review'], 'open: not «Влит» yet')
   assert.deepEqual(view({ ...base, pr: { state: 'merged' } }), ['Коммит:done Push:done PR:done Влит:done', 'merged'])
   assert.equal(view({ ...base, pr: { state: 'declined' } })?.[1], 'declined')
   assert.equal(view({ ...base, changed: 1, pr: { state: 'open' } })?.[1], 'commit', 'a fix after review: commit again first')

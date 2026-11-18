@@ -160,9 +160,11 @@ export function ChangesTab({ cwd }: { cwd: string }) {
   const createPr = () => openDialog({ kind: 'pr', cwd, base: suggest?.pr.base ?? undefined })
 
   // the primary action follows the state: commit the selection, everything, or push what is ahead
-  const mode: 'selected' | 'all' | 'push' = staged.length ? 'selected' : files.length || !status.ahead ? 'all' : 'push'
+  // a branch never pushed (no upstream) is published by the main button too — not hidden under the arrow
+  const unpublished = !status.upstream && !!branch && branch !== suggest?.pr.base
+  const mode: 'selected' | 'all' | 'push' = staged.length ? 'selected' : files.length || (!status.ahead && !unpublished) ? 'all' : 'push'
   const primaryLabel = busy === 'commit' ? 'Коммит…' : busy === 'push' ? 'Push…'
-    : mode === 'selected' ? `Закоммитить выбранные (${staged.length})` : mode === 'push' ? `Push ↑${status.ahead}` : 'Закоммитить всё'
+    : mode === 'selected' ? `Закоммитить выбранные (${staged.length})` : mode === 'push' ? (unpublished ? 'Опубликовать ветку' : `Push ↑${status.ahead}`) : 'Закоммитить всё'
   const primaryDisabled = !!busy || gen.running || (mode === 'push' ? false : !files.length || !title)
   const primary = () => (mode === 'push' ? void push() : void commit())
   const splitItems: MenuItem[] = [
@@ -418,7 +420,7 @@ function FlowStrip({ cwd, changed, ahead, upstream, branch, base, pr, prEnabled,
   const cleanup = place && !place.main ? { label: 'Убрать дерево…', run: () => openDialog({ kind: 'wt-delete', workspaceId: place.ws, path: cwd }) } : undefined
   const next: { text: string; action?: { label: string; run: () => void } } = {
     // review first: the diff is one click away, the commit button right below does the rest
-    commit: { text: `проверить ${changed} ${plural(changed, 'файл', 'файла', 'файлов')} и закоммитить`, action: { label: 'Посмотреть изменения', run: () => openTab({ kind: 'diff', cwd, path: null }) } },
+    commit: { text: `проверить ${changed} ${plural(changed, 'файл', 'файла', 'файлов')} и закоммитить`, action: { label: 'Посмотреть изменения', run: () => { openTab({ kind: 'diff', cwd, path: null }); setState({ panelOverlay: false }) } } }, // a narrow window: the overlay must not cover the diff
     push: { text: ahead ? `отправить ${ahead} ${plural(ahead, 'коммит', 'коммита', 'коммитов')} в origin` : 'отправить ветку в origin' },
     pushed: { text: 'всё отправлено' },
     'create-pr': { text: 'открыть пулл-реквест', action: { label: 'Создать PR', run: onCreatePr } },

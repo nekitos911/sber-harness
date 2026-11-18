@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { Send } from 'lucide-react'
 import { tryApi } from '../api'
 import { toast, useStore, wtKey } from '../store'
-import { commentMessage, commentTargets, pathFor } from '../lib/agentComment'
+import { commentMessage, commentTargets, pathFor, within } from '../lib/agentComment'
 import { newChat } from '../lib/actions'
 import { Button, Select } from './ui'
 
@@ -18,13 +18,16 @@ export function AgentComment({ cwd, path, from, to, snippet, onDone }: {
   const sessions = useStore((s) => s.sessions)
   const active = useStore((s) => s.wt[wtKey(cwd)]?.active ?? null)
   const file = `${cwd.replace(/[\\/]+$/, '')}/${path}`
-  const targets = useMemo(() => commentTargets(sessions, file, active?.startsWith('s:') ? active.slice(2) : null), [sessions, file, active])
-  const [target, setTarget] = useState<string>(() => targets[0]?.id ?? NEW)
+  const openId = active?.startsWith('s:') ? active.slice(2) : null
+  const targets = useMemo(() => commentTargets(sessions, file, openId, cwd), [sessions, file, openId, cwd])
+  // preselected only when it is this worktree's chat (or the open one); otherwise the person picks — no silent detour
+  const own = targets[0] && (targets[0].id === openId || within(targets[0].cwd, cwd))
+  const [target, setTarget] = useState<string>(() => (own ? targets[0].id : targets.length ? '' : NEW))
   const [note, setNote] = useState('')
   const [busy, setBusy] = useState(false)
 
   const send = async () => {
-    if (!note.trim() || busy) return
+    if (!note.trim() || busy || !target) return
     setBusy(true)
     const chat = targets.find((s) => s.id === target)
     const text = commentMessage({ path: chat ? pathFor(chat.cwd, file) : path, from, to, snippet, note })
@@ -51,11 +54,11 @@ export function AgentComment({ cwd, path, from, to, snippet, onDone }: {
       />
       <div className="agent-comment-bar">
         <span className="muted">в</span>
-        <Select size="sm" label="Какому чату отправить" value={target} onChange={setTarget}
+        <Select size="sm" label="Какому чату отправить" value={target} onChange={setTarget} placeholder="Выберите чат"
           options={[...targets.map((s) => ({ value: s.id, label: s.title || s.id, hint: s.status === 'running' ? 'работает — в очередь' : undefined })), { value: NEW, label: 'Новый чат' }]} />
         <span className="grow" />
         <Button size="sm" variant="ghost" onClick={onDone}>Отмена</Button>
-        <Button size="sm" variant="primary" type="submit" icon={<Send />} busy={busy} disabled={!note.trim()}>Отправить</Button>
+        <Button size="sm" variant="primary" type="submit" icon={<Send />} busy={busy} disabled={!note.trim() || !target}>Отправить</Button>
       </div>
     </form>
   )
