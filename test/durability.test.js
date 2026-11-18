@@ -23,7 +23,7 @@ after(() => rmrf(root));
 
 const SLOW = 'slow '.repeat(20);
 const overrides = {
-  defaultAgent: 'mock', mcpServersFrom: null, worktreeRoot: null,
+  defaultAgent: 'mock', mcpServersFrom: null, worktreeRoot: null, history: { adopt: false },
   agents: { mock: { modelsDiscovery: null, agentsDir: path.join(root, 'профили') } },
   orchestration: { reviewMode: 'harness', review: { promptTemplate: '#slow #reviewer round={round} approve-at=1' } },
 };

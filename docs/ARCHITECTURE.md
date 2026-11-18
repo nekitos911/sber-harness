@@ -784,7 +784,7 @@ Session role `reviewer`; reviewers are nested under their worker in the UI; thei
   `identity: { found, source }` (the shim the identity came from; never the value).
 
 - Sources, merged and deduped by id: (1) **discovered** — the harness runs the agent CLI headless with
-  `agents.<id>.modelsDiscovery.prompt` (gigacode default `"/models"`) in `<dataDir>/chats/discovery`, takes the final
+  `agents.<id>.modelsDiscovery.prompt` (gigacode default `"/models"`) in `<dataDir>/chats/helper/discovery` (no CLI chat record), takes the final
   text (`result` / assistant text) and extracts model ids with a tolerant parser (markdown table / list / plain lines;
   token = letters/digits/`.`/`-`, contains a digit and a `-`, 4–80 chars; optional context like `262k`/`128k` nearby) or
   with `modelsDiscovery.pattern` (regex with a capture group) when set; result cached in `db.agentMeta[agent].catalog =
@@ -1388,7 +1388,15 @@ The user wants dialogs started in the GigaCode CLI to be continuable in the UI a
   into the harness transcript (`cliImportedAt`) and continues with `--resume <id>` as any chat. Later CLI-side activity
   on an idle adopted session (record mtime newer than the harness transcript's last message) appends the new record
   messages before the next harness turn.
-- Feature flag `cli-adopt`; config `history.adopt: true`, `history.adoptDays: 14`. `/api/history` (all/per-folder) stays
+- Implementation (server/adopt.js): a record's folder = its explicit cwd, else the folder whose sha256 is its projectHash
+  among registered projects, their worktrees, the projects root's folders and session cwds (unknown → not adopted). Also
+  skipped: a chat whose only user message is a bare slash command (/clear). The transcript is the record's messages
+  imported with stable ids (re-imported while no harness turn ran); after harness turns the CLI's own recording of them
+  (≤ 15 s after the turn end) only moves the counter, later record messages are appended (`cliRecordCount`,
+  `cliRecordAt`, `cliImportedAt`). The harness's helper runs (model discovery, commit/PR messages, probes) run in
+  `<dataDir>/chats/helper/<kind>/<agent>` with their own settings `chatRecording: false`: they leave no CLI record.
+- Feature flag `cli-adopt`; config `history.adopt: true`, `history.adoptDays: 14`. Both in /api/settings as
+  `history: { adopt, adoptDays }` (1..365). `/api/history` (all/per-folder) stays
   for the «История» tab (older chats).
 
 ## Handoff: one input, the orchestrator decides (the main scenario)

@@ -19,7 +19,7 @@ fs.copyFileSync(path.join(CODE_ROOT, 'harness.config.json'), configFile);
 after(() => rmrf(root));
 
 async function harness(dataDir, extra = {}) {
-  const srv = await startServer({ dataDir, configFile, port: 0, configOverrides: { defaultAgent: 'mock', mcpServersFrom: null, agents: { mock: { modelsDiscovery: null } }, ...extra } });
+  const srv = await startServer({ dataDir, configFile, port: 0, configOverrides: { defaultAgent: 'mock', mcpServersFrom: null, history: { adopt: false }, agents: { mock: { modelsDiscovery: null } }, ...extra } });
   const api = async (method, p, body) => {
     const res = await fetch(srv.url + p, { method, headers: { 'x-harness-token': srv.token, 'content-type': 'application/json' }, body: body && JSON.stringify(body) });
     return { status: res.status, body: await res.json() };

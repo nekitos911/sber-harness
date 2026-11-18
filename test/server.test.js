@@ -198,7 +198,7 @@ test('restart: an interrupted chat turn becomes idle with a system message', asy
     autoReport: false, queued: 2, preview: '', command: null, pid: 123, createdAt: 1, lastActivityAt: 1,
   };
   fs.writeFileSync(path.join(dataDir, 'db.json'), JSON.stringify({ seq: { task: 0 }, tasks: [], workspaces: [], notifications: [], sessions: [old] }));
-  const srv = await startServer({ dataDir, port: 0, configOverrides: { agents: { mock: { modelsDiscovery: null } } } });
+  const srv = await startServer({ dataDir, port: 0, configOverrides: { history: { adopt: false }, agents: { mock: { modelsDiscovery: null } } } });
   try {
     const get = (p) => fetch(srv.url + p, { headers: { 'x-harness-token': srv.token } }).then((r) => r.json());
     const s = (await get('/api/state')).sessions[0];
@@ -347,13 +347,13 @@ test('ops: one harness per data dir, a clear message for a busy port; models in 
     try {
       const port = await new Promise((resolve) => other.stdout.once('data', (d) => resolve(Number(String(d).trim()))));
       fs.writeFileSync(path.join(busy, 'server.json'), JSON.stringify({ url: `http://127.0.0.1:${port}`, pid: other.pid }));
-      await assert.rejects(startServer({ dataDir: busy, port: 0, configOverrides: { mcpServersFrom: null } }), /уже работает с/);
+      await assert.rejects(startServer({ dataDir: busy, port: 0, configOverrides: { mcpServersFrom: null, history: { adopt: false } } }), /уже работает с/);
     } finally {
       other.kill();
     }
     // a live pid that is no harness (reused pid, crashed harness): the stale lock is taken over
     fs.writeFileSync(path.join(busy, 'server.json'), JSON.stringify({ url: 'http://127.0.0.1:1', pid: process.ppid }));
-    const taken = await startServer({ dataDir: busy, port: 0, configOverrides: { mcpServersFrom: null, agents: { mock: { modelsDiscovery: null } } } });
+    const taken = await startServer({ dataDir: busy, port: 0, configOverrides: { mcpServersFrom: null, history: { adopt: false }, agents: { mock: { modelsDiscovery: null } } } });
     assert.equal(JSON.parse(fs.readFileSync(path.join(busy, 'server.json'), 'utf8')).pid, process.pid);
     await taken.close();
     fs.writeFileSync(path.join(busy, 'server.json'), JSON.stringify({ url: 'http://127.0.0.1:1', pid: 999999 }));

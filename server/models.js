@@ -1,6 +1,6 @@
 // Model catalogue that survives renames (docs/ARCHITECTURE.md): ids are DISCOVERED by asking the agent CLI itself
 // (agents.<id>.modelsDiscovery.prompt, gigacode "/models"), merged with ids seen in system/init events and with the
-// config catalogue (labels/descriptions/order only). Discovery runs headless in <dataDir>/chats/discovery/<agent>,
+// config catalogue (labels/descriptions/order only). Discovery runs headless in <dataDir>/chats/helper/discovery/<agent>,
 // one at a time per agent, in the background; failures are stored, never fatal.
 import fs from 'node:fs';
 import path from 'node:path';

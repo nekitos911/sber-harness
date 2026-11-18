@@ -18,6 +18,7 @@ export function demoOverrides(root, dataDir) {
   return {
     defaultAgent: 'mock',
     mcpServersFrom: null,
+    history: { adopt: false },
     workspaces: { root: demoProjects(dataDir), repos: [] },
     mcpServers: { onework: fixtures('onework'), sourcecontrol: fixtures('sourcecontrol') },
     integrations: {

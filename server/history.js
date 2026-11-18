@@ -176,6 +176,14 @@ export function createHistory(config) {
       }
       return out.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
     },
+    /** Every record of every agent with history updated since `sinceMs` → [{ agent, rec }] (CLI chat adoption). */
+    async recent(sinceMs) {
+      const out = [];
+      for (const agent of agentsWithHistory()) {
+        for (const rec of await records(agent)) if ((rec.updatedAt || 0) >= sinceMs) out.push({ agent, rec });
+      }
+      return out;
+    },
     async get(agent, id) {
       if (!config.agents[agent]) fail(404, `агент ${agent} не найден`);
       return (await records(agent)).find((r) => r.id === id) || fail(404, `сессия истории ${id} не найдена`);

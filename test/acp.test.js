@@ -24,7 +24,7 @@ async function harness() {
   const srv = await startServer({
     dataDir, configFile, port: 0,
     configOverrides: {
-      defaultAgent: 'mock', mcpServersFrom: null, agents: {
+      defaultAgent: 'mock', mcpServersFrom: null, history: { adopt: false }, agents: {
         mock: { modelsDiscovery: null },
         acpmock: { launcher: 'mock', label: 'ACP mock', transport: 'acp', command: [process.execPath, path.join(CODE_ROOT, 'scripts', 'mock-acp-agent.js')], approvalMode: 'auto', approvalModes: ['default', 'auto'], modelsDiscovery: { prompt: '/models', maxAgeHours: 24 } },
         // the same mock, unloaded after 0.4 s idle

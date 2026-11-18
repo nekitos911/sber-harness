@@ -216,7 +216,8 @@ function mcpExclusion(agentCfg, rest) {
   return { [head]: obj };
 }
 
-export function sessionSettings({ agentCfg, harnessMcp, agentMcpServers }) {
+/** chatRecording false: the harness's own helper runs (model discovery, commit messages) leave no CLI chat record. */
+export function sessionSettings({ agentCfg, harnessMcp, agentMcpServers, chatRecording = true }) {
   const { permissions, agents, mcpServers, ...rest } = agentCfg.settings || {};
   return {
     ...rest,
@@ -224,7 +225,7 @@ export function sessionSettings({ agentCfg, harnessMcp, agentMcpServers }) {
     ...(agentCfg.autoSandbox ? { tools: { ...rest.tools, sandbox: agentCfg.autoSandbox } } : {}),
     ...mcpExclusion(agentCfg, rest),
     agents: { ...agents, modelGrades: agents?.modelGrades || {}, allowedGrades: agents?.allowedGrades || [] },
-    chatRecording: true,
+    chatRecording,
     mcpServers: {
       ...(agentCfg.inheritUserMcp ? userMcpServers(agentCfg.userSettingsPath) : {}),
       ...agentMcpServers,

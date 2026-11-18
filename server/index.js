@@ -23,6 +23,7 @@ import { createModelCatalog, scanModelRefs } from './models.js';
 import { readSdd } from './sdd.js';
 import { generateMessage } from './generate.js';
 import { resolveReleases, releasePlan } from './releases.js';
+import { createAdopter } from './adopt.js';
 import { createHistory, historyMessages } from './history.js';
 import { runJob, jobStep, JOB_ID_RE, holdJob } from './jobs.js';
 import { DEMO_PORT, demoOverrides, seedDemoRepos, seedDemoTasks } from './demo.js';
@@ -40,7 +41,7 @@ const NO_BUILD_HTML = '<!doctype html><meta charset="utf-8"><title>Harness</titl
 const GRADES = ['default', 'fast', 'review', 'explore'];
 // optional API groups this server implements (docs/ARCHITECTURE.md "Feature flags"); a flag ships with its route
 export const FEATURES = ['branches', 'fs-search', 'pr-status', 'agent-info', 'models-refresh', 'tracker-links', 'board-columns', 'review-loop',
-  'subagents', 'virtual-sessions', 'worker-run', 'skills-install', 'demo', 'worktree-meta', 'open', 'sdd', 'health', 'folders', 'include-dirs', 'questions', 'permissions', 'activity', 'rework', 'fs-raw', 'tracker-import', 'pr-decline', 'task-suggest', 'recovery', 'acp', 'worktree-lazy', 'cli-history', 'prs-mine', 'git-generate', 'git-via-agent', 'git-stage', 'handoff', 'release-resolve'];
+  'subagents', 'virtual-sessions', 'worker-run', 'skills-install', 'demo', 'worktree-meta', 'open', 'sdd', 'health', 'folders', 'include-dirs', 'questions', 'permissions', 'activity', 'rework', 'fs-raw', 'tracker-import', 'pr-decline', 'task-suggest', 'recovery', 'acp', 'worktree-lazy', 'cli-history', 'prs-mine', 'git-generate', 'git-via-agent', 'git-stage', 'handoff', 'release-resolve', 'cli-adopt'];
 // titles of operations the UI may follow by sending x-job-id (WS { t: 'job' } frames)
 const JOB_TITLES = {
   'POST /api/tasks/sync': 'Синхронизация с трекером',
@@ -389,6 +390,7 @@ export async function startServer(opts = {}) {
       },
       session: { stallSec: config.session.stallSec },
       sessions: { autoArchiveDays: config.sessions.autoArchiveDays },
+      history: { adopt: config.history.adopt !== false, adoptDays: config.history.adoptDays },
       // «Разрешать всегда в этом проекте»: allow-list patterns per workspace id (stored in the db, not the config)
       permissions: { allowedToolsByWorkspace: db.prefs?.allowedToolsByWorkspace || {} },
       recovery: { autoResume: !!config.recovery.autoResume, message: config.recovery.message },
@@ -684,6 +686,12 @@ export async function startServer(opts = {}) {
       const d = body.sessions?.autoArchiveDays ?? 0; // null = off, stored as 0
       if (!isObj(body.sessions) || Object.keys(body.sessions).some((k) => k !== 'autoArchiveDays') || !Number.isInteger(d) || d < 0) fail(400, 'sessions: { autoArchiveDays: целое число ≥ 0 или null (0/null — выключено) }');
       patch.sessions = { autoArchiveDays: d };
+    }
+    if (body.history !== undefined) {
+      const hh = body.history;
+      const ok = isObj(hh) && Object.entries(hh).every(([k, v]) => (k === 'adopt' && typeof v === 'boolean') || (k === 'adoptDays' && Number.isInteger(v) && v >= 1 && v <= 365));
+      if (!ok) fail(400, 'history: { adopt: true/false, adoptDays: 1..365 }');
+      patch.history = hh;
     }
     if (body.permissions !== undefined) {
       const byWs = body.permissions?.allowedToolsByWorkspace;
@@ -1476,6 +1484,12 @@ export async function startServer(opts = {}) {
 
   // ---- the agent CLI's own recorded chats (sessions started outside the harness) ----
   const history = createHistory(config);
+  // CLI chats are ordinary chats: adopted on start, every 60 s while the UI is open, and on demand
+  const adopter = createAdopter({ config, store, sessions, history });
+  route('POST', '/api/history/adopt', () => adopter.adopt());
+  setImmediate(() => adopter.adopt().catch((e) => console.error('[adopt]', e.message)));
+  const adoptTimer = setInterval(() => { if (wss.clients.size > 0) adopter.adopt().catch(() => {}); }, 60000);
+  adoptTimer.unref?.();
   const linkedFor = (agent, id) => db.sessions.find((s) => s.kind === 'chat' && !s.virtual && s.agent === agent && s.externalSessionId === id)?.id ?? null;
   const historyPaths = async (cwd) => [path.resolve(cwd), (await git.worktrees(cwd).catch(() => []))[0]?.path ?? null];
   route('GET', '/api/history', async ({ query }) => history.list(await historyPaths(cwdOf(query)), linkedFor));
@@ -1730,6 +1744,7 @@ export async function startServer(opts = {}) {
       clearInterval(syncTimer);
       clearInterval(prTimer);
       clearInterval(sddTimer);
+      clearInterval(adoptTimer);
       clearInterval(linkTimer);
       await catalog.close();
       sessions.close();

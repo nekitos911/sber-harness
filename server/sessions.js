@@ -655,6 +655,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
   }
 
   function runTurnEnded(s, r, stopped) {
+    if (s.origin === 'cli') s.cliSyncAfter = Date.now() + 15000; // the CLI records this turn too: not «CLI-side activity»
     try {
       // the user's own follow-up (not the first turn, every message from the user): no escalation to the user
       const userFollowUp = r.turn > 1 && !!r.lastItems?.length && r.lastItems.every((it) => it.from === 'user');
@@ -684,6 +685,13 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
       updateMessage(x, m);
     }
     if (x.waitingFor) x.waitingFor = null;
+  }
+
+  /** An adopted CLI chat archived or deleted is never adopted again (db.cliIgnored). */
+  function ignoreCli(s) {
+    if (s.origin !== 'cli' || !s.externalSessionId) return;
+    db.cliIgnored = [...new Set([...(db.cliIgnored || []), s.externalSessionId])];
+    store.save();
   }
 
   /** A built-in sub-agent's chat is archived once it settles (orchestration.subagentRetention "archive"). */
@@ -735,6 +743,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     // re-queued items (their process never started) are in the transcript already
     const userMsgs = retry ? [] : items.filter((it) => !it.recorded).map((it) => addMessage(s, { kind: 'user', text: it.text, from: it.from, ...(it.options ? { options: it.options } : {}) }));
     Object.assign(s, { status: 'running', errorKind: null, queued: 0, lastActivityAt: Date.now(), lastEventAt: null, stalled: false, turnClosing: false });
+    if (s.origin === 'cli' && !s.cliImportedAt) s.cliImportedAt = Date.now(); // an adopted CLI chat: the harness took over
     hooks.turnStarted?.(s);
     const approvalOnce = s.approvalOnce; // an edit tool allowed once in plan/default mode: this turn only
     delete s.approvalOnce;
@@ -1428,6 +1437,7 @@ ${note.trim()}` : text });
         Object.assign(x, { archived, archivedAt: archived ? Date.now() : null });
         if (archived) cancelPending(x);
         if (archived) hooks.sessionGone?.(x, 'archived');
+        if (archived) ignoreCli(x);
         emit(x);
       }
       return s;
@@ -1461,6 +1471,7 @@ ${note.trim()}` : text });
       if (!force && ((r0.running && !r0.closedEarly) || r0.pty)) fail(409, 'сессия работает — остановите её или удалите с ?force=1');
       for (const v of db.sessions.filter((x) => x.virtual && x.parentId === sid)) api.remove(v.id, { force: true });
       hooks.sessionGone?.(s, 'removed');
+      ignoreCli(s);
       const r = runtime(sid);
       clearInterval(r.registryTimer);
       r.handle?.stop();
@@ -1557,9 +1568,9 @@ ${note.trim()}` : text });
     acpPrompt: (agent, text) => acp.helperPrompt(agent, text),
 
     /** A CLI history transcript as the past of a harness chat (marked imported; turn 0). */
-    importMessages(sid, msgs) {
+    importMessages(sid, msgs, turn = 0) {
       get(sid);
-      for (const m of msgs) store.putMessage(sid, { from: null, tool: null, ...m, sessionId: sid, turn: 0, imported: true });
+      for (const m of msgs) store.putMessage(sid, { from: null, tool: null, ...m, sessionId: sid, turn, imported: true });
     },
 
     /**

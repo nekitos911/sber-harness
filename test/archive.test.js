@@ -64,7 +64,7 @@ test('auto-archive on start: only idle, unwaited, uninterrupted sessions without
   fs.writeFileSync(path.join(dataDir, 'db.json'), JSON.stringify({ seq: { task: 1 }, tasks, workspaces: [], notifications: [], sessions }));
   const configFile = path.join(root, 'config.json');
   fs.copyFileSync(path.join(CODE_ROOT, 'harness.config.json'), configFile);
-  const srv = await startServer({ dataDir, configFile, port: 0, configOverrides: { mcpServersFrom: null, terminal: { autoRespawn: false }, sessions: { autoArchiveDays: 7 }, agents: { mock: { modelsDiscovery: null } } } });
+  const srv = await startServer({ dataDir, configFile, port: 0, configOverrides: { mcpServersFrom: null, history: { adopt: false }, terminal: { autoRespawn: false }, sessions: { autoArchiveDays: 7 }, agents: { mock: { modelsDiscovery: null } } } });
   try {
     const st = await (await fetch(`${srv.url}/api/state`, { headers: { 'x-harness-token': srv.token } })).json();
     const archived = st.sessions.filter((s) => s.archived).map((s) => s.id).sort();

@@ -43,6 +43,9 @@ test('commit message: the agent writes it (plan mode, quick args, no chat); the 
   assert.deepEqual([r.body.title, r.body.body], [`${task.id} PROJ-1 Тестовое сообщение`, 'Что и зачем.']);
   assert.equal(typeof r.body.ms, 'number');
   assert.equal((await h.api('GET', '/api/state')).body.sessions.length, before, 'no chat appears');
+  // its own settings: no CLI chat record (GigaCode records every headless run otherwise), cwd in the helper folder
+  const settings = JSON.parse(fs.readFileSync(path.join(h.dataDir, 'chats', 'helper', 'generate', 'mock', 'settings.json'), 'utf8'));
+  assert.equal(settings.chatRecording, false);
   const run = helperRuns().at(-1);
   assert.ok(run.argv.includes('--safe-mode'));
   assert.equal(run.argv[run.argv.indexOf('--approval-mode') + 1], 'plan');

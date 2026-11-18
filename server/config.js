@@ -53,6 +53,7 @@ export function loadConfig({ root = CODE_ROOT, overrides = {}, dataDir, configFi
   cfg.git = { defaultBase: 'main', excludeFromCommit: ['.superpowers/'], networkTimeoutSec: 120, generateMessages: true, generateTimeoutSec: 120, via: 'agent', ...cfg.git };
   cfg.session = { idleWindowSec: 90, stallSec: 300, ...cfg.session };
   cfg.sessions = { autoArchiveDays: 7, ...cfg.sessions };
+  cfg.history = { adopt: true, adoptDays: 14, ...cfg.history }; // CLI chats become ordinary chats (server/adopt.js)
   cfg.terminal = { autoRespawn: true, ...cfg.terminal };
   cfg.recovery = { autoResume: false, message: 'Был перезапуск, твой предыдущий ход прервался. Продолжи с того места, где остановился — сначала проверь текущее состояние рабочего дерева.', ...cfg.recovery };
   cfg.orchestration = { workerMayCommit: false, reviewMode: 'builtin', subagents: 'harness', subagentRetention: 'archive', maxSubagentDepth: 1, ...cfg.orchestration };

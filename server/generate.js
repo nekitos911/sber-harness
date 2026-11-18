@@ -103,7 +103,8 @@ export async function generateMessage({ config, store, getUrl, tasks, suggest, c
   const model = agentCfg.settings?.agents?.modelGrades?.fast || null;
   const timeoutMs = (Number(config.git.generateTimeoutSec) || 120) * 1000;
   jobStep(`${label} пишет сообщение`);
-  const once = (extraArgs) => runHelper({ config, store, getUrl, agent, kind: 'generate', prompt, cwd, extraArgs, approvalMode: 'plan', model, timeoutMs });
+  // the prompt carries the changes: the run needs no repository folder (and records no CLI chat there)
+  const once = (extraArgs) => runHelper({ config, store, getUrl, agent, kind: 'generate', prompt, extraArgs, approvalMode: 'plan', model, timeoutMs });
   let out = await once(quick);
   if (quick.length && !out.res.eventCount && !out.res.timedOut && !out.res.stopped) {
     // the quick args made the CLI fail before any output: remembered, and this run goes without them

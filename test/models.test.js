@@ -76,7 +76,7 @@ test('"model not present" failure: pick-model action and an automatic re-discove
     const err = await waitFor(async () => (await h.api('GET', `/api/sessions/${s.id}/messages`)).body.find((m) => m.kind === 'error'), { what: 'failure' });
     assert.equal(err.action, 'pick-model');
     assert.match(err.text, /not present in the current backend catalogue/);
-    await waitFor(() => fs.existsSync(path.join(h.dataDir, 'chats', 'discovery', 'mock', 'discovery.log')), { what: 'automatic discovery' });
+    await waitFor(() => fs.existsSync(path.join(h.dataDir, 'chats', 'helper', 'discovery', 'mock', 'discovery.log')), { what: 'automatic discovery' });
     const info = await waitFor(async () => {
       const i = (await h.api('GET', '/api/agents/mock/info')).body;
       return i.catalog.at ? i : null;

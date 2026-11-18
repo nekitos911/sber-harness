@@ -1,5 +1,6 @@
 // One-off headless runs of an agent CLI outside any chat (model discovery, commit/PR messages): no session, no harness
-// preamble, nothing in the chat list. The run's files live in <dataDir>/chats/<kind>/<agent> (a system folder).
+// preamble, nothing in the chat list, no CLI chat record (chatRecording false). The run's cwd and files are
+// <dataDir>/chats/helper/<kind>/<agent> (a system folder the CLI history adoption never takes).
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
@@ -13,13 +14,13 @@ const fail = (status, message) => { throw Object.assign(new Error(message), { st
 /**
  * @returns {Promise<{ text, resultText, res }>} text = the streamed answer, resultText = the result event's text,
  *   res = runTurn's result (error, timedOut, eventCount, stderrTail, ...).
- * o = { config, store, getUrl, agent, kind, prompt, cwd?, extraArgs?, approvalMode?, model?, timeoutMs?, logName?, onHandle? }
+ * o = { config, store, getUrl, agent, kind, prompt, extraArgs?, approvalMode?, model?, timeoutMs?, logName?, onHandle }
  */
-export function runHelper({ config, store, getUrl, agent, kind, prompt, cwd = null, extraArgs = [], approvalMode = null, model = null, timeoutMs = 0, logName = `${kind}.log`, onHandle }) {
+export function runHelper({ config, store, getUrl, agent, kind, prompt, extraArgs = [], approvalMode = null, model = null, timeoutMs = 0, logName = `${kind}.log`, onHandle }) {
   const agentCfg = config.agents[agent] || fail(404, `агент ${agent} не найден`);
   const launcher = launchers[agentCfg.launcher] || fail(400, `неизвестный лаунчер «${agentCfg.launcher}»`);
   const exe = launcher.resolve(agentCfg);
-  const dir = path.join(store.dataDir, 'chats', kind, agent);
+  const dir = path.join(store.dataDir, 'chats', 'helper', kind, agent);
   fs.mkdirSync(dir, { recursive: true });
   const env = { HARNESS_URL: getUrl(), HARNESS_TOKEN: store.token, HARNESS_SESSION_ID: '' };
   const ctx = {
@@ -31,6 +32,7 @@ export function runHelper({ config, store, getUrl, agent, kind, prompt, cwd = nu
     harnessMcp: { command: process.execPath, args: [path.join(CODE_ROOT, 'mcp', 'harness-mcp.js')], env },
     agentMcpServers: {},
     extraArgs,
+    chatRecording: false,
   };
   launcher.prepare(ctx);
   const run = `${Date.now()}-${randomBytes(3).toString('hex')}`; // concurrent runs never share their output files
@@ -38,7 +40,7 @@ export function runHelper({ config, store, getUrl, agent, kind, prompt, cwd = nu
   let text = '';
   let resultText = null;
   const handle = runTurn({
-    launcher, ctx, command: exe, cwd: cwd || dir,
+    launcher, ctx, command: exe, cwd: dir,
     env: { ...process.env, ...agentCfg.env, ...secretEnv(config), ...exe.env, ...launcher.env(ctx), ...env },
     firstEventTimeoutMs: agentCfg.firstEventTimeoutMs || launcher.defaults.firstEventTimeoutMs || 30000,
     authTimeoutMs: agentCfg.authTimeoutMs || 600000,
