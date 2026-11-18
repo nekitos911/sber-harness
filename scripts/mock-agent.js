@@ -129,7 +129,8 @@ emit({ type: 'init', session_id: sessionId, model });
 // GigaCode's real init (Qwen-Code style): what the harness records as the agent's "seen" info
 emit({
   type: 'system', subtype: 'init', session_id: sessionId, model,
-  mcp_servers: mcpServers.map((name) => ({ name, status: 'connected' })),
+  // #noharness: the harness server failed to start in the CLI (no harness tools for the agent)
+  mcp_servers: mcpServers.map((name) => ({ name, status: name === 'harness' && has(/#noharness\b/) ? 'failed' : 'connected' })),
   slash_commands: ['clear', 'full-task'], agents: ['general-purpose'], qwen_code_version: 'mock-1.0',
 });
 emit({ type: 'message', role: 'user', content: prompt });

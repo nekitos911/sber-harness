@@ -711,7 +711,9 @@ is added to `taskPromptPresets`.
   /api/settings. A same-worktree helper (worker_run / harness `agent` in the caller's worktree) is ephemeral: once
   settled (done/failed/stopped/no_report) and its result delivered, it is archived (`archived`, `archivedAt`; still
   openable by id) — a running turn when its process ends. A built-in (virtual) sub-agent chat stays beside its parent
-  (sidebar, workers panel) until the parent's turn ends, then it is archived (Orca-like); the panel lists only non-archived. Its open
+  (sidebar, workers panel, the Agents board in the parent's lane) until the parent's turn ends, then it is archived
+  (Orca-like); the panel lists only non-archived. At `init`, a CLI whose `mcp_servers` lack a connected `harness` gets a
+  one-time «⚠ MCP-сервер harness …» note in the chat (no harness sub-agents or questions there). Its open
   questions/permission cards (and its cards re-emitted in the parent) are resolved «отменено». A helper at the depth limit
   cannot start helpers: worker_run/agent → 409 «Субагенты не запускают своих субагентов: выполни это сам или верни запрос
   оркестратору», its context block says the same and its tools/list has no `agent` (tools/list is per caller session).

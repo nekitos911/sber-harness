@@ -1,5 +1,5 @@
 import { useMemo, useState, type MouseEvent } from 'react'
-import { CircleHelp, GitCompare, LoaderCircle, ShieldAlert, TriangleAlert, Wrench } from 'lucide-react'
+import { ChevronRight, CircleHelp, GitCompare, LoaderCircle, ShieldAlert, TriangleAlert, Wrench } from 'lucide-react'
 import { tryApi } from '../../api'
 import { openTab } from '../../store'
 import { basename, normPath, plural } from '../../lib/format'
@@ -213,10 +213,18 @@ export function activityOf(list: Message[], lastEventKind?: string | null, quiet
   return { text: 'Работает…' }
 }
 
+/** The running turn's latest thought with text (null when the CLI sent none). */
+function lastThought(list: Message[]): Message | null {
+  const turn = list.length ? list[list.length - 1].turn : -1
+  for (let i = list.length - 1; i >= 0 && list[i].turn === turn; i--) if (list[i].kind === 'thought' && list[i].text.trim()) return list[i]
+  return null
+}
+
 /** Bottom line while the agent works: spinner, activity, and «последнее событие 40 с назад» once it goes quiet. */
 export function ActivityLine({ session, list, starting }: { session: Session; list: Message[]; starting: string }) {
   const lastEvent = session.lastEventAt ?? (list.length ? Math.max(list[list.length - 1].at, session.lastActivityAt) : session.lastActivityAt)
   const quiet = useElapsed(lastEvent, true)
+  const [open, setOpen] = useState(false) // «Думает» unfolded
   if (session.waitingFor === 'answer' || session.waitingFor === 'permission') {
     const Icon = session.waitingFor === 'answer' ? CircleHelp : ShieldAlert
     return <div className="chat-working chat-waiting" role="status"><Icon aria-hidden />{session.waitingFor === 'answer' ? 'Ждёт вашего ответа' : 'Ждёт вашего разрешения'}</div>
@@ -224,12 +232,21 @@ export function ActivityLine({ session, list, starting }: { session: Session; li
   const act = starting ? { text: starting } : activityOf(list, session.lastEventKind, quiet * 1000)
   // A finished answer is not news for half a minute; after that silence is worth saying.
   const showQuiet = !starting && quiet > (act.closing ? 30 : 20)
+  // «Думает» opens the turn's latest thought, live, when the CLI sends its reasoning at all
+  const thinking = act.text === 'Думает'
+  const thought = thinking ? lastThought(list) : null
   return (
-    <div className="chat-working" data-closing={act.closing || undefined} role="status">
-      <LoaderCircle className="spinner" aria-hidden />
-      <span className="ellipsis">{act.text}</span>
-      {showQuiet && <span className="muted num nowrap">· последнее событие {dur(quiet * 1000)} назад</span>}
-    </div>
+    <>
+      <div className="chat-working" data-closing={act.closing || undefined} role="status">
+        <LoaderCircle className="spinner" aria-hidden />
+        {thought
+          ? <button type="button" className="working-toggle" aria-expanded={open} onClick={() => setOpen(!open)}>{act.text}<ChevronRight className="chev" aria-hidden /></button>
+          : <span className="ellipsis">{act.text}</span>}
+        {showQuiet && <span className="muted num nowrap">· последнее событие {dur(quiet * 1000)} назад</span>}
+        {thinking && !thought && quiet > 10 && <span className="muted nowrap">· агент не присылает ход мыслей</span>}
+      </div>
+      {thought && open && <div className="thought-text working-thought">{thought.text}</div>}
+    </>
   )
 }
 

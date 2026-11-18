@@ -114,6 +114,10 @@
 .chat-working { display: flex; align-items: center; gap: 8px; color: var(--lamp-run); font-size: 13px; font-variant-numeric: tabular-nums; animation: fade-in var(--t-base) var(--ease-out); }
 .chat-working svg { width: 14px; height: 14px; flex-shrink: 0; }
 .chat-working .muted { color: var(--ink-3); }
+.working-toggle { display: inline-flex; align-items: center; gap: 4px; padding: 0; border: 0; background: none; color: inherit; font: inherit; cursor: pointer; }
+.working-toggle .chev { width: 12px; height: 12px; transition: transform var(--t-fast) var(--ease-out); }
+.working-toggle[aria-expanded="true"] .chev { transform: rotate(90deg); }
+.working-thought { max-height: 12lh; overflow-y: auto; padding-left: 22px; }
 .chat-stall { border-color: color-mix(in srgb, var(--lamp-stall) 45%, var(--rule)); }
 .chat-stall > svg { width: 14px; height: 14px; color: var(--lamp-stall); flex-shrink: 0; }
 

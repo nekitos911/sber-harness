@@ -339,6 +339,17 @@ test('built-in sub-agent activity lands on the parent tool call, not in the main
   assert.ok(!msgs.some((m) => m.kind === 'tool' && m.tool.id === 'sub_grep'));
 });
 
+test('the CLI reports the harness MCP server failed: a plain warning in the chat, once', async () => {
+  const s = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', cwd: repo, prompt: '#noharness привет' })).body;
+  await waitFor(async () => (await state()).sessions.find((x) => x.id === s.id).status === 'idle', { what: 'idle' });
+  const warn = (await messages(s.id)).filter((m) => m.kind === 'system' && m.text.startsWith('⚠ MCP-сервер harness'));
+  assert.equal(warn.length, 1);
+  assert.match(warn[0].text, /не подключился \(failed\)/);
+  const ok = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', cwd: repo, prompt: 'привет' })).body;
+  await waitFor(async () => (await state()).sessions.find((x) => x.id === ok.id).status === 'idle', { what: 'idle' });
+  assert.ok(!(await messages(ok.id)).some((m) => m.text.startsWith('⚠ MCP-сервер harness')), 'no warning when it is connected');
+});
+
 test('a finished built-in sub-agent stays beside its working parent and is archived when the parent turn ends', async () => {
   const s = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', cwd: repo, prompt: '#subagent #slow' })).body;
   const vid = `${s.id}~call_agent_1`;

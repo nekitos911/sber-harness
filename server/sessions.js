@@ -546,6 +546,12 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
         const note = [ev.model && `Модель: ${ev.model}`, mcp && `MCP: ${mcp}`].filter(Boolean).join(' · ');
         // once per session (again only when it changes, e.g. an MCP server went down)
         if (note && !store.messages(s.id).some((m) => m.kind === 'system' && m.text === note)) addMessage(s, { kind: 'system', text: note });
+        // the harness's own server missing or down: the agent cannot start harness sub-agents or ask — say it plainly
+        const hm = ev.mcpServers.find((m) => m.name === 'harness');
+        if (ev.mcpServers.length && !s.virtual && (!hm || !/^connected$/i.test(hm.status))) {
+          const warn = `⚠ MCP-сервер harness ${hm ? `не подключился (${hm.status})` : 'агент не загрузил'}: субагенты отдельными чатами и вопросы через harness в этом чате не работают. Проверьте Настройки → GigaCode → MCP-серверы.`;
+          if (!store.messages(s.id).some((m) => m.text === warn)) addMessage(s, { kind: 'system', text: warn });
+        }
         // what the CLI reported about itself, for GET /api/agents/:id/info (models seen accumulate, newest first)
         const prev = db.agentMeta[s.agent];
         db.agentMeta[s.agent] = {

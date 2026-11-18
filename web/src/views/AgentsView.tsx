@@ -41,6 +41,9 @@ export function AgentsView() {
   const chats = useMemo(() => sessions.filter((s) => (archive ? s.kind === 'chat' && !s.virtual && !s.system && !!s.archived : listedChat(s))).sort((a, b) => b.lastActivityAt - a.lastActivityAt), [sessions, archive])
   const archivedCount = useMemo(() => sessions.filter((s) => s.kind === 'chat' && !s.virtual && s.archived).length, [sessions])
   const byId = useMemo(() => new Map(sessions.map((s) => [s.id, s])), [sessions])
+  // built-in sub-agents (not archived yet: their parent's turn still runs) ride in the parent's lane, right under it
+  const subs = useMemo(() => (archive ? [] : sessions.filter((s) => s.virtual && !s.archived && !!s.parentId && byId.has(s.parentId))), [sessions, archive, byId])
+  const laneState = (s: Session) => sessionVisualState(s.virtual ? byId.get(s.parentId!) ?? s : s)
 
   return (
     <div className="agents-view">
@@ -66,7 +69,7 @@ export function AgentsView() {
       ) : (
         <div className="lanes">
           {GROUPS.map((g) => {
-            const list = chats.filter((s) => g.match.includes(sessionVisualState(s)))
+            const list = [...chats, ...subs].filter((s) => g.match.includes(laneState(s)))
             if (g.optional && !list.length) return null
             return (
               <section key={g.id} className="lane" aria-labelledby={`lane-${g.id}`}>
@@ -148,12 +151,12 @@ function AgentCard({ s, nested, parent }: { s: Session; nested: boolean; parent?
       <div className="agent-foot" data-open={mode !== null || undefined}>
         <span className="muted num">активность {ago(s.lastActivityAt, now)}</span>
         <span className="grow" />
-        <button type="button" className="icon-btn icon-btn-sm" aria-label="Написать агенту" data-tip="Написать" aria-pressed={mode === 'message'} onClick={() => setMode(mode === 'message' ? null : 'message')}><Send /></button>
+        {!s.virtual && <button type="button" className="icon-btn icon-btn-sm" aria-label="Написать агенту" data-tip="Написать" aria-pressed={mode === 'message'} onClick={() => setMode(mode === 'message' ? null : 'message')}><Send /></button>}
         {s.archived && <button type="button" className="btn btn-sm" onClick={() => void archiveSession(s, false)}><ArchiveRestore />Вернуть</button>}
-        <MenuButton label="Ещё действия" icon={<Ellipsis />} align="right" className="icon-btn-sm" items={[
+        {!s.virtual && <MenuButton label="Ещё действия" icon={<Ellipsis />} align="right" className="icon-btn-sm" items={[
           ...(!s.archived ? [{ label: 'Дать задачу…', icon: <ListPlus />, onSelect: () => setMode('assign') }] : []),
           ...sessionMenu(s, () => setEditing(true)),
-        ]} />
+        ]} />}
       </div>
       {mode === 'message' && (
         <form className="agent-inline" onSubmit={(e) => { e.preventDefault(); void send() }}>
