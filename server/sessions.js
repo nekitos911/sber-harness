@@ -447,8 +447,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     if (!v?.virtual) return;
     addMessage(v, { kind: ev.isError ? 'error' : 'assistant', text: ev.output || '(no output)' });
     Object.assign(v, { status: ev.isError ? 'failed' : 'done', preview: (ev.output || '').slice(-200), lastActivityAt: Date.now() });
-    emit(v);
-    retireVirtual(v);
+    emit(v); // stays beside its parent until the parent's turn ends (settleVirtuals), like Orca
   }
 
   /** A headless permission card (in the PARENT for a sub-agent's denial: it is the parent's next turn that retries). */
@@ -460,7 +459,21 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     setWaiting(s, 'permission');
   }
 
+  /**
+   * A tool failed inside GigaCode's sandbox (e.g. «GigaCode sandbox: acl-object-hardlink (Win32 50)»): the sandbox does not
+   * work on this machine. Same as a run that fails on it: agentMeta.sandboxBroken, the next turns run without it.
+   */
+  function sandboxToolFailure(s, ev) {
+    if (ev.type !== 'tool_result' || !ev.isError || !/GigaCode sandbox:/i.test(ev.output || '')) return;
+    if (db.agentMeta[s.agent]?.sandboxBroken || !sandboxed(s, config.agents[s.agent] || {}).autoSandbox) return;
+    const why = (ev.output.split('\n').find((l) => /GigaCode sandbox:/i.test(l)) || ev.output).trim().slice(0, 300);
+    db.agentMeta[s.agent] = { ...db.agentMeta[s.agent], sandboxBroken: { at: Date.now(), error: why } };
+    store.save();
+    addMessage(s, { kind: 'system', text: `⚠ Песочница GigaCode не работает на этой машине: ${why}. Следующие ходы — без песочницы («Полный доступ» = «Авто-правки» + разрешённые команды).` });
+  }
+
   function subagentProgress(s, c, ev) {
+    sandboxToolFailure(s, ev);
     applyVirtual(s, c, ev);
     if (ev.type === 'tool_call') (c.subInputs ||= new Map()).set(ev.id, ev.input);
     if (ev.type === 'tool_result') {
@@ -647,6 +660,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
         break;
       }
       case 'tool_result': {
+        sandboxToolFailure(s, ev);
         c.assistant = c.thought = null;
         if (c.questions?.has(ev.id)) break;
         const m = c.tools.get(ev.id);
@@ -703,10 +717,13 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     }
   }
 
-  function failRunningVirtuals(s) {
-    for (const v of db.sessions.filter((x) => x.virtual && x.parentId === s.id && x.status === 'running')) {
-      Object.assign(v, { status: 'failed', lastActivityAt: Date.now() });
-      emit(v);
+  /** The parent's turn is over: a sub-agent still running failed with it; all of them are archived now. */
+  function settleVirtuals(s) {
+    for (const v of db.sessions.filter((x) => x.virtual && x.parentId === s.id && !x.archived)) {
+      if (v.status === 'running') {
+        Object.assign(v, { status: 'failed', lastActivityAt: Date.now() });
+        emit(v);
+      }
       retireVirtual(v);
     }
   }
@@ -749,7 +766,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     const status = r.flags.reported && (s.status === 'done' || s.status === 'failed') ? s.status : 'idle';
     Object.assign(s, { status, phase: null, lastActivityAt: Date.now(), stalled: false, turnClosing: true });
     if (s.waitingFor === 'auth') s.waitingFor = null;
-    failRunningVirtuals(s);
+    settleVirtuals(s);
     emit(s);
     runTurnEnded(s, r, false);
     store.flush();
@@ -1012,7 +1029,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     const errorKind = status === 'error' ? (s.everStarted ? 'turn' : 'not_started') : null;
     Object.assign(s, { status, errorKind, pid: null, pidStartedAt: null, phase: null, turnOffset: null, lastActivityAt: Date.now(), stalled: false, turnClosing: false });
     if (s.waitingFor === 'auth') s.waitingFor = null;
-    failRunningVirtuals(s);
+    settleVirtuals(s);
     emit(s);
     runTurnEnded(s, r, stopped);
     store.flush(); // a finished turn is never lost to a crash right after it

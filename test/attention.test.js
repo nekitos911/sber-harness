@@ -168,3 +168,17 @@ test('sandbox self-healing: a fatal sandbox error flags the agent, retries the s
   const third = runs(s.id)[2].argv;
   assert.equal(third[third.indexOf('--approval-mode') + 1], 'auto', 'the sandbox is tried again');
 });
+
+test('a command failing inside the sandbox (acl-object-hardlink) flags the sandbox broken; the next turn runs without it', async () => {
+  await h.api('POST', '/api/agents/mocksb/sandbox/recheck');
+  const s = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mocksb', cwd: root, approvalMode: 'auto', prompt: '#sandboxtool привет' })).body;
+  await idle(s.id);
+  assert.ok((await messages(s.id)).some((m) => m.kind === 'system' && /^⚠ Песочница GigaCode не работает на этой машине: GigaCode sandbox: acl-object-hardlink/.test(m.text)));
+  assert.match((await h.api('GET', '/api/agents/mocksb/info')).body.sandboxBroken.error, /acl-object-hardlink/);
+  await h.api('POST', `/api/sessions/${s.id}/messages`, { text: 'снова' });
+  await waitFor(() => runs(s.id).length === 2, { what: 'second turn' });
+  await idle(s.id);
+  const next = runs(s.id)[1].argv;
+  assert.equal(next[next.indexOf('--approval-mode') + 1], 'auto-edit', 'no sandbox: auto runs as auto-edit');
+  await h.api('POST', '/api/agents/mocksb/sandbox/recheck');
+});

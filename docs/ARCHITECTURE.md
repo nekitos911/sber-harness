@@ -710,7 +710,8 @@ is added to `taskPromptPresets`.
 - `orchestration.subagentRetention`: `"archive"` (default) | `"keep"`; `orchestration.maxSubagentDepth` (default 1); both in
   /api/settings. A same-worktree helper (worker_run / harness `agent` in the caller's worktree) is ephemeral: once
   settled (done/failed/stopped/no_report) and its result delivered, it is archived (`archived`, `archivedAt`; still
-  openable by id) — a running turn when its process ends; built-in (virtual) sub-agent chats likewise. Its open
+  openable by id) — a running turn when its process ends. A built-in (virtual) sub-agent chat stays beside its parent
+  (sidebar, workers panel) until the parent's turn ends, then it is archived (Orca-like); the panel lists only non-archived. Its open
   questions/permission cards (and its cards re-emitted in the parent) are resolved «отменено». A helper at the depth limit
   cannot start helpers: worker_run/agent → 409 «Субагенты не запускают своих субагентов: выполни это сам или верни запрос
   оркестратору», its context block says the same and its tools/list has no `agent` (tools/list is per caller session).
@@ -1144,7 +1145,8 @@ GigaCode has no yolo; headless denies everything not pre-allowed. Three layers, 
    Settings → «Песочница для «Полного доступа»» sets `"workspace"`, the CLI's documented `settings.tools.sandbox`).
    When enabled, the sandbox scope is the session cwd (+ includeDirs); a task started at the
    projects root therefore covers every repo and `<repo>-worktrees`. Self-healing: if a turn fails fatally with a
-   sandbox-related error (stderr matches `/sandbox/i` before any event), the harness sets
+   sandbox-related error (stderr matches `/sandbox/i` before any event) — or a tool result (also a sub-agent's) fails
+   with «GigaCode sandbox: …» (seen: `acl-object-hardlink (Win32 50)`; no retry then, the next turns) — the harness sets
    `agentMeta.<id>.sandboxBroken = { at, error }`, maps auto → auto-edit for that agent from then on (approvalModeMap),
    retries the same turn once, and notifies «Песочница GigaCode недоступна: <reason>. «Полный доступ» работает как
    «Авто-правки» + разрешённые команды». Settings show the state and a «Проверить снова» action (clears the flag).

@@ -671,8 +671,8 @@ function childrenOf(s: Session, kids: Map<string, Session[]>): { c: Session; via
 }
 
 function SessionNode({ s, kids, level = 0, base = 2, via, from }: { s: Session; kids: Map<string, Session[]>; level?: number; base?: number; via?: string; from?: Session }) {
-  // finished sub-agents stay out of the tree: the chat's workers panel lists them
-  const children = childrenOf(s, kids).filter((x) => !isFinishedSub(x.c))
+  // a finished sub-agent stays under its parent while the parent works (Orca), then it is archived and leaves the tree
+  const children = childrenOf(s, kids).filter((x) => !isFinishedSub(x.c) || s.status === 'running')
   const internal = useStore((st) => st.subagents[s.id])
   const [open, setOpen] = useState(true)
   const has = children.length > 0 || !!internal?.items.length

@@ -33,7 +33,8 @@ export function ChatView({ id, active }: { id: string; active: boolean }) {
   const session = useStore((s) => s.sessions.find((x) => x.id === id))
   const messages = useStore((s) => s.messages[id])
   const allSessions = useStore((s) => s.sessions)
-  const workers = useMemo(() => allSessions.filter((s) => s.parentId === id), [allSessions, id])
+  // archived ones (settled sub-agents once the turn is over) leave the panel; their chats open from the transcript card
+  const workers = useMemo(() => allSessions.filter((s) => s.parentId === id && !s.archived), [allSessions, id])
   const [loadError, setLoadError] = useState<string | null>(null)
   const [limit, setLimit] = useState(PAGE)
   const [log, setLog] = useState<string | null>(null)

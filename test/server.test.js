@@ -339,6 +339,16 @@ test('built-in sub-agent activity lands on the parent tool call, not in the main
   assert.ok(!msgs.some((m) => m.kind === 'tool' && m.tool.id === 'sub_grep'));
 });
 
+test('a finished built-in sub-agent stays beside its working parent and is archived when the parent turn ends', async () => {
+  const s = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', cwd: repo, prompt: '#subagent #slow' })).body;
+  const vid = `${s.id}~call_agent_1`;
+  const v = await waitFor(async () => (await state()).sessions.find((x) => x.id === vid && x.status === 'done'), { what: 'sub-agent done' });
+  assert.equal((await state()).sessions.find((x) => x.id === s.id).status, 'running', 'the parent still works');
+  assert.ok(!v.archived, 'not archived while the parent works');
+  await waitFor(async () => (await state()).sessions.find((x) => x.id === s.id).status === 'idle', { what: 'parent idle' });
+  assert.ok((await state()).sessions.find((x) => x.id === vid).archived, 'archived with the end of the turn');
+});
+
 test('ops: one harness per data dir, a clear message for a busy port; models in state', async () => {
   const busy = fs.mkdtempSync(path.join(os.tmpdir(), 'harness-lock-'));
   try {

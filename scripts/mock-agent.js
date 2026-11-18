@@ -67,6 +67,11 @@ if (opt('--model') && catalogue.length && !catalogue.includes(model)) {
   process.stderr.write(`An unexpected critical error occurred:\nError: The selected model '${model}' is not present in the current backend catalogue\n`);
   process.exit(1);
 }
+if (has(/#sandboxtool\b/)) {
+  // the run starts, but a command inside the sandbox fails (seen on the target: Windows, hardlink ACLs unsupported)
+  emit({ type: 'tool_use', tool_name: 'run_shell_command', tool_id: 'sbt_1', parameters: { command: 'git status' } });
+  emit({ type: 'tool_result', tool_id: 'sbt_1', status: 'error', output: 'GigaCode sandbox: acl-object-hardlink (Win32 50)' });
+}
 if (has(/#sandboxfail\b/)) {
   let sandbox = null;
   try { sandbox = JSON.parse(fs.readFileSync(process.env.MOCK_AGENT_SETTINGS_PATH || '', 'utf8')).tools?.sandbox ?? null; } catch {}
