@@ -1025,6 +1025,9 @@ Secrets:
   worktrees) of the other subtasks of the same parent task + the parent task's explicit `includeDirs`; a coordinator at
   the projects folder needs none. Terminal sessions with an agent CLI get the same flags at start.
   `POST /api/sessions` accepts `includeDirs`. Feature flags: `folders`, `include-dirs`.
+- Text with no letter and several «??» groups (Cyrillic lost to a non-UTF-8 client, e.g. Windows PowerShell 5.1
+  `Invoke-RestMethod`) is refused with 400 by `POST /api/sessions` (title, prompt), `/api/sessions/:id/messages` and
+  `/api/handoff` (input, notes); a lone «???» passes.
 - Implementation notes: the root workspace's `name` is the folder name (the UI adds «Все проекты»); auto-detection uses
   repository workspaces only (not `kind: 'folder'` ones) and is redone when workspaces are added/removed; a session's
   `workspaceId` is the DEEPEST registered folder containing its cwd. Hidden = names starting with `.` or `$`.

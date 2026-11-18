@@ -53,3 +53,6 @@ checked and what has not.
 5. Sub-agents are created only through harness orchestration (`worker_start`), never through a CLI's built-in sub-agents.
 6. Any change to stream parsing ships with a fixture of real output in `test/fixtures/` and a test.
 7. Before committing: `npm test` and `npm run build` must be green.
+8. Calling the harness API by hand on Windows: send UTF-8. Windows PowerShell 5.1 `Invoke-RestMethod` with a string body
+   turns Cyrillic into «?» (the server refuses such text with 400): use `-ContentType "application/json; charset=utf-8"
+   -Body ([Text.Encoding]::UTF8.GetBytes($json))`, or `node mcp/harness-mcp.js call ...`.

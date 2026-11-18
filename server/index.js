@@ -86,6 +86,15 @@ const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const insidePath = (dir, p) => { const rel = path.relative(dir, p); return !rel.startsWith('..') && !path.isAbsolute(rel); };
 const samePath = (a, b) => (process.platform === 'win32' ? path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase() : path.resolve(a) === path.resolve(b));
 
+/**
+ * Text whose letters were lost on the way: no letter at all, several «??» groups (Cyrillic sent by a non-UTF-8 client,
+ * e.g. Windows PowerShell 5.1 Invoke-RestMethod). Refused so the caller fixes the encoding instead of making a «?????» chat.
+ */
+export const garbled = (t) => typeof t === 'string' && !/\p{L}/u.test(t) && /\?{2,}[\s\p{P}]+\?{2,}/u.test(t);
+function notGarbled(...texts) {
+  if (texts.some(garbled)) fail(400, 'Текст пришёл без букв, одни «?»: клиент отправил его не в UTF-8. Из Windows PowerShell 5.1: Invoke-RestMethod -ContentType "application/json; charset=utf-8" -Body ([Text.Encoding]::UTF8.GetBytes($json)).');
+}
+
 /** Validates `obj` against { field: 'string' | 'string?' | 'boolean?' | 'number?' | 'array?' }. */
 function check(obj, spec) {
   for (const [k, t] of Object.entries(spec)) {
@@ -1250,6 +1259,7 @@ export async function startServer(opts = {}) {
 
   route('POST', '/api/handoff', async ({ body }) => {
     check(body, { input: 'string', notes: 'string?', agent: 'string?', approvalMode: 'string?', model: 'string?', targets: 'array?', dryRun: 'boolean?' });
+    notGarbled(body.input, body.notes);
     const explicit = targetsOf(body.targets); // the UI's chips override what the text says
     const input = body.input.trim() || fail(400, 'нужен текст или ссылка на задачу');
     const root = db.workspaces.find((w) => w.kind === 'root') || fail(400, 'Укажите папку с проектами в Настройках');
@@ -1332,6 +1342,7 @@ export async function startServer(opts = {}) {
 
   // sessions
   route('POST', '/api/sessions', async ({ body }) => {
+    notGarbled(body?.title, body?.prompt);
     const s = await sessions.create(pick(body, ['kind', 'agent', 'cwd', 'workspaceId', 'title', 'prompt', 'role', 'approvalMode', 'model', 'command', 'includeDirs']));
     if (typeof body.cwd === 'string') rememberFolder(s.cwd);
     return s;
@@ -1349,7 +1360,10 @@ export async function startServer(opts = {}) {
     const m = sessions.messages(params.id).find((x) => x.id === params.mid) || fail(404, `сообщение ${params.mid} не найдено`);
     return { output: m.tool?.output ?? null };
   });
-  route('POST', '/api/sessions/:id/messages', ({ params, body }) => sessions.deliver(params.id, { from: 'user', text: check(body, { text: 'string' }).text }));
+  route('POST', '/api/sessions/:id/messages', ({ params, body }) => {
+    notGarbled(check(body, { text: 'string' }).text);
+    return sessions.deliver(params.id, { from: 'user', text: body.text });
+  });
   route('POST', '/api/sessions/:id/permission', ({ params, body }) => sessions.permission(params.id, check(body, { permissionId: 'string', optionId: 'string', note: 'string?' })));
   route('POST', '/api/sessions/:id/stop', ({ params }) => sessions.stop(params.id));
   route('POST', '/api/sessions/:id/restart', ({ params }) => sessions.restart(params.id));

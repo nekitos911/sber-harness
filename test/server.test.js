@@ -339,6 +339,18 @@ test('built-in sub-agent activity lands on the parent tool call, not in the main
   assert.ok(!msgs.some((m) => m.kind === 'tool' && m.tool.id === 'sub_grep'));
 });
 
+test('Cyrillic lost to a non-UTF-8 client («?????? ????? ??????: ??») is refused, not turned into a chat', async () => {
+  const bad = '?????? ????? ??????: ??'; // «Ответь одним словом: ок» sent by Windows PowerShell 5.1 Invoke-RestMethod
+  const r = await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', cwd: repo, prompt: bad });
+  assert.equal(r.status, 400);
+  assert.match(r.body.error, /UTF-8/);
+  assert.equal((await h.api('POST', '/api/handoff', { input: bad, dryRun: true })).status, 400);
+  const ok = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', cwd: repo, prompt: '???' })).body;
+  assert.ok(ok.id, 'a person typing «???» is fine');
+  assert.equal((await h.api('POST', `/api/sessions/${ok.id}/messages`, { text: '?? ??' })).status, 400);
+  await waitFor(async () => (await state()).sessions.find((x) => x.id === ok.id).status === 'idle', { what: 'idle' });
+});
+
 test('the CLI reports the harness MCP server failed: a plain warning in the chat, once', async () => {
   const s = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', cwd: repo, prompt: '#noharness привет' })).body;
   await waitFor(async () => (await state()).sessions.find((x) => x.id === s.id).status === 'idle', { what: 'idle' });
