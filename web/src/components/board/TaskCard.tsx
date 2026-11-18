@@ -7,7 +7,7 @@ import { StatusIcon, statusText } from '../bits'
 import { dur, sessionVisualState, STATE_LABEL } from '../../lib/sessionState'
 import { useCurrentTool, useStateLine, useTurnStart } from '../../lib/live'
 import { useNow } from '../../lib/useNow'
-import { normPath, plural } from '../../lib/format'
+import { ago, normPath, plural } from '../../lib/format'
 import { PrGlyph } from '../PrChip'
 import { openDialog, openSession, openTab, openWorktree, showPanel, useFeature, useStore, wtKey } from '../../store'
 import { ReworkPopover, StartPopover } from './Rework'
@@ -99,8 +99,9 @@ export const TaskCard = memo(function TaskCard({ task, ctx }: { task: Task; ctx:
         </span>
       )}
       {ctx.trackerSync[task.id] && <span className="card-sync" role="status">{ctx.trackerSync[task.id].text}</span>}
-      {(session || task.externalUrl) && (
+      {(session || task.externalUrl || task.assigneeSessionId) && (
         <div className="card-foot">
+          {!session && task.assigneeSessionId && <span className="card-agent muted" data-tip="Сессия агента удалена — задачу можно взять в работу снова">агент удалён</span>}
           {session && (REVIEW.has(task.agentState ?? '') ? <AgentBadge task={task} session={session} ctx={ctx} /> : <CardLive task={task} session={session} />)}
           <span className="grow" />
           {task.externalUrl && (
@@ -161,7 +162,7 @@ function CardLive({ task, session }: { task: Task; session: Session }) {
   const since = session.lastEventAt ?? session.lastActivityAt
   const text = v === 'running' && tool ? `Выполняет: ${tool}`
     : WAITS.has(v) ? `${STATE_LABEL[v]} ${dur(now - since)}`
-      : finished ? `агент закончил ${dur(now - session.lastActivityAt)} назад`
+      : finished ? `агент закончил ${ago(session.lastActivityAt, now)}`
         : line || statusText(session)
   const go = (fn: () => void) => (e: MouseEvent) => { e.stopPropagation(); fn() }
   return (

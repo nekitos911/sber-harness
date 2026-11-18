@@ -10,6 +10,8 @@ test('priority: waiting answer beats stalled beats starting beats running', () =
   assert.equal(v({ kind: 'chat', status: 'running', phase: 'auth' }), 'auth')
   assert.equal(v({ kind: 'chat', status: 'running', phase: 'starting' }), 'starting')
   assert.equal(v({ kind: 'chat', status: 'running' }), 'running')
+  assert.equal(v({ kind: 'chat', status: 'idle', interrupted: { at: 1 } as never }), 'interrupted')
+  assert.equal(v({ kind: 'chat', status: 'running', interrupted: { at: 1 } as never }), 'running') // resumed
   assert.equal(v({ kind: 'chat', status: 'failed' }), 'error')
   assert.equal(v({ kind: 'chat', status: 'idle', stalled: true }), 'idle') // stalled only means something while running
   assert.equal(v({ kind: 'terminal', status: 'idle' }), 'terminal')

@@ -19,7 +19,7 @@ export const NOTIFY_KIND: Record<NotificationKind, string> = {
 
 export function relTime(at: number, now = Date.now()) {
   const s = Math.max(0, Math.round((now - at) / 1000))
-  if (s < 45) return 'сейчас'
+  if (s < 60) return 'только что' // never seconds: clocks tick every 30 s
   const m = Math.round(s / 60)
   if (m < 60) return `${m} мин`
   const h = Math.round(m / 60)
@@ -53,4 +53,10 @@ export function tokens(n: number) {
   if (n < 1000) return String(n)
   if (n < 1_000_000) return `${+(n / 1000).toFixed(1)}k`
   return `${+(n / 1_000_000).toFixed(1)}M`
+}
+
+/** «только что» · «5 мин назад» · «3 ч назад» */
+export function ago(at: number, now = Date.now()) {
+  const r = relTime(at, now)
+  return /^\d+ (мин|ч|д)$/.test(r) ? `${r} назад` : r // «только что» and a date stay as they are
 }

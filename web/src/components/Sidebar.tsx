@@ -21,7 +21,7 @@ import { Button, Menu, Popover } from './ui'
 import { ideEnabled, isUnread, onWorktreeKey, projectMenu, setUnread, worktreeMenu } from './WorktreeMenu'
 import { useNow } from '../lib/useNow'
 import { useRail } from '../lib/useMedia'
-import { pendingCount } from '../lib/pending'
+import { listedChat, pendingCount } from '../lib/pending'
 
 const depth = (d: number) => ({ '--depth': d }) as CSSProperties
 const APP_START = Date.now() // rows for sessions born after this animate in; the initial list does not
@@ -40,9 +40,11 @@ export function Sidebar() {
   const width = useStore((s) => s.sidebarWidth)
   const [query, setQuery] = useState('')
 
-  const running = sessions.filter((s) => s.kind === 'chat' && s.status === 'running').length
+  // the same set as the Agents screen: listed chats; «работают» = running, starting or silent
+  const agents = sessions.filter(listedChat)
+  const running = agents.filter((s) => BUSY.has(sessionVisualState(s)) || sessionVisualState(s) === 'stalled').length
   const openPrs = useStore((s) => s.tasks.filter((t) => t.pr?.state === 'open').length)
-  const chats = sessions.filter((s) => s.kind === 'chat').length
+  const chats = agents.length
   const allWorktrees = useStore((s) => s.worktrees)
   const leaving = useLeaving(sessions)
   const tree = useMemo(() => buildTree(sessions.filter((s) => !s.archived || leaving.has(s.id)), query, allWorktrees), [sessions, query, allWorktrees, leaving])
@@ -558,7 +560,8 @@ function WorktreeRow({ ws, wt, sessions, terminals, dup, kids, active, fromOf, p
   const sleeping = !!wt.meta?.sleeping
   const ahead = wt.ahead ?? 0
   const states = withKids(sessions, kids).map(sessionVisualState)
-  const mark = sleeping ? 'sleep' : states.some((v) => ATTENTION.has(v)) ? 'attention' : states.some((v) => BUSY.has(v)) ? 'busy' : 'idle'
+  // an agent working in a sleeping worktree wins: no moon, no dimming while it runs
+  const mark = states.some((v) => ATTENTION.has(v)) ? 'attention' : states.some((v) => BUSY.has(v)) ? 'busy' : sleeping ? 'sleep' : 'idle'
   // Two or more agents fold into «N агента» unless one needs you or is on screen.
   const needs = states.some((v) => ATTENTION.has(v)) || sessions.some((x) => activeSession === `s:${x.id}`)
   const [foldChoice, setFold] = useState<boolean | null>(() => loadDraft<boolean>(`sb:fold:${normPath(wt.path)}`))
@@ -574,7 +577,7 @@ function WorktreeRow({ ws, wt, sessions, terminals, dup, kids, active, fromOf, p
   const history = useHistory(wt.path, sessions.length === 0) // only rows without harness chats ask for it
   const ownHistory = (history ?? []).filter((h) => normPath(h.cwd) === normPath(wt.path)).length // not the main copy's, listed for every worktree
   return (
-    <div className="wt" data-active={active} data-sleeping={sleeping || undefined}>
+    <div className="wt" data-active={active} data-sleeping={mark === 'sleep' || undefined}>
       <div ref={row} className="tree-row tree-wt" role="button" tabIndex={0} style={depth(1)}
         data-tip={wt.branch ? `${name}\n${wt.branch}` : name}
         aria-current={active ? 'location' : undefined} onClick={pick}

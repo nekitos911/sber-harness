@@ -2,7 +2,7 @@ import { Circle, CircleCheck, CircleDashed, CircleDot, CircleHelp, CircleSlash, 
 import { sessionVisualState, STATE_LABEL, type VisualState } from '../lib/sessionState'
 import type { Session, SubAgentState } from '../types'
 
-type StatusLike = Pick<Session, 'status' | 'kind'> & Partial<Pick<Session, 'phase' | 'waitingFor' | 'stalled'>>
+type StatusLike = Pick<Session, 'status' | 'kind'> & Partial<Pick<Session, 'phase' | 'waitingFor' | 'stalled' | 'interrupted'>>
 
 export const statusText = (s: StatusLike) => STATE_LABEL[sessionVisualState(s)]
 
@@ -13,6 +13,7 @@ const ICONS: Record<VisualState, LucideIcon> = {
   auth: KeyRound,
   starting: CircleDashed,
   running: LoaderCircle,
+  interrupted: RotateCw,
   error: CircleX,
   stopped: Square,
   done: CircleCheck,

@@ -3,7 +3,7 @@ import { useEffect } from 'react'
 import { CheckCheck, CircleAlert, CircleCheck, CircleHelp, GitCommitHorizontal, GitCompare, GitPullRequest, Inbox, Info, Megaphone, RotateCcw, ShieldAlert, TriangleAlert, Wrench } from 'lucide-react'
 import { tryApi } from '../api'
 import { openDialog, openSession, openTab, openTask, openWorktree, setState, showPanel, useFeature, useStore } from '../store'
-import { doneForReview, openEscalation, waitsForMe } from '../lib/pending'
+import { doneForReview, openEscalation, pendingCount, waitsForMe } from '../lib/pending'
 import { ReworkPopover } from '../components/board/Rework'
 import { fullTime, NOTIFY_KIND, relTime } from '../lib/format'
 import { useNow } from '../lib/useNow'
@@ -146,10 +146,21 @@ function markRead(ids: string[]) {
 
 export function InboxView() {
   const notifications = useStore((s) => s.notifications)
+  const sessions = useStore((s) => s.sessions)
+  const tasks = useStore((s) => s.tasks)
+  // What «Ждёт меня» shows is not repeated in the feed: open escalations, requests of chats still waiting, finished tasks.
+  const shownAbove = useMemo(() => {
+    const waiting = new Set(sessions.filter(waitsForMe).map((s) => s.id))
+    const done = new Set(tasks.filter(doneForReview).map((t) => t.id))
+    return (n: Notification) => openEscalation(n)
+      || ((n.kind === 'question' || n.kind === 'permission') && !!n.sessionId && waiting.has(n.sessionId))
+      || (n.kind === 'done' && !n.read && !!n.taskId && done.has(n.taskId))
+  }, [sessions, tasks])
   // Unread questions and permission requests first: someone is waiting.
   const urgent = (n: Notification) => !n.read && (n.kind === 'question' || n.kind === 'permission')
-  const list = useMemo(() => [...notifications].sort((a, b) => Number(urgent(b)) - Number(urgent(a)) || b.at - a.at), [notifications])
-  const unread = list.filter((n) => !n.read).length
+  const list = useMemo(() => notifications.filter((n) => !shownAbove(n)).sort((a, b) => Number(urgent(b)) - Number(urgent(a)) || b.at - a.at), [notifications, shownAbove])
+  const unread = notifications.filter((n) => !n.read).length
+  const pending = pendingCount(sessions, tasks, notifications) // the same number as the sidebar badge and the tab title
 
   const readAll = async () => {
     if ((await tryApi<unknown>('POST', '/notifications/read-all')) !== undefined) markRead(list.map((n) => n.id))
@@ -159,7 +170,7 @@ export function InboxView() {
     <div className="inbox-view">
       <header className="view-head">
         <h1>Входящие</h1>
-        {unread > 0 && <span className="count count-signal">{unread}</span>}
+        {pending > 0 ? <span className="count count-signal" data-tip="Ждёт меня">{pending}</span> : unread > 0 && <span className="count">{unread}</span>}
         <span className="grow" />
         <button type="button" className="btn" disabled={!unread} onClick={() => void readAll()}>
           <CheckCheck />
@@ -190,6 +201,8 @@ function Item({ n }: { n: Notification }) {
   const [replying, setReplying] = useState(false)
   const [text, setText] = useState('')
   const Icon = ICON[n.kind]
+  // a question can be answered from here only while its chat still waits for it: never a stale answer
+  const live = n.kind === 'question' && !n.read && !n.answered && !!session && session.waitingFor === 'answer'
 
   const read = async () => {
     if (n.read) return
@@ -223,7 +236,7 @@ function Item({ n }: { n: Notification }) {
           <time className="muted num" data-tip={fullTime(n.at)}>{relTime(n.at, now)}</time>
         </div>
         <button type="button" className="inbox-text" onClick={open} disabled={!session && !task}>{n.text}</button>
-        {n.options?.length && n.sessionId ? <ReplyOptions options={n.options} to={n.sessionId} onSent={() => void read()} /> : null}
+        {live && n.options?.length ? <ReplyOptions options={n.options} to={n.sessionId!} onSent={() => void read()} /> : null}
         {n.link && <LinkButton href={n.link} />}
         {replying ? (
           <form className="inbox-reply" onSubmit={(e) => { e.preventDefault(); void reply() }}>
@@ -247,7 +260,7 @@ function Item({ n }: { n: Notification }) {
           </form>
         ) : (
           <div className="inbox-actions">
-            {n.kind === 'question' && n.sessionId && <button type="button" className="btn btn-sm" onClick={() => setReplying(true)}>Ответить</button>}
+            {live && <button type="button" className="btn btn-sm" onClick={() => setReplying(true)}>Ответить</button>}
             {!n.read && <button type="button" className="btn btn-ghost btn-sm" onClick={() => void read()}>Прочитано</button>}
           </div>
         )}

@@ -1,5 +1,8 @@
 import type { Notification, Session, Task } from '../types'
 
+/** The agents the UI counts and lists: chats, not archived, not harness-internal, not a CLI's internal sub-agent. */
+export const listedChat = (s: Session) => s.kind === 'chat' && !s.archived && !s.system && !s.virtual
+
 /** A chat that waits for the person (question, permission, login); a sub-agent's request shows in its parent. */
 export const waitsForMe = (s: Session) => !s.archived && !s.virtual && (s.waitingFor === 'answer' || s.waitingFor === 'permission' || s.waitingFor === 'auth')
 

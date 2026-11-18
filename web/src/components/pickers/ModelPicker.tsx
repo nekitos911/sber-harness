@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Check, ChevronDown, LoaderCircle, RefreshCw } from 'lucide-react'
 import { openScreen, useFeature, useStore } from '../../store'
 import { api, errorText } from '../../api'
-import { relTime } from '../../lib/format'
+import { ago } from '../../lib/format'
 import { GRADES, loadAgentMeta, loadSettings, modelLabel, useAgentMeta, useSettings } from '../../lib/agents'
 import { pickerModels } from '../../lib/models'
 import { useElapsed } from '../../lib/live'
@@ -196,7 +196,7 @@ function CatalogRefresh({ agentId }: { agentId: string }) {
         <RefreshCw />
         Обновить список
       </button>
-      <span className="muted">{!at ? 'ещё не обновлялся' : relTime(at) === 'сейчас' ? 'обновлено только что' : `обновлено ${relTime(at)} назад`}</span>
+      <span className="muted">{!at ? 'ещё не обновлялся' : `обновлено ${ago(at)}`}</span>
     </div>
   )
 }

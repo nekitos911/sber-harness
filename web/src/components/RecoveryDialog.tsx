@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { api, errorText, tryApi } from '../api'
 import { closeDialog, setState, toast, useStore } from '../store'
-import { basename, plural, relTime } from '../lib/format'
+import { ago, basename, plural } from '../lib/format'
 import { loadDraft, saveDraft } from '../lib/draft'
 import type { RecoveryItem } from '../types'
 import { StatusIcon } from './bits'
@@ -84,7 +84,7 @@ export function RecoveryDialog() {
               <span className="recovery-meta">
                 <span className="mono ellipsis" data-tip={it.cwd}>{basename(it.cwd)}</span>
                 {it.lastActivity && <span className="ellipsis">прервано на: <span className="mono">{it.lastActivity}</span></span>}
-                <span className="num">{relTime(it.at) === 'сейчас' ? 'только что' : `${relTime(it.at)} назад`}</span>
+                <span className="num">{ago(it.at)}</span>
               </span>
               {done ? <span className="recovery-state">продолжена</span>
                 : <MenuButton label={`Действия: ${it.title}`} icon={<Ellipsis />} align="right" items={[{ label: 'Не продолжать — убрать из списка', onSelect: () => void dismiss(it.id) }]} />}

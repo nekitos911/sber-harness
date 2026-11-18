@@ -193,6 +193,7 @@ export interface Notification {
   options?: string[] | null
   link?: string | null
   actions?: ('open' | 'rework' | 'accept')[] // escalations: what the person can do right from the inbox
+  answered?: boolean // a question answered (in its chat or elsewhere)
   count?: number // the same escalation again: ×N
 }
 

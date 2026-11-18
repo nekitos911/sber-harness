@@ -3,7 +3,7 @@ import { Ellipsis, ExternalLink, GitPullRequest, GitPullRequestClosed, RefreshCw
 import { tryApi } from '../api'
 import { openTask, toast, useFeature, useStore, wtKey } from '../store'
 import { loadPr, openPrSettings, PR_STATE, reviewText } from '../lib/pr'
-import { relTime } from '../lib/format'
+import { ago } from '../lib/format'
 import { useNow } from '../lib/useNow'
 import { loadWorktrees } from '../ws'
 import type { PrInfo, Task, TaskPr } from '../types'
@@ -105,7 +105,7 @@ export function PrsView() {
                           {r.head && <span className="mono">{r.head} → {full?.base ?? r.task?.targets[0] ?? '?'}</span>}
                           {full && reviewText(full) && <span>{reviewText(full)}</span>}
                           {full?.mergeable === false && r.pr.state === 'open' && <span className="pr-warn">конфликт</span>}
-                          <span>{PR_STATE[r.pr.state]} {relTime(r.pr.updatedAt, now)} назад</span>
+                          <span>{PR_STATE[r.pr.state]} {ago(r.pr.updatedAt, now)}</span>
                         </span>
                       </span>
                       {r.task && <button type="button" className="chip chip-mono" onClick={() => openTask(r.task!.id)} data-tip={r.task.title}>{r.task.externalId ?? r.task.id}</button>}

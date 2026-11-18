@@ -1,8 +1,9 @@
 import { useMemo, useState } from 'react'
+import { listedChat } from '../lib/pending'
 import { ArchiveRestore, Bot, Ellipsis, ListPlus, MessageSquarePlus, Send } from 'lucide-react'
 import { tryApi } from '../api'
 import { openDialog, openSession, openTask, useStore } from '../store'
-import { relTime, ROLE, tokens } from '../lib/format'
+import { ago, ROLE, tokens } from '../lib/format'
 import { useNow } from '../lib/useNow'
 import type { Session } from '../types'
 import { Branch, StateLegend, StatusIcon, statusText } from '../components/bits'
@@ -13,7 +14,7 @@ import { MenuButton, Select } from '../components/ui'
 
 /** Lanes by visual state; «Ждут вас» shows only when someone does. */
 const GROUPS: { id: string; label: string; hint: string; match: VisualState[]; optional?: boolean }[] = [
-  { id: 'you', label: 'Ждут вас', hint: 'вопрос, разрешение или вход', match: ['waiting_answer', 'waiting_permission', 'auth'], optional: true },
+  { id: 'you', label: 'Ждут вас', hint: 'вопрос, разрешение, вход или прерваны', match: ['waiting_answer', 'waiting_permission', 'auth', 'interrupted'], optional: true },
   { id: 'run', label: 'Работают', hint: 'идёт ход', match: ['running', 'starting', 'stalled'] },
   { id: 'idle', label: 'Свободны', hint: 'ход закончен, ждут сообщения', match: ['idle', 'stopped'] },
   { id: 'done', label: 'Готово', hint: 'отчитались о задаче', match: ['done'] },
@@ -35,7 +36,8 @@ function ordered(list: Session[]) {
 export function AgentsView() {
   const sessions = useStore((s) => s.sessions)
   const [archive, setArchive] = useState(false)
-  const chats = useMemo(() => sessions.filter((s) => s.kind === 'chat' && !s.virtual && !!s.archived === archive).sort((a, b) => b.lastActivityAt - a.lastActivityAt), [sessions, archive])
+  // «Активные» = the set the sidebar counts (listedChat); «Архив» = archived ones
+  const chats = useMemo(() => sessions.filter((s) => (archive ? s.kind === 'chat' && !s.virtual && !s.system && !!s.archived : listedChat(s))).sort((a, b) => b.lastActivityAt - a.lastActivityAt), [sessions, archive])
   const archivedCount = useMemo(() => sessions.filter((s) => s.kind === 'chat' && !s.virtual && s.archived).length, [sessions])
   const byId = useMemo(() => new Map(sessions.map((s) => [s.id, s])), [sessions])
 
@@ -145,7 +147,7 @@ function AgentCard({ s, nested, parent }: { s: Session; nested: boolean; parent?
       {s.branch && <div className="agent-where"><Branch name={s.branch} /></div>}
       {s.preview && <p className="agent-preview">{s.preview}</p>}
       <div className="agent-foot" data-open={mode !== null || undefined}>
-        <span className="muted num">{relTime(s.lastActivityAt, now) === 'сейчас' ? 'активен сейчас' : `активность ${relTime(s.lastActivityAt, now)} назад`}</span>
+        <span className="muted num">активность {ago(s.lastActivityAt, now)}</span>
         <span className="grow" />
         <button type="button" className="icon-btn icon-btn-sm" aria-label="Написать агенту" data-tip="Написать" aria-pressed={mode === 'message'} onClick={() => setMode(mode === 'message' ? null : 'message')}><Send /></button>
         {s.archived && <button type="button" className="btn btn-sm" onClick={() => void archiveSession(s, false)}><ArchiveRestore />Вернуть</button>}

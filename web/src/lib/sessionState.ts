@@ -2,9 +2,9 @@ import type { Session } from '../types'
 
 /** What a session is doing, as the UI shows it: every state has its own icon, colour and words. */
 export type VisualState =
-  | 'waiting_answer' | 'waiting_permission' | 'stalled' | 'auth' | 'starting' | 'running' | 'error' | 'stopped' | 'done' | 'exited' | 'terminal' | 'idle'
+  | 'waiting_answer' | 'waiting_permission' | 'stalled' | 'auth' | 'starting' | 'running' | 'interrupted' | 'error' | 'stopped' | 'done' | 'exited' | 'terminal' | 'idle'
 
-type StateInput = Pick<Session, 'status' | 'kind'> & Partial<Pick<Session, 'phase' | 'waitingFor' | 'stalled'>>
+type StateInput = Pick<Session, 'status' | 'kind'> & Partial<Pick<Session, 'phase' | 'waitingFor' | 'stalled' | 'interrupted'>>
 
 /** The contract's priority order; fields an older server does not send count as absent. */
 export function sessionVisualState(s: StateInput): VisualState {
@@ -14,6 +14,7 @@ export function sessionVisualState(s: StateInput): VisualState {
   if (s.phase === 'auth' || s.waitingFor === 'auth') return 'auth'
   if (s.status === 'running' && s.phase === 'starting') return 'starting'
   if (s.status === 'running') return 'running'
+  if (s.interrupted) return 'interrupted' // a restart cut its turn: resumable from the recovery dialog
   if (s.status === 'error' || s.status === 'failed') return 'error'
   if (s.status === 'stopped') return 'stopped'
   if (s.status === 'done') return 'done'
@@ -23,7 +24,7 @@ export function sessionVisualState(s: StateInput): VisualState {
 
 export const STATE_LABEL: Record<VisualState, string> = {
   waiting_answer: 'ждёт ответа', waiting_permission: 'ждёт разрешения', stalled: 'нет вывода', auth: 'нужен вход', starting: 'запуск', running: 'работает',
-  error: 'ошибка', stopped: 'остановлен', done: 'готово', exited: 'завершён', terminal: 'запущен', idle: 'свободен',
+  interrupted: 'прервана', error: 'ошибка', stopped: 'остановлен', done: 'готово', exited: 'завершён', terminal: 'запущен', idle: 'свободен',
 }
 
 /** 40 с · 7 мин · 3 ч */

@@ -7,7 +7,7 @@ import { api, ApiError, errorText, qs, tryApi } from '../api'
 import { setState, toast, useFeature, useStore } from '../store'
 import { adoptSession } from '../lib/actions'
 import { desktopNotifyOn, setDesktopNotify } from '../lib/notify'
-import { COLUMNS, relTime } from '../lib/format'
+import { ago, COLUMNS } from '../lib/format'
 import { FULL_ACCESS, GRADES, loadAgentMeta, loadSettings, modeShort, normMeta, normModels, useAgentMeta } from '../lib/agents'
 import { useNow } from '../lib/useNow'
 import type { AgentSettings, BoardColumn, BoardSettings, GitBranches, Grade, Session, Settings, TaskStatus } from '../types'
@@ -352,7 +352,7 @@ function AgentStatus({ id }: { id: string }) {
         <dt>Каталог моделей</dt>
         <dd className="status-auth">
           {meta.catalog?.error ? <span className="field-error">{meta.catalog.error}</span>
-            : meta.catalog?.at ? <span>обновлён {relTime(meta.catalog.at, now)} назад</span> : <span className="muted">ещё не запрашивался</span>}
+            : meta.catalog?.at ? <span>обновлён {ago(meta.catalog.at, now)}</span> : <span className="muted">ещё не запрашивался</span>}
           {refreshOn && <Button size="sm" variant="ghost" icon={<RefreshCw className={refreshing ? 'spinner' : undefined} />} disabled={refreshing || !r.ok} onClick={() => void refreshModels()}>Обновить список</Button>}
         </dd>
         {seen && (
@@ -383,7 +383,7 @@ function AgentStatus({ id }: { id: string }) {
           </>
         )}
       </dl>
-      <p className="set-note">{seen ? `По данным последней сессии, ${relTime(seen.at, now)} назад.` : 'Сессий этого агента ещё не было: MCP и команды появятся после первого запуска.'}</p>
+      <p className="set-note">{seen ? `По данным последней сессии, ${ago(seen.at, now)}.` : 'Сессий этого агента ещё не было: MCP и команды появятся после первого запуска.'}</p>
     </div>
   )
 }
