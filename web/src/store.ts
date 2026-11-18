@@ -6,7 +6,7 @@ import type { DiffFile } from './lib/diff'
 import { normPath } from './lib/format'
 import type { PrState } from './lib/pr'
 
-export type Screen = 'board' | 'agents' | 'prs' | 'inbox' | 'settings'
+export type Screen = 'home' | 'board' | 'agents' | 'prs' | 'inbox' | 'settings'
 
 /** A tab always lives in one worktree (cwd): chats and terminals by their session cwd, files and diffs by theirs. */
 export type Tab =
@@ -113,10 +113,10 @@ export const wtKey = (cwd: string) => normPath(cwd)
 
 const PREFS_KEY = 'harness.ui.v2'
 const defaultPrefs: Prefs = {
-  view: { kind: 'screen', screen: 'board' }, wt: {}, sidebar: true, sidebarWidth: 288, panel: true, panelTab: 'changes', theme: null, drafts: {},
+  view: { kind: 'screen', screen: 'home' }, wt: {}, sidebar: true, sidebarWidth: 288, panel: true, panelTab: 'changes', theme: null, drafts: {},
 }
 
-const SCREENS = new Set<Screen>(['board', 'agents', 'prs', 'inbox', 'settings'])
+const SCREENS = new Set<Screen>(['home', 'board', 'agents', 'prs', 'inbox', 'settings'])
 const validView = (v: unknown): v is View => {
   const x = v as View | null
   return !!x && ((x.kind === 'screen' && SCREENS.has(x.screen)) || (x.kind === 'wt' && typeof x.cwd === 'string'))
@@ -131,7 +131,8 @@ function readPrefs(): Prefs {
     for (const [k, e] of Object.entries(p.wt ?? {})) {
       if (e && typeof e.cwd === 'string' && Array.isArray(e.tabs)) wt[k] = { cwd: e.cwd, tabs: e.tabs, active: typeof e.active === 'string' ? e.active : null }
     }
-    return { ...defaultPrefs, ...p, view: validView(p.view) ? p.view : defaultPrefs.view, wt }
+    // a start opens «Главная», unless a chat or file was on screen (that comes back)
+    return { ...defaultPrefs, ...p, view: validView(p.view) && p.view.kind === 'wt' ? p.view : defaultPrefs.view, wt }
   } catch {
     return defaultPrefs
   }
@@ -185,7 +186,7 @@ document.documentElement.dataset.theme = state.scheme
 
 export type Feature = 'sdd' | 'subagents' | 'virtual-sessions' | 'worker-run' | 'pr-status' | 'branches' | 'fs-search'
   | 'agent-info' | 'models-refresh' | 'tracker-links' | 'worktree-meta' | 'open' | 'board-columns' | 'review-loop' | 'skills-install' | 'demo'
-  | 'fs-raw' | 'rework' | 'tracker-import' | 'folders' | 'include-dirs' | 'acp' | 'pr-decline' | 'questions' | 'permissions' | 'activity' | 'recovery' | 'cli-history' | 'prs-mine' | 'git-generate' | 'git-via-agent' | 'git-stage' | 'handoff'
+  | 'fs-raw' | 'rework' | 'tracker-import' | 'folders' | 'include-dirs' | 'acp' | 'pr-decline' | 'questions' | 'permissions' | 'activity' | 'recovery' | 'cli-history' | 'prs-mine' | 'git-generate' | 'git-via-agent' | 'git-stage' | 'handoff' | 'release-resolve'
 
 /** Whether this server implements an optional API group (no flag list = an older server = none). */
 export const hasFeature = (f: Feature) => state.features.includes(f)

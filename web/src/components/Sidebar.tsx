@@ -90,6 +90,7 @@ export function Sidebar() {
       </div>
 
       <div className="nav">
+        <NavItem screen="home" icon={<House />} label="Главная" />
         <NavItem screen="board" icon={<SquareKanban />} label="Задачи" />
         <NavItem
           screen="agents"

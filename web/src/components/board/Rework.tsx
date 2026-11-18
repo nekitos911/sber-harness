@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode, type RefObject } from 'react'
+import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { Play, Wrench } from 'lucide-react'
 import { api, qs } from '../../api'
 import { runJob } from '../../lib/jobs'
@@ -11,6 +11,7 @@ import { isMac } from '../../lib/keys'
 import { useSettings } from '../../lib/agents'
 import type { Session, Task } from '../../types'
 import { Button, Popover, Select } from '../ui'
+import { ReleaseChips, useReleaseTargets } from '../ReleaseTargets'
 
 export const DEFAULT_REWORK = '{key} {title}: нужны правки: {notes}' // the server's own default (agents.<id>.reworkPromptTemplate unset)
 
@@ -19,6 +20,13 @@ function reworkPreview(template: string, task: Task, notes: string) {
   const url = task.externalUrl ?? task.externalId ?? task.id
   return template.replaceAll('{taskUrl}', url).replaceAll('{key}', task.externalId ?? task.id).replaceAll('{title}', task.title)
     .replaceAll('{notes}', notes.trim().split('\n')[0] || '…').split('\n')[0]
+}
+
+/** «Доработать»: the releases the notes name, as chips (their state goes with the request when changed). */
+function ReworkReleases({ notes, task, targets }: { notes: string; task: Task; targets: { current: string[] | undefined } }) {
+  const rel = useReleaseTargets(notes, task.workspaceId)
+  targets.current = rel.targets
+  return <ReleaseChips rel={rel} />
 }
 
 let previewOff = false // the server has no /rework-preview: the template is filled here
@@ -88,18 +96,21 @@ export function ReworkPopover({ task, anchor, open, onClose, onSent, onMoveOnly 
   const settings = useSettings()
   const agent = getState().sessions.find((s) => s.taskId === task.id && s.role !== 'reviewer')?.agent ?? getState().defaultAgent ?? ''
   const template = settings?.agents[agent]?.reworkPromptTemplate || settings?.agents[agent]?.reworkPromptPresets?.[0] || settings?.reworkPromptPresets?.[0] || DEFAULT_REWORK
+  const targets = useRef<string[] | undefined>(undefined) // the release chips under the notes, when the person changed them
   return (
     <NotesPopover
       anchor={anchor} open={open} onClose={onClose}
       label="Что поправить?" draftKey={`rework:${task.id}`} required
       placeholder="Например: кнопка «Сохранить» не блокируется во время запроса; тест на пустой список падает"
-      preview={(n) => <ReworkPreview task={task} notes={n} template={template} />}
+      preview={(n) => <><ReworkPreview task={task} notes={n} template={template} /><ReworkReleases notes={n} task={task} targets={targets} /></>}
       primary={{
         label: 'Отправить агенту', icon: <Wrench />,
         run: async (notes) => {
-          const res = await runJob('Доработка', (jobId) => api<{ task?: Task; session?: Session }>('POST', `/tasks/${encodeURIComponent(task.id)}/rework`, { notes }, { jobId }))
+          const res = await runJob('Доработка', (jobId) => api<{ task?: Task; session?: Session; releaseWarning?: string }>('POST', `/tasks/${encodeURIComponent(task.id)}/rework`,
+            { notes, ...(targets.current ? { targets: targets.current } : {}) }, { jobId }))
           if (res === undefined) return false
           if (res?.task) setState((s) => ({ tasks: upsert(s.tasks, res.task!) }))
+          if (res?.releaseWarning) toast(res.releaseWarning, 'info')
           toast(`${task.externalId ?? task.id}: правки отправлены агенту`, 'ok')
           onSent?.()
           return true

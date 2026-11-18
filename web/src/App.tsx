@@ -1,4 +1,5 @@
 import { lazy, Suspense, useEffect, useState, type CSSProperties } from 'react'
+import { HomeView } from './views/HomeView'
 import { useCompact, useRail } from './lib/useMedia'
 import { RotateCw, WifiOff } from 'lucide-react'
 import { closeTab, getState, setState, tabKey, useStore, wtKey, type Screen, type Tab } from './store'
@@ -139,10 +140,11 @@ export function App() {
   )
 }
 
-const SCREEN_AREA: Record<Screen, string> = { board: 'доску задач', agents: 'агентов', prs: 'пулл-реквесты', inbox: 'входящие', settings: 'настройки' }
+const SCREEN_AREA: Record<Screen, string> = { home: 'главную', board: 'доску задач', agents: 'агентов', prs: 'пулл-реквесты', inbox: 'входящие', settings: 'настройки' }
 
 function ScreenContent({ screen }: { screen: Screen }) {
   switch (screen) {
+    case 'home': return <HomeView />
     case 'board': return <BoardView />
     case 'agents': return <AgentsView />
     case 'prs': return <PrsView />

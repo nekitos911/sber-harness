@@ -33,6 +33,7 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
     { id: 'term', label: 'Новый терминал', icon: <SquareTerminal />, run: () => { const w = currentWhere(); if (w.cwd) void newTerminal(w); else openDialog({ kind: 'terminal' }) } },
     { id: 'term-form', label: 'Новый терминал с настройками…', icon: <SquareTerminal />, run: () => openDialog({ kind: 'terminal', ...dialogWhere() }) },
     { id: 'ws', label: 'Добавить проект', icon: <FolderPlus />, run: () => openDialog({ kind: 'workspace' }) },
+    { id: 'home', label: 'Главная: передать задачу агенту', icon: <SquareKanban />, run: () => openScreen('home') },
     { id: 'board', label: 'Доска задач', icon: <SquareKanban />, run: () => openScreen('board') },
     { id: 'agents', label: 'Агенты', icon: <Bot />, run: () => openScreen('agents') },
     { id: 'prs', label: 'Пулл-реквесты', icon: <GitPullRequest />, run: () => openScreen('prs') },
