@@ -44,7 +44,7 @@ const NO_BUILD_HTML = '<!doctype html><meta charset="utf-8"><title>Harness</titl
 const GRADES = ['default', 'fast', 'review', 'explore'];
 // optional API groups this server implements (docs/ARCHITECTURE.md "Feature flags"); a flag ships with its route
 export const FEATURES = ['branches', 'fs-search', 'pr-status', 'agent-info', 'models-refresh', 'tracker-links', 'board-columns', 'review-loop',
-  'subagents', 'virtual-sessions', 'worker-run', 'skills-install', 'demo', 'worktree-meta', 'open', 'sdd', 'health', 'folders', 'include-dirs', 'questions', 'permissions', 'activity', 'rework', 'fs-raw', 'tracker-import', 'pr-decline', 'task-suggest', 'recovery', 'acp', 'worktree-lazy', 'cli-history', 'prs-mine', 'git-generate', 'git-via-agent', 'git-stage', 'handoff', 'release-resolve', 'cli-adopt', 'handoff-dry-run', 'integrations-check', 'pick-folder', 'checks', 'revive', 'bind-task'];
+  'subagents', 'virtual-sessions', 'worker-run', 'skills-install', 'demo', 'worktree-meta', 'open', 'sdd', 'health', 'folders', 'include-dirs', 'questions', 'permissions', 'activity', 'rework', 'fs-raw', 'tracker-import', 'pr-decline', 'task-suggest', 'recovery', 'acp', 'worktree-lazy', 'cli-history', 'prs-mine', 'git-generate', 'git-via-agent', 'git-stage', 'handoff', 'release-resolve', 'cli-adopt', 'handoff-dry-run', 'integrations-check', 'pick-folder', 'checks', 'revive', 'bind-task', 'open-file'];
 // titles of operations the UI may follow by sending x-job-id (WS { t: 'job' } frames)
 const JOB_TITLES = {
   'POST /api/tasks/sync': 'Синхронизация с трекером',
@@ -1228,20 +1228,49 @@ export async function startServer(opts = {}) {
     // stored and broadcast (`worktree.meta`) like every other meta change
     return orch.markWorktree(p, Object.fromEntries(['label', 'note', 'pinned', 'sleeping'].filter((k) => k in body).map((k) => [k, body[k]])));
   });
+  /** A file the person may open from the chat: in a registered folder or its worktree, or a chat's own attachments. */
+  async function openableFile(f) {
+    const within = (dir, p) => { const r = path.relative(dir, p); return !!r && !r.startsWith('..') && !path.isAbsolute(r); };
+    const runs = path.join(store.dataDir, 'runs');
+    if (within(runs, f) && path.relative(runs, f).split(path.sep)[1] === 'attachments') return true;
+    for (const ws of db.workspaces) {
+      if (within(ws.path, f)) return true;
+      if (ws.isGit && (await git.worktrees(ws.path).catch(() => [])).some((w) => within(w.path, f))) return true;
+    }
+    return false;
+  }
+  // a program or a script is never started from a click: its folder is shown instead
+  const RUNNABLE = /\.(exe|com|bat|cmd|ps1|psm1|vbs|vbe|js|jse|mjs|wsf|wsh|msi|msp|scr|pif|lnk|url|hta|cpl|reg|jar|appref-ms|application|sh|command|app)$/i;
+
   route('POST', '/api/open', async ({ body }) => {
-    check(body, { cwd: 'string', target: 'string' });
-    if (!['explorer', 'ide'].includes(body.target)) fail(400, 'target: "explorer" или "ide"');
-    const p = path.resolve(body.cwd);
-    if (!(await registeredFolder(p))) fail(400, `не зарегистрированная рабочая папка и не её рабочее дерево: ${body.cwd}`);
+    check(body, { target: 'string' });
+    if (!['explorer', 'ide', 'file', 'reveal'].includes(body.target)) fail(400, 'target: "explorer", "ide", "file" или "reveal"');
+    const fm = process.platform === 'win32' ? 'explorer.exe' : process.platform === 'darwin' ? 'open' : 'xdg-open';
     let command;
     let args;
-    if (body.target === 'ide') {
-      if (!config.ide?.command) fail(400, 'IDE не настроена (config.ide)');
-      command = config.ide.command;
-      args = (config.ide.args || ['{path}']).map((a) => String(a).replace(/\{path\}/g, p));
+    let revealed;
+    // «file»: the default program for it; «reveal»: its folder, the file selected. `path` may be relative to `cwd`.
+    if (body.target === 'file' || body.target === 'reveal') {
+      check(body, { path: 'string' });
+      const f = path.resolve(typeof body.cwd === 'string' ? body.cwd : '', body.path);
+      if (!path.isAbsolute(body.path) && typeof body.cwd !== 'string') fail(400, 'path: абсолютный путь (или cwd)');
+      if (!(await openableFile(f))) fail(400, `не в рабочей папке и не вложение чата: ${body.path}`);
+      if (!fs.existsSync(f)) fail(404, `файла больше нет: ${f}`);
+      revealed = body.target === 'reveal' || RUNNABLE.test(f);
+      command = fm;
+      args = !revealed ? [f] : process.platform === 'win32' ? ['/select,', f] : process.platform === 'darwin' ? ['-R', f] : [path.dirname(f)];
     } else {
-      command = process.platform === 'win32' ? 'explorer.exe' : process.platform === 'darwin' ? 'open' : 'xdg-open';
-      args = [p];
+      check(body, { cwd: 'string' });
+      const p = path.resolve(body.cwd);
+      if (!(await registeredFolder(p))) fail(400, `не зарегистрированная рабочая папка и не её рабочее дерево: ${body.cwd}`);
+      if (body.target === 'ide') {
+        if (!config.ide?.command) fail(400, 'IDE не настроена (config.ide)');
+        command = config.ide.command;
+        args = (config.ide.args || ['{path}']).map((a) => String(a).replace(/\{path\}/g, p));
+      } else {
+        command = fm;
+        args = [p];
+      }
     }
     const failOpen = (e) => fail(400, `Не удалось запустить «${[command].flat()[0]}»: ${e.message}`);
     let child;
@@ -1253,7 +1282,7 @@ export async function startServer(opts = {}) {
     child.on('error', () => {});
     if (!child.pid) await new Promise((resolve, reject) => child.once('error', reject)).catch(failOpen); // ENOENT etc. come async
     child.unref?.();
-    return { ok: true };
+    return revealed === undefined ? { ok: true } : { ok: true, revealed };
   });
 
   // tasks

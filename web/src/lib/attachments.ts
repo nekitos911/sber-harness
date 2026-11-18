@@ -17,3 +17,20 @@ export function splitAttachments(text: string): { text: string; paths: string[] 
 }
 
 export const isImagePath = (p: string) => /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(p)
+
+/** The mention of the n-th attachment in the text, where it was attached (like «Изображение №1» in Orca): the number is its line in the list. */
+export const attRef = (n: number, image: boolean) => `[${image ? 'Изображение' : 'Файл'} №${n}]`
+export const ATT_REF = /\[(?:Изображение|Файл) №\d+\]/
+
+/** `tag` put at the caret, a space on each side when the text needs one → the new text and the caret after the tag. */
+export function insertRef(text: string, at: number, tag: string): { text: string; caret: number } {
+  const before = text.slice(0, at)
+  const after = text.slice(at)
+  const head = before + (before && !/\s$/.test(before) ? ' ' : '') + tag + (/^\s/.test(after) ? '' : ' ')
+  return { text: head + after, caret: head.length }
+}
+
+/** The n-th attachment removed: its mention goes, the later ones move down by one (their line in the list moved too). */
+export function dropRef(text: string, n: number): string {
+  return text.replace(/ ?\[(Изображение|Файл) №(\d+)\]/g, (m, kind: string, d: string) => (+d === n ? '' : +d > n ? m.replace(`[${kind} №${d}]`, `[${kind} №${+d - 1}]`) : m))
+}

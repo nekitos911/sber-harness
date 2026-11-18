@@ -10,6 +10,7 @@ import { dur } from '../../lib/sessionState'
 import type { DiffLine } from '../../lib/diff'
 import type { Message, ToolCall } from '../../types'
 import { DiffLines } from '../DiffLines'
+import { openFile } from '../WorktreeMenu'
 import { Disclosure } from '../ui'
 import { isSubagentTool } from './SubagentCard'
 
@@ -138,6 +139,7 @@ export function Thumb({ cwd, path }: { cwd: string; path: string }) {
   const [url, setUrl] = useState<string | null>(null)
   const [failed, setFailed] = useState(false)
   const box = useRef<HTMLDialogElement>(null)
+  const canReveal = useFeature('open-file')
   useEffect(() => {
     let live = true
     let made: string | null = null
@@ -154,6 +156,12 @@ export function Thumb({ cwd, path }: { cwd: string; path: string }) {
         <dialog ref={box} className="lightbox" aria-label={basename(path)} onClick={() => box.current?.close()}>
           <img src={url} alt={basename(path)} />
           <span className="lightbox-name mono">{path}</span>
+          {canReveal && (
+            <span className="lightbox-actions">
+              <button type="button" className="btn btn-sm" onClick={(e) => { e.stopPropagation(); openFile(path, 'file', cwd) }}>Открыть</button>
+              <button type="button" className="btn btn-sm" onClick={(e) => { e.stopPropagation(); openFile(path, 'reveal', cwd) }}>Показать в папке</button>
+            </span>
+          )}
         </dialog>
       )}
     </>

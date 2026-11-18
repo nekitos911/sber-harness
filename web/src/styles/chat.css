@@ -419,3 +419,14 @@ svg.step-icon.spinner { color: var(--lamp-run); }
 .cq-toggle { display: inline-flex; align-items: center; gap: 6px; padding: 0; border: 0; background: none; color: inherit; font: inherit; cursor: pointer; text-align: left; }
 .cq-toggle svg { width: 14px; height: 14px; flex-shrink: 0; color: var(--ink-3); }
 .cq-toggle:hover { color: var(--ink); }
+/* an attached file in the chat: the name opens it, the folder shows where it lies */
+.file-chip { padding: 0; gap: 0; overflow: hidden; }
+.file-chip button { display: inline-flex; align-items: center; gap: 4px; height: 100%; padding: 0 6px; border: 0; background: none; color: inherit; font: inherit; cursor: pointer; }
+.file-chip button:hover { background: var(--deck-3, var(--rule)); color: var(--ink); }
+.file-chip-open { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.file-chip-dir { border-left: 1px solid var(--rule) !important; padding: 0 5px !important; }
+.lightbox-actions { display: flex; justify-content: center; gap: 6px; margin-top: 6px; cursor: default; }
+/* «[Изображение №1]» in the input: where the attachment belongs in the text */
+.composer-mirror mark.att-ref { background: var(--deck-3, var(--rule)); box-shadow: 0 0 0 1px var(--rule-strong); }
+.att-open { display: inline-flex; align-items: center; gap: 6px; min-width: 0; height: 100%; width: 100%; padding: 0; border: 0; background: none; color: inherit; font: inherit; cursor: pointer; }
+.att-n { color: var(--ink-3); font-size: 11px; }

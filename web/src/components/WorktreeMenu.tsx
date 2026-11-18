@@ -36,6 +36,11 @@ export function openFolder(cwd: string) {
   void tryApi('POST', '/open', { cwd, target: 'explorer' })
 }
 
+/** A file from the chat: «file» — its own program (a program or a script: its folder instead); «reveal» — its folder, the file selected. */
+export function openFile(path: string, how: 'file' | 'reveal' = 'file', cwd?: string) {
+  void tryApi('POST', '/open', { path, target: how, ...(cwd ? { cwd } : {}) })
+}
+
 /** Optimistic: pin/sleep/label show at once; the list is reloaded after (which also undoes a failed change). */
 async function patchMeta(workspaceId: string, path: string, meta: Partial<NonNullable<Worktree['meta']>>) {
   setState((s) => ({ worktrees: { ...s.worktrees, [workspaceId]: (s.worktrees[workspaceId] ?? []).map((w) => (w.path === path ? { ...w, meta: { ...w.meta, ...meta } } : w)) } }))

@@ -94,6 +94,32 @@ test('open in the file manager or the configured IDE, only for registered folder
   assert.equal((await h.api('PUT', '/api/settings', { ide: { command: '' } })).status, 400);
 });
 
+test('a file from the chat: opened by its program, or shown in its folder; never a program, never outside', async () => {
+  const doc = path.join(repo, 'спека.docx');
+  fs.writeFileSync(doc, 'x');
+  const fm = process.platform === 'win32' ? 'explorer.exe' : process.platform === 'darwin' ? 'open' : 'xdg-open';
+  const open = (body) => h.api('POST', '/api/open', body);
+  assert.deepEqual((await open({ target: 'file', path: doc })).body, { ok: true, revealed: false });
+  assert.deepEqual([spawned.at(-1).command, spawned.at(-1).args], [fm, [doc]]);
+  assert.equal((await open({ target: 'reveal', cwd: repo, path: 'спека.docx' })).status, 200, 'relative to cwd');
+  const select = process.platform === 'win32' ? ['/select,', doc] : process.platform === 'darwin' ? ['-R', doc] : [repo];
+  assert.deepEqual(spawned.at(-1).args, select);
+  const bat = path.join(repo, 'run.bat');
+  fs.writeFileSync(bat, 'echo');
+  assert.equal((await open({ target: 'file', path: bat })).body.revealed, true, 'a script is shown in its folder, not started');
+  // a chat's attachment lives outside every project folder, still opens
+  const att = path.join(h.dataDir, 'runs', 'чат1', 'attachments', 'a.png');
+  fs.mkdirSync(path.dirname(att), { recursive: true });
+  fs.writeFileSync(att, 'x');
+  assert.equal((await open({ target: 'file', path: att })).status, 200);
+  const n = spawned.length;
+  assert.equal((await open({ target: 'file', path: path.join(h.dataDir, 'db.json') })).status, 400, 'the harness data is not a chat file');
+  assert.equal((await open({ target: 'file', path: path.join(root, 'чужое.txt') })).status, 400, 'outside the projects');
+  assert.equal((await open({ target: 'file', path: path.join(repo, 'нет.txt') })).status, 404);
+  assert.equal((await open({ target: 'file', path: 'спека.docx' })).status, 400, 'relative without cwd');
+  assert.equal(spawned.length, n, 'nothing was started for a refused path');
+});
+
 test('listing scales: 20 worktrees list without git per worktree; enrich and per-path info on demand', async () => {
   for (let i = 0; i < 20; i++) gitIn(repo, 'worktree', 'add', '-q', '-b', `bulk/w${i}`, path.join(root, 'много', `w${i}`));
   const t0 = performance.now();

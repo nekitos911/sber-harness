@@ -1,7 +1,8 @@
 import { memo, useState, type MouseEvent } from 'react'
-import { Check, Copy, ExternalLink, FileText, GitCompare, LoaderCircle, TriangleAlert, X } from 'lucide-react'
+import { Check, Copy, ExternalLink, FileText, FolderOpen, GitCompare, LoaderCircle, TriangleAlert, X } from 'lucide-react'
 import { tryApi } from '../../api'
-import { openSession, openTab, useStore } from '../../store'
+import { openSession, openTab, useFeature, useStore } from '../../store'
+import { openFile } from '../WorktreeMenu'
 import { basename, fullTime, normPath } from '../../lib/format'
 import { emptyInput, fileEdit, summarizeInput, type FileEdit } from '../../lib/toolcall'
 import { parseDiff, type DiffFile, type DiffLine } from '../../lib/diff'
@@ -63,6 +64,18 @@ export function ReplyOptions({ options, to, onSent }: { options: string[]; to: s
   )
 }
 
+/** An attached file: a click opens it in its program; the folder button shows where it lies. */
+function FileChip({ path, n }: { path: string; n: number }) {
+  const can = useFeature('open-file')
+  if (!can) return <span className="chip" data-tip={path}><FileText aria-hidden />{basename(path)}</span>
+  return (
+    <span className="chip file-chip">
+      <button type="button" className="file-chip-open" data-tip={`Открыть: ${path}`} onClick={() => openFile(path)}><FileText aria-hidden /><span className="muted num">#{n}</span> {basename(path).replace(/^\d{8}-\d{6}-/, '')}</button>
+      <button type="button" className="file-chip-dir" aria-label={`Показать ${basename(path)} в папке`} data-tip="Показать в папке" onClick={() => openFile(path, 'reveal')}><FolderOpen aria-hidden /></button>
+    </span>
+  )
+}
+
 function UserMessage({ m }: { m: Message }) {
   const sender = useStore((s) => (m.from && m.from !== 'user' ? s.sessions.find((x) => x.id === m.from) : undefined))
   const fromOther = m.from && m.from !== 'user'
@@ -82,7 +95,7 @@ function UserMessage({ m }: { m: Message }) {
         <div className="msg-atts" aria-label="Вложения">
           {paths.map((p) => (isImagePath(p) && cwd
             ? <Thumb key={p} cwd={cwd} path={p} />
-            : <span key={p} className="chip" data-tip={p}><FileText aria-hidden />{basename(p)}</span>))}
+            : <FileChip key={p} path={p} n={paths.indexOf(p) + 1} />))}
         </div>
       )}
       {text && <Markdown text={text} />}

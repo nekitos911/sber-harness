@@ -13,3 +13,14 @@ test('attachments go as a numbered list of paths at the end and come back out of
   assert.deepEqual(splitAttachments('Вложения: в середине\nне список'), { text: 'Вложения: в середине\nне список', paths: [] })
   assert.deepEqual([isImagePath('a.JPEG'), isImagePath('a.txt')], [true, false])
 })
+
+test('a file attached where the caret is gets its mention there; removing it renumbers the later ones', async () => {
+  const { attRef, insertRef, dropRef } = await import('./attachments.ts')
+  let r = insertRef('Почему тут ошибка', 'Почему тут'.length, attRef(1, true))
+  assert.deepEqual(r, { text: 'Почему тут [Изображение №1] ошибка', caret: 'Почему тут [Изображение №1]'.length })
+  r = insertRef(r.text, r.text.length, attRef(2, false))
+  assert.equal(r.text, 'Почему тут [Изображение №1] ошибка [Файл №2] ')
+  assert.equal(insertRef('', 0, attRef(1, true)).text, '[Изображение №1] ')
+  assert.equal(dropRef('a [Изображение №1] b [Файл №2] c [Изображение №3]', 1), 'a b [Файл №1] c [Изображение №2]')
+  assert.equal(dropRef('a [Изображение №1] b [Файл №2]', 2), 'a [Изображение №1] b')
+})

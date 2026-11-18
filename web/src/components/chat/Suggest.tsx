@@ -6,6 +6,7 @@ import { splitPath } from '../../lib/git'
 import { Popover } from '../ui'
 import { useFeature } from '../../store'
 import { tokenAt } from '../../lib/mention'
+import { ATT_REF } from '../../lib/attachments'
 import { useListNav } from '../ui/listNav'
 
 interface Item { key: string; text: string; insert: string; node: ReactNode }
@@ -96,10 +97,10 @@ export function useComposerSuggest({ input, text, caret, cwd, agentId, onInsert 
 
 /** Behind the textarea: the same text with @path tokens drawn as chips (the sent message stays plain text). */
 export function MentionMirror({ text, scrollTop }: { text: string; scrollTop: number }) {
-  const parts = text.split(/(@[^\s@]+)/g)
+  const parts = text.split(/(@[^\s@]+|\[(?:Изображение|Файл) №\d+\])/g)
   return (
     <div className="composer-mirror" aria-hidden style={{ transform: `translateY(${-scrollTop}px)` }}>
-      {parts.map((p, i) => (p.startsWith('@') && p.length > 1 ? <mark key={i}>{p}</mark> : <span key={i}>{p}</span>))}
+      {parts.map((p, i) => (p.startsWith('@') && p.length > 1 ? <mark key={i}>{p}</mark> : ATT_REF.test(p) ? <mark key={i} className="att-ref">{p}</mark> : <span key={i}>{p}</span>))}
       {'​'}
     </div>
   )

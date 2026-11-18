@@ -1,17 +1,22 @@
 import { useLayoutEffect, useRef, useState } from 'react'
 import { ArrowUp, ChevronDown, ChevronUp, Clock, FileText, Pencil, Plus, Square, X } from 'lucide-react'
 import { tryApi } from '../../api'
-import { getState, setDraft, setState, useStore, upsertSession } from '../../store'
+import { getState, setDraft, setState, useFeature, useStore, upsertSession } from '../../store'
+import { openFile } from '../WorktreeMenu'
 import type { Session } from '../../types'
 import { IconButton, Select } from '../ui'
 import { MentionMirror, useComposerSuggest } from './Suggest'
 import { ModelPicker } from '../pickers/ModelPicker'
 import { ContextRing } from './ContextRing'
 import { FULL_ACCESS, modeShort, useSettings } from '../../lib/agents'
-import { withAttachments } from '../../lib/attachments'
+import { attRef, dropRef, insertRef, withAttachments } from '../../lib/attachments'
 
 /** A file attached to the message being written: its copy at the harness, and a preview for an image. */
 interface Att { path: string; name: string; preview: string | null }
+
+function AttFace({ a, n }: { a: Att; n: number }) {
+  return a.preview ? <img src={a.preview} alt={a.name} /> : <><FileText aria-hidden /><span className="att-n num">#{n}</span><span className="att-name ellipsis">{a.name}</span></>
+}
 
 export function Composer({ session, active }: { session: Session; active: boolean }) {
   const agent = useStore((s) => s.agents.find((a) => a.id === session.agent))
@@ -50,14 +55,28 @@ export function Composer({ session, active }: { session: Session; active: boolea
    * for an image); the agent gets the paths as a list at the end of the message. Project files are mentioned with @.
    */
   const attach = async (files: File[]) => {
+    let n = atts.length
+    let at = ref.current?.selectionStart ?? text.length
     for (const f of files) {
       const r = await tryApi<{ path: string }>('POST', `/sessions/${session.id}/attachments?name=${encodeURIComponent(f.name || 'file')}`, f)
       if (!r) return
-      setAtts((list) => [...list, { path: r.path, name: f.name || 'файл', preview: f.type.startsWith('image/') ? URL.createObjectURL(f) : null }])
+      const image = f.type.startsWith('image/')
+      setAtts((list) => [...list, { path: r.path, name: f.name || 'файл', preview: image ? URL.createObjectURL(f) : null }])
+      // «[Изображение №1]» where the caret was (as in Orca): the agent sees which part of the question the file is about
+      const cur = getState().drafts[session.id] ?? ''
+      const next = insertRef(cur, Math.min(at, cur.length), attRef(++n, image))
+      update(next.text)
+      at = next.caret
     }
-    ref.current?.focus()
+    requestAnimationFrame(() => { ref.current?.focus(); ref.current?.setSelectionRange(at, at); setCaret(at) })
   }
-  const unattach = (a: Att) => { if (a.preview) URL.revokeObjectURL(a.preview); setAtts((list) => list.filter((x) => x !== a)) }
+  const unattach = (a: Att) => {
+    const i = atts.indexOf(a)
+    if (a.preview) URL.revokeObjectURL(a.preview)
+    setAtts((list) => list.filter((x) => x !== a))
+    if (i >= 0) update(dropRef(getState().drafts[session.id] ?? '', i + 1)) // its mention goes, the later ones renumber
+  }
+  const canOpen = useFeature('open-file')
 
   const send = async () => {
     const body = withAttachments(text.trim(), atts.map((a) => a.path))
@@ -95,8 +114,10 @@ export function Composer({ session, active }: { session: Session; active: boolea
       {atts.length > 0 && (
         <div className="composer-atts" role="list" aria-label="Вложения">
           {atts.map((a, i) => (
-            <div key={a.path} className="att" role="listitem" data-tip={a.name} data-img={!!a.preview || undefined}>
-              {a.preview ? <img src={a.preview} alt={a.name} /> : <><FileText aria-hidden /><span className="att-name ellipsis">{a.name}</span></>}
+            <div key={a.path} className="att" role="listitem" data-tip={canOpen ? `Открыть: ${a.name}` : a.name} data-img={!!a.preview || undefined}>
+              {canOpen
+                ? <button type="button" className="att-open" aria-label={`Открыть ${a.name}`} onClick={() => openFile(a.path)}><AttFace a={a} n={i + 1} /></button>
+                : <AttFace a={a} n={i + 1} />}
               {a.preview && <span className="att-num">#{i + 1}</span>}
               <button type="button" className="att-x" aria-label={`Убрать ${a.name}`} onClick={() => unattach(a)}><X /></button>
             </div>
