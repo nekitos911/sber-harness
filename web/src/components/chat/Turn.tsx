@@ -1,4 +1,4 @@
-import { useMemo, useState, type MouseEvent } from 'react'
+import { memo, useMemo, useState, type MouseEvent } from 'react'
 import { ChevronRight, CircleHelp, GitCompare, LoaderCircle, ShieldAlert, TriangleAlert, Wrench } from 'lucide-react'
 import { tryApi } from '../../api'
 import { openTab } from '../../store'
@@ -104,7 +104,7 @@ function head(list: Message[], userIdx: number, runningTurn: number | null, last
 }
 
 /** «Работает 14 с» while the turn runs, «Работал 1 мин 20 с» after. */
-export function TurnHead({ start, end }: { start: number; end: number | null }) {
+function TurnHeadView({ start, end }: { start: number; end: number | null }) {
   const sec = useElapsed(start, end === null)
   return <div className="turn-head num">{end === null ? `Работает ${longDur(sec * 1000)}` : `Работал ${longDur(end - start)}`}</div>
 }
@@ -112,7 +112,7 @@ export function TurnHead({ start, end }: { start: number; end: number | null }) 
 // ---------- tool runs ----------
 
 /** Consecutive tool calls (and the thoughts between them) as one line; expanding lists every step in order. */
-export function ToolRun({ msgs, cwd, live }: { msgs: Message[]; cwd: string; live: boolean }) {
+function ToolRunView({ msgs, cwd, live }: { msgs: Message[]; cwd: string; live: boolean }) {
   const tools = msgs.filter((m) => m.tool)
   const running = tools.some((m) => m.tool!.status === 'running')
   const failed = tools.filter((m) => m.tool!.status === 'error').length
@@ -142,7 +142,7 @@ const editLines = (lines: { kind: ' ' | '+' | '-'; text: string }[]): DiffLine[]
   lines.map((l) => ({ kind: l.kind === '+' ? 'add' : l.kind === '-' ? 'del' : 'ctx', text: l.text, old: null, new: null }))
 
 /** «Изменено 2 файла +12 −3»: every file the turn's edit tools touched; each expands to its diff. */
-export function TurnFiles({ msgs, cwd }: { msgs: Message[]; cwd: string }) {
+function TurnFilesView({ msgs, cwd }: { msgs: Message[]; cwd: string }) {
   const files = useMemo(() => {
     const map = new Map<string, { added: number; removed: number; lines: DiffLine[] }>()
     for (const m of msgs) {
@@ -282,3 +282,8 @@ export function StallBanner({ session }: { session: Session }) {
     </div>
   )
 }
+
+// memo: a chat re-renders on every event of every agent; a block of finished steps has nothing new to draw
+export const TurnHead = memo(TurnHeadView)
+export const ToolRun = memo(ToolRunView)
+export const TurnFiles = memo(TurnFilesView)

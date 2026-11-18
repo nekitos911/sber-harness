@@ -153,6 +153,8 @@ let state: State = {
 }
 
 const listeners = new Set<() => void>()
+let batching = 0 // inside batch(): state changes, listeners hear once at the end
+let changed = false
 
 export const getState = () => state
 
@@ -163,7 +165,16 @@ export function setState(patch: Partial<State> | ((s: State) => Partial<State>))
   if (state.theme !== prev.theme) state = { ...state, scheme: resolveScheme(state.theme) }
   if (state.scheme !== prev.scheme) document.documentElement.dataset.theme = state.scheme
   savePrefs(prev)
+  if (batching) { changed = true; return }
   listeners.forEach((l) => l())
+}
+
+/** Many changes, one render: every subscriber hears once after `fn` (e.g. all server events of one frame). */
+export function batch(fn: () => void) {
+  batching++
+  try { fn() } finally {
+    if (--batching === 0 && changed) { changed = false; listeners.forEach((l) => l()) }
+  }
 }
 
 function savePrefs(prev: State) {

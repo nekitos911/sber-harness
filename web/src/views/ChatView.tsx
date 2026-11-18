@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { ArrowDown, Check, Copy, Ellipsis, ExternalLink, FolderPlus, KeyRound, ShieldCheck, Wrench, X, GitCompareArrows, MessageSquare, RotateCcw, ScrollText, Square, Trash2 } from 'lucide-react'
 import { api, errorText, tryApi } from '../api'
-import { openDialog, openScreen, openSession, openTask, setState, showPanel, useFeature, useStore, upsertSession } from '../store'
+import { getState, openDialog, openScreen, openSession, openTask, setState, showPanel, useFeature, useStore, upsertSession } from '../store'
 import { loadMessages, loadSubagents } from '../ws'
 import { basename, normPath, plural, ROLE } from '../lib/format'
 import { useGit } from '../lib/git'
@@ -53,12 +53,13 @@ function InterruptedBar({ session }: { session: Session }) {
 export function ChatView({ id, active }: { id: string; active: boolean }) {
   const session = useStore((s) => s.sessions.find((x) => x.id === id))
   const messages = useStore((s) => s.messages[id])
-  const allSessions = useStore((s) => s.sessions)
+  // a key of this chat's own helpers (what the panel shows changes it); the list itself is read when the key changes
+  const kidsKey = useStore((s) => s.sessions.filter((x) => x.parentId === id && !x.archived).map((x) => `${x.id}:${x.status}:${x.waitingFor ?? ''}:${x.title}:${x.lastActivityAt}`).join('|'))
   // archived ones (settled sub-agents once the turn is over) leave the panel; their chats open from the transcript card.
   // Once this chat's turn is over only children still working or waiting stay — a finished one in its own worktree is
   // not archived (a per-service orchestrator lives on), it is in the sidebar under that worktree.
-  const parentBusy = allSessions.find((s) => s.id === id)?.status === 'running'
-  const workers = useMemo(() => allSessions.filter((s) => s.parentId === id && !s.archived && (parentBusy || s.status === 'running' || !!s.waitingFor)), [allSessions, id, parentBusy])
+  const parentBusy = useStore((s) => s.sessions.find((x) => x.id === id)?.status === 'running')
+  const workers = useMemo(() => getState().sessions.filter((s) => s.parentId === id && !s.archived && (parentBusy || s.status === 'running' || !!s.waitingFor)), [kidsKey, id, parentBusy]) // eslint-disable-line react-hooks/exhaustive-deps
   const [loadError, setLoadError] = useState<string | null>(null)
   const [limit, setLimit] = useState(PAGE)
   const [log, setLog] = useState<string | null>(null)

@@ -1,5 +1,5 @@
 import { api, ApiError, errorText, wsUrl } from './api'
-import { closeSessionTab, getState, hasFeature, setState, tabKey, toast, upsert, without, wtKey, type WtTabs } from './store'
+import { batch, closeSessionTab, getState, hasFeature, setState, tabKey, toast, upsert, without, wtKey, type WtTabs } from './store'
 import { desktopNotify } from './lib/notify'
 import { saveDraft } from './lib/draft'
 import { applyJobEvent } from './lib/jobs'
@@ -18,6 +18,24 @@ let retryTimer = 0
 let wasOpen = false // a socket has been open before: the next open is a reconnect
 let failed = 0 // connection attempts that never opened since the last open (the server was down, not a dropped socket)
 const terms = new Map<string, TermListener>()
+
+// Server events come in bursts (several agents streaming at once): all that came within ~80 ms are applied together —
+// one render instead of one per event.
+let pending: ServerEvent[] = []
+let scheduled = false
+function flush() {
+  scheduled = false
+  const evs = pending
+  pending = []
+  batch(() => { for (const ev of evs) apply(ev) })
+}
+function queue(ev: ServerEvent) {
+  pending.push(ev)
+  if (scheduled) return
+  scheduled = true
+  // ~12 renders a second while agents stream: text still flows, the page keeps time to answer typing and clicks
+  setTimeout(flush, document.visibilityState === 'visible' ? 80 : 250)
+}
 
 export function connect() {
   window.clearTimeout(retryTimer)
@@ -42,7 +60,7 @@ export function connect() {
   ws.onmessage = (e) => {
     let ev: ServerEvent
     try { ev = JSON.parse(String(e.data)) as ServerEvent } catch { return }
-    apply(ev)
+    queue(ev)
   }
   ws.onclose = () => {
     if (socket !== ws) return
