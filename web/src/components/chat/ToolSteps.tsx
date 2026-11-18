@@ -4,7 +4,7 @@ import { apiBlobUrl, qs } from '../../api'
 import { openSession, useFeature } from '../../store'
 import { basename } from '../../lib/format'
 import { mcpParts, obj, pathOf, runImages, toolKind } from '../../lib/toolRun'
-import { fileEdit, summarizeInput } from '../../lib/toolcall'
+import { emptyInput, fileEdit, summarizeInput } from '../../lib/toolcall'
 import { useElapsed } from '../../lib/live'
 import { dur } from '../../lib/sessionState'
 import type { DiffLine } from '../../lib/diff'
@@ -72,7 +72,9 @@ function StepDetails({ t, ms }: { t: ToolCall; ms: number | null }) {
     <div className="step-details">
       {t.subSessionId && <button type="button" className="step-link" onClick={() => openSession(t.subSessionId!)}>Открыть чат субагента</button>}
       {e ? <DiffLines lines={editLines(e)} numbers={false} limit={400} label={`Изменения ${basename(e.file)}`} />
-        : <pre>{toolKind(t.name) === 'shell' && typeof input.command === 'string' ? input.command : typeof t.input === 'string' ? t.input : JSON.stringify(t.input, null, 2)}</pre>}
+        : emptyInput(t.input)
+          ? <p className="muted tool-noinput">{t.status === 'running' ? 'аргументы ещё не пришли' : 'без аргументов'}</p>
+          : <pre>{toolKind(t.name) === 'shell' && typeof input.command === 'string' ? input.command : typeof t.input === 'string' ? t.input : JSON.stringify(t.input, null, 2)}</pre>}
       {out && <pre data-error={t.status === 'error'}>{all ? out : lines.slice(0, 40).join('\n')}</pre>}
       {!all && lines.length > 40 && <button type="button" className="btn btn-ghost btn-sm" onClick={() => setAll(true)}>Показать всё ({lines.length} строк)</button>}
       <div className="step-foot muted">

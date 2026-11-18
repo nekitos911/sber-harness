@@ -20,14 +20,15 @@ export async function api<T>(method: Method, path: string, body?: unknown, opts?
   // No socket = the server is down or unreachable: say so at once instead of a slow network failure.
   if (method !== 'GET' && getState().conn === 'closed') throw new ApiError('Нет связи с сервером', 0)
   const headers: Record<string, string> = { 'x-harness-token': token }
-  if (body !== undefined) headers['content-type'] = 'application/json'
+  const raw = body instanceof Blob // a pasted image goes as bytes (with its own type), not JSON
+  if (body !== undefined) headers['content-type'] = raw ? body.type : 'application/json'
   if (opts?.jobId) headers['x-job-id'] = opts.jobId
   let res: Response
   try {
     res = await fetch(`/api${path}`, {
       method,
       headers,
-      body: body === undefined ? undefined : JSON.stringify(body),
+      body: body === undefined ? undefined : raw ? body : JSON.stringify(body),
     })
   } catch {
     throw new ApiError('Сервер недоступен', 0)

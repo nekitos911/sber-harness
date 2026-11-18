@@ -17,8 +17,11 @@ export function summarizeInput(input: unknown): string {
   }
   const first = Object.values(input).find((v) => typeof v === 'string') as string | undefined
   if (first) return first.split('\n')[0]
-  return JSON.stringify(input).slice(0, 160)
+  return Object.keys(input).length ? JSON.stringify(input).slice(0, 160) : '' // {}: the arguments have not come yet
 }
+
+/** No arguments to show: null or {} (over ACP a call is announced before its arguments are written). */
+export const emptyInput = (v: unknown) => v == null || (isObj(v) && !Object.keys(v).length)
 
 export interface EditLine { kind: ' ' | '+' | '-'; text: string }
 export interface FileEdit { file: string; created: boolean; lines: EditLine[]; added: number; removed: number }

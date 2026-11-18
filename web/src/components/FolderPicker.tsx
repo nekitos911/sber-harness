@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { createPortal } from 'react-dom'
-import { ChevronRight, Clock, CornerLeftUp, Folder, HardDrive } from 'lucide-react'
+import { ChevronRight, Clock, CornerLeftUp, FileText, Folder, HardDrive } from 'lucide-react'
 import { api, errorText, qs } from '../api'
 import { useStore } from '../store'
 import { basename } from '../lib/format'
 import { Modal } from './ui/Dialog'
 
-interface Dirs { path: string; parent: string | null; entries: { name: string; path: string }[]; roots: string[] }
+interface Dirs { path: string; parent: string | null; entries: { name: string; path: string; file?: boolean }[]; roots: string[] }
 
 /** C:\a\b → [C:\, C:\a, C:\a\b]; /a/b → [/, /a, /a/b] */
 function crumbs(path: string): { name: string; path: string }[] {
@@ -26,9 +26,12 @@ function crumbs(path: string): { name: string; path: string }[] {
  * Pick a folder on the server's machine: roots (drives, / and ~), breadcrumbs, the folders here with a filter and
  * arrow keys, recent folders, and a path field for pasting. Needs the server's `folders` API.
  */
-export function FolderPicker({ title = 'Выбор папки', initial, submitLabel = 'Выбрать эту папку', onPick, onClose }: {
-  title?: string; initial?: string | null; submitLabel?: string; onPick: (path: string) => void; onClose: () => void
+export function FolderPicker({ title = 'Выбор папки', initial, submitLabel = 'Выбрать эту папку', files = false, onPick, onClose }: {
+  title?: string; initial?: string | null; submitLabel?: string
+  files?: boolean // pick a file: files are listed after the folders, a click selects one, a double click / Enter picks it
+  onPick: (path: string) => void; onClose: () => void
 }) {
+  const [picked, setPicked] = useState<string | null>(null)
   const recent = useStore((s) => s.recentFolders)
   const [at, setAt] = useState(initial ?? '')
   const [dirs, setDirs] = useState<Dirs | null>(null)
@@ -40,9 +43,10 @@ export function FolderPicker({ title = 'Выбор папки', initial, submitL
 
   useEffect(() => {
     let live = true
-    api<Dirs>('GET', `/fs/dirs${qs({ path: at || undefined })}`).then((d) => {
+    api<Dirs>('GET', `/fs/dirs${qs({ path: at || undefined, files: files ? '1' : undefined })}`).then((d) => {
       if (!live) return
       setDirs(d)
+      setPicked(null)
       setTyped(d.path)
       setFilter('')
       setActive(0)
@@ -70,7 +74,8 @@ export function FolderPicker({ title = 'Выбор папки', initial, submitL
 
   // A portal: the picker is often opened from another dialog and must not nest its <form> inside that one.
   return createPortal(
-    <Modal title={title} submitLabel={submitLabel} wide disabled={!dirs} onClose={onClose} onSubmit={() => dirs && onPick(dirs.path)}>
+    <Modal title={title} submitLabel={submitLabel} wide disabled={!dirs || (files && !picked)} onClose={onClose}
+      onSubmit={() => { if (files) { if (picked) onPick(picked) } else if (dirs) onPick(dirs.path) }}>
       <div className="fp-path">
         <input className="input mono" aria-label="Путь к папке" placeholder="Вставьте путь и нажмите Enter" value={typed}
           onChange={(e) => setTyped(e.target.value)}
@@ -105,15 +110,17 @@ export function FolderPicker({ title = 'Выбор папки', initial, submitL
               <button type="button" className="fp-item fp-up" onClick={() => setAt(dirs.parent!)}><CornerLeftUp aria-hidden />..</button>
             )}
             {shown.map((e, i) => (
-              <button key={e.path} type="button" role="option" aria-selected={i === active} className="fp-item" tabIndex={i === active ? 0 : -1}
+              <button key={e.path} type="button" role="option" aria-selected={e.file ? picked === e.path : i === active} className="fp-item" tabIndex={i === active ? 0 : -1}
+                data-picked={(e.file && picked === e.path) || undefined}
                 onFocus={() => setActive(i)}
-                onClick={() => setAt(e.path)}
-                onKeyDown={(k) => { if (k.key === 'Enter') { k.preventDefault(); k.stopPropagation(); setAt(e.path) } }}>
-                <Folder aria-hidden />
+                onClick={() => (e.file ? setPicked(e.path) : setAt(e.path))}
+                onDoubleClick={() => { if (e.file) onPick(e.path) }}
+                onKeyDown={(k) => { if (k.key === 'Enter') { k.preventDefault(); k.stopPropagation(); if (e.file) onPick(e.path); else setAt(e.path) } }}>
+                {e.file ? <FileText aria-hidden /> : <Folder aria-hidden />}
                 <span className="ellipsis">{e.name}</span>
               </button>
             ))}
-            {dirs && !shown.length && <p className="muted fp-empty">{filter ? 'Нет папок по фильтру' : 'Вложенных папок нет'}</p>}
+            {dirs && !shown.length && <p className="muted fp-empty">{filter ? 'Ничего по фильтру' : files ? 'Папка пуста' : 'Вложенных папок нет'}</p>}
           </div>
         </div>
         {recent.length > 0 && (

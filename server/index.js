@@ -1537,7 +1537,7 @@ export async function startServer(opts = {}) {
   // files
   // sessionId: only that session's plans (its task key, or written since it started); without it every plan («показать все»)
   route('GET', '/api/sdd', ({ query }) => readSdd(path.resolve(cwdOf(query)), query.sessionId ? sddScope(sessions.get(query.sessionId)) : null));
-  route('GET', '/api/fs/dirs', ({ query }) => wfs.listDirs(query.path || '', { hidden: query.hidden === '1' }));
+  route('GET', '/api/fs/dirs', ({ query }) => wfs.listDirs(query.path || '', { hidden: query.hidden === '1', files: query.files === '1' }));
   route('GET', '/api/fs/list', ({ query }) => wfs.list(cwdOf(query), query.path || ''));
   route('GET', '/api/fs/search', ({ query }) => wfs.searchFiles(cwdOf(query), query.q || '', query.limit));
   route('GET', '/api/fs/file', ({ query }) => wfs.readFile(cwdOf(query), check(query, { path: 'string' }).path));
@@ -1610,7 +1610,7 @@ export async function startServer(opts = {}) {
   function serveRaw(req, res, u) {
     if (!tokenOk(req.headers['x-harness-token'] ?? u.searchParams.get('token') ?? undefined)) return sendJson(res, 401, { error: 'нет токена или он неверный' });
     const q = check(Object.fromEntries(u.searchParams), { cwd: 'string', path: 'string' });
-    const extra = db.sessions.filter((s) => s.cwd && samePath(s.cwd, q.cwd)).flatMap((s) => s.includeDirs || []);
+    const extra = db.sessions.filter((s) => s.cwd && samePath(s.cwd, q.cwd)).flatMap((s) => [...(s.includeDirs || []), sessions.attachmentsDir(s.id)]);
     const f = wfs.rawImage([q.cwd, ...extra], q.path);
     const etag = `"${f.size}-${Math.floor(f.mtimeMs)}"`;
     const headers = {
@@ -1623,6 +1623,31 @@ export async function startServer(opts = {}) {
     }
     res.writeHead(200, { ...headers, 'content-length': f.size });
     return fs.createReadStream(f.abs).pipe(res);
+  }
+
+  /**
+   * POST /api/sessions/:id/attachments (raw image bytes, Content-Type image/*): a screenshot pasted into the composer,
+   * saved in the chat's own folder → { path }. Raw bytes, not JSON: a screenshot is bigger than MAX_BODY as base64.
+   */
+  async function serveUpload(req, res, sid) {
+    if (!tokenOk(req.headers['x-harness-token'])) return sendJson(res, 401, { error: 'нет x-harness-token или он неверный' });
+    const dir = sessions.attachmentsDir(sid); // 404 for an unknown chat
+    const ext = { 'image/png': '.png', 'image/jpeg': '.jpg', 'image/gif': '.gif', 'image/webp': '.webp' }[String(req.headers['content-type'] || '').split(';')[0].trim()]
+      || fail(415, 'вставляются только картинки: png, jpg, gif, webp');
+    const chunks = [];
+    let size = 0;
+    for await (const c of req) {
+      size += c.length;
+      if (size > wfs.RAW_MAX) fail(413, `картинка больше ${wfs.RAW_MAX / 1024 / 1024} МБ`);
+      chunks.push(c);
+    }
+    if (!size) fail(400, 'пустая картинка');
+    fs.mkdirSync(dir, { recursive: true });
+    const stamp = new Date().toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15);
+    let file = path.join(dir, `screenshot-${stamp}${ext}`);
+    for (let n = 2; fs.existsSync(file); n++) file = path.join(dir, `screenshot-${stamp}-${n}${ext}`);
+    fs.writeFileSync(file, Buffer.concat(chunks));
+    return sendJson(res, 200, { path: file });
   }
 
   const server = http.createServer(async (req, res) => {
@@ -1639,6 +1664,8 @@ export async function startServer(opts = {}) {
       // liveness for the single-instance lock: no token (it proves nothing secret), still behind the Host guard
       if (u.pathname === '/api/health') return sendJson(res, 200, { ok: true, pid: process.pid, dataDir: config.dataDir });
       if (u.pathname === '/api/fs/raw' && req.method === 'GET') return serveRaw(req, res, u);
+      const upload = req.method === 'POST' && /^\/api\/sessions\/([^/]+)\/attachments$/.exec(u.pathname);
+      if (upload) return await serveUpload(req, res, decodeURIComponent(upload[1]));
       if (u.pathname === '/api' || u.pathname.startsWith('/api/')) {
         if (!tokenOk(req.headers['x-harness-token'])) return sendJson(res, 401, { error: 'нет x-harness-token или он неверный' });
         const candidates = routes.map((r) => ({ r, m: u.pathname.match(r.re) })).filter((x) => x.m);

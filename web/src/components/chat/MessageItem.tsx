@@ -3,7 +3,7 @@ import { Check, Copy, ExternalLink, GitCompare, LoaderCircle, TriangleAlert, X }
 import { tryApi } from '../../api'
 import { openSession, openTab, useStore } from '../../store'
 import { basename, fullTime, normPath } from '../../lib/format'
-import { fileEdit, summarizeInput, type FileEdit } from '../../lib/toolcall'
+import { emptyInput, fileEdit, summarizeInput, type FileEdit } from '../../lib/toolcall'
 import { parseDiff, type DiffFile, type DiffLine } from '../../lib/diff'
 import type { Message, ToolCall } from '../../types'
 import { Markdown } from '../Markdown'
@@ -157,7 +157,9 @@ function GenericTool({ tool }: { tool: ToolCall }) {
     >
       <div className="tool-body" data-s={tool.status}>
         <div className="tool-label">Вход</div>
-        <pre>{typeof tool.input === 'string' ? tool.input : JSON.stringify(tool.input, null, 2)}</pre>
+        {emptyInput(tool.input)
+          ? <p className="muted tool-noinput">{tool.status === 'running' ? 'аргументы ещё не пришли' : 'без аргументов'}</p>
+          : <pre>{typeof tool.input === 'string' ? tool.input : JSON.stringify(tool.input, null, 2)}</pre>}
         {tool.output !== null && (
           <>
             <div className="tool-label">Результат</div>

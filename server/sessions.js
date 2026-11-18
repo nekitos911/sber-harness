@@ -170,6 +170,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
   const get = (sid) => find(sid) || fail(404, `сессия ${sid} не найдена`);
   const runDir = (sid) => path.join(store.dataDir, 'runs', sid);
   const registryDir = (sid) => path.join(runDir(sid), 'registry');
+  const attachmentsDir = (sid) => path.join(runDir(sid), 'attachments'); // pasted screenshots (POST /api/sessions/:id/attachments)
 
   function runtime(sid) {
     if (!rt.has(sid)) {
@@ -862,6 +863,8 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
         prompt = `${slash}Полный текст сообщения: ${file}\n(${prompt.length} символов — прочитай файл целиком и выполни его как сообщение пользователя)`;
         turnSession.includeDirs = [...(s.includeDirs || []), dir];
       }
+      // a pasted screenshot lives in the harness's folder: the CLI may read it on the turn that mentions it
+      if (items.some((i) => i.text.includes(attachmentsDir(s.id)))) turnSession.includeDirs = [...(turnSession.includeDirs || []), attachmentsDir(s.id)];
       const ctx = turnCtx(turnSession, agentCfg, prompt);
       // the session keeps its chosen mode; the UI shows what the CLI really got (e.g. auto -> auto-edit)
       s.effectiveApprovalMode = launcher.effectiveMode?.(ctx) ?? (ctx.session.approvalMode || agentCfg.approvalMode || null);
@@ -880,7 +883,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
       if (agentCfg.transport === 'acp') {
         if (!launcher.acpArgs) throw new Error(`у лаунчера «${launcher.id}» нет режима ACP; укажите agents.${s.agent}.transport = "headless"`);
         handle = acp.turn({
-          sid: s.id, agent: s.agent, launcher, ctx, command: exe, cwd: s.cwd, env, logFile: turnFiles(s, r.turn).logFile, roots: [s.cwd, ...(s.includeDirs || [])],
+          sid: s.id, agent: s.agent, launcher, ctx, command: exe, cwd: s.cwd, env, logFile: turnFiles(s, r.turn).logFile, roots: [s.cwd, ...(s.includeDirs || []), attachmentsDir(s.id)],
           idleMs: (agentCfg.acpIdleMin ?? agentCfg.acpIdleTimeoutMin ?? 30) * 60000,
           externalSessionId: s.externalSessionId, prompt, initTimeoutMs: firstEventTimeoutMs, onEvent: (ev) => applyEvent(s, ev),
         });
@@ -1254,6 +1257,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     messages: (sid) => (get(sid), store.messages(sid)),
     children: (sid) => db.sessions.filter((s) => s.parentId === sid),
     isRunning: (sid) => runtime(sid).running,
+    attachmentsDir: (sid) => (get(sid), attachmentsDir(sid)),
     subagents: (sid) => (get(sid), readRegistry(registryDir(sid), { idleWindowSec: config.session.idleWindowSec })),
     /** An informational line in a chat that does not wake the agent. */
     note(sid, text) {

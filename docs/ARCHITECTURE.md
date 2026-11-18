@@ -456,6 +456,10 @@ GET    /api/fs/file?cwd=&path=  -> { path, content, size, binary: boolean }   (t
 PUT    /api/fs/file             {cwd, path, content} -> { ok: true }
        (all fs paths are resolved against cwd and must stay inside it, else 400)
 
+POST   /api/sessions/:id/attachments  (raw image bytes, Content-Type image/png|jpeg|gif|webp, ≤10 MB) -> { path }:
+                                    a screenshot pasted into the composer, saved in <dataDir>/runs/<id>/attachments; the
+                                    turn whose message mentions that folder gets it in includeDirs (ACP: fs roots)
+GET    /api/fs/dirs?path=&files=1 -> also the folder's files ({ name, path, file: true }), folders first («Файл с диска…»)
 GET    /api/mcp/servers         -> [{ name, enabled, transport, ok, error?, problem?, tools: [{name, description}] }]
                                     (only the servers the harness calls: integrations.tasks/pr.server and its own
                                     config.mcpServers — servers that come only from mcpServersFrom are not started)
