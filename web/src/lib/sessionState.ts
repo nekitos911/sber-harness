@@ -24,7 +24,7 @@ export function sessionVisualState(s: StateInput): VisualState {
 
 export const STATE_LABEL: Record<VisualState, string> = {
   waiting_answer: 'ждёт ответа', waiting_permission: 'ждёт разрешения', stalled: 'нет вывода', auth: 'нужен вход', starting: 'запуск', running: 'работает',
-  interrupted: 'прервана', error: 'ошибка', stopped: 'остановлен', done: 'готово', exited: 'завершён', terminal: 'запущен', idle: 'свободен',
+  interrupted: 'прервана', error: 'ошибка', stopped: 'остановлен', done: 'задача выполнена', exited: 'завершён', terminal: 'запущен', idle: 'ответил',
 }
 
 /** 40 с · 7 мин · 3 ч */

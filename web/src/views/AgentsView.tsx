@@ -10,14 +10,14 @@ import { Branch, StateLegend, StatusIcon, statusText } from '../components/bits'
 import { useStateLine } from '../lib/live'
 import { sessionVisualState, type VisualState } from '../lib/sessionState'
 import { archiveSession, renameSession, sessionMenu } from '../lib/sessionActions'
-import { MenuButton, Select } from '../components/ui'
+import { MenuButton, Segmented, Select } from '../components/ui'
 
 /** Lanes by visual state; «Ждут вас» shows only when someone does. */
 const GROUPS: { id: string; label: string; hint: string; match: VisualState[]; optional?: boolean }[] = [
   { id: 'you', label: 'Ждут вас', hint: 'вопрос, разрешение, вход или прерваны', match: ['waiting_answer', 'waiting_permission', 'auth', 'interrupted'], optional: true },
   { id: 'run', label: 'Работают', hint: 'идёт ход', match: ['running', 'starting', 'stalled'] },
-  { id: 'idle', label: 'Свободны', hint: 'ход закончен, ждут сообщения', match: ['idle', 'stopped'] },
-  { id: 'done', label: 'Готово', hint: 'отчитались о задаче', match: ['done'] },
+  { id: 'idle', label: 'Ответили', hint: 'ход закончен — можно писать дальше', match: ['idle', 'stopped'] },
+  { id: 'done', label: 'Задача выполнена', hint: 'агент задачи отчитался (worker_done)', match: ['done'] },
   { id: 'fail', label: 'Ошибки', hint: 'упали или завершились', match: ['error', 'exited'], optional: true },
 ]
 
@@ -46,10 +46,8 @@ export function AgentsView() {
       <header className="view-head">
         <h1>Агенты</h1>
         <span className="count">{chats.length}</span>
-        <span className="sb-scope" role="group" aria-label="Какие чаты показывать">
-          <button type="button" aria-pressed={!archive} onClick={() => setArchive(false)}>Активные</button>
-          <button type="button" aria-pressed={archive} onClick={() => setArchive(true)}>Архив{archivedCount > 0 && <span className="num"> {archivedCount}</span>}</button>
-        </span>
+        <Segmented size="sm" label="Какие чаты показывать" value={archive ? 'archive' : 'active'} onChange={(v) => setArchive(v === 'archive')}
+          options={[{ value: 'active', label: 'Активные' }, { value: 'archive', label: archivedCount > 0 ? `Архив ${archivedCount}` : 'Архив' }]} />
         {!archive && <StateLegend />}
         <span className="grow" />
         <button type="button" className="btn" onClick={() => openDialog({ kind: 'chat' })}>
@@ -129,7 +127,7 @@ function AgentCard({ s, nested, parent }: { s: Session; nested: boolean; parent?
       <div className="agent-meta">
         <span>{agents.find((a) => a.id === s.agent)?.label ?? s.agent}</span>
         {s.model && <span className="mono muted">{s.model}</span>}
-        <span className="agent-state" data-s={sessionVisualState(s)}>{line || statusText(s)}</span>
+        {!['idle', 'done'].includes(sessionVisualState(s)) && <span className="agent-state" data-s={sessionVisualState(s)}>{line || statusText(s)}</span>}
         {s.queued > 0 && <span className="chip chip-run">в очереди {s.queued}</span>}
         {s.tokensIn + s.tokensOut > 0 && (
           <span className="muted num" data-tip={`вход ${s.tokensIn}, выход ${s.tokensOut}`}>токены {tokens(s.tokensIn + s.tokensOut)}</span>
