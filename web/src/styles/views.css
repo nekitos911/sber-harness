@@ -499,3 +499,11 @@ button.prs-group[aria-expanded="true"] .chev { transform: rotate(90deg); }
 .prs-errors ul { display: grid; gap: 4px; margin: 6px 0 0; padding-left: 18px; font-size: 12px; }
 .verdicts-scope { display: flex; align-items: center; gap: 6px; padding: 8px 12px 0; color: var(--ink-3); font-size: 12px; cursor: pointer; }
 .sdd-items { display: grid; gap: 2px; margin: 6px 0 0; padding-left: 18px; font-size: 12.5px; color: var(--ink-2); }
+/* the agent writing a commit / PR message */
+.gen-btn svg { color: var(--lamp-ask); }
+.gen-status { margin: 0; color: var(--ink-3); font-size: 12px; }
+.gen-status .link { margin-left: 4px; }
+.gen-error { color: var(--ink-3); }
+.commit-box[data-generating] .input, .commit-box[data-generating] .textarea, .input[data-generating], .textarea[data-generating] { background: linear-gradient(90deg, var(--well) 0%, var(--deck-2) 50%, var(--well) 100%); background-size: 200% 100%; animation: gen-shimmer 1.4s linear infinite; }
+@keyframes gen-shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+@media (prefers-reduced-motion: reduce) { .commit-box[data-generating] .input, .commit-box[data-generating] .textarea, .input[data-generating], .textarea[data-generating] { animation: none; } }

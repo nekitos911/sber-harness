@@ -322,6 +322,7 @@ export interface Settings {
     portBranchTemplate?: string
     commitTitleTemplate?: string
     prTitleTemplate?: string
+    generateMessages?: boolean // the agent writes commit / PR messages (auto on open); false = only on «✨»
   }
   tasks: { refreshSec: number }
   orchestration?: { reviewMode?: 'builtin' | 'harness'; subagents?: 'harness' | 'builtin'; workerMayCommit?: boolean; review?: ReviewSettings; subagentRetention?: 'archive' | 'keep'; maxSubagentDepth?: number }

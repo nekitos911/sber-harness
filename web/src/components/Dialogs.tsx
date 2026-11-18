@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { FolderPlus } from 'lucide-react'
 import { api, errorText, qs, tryApi } from '../api'
 import { closeDialog, openWorktree, setState, toast, upsert, useFeature, useStore, type DialogRequest } from '../store'
@@ -19,6 +19,7 @@ import { archiveSession, deleteSession, isLive } from '../lib/sessionActions'
 import { endJob, startJob, useJobStep } from '../lib/jobs'
 import { Markdown } from './Markdown'
 import { useWhere as useStartWhere } from './board/Rework'
+import { GenerateButton, GenerateStatus, useGenerate } from './GenerateMessage'
 
 export function Dialogs() {
   const d = useStore((s) => s.dialog)
@@ -497,6 +498,7 @@ function PrDialog({ cwd, base: initBase }: { cwd: string; base?: string }) {
   const [base, setBase] = useState(saved?.base || initBase || '')
   // Only typed text is a draft; the prefill is fetched again next time.
   const edit = (next: { title?: string; body?: string; base?: string }) => {
+    if (next.title !== undefined || next.body !== undefined) { typed.current = true; if (gen.running) gen.cancel() }
     const d = { title, body, base, ...next }
     setTitle(d.title)
     setBody(d.body)
@@ -505,13 +507,30 @@ function PrDialog({ cwd, base: initBase }: { cwd: string; base?: string }) {
   }
   const [preview, setPreview] = useState(false)
   const [busy, run, step] = useBusy()
+  // the agent writes title and description (feature git-generate): on open when nothing was typed, and on «✨»
+  const gen = useGenerate(cwd, 'pr', base || null)
+  const settings = useSettings()
+  const typed = useRef(!!saved)
+  const generated = useRef(false)
+  const generate = async () => {
+    const r = await gen.run()
+    if (!r || typed.current) return
+    generated.current = true
+    setTitle(r.title)
+    setBody(r.body)
+  }
+  useEffect(() => {
+    if (gen.on && settings?.git.generateMessages !== false && !saved) void generate()
+  }, [gen.on]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     api<GitSuggest>('GET', `/git/suggest${qs({ cwd })}`).then((s) => {
       setSuggest(s)
-      // Prefill only what the user hasn't typed yet.
-      setTitle((v) => v || s.pr.title)
-      setBody((v) => v || s.pr.body)
+      // Prefill only what the user hasn't typed yet (and not over what the agent wrote).
+      if (!generated.current) {
+        setTitle((v) => v || s.pr.title)
+        setBody((v) => v || s.pr.body)
+      }
       setBase((v) => v || s.pr.base)
     }, (e) => toast(`Не удалось подготовить PR: ${errorText(e)}`, 'error'))
   }, [cwd])
@@ -541,9 +560,13 @@ function PrDialog({ cwd, base: initBase }: { cwd: string; base?: string }) {
         {suggest?.branch ? <>Из <span className="mono">{suggest.branch}</span> · {basename(cwd)}</> : basename(cwd)}
       </p>
       <label className="field">
-        <span className="row" style={{ justifyContent: 'space-between' }}>Заголовок <ByteCount value={title.trim()} limit={PR_TITLE_BYTES} /></span>
-        <input className="input" aria-invalid={bytes(title.trim()) > PR_TITLE_BYTES} value={title} onChange={(e) => edit({ title: e.target.value })} placeholder={suggest ? '' : 'Загрузка…'} />
+        <span className="row" style={{ justifyContent: 'space-between' }}>
+          <span className="row">Заголовок <GenerateButton g={gen} onClick={() => { typed.current = false; void generate() }} /></span>
+          <ByteCount value={title.trim()} limit={PR_TITLE_BYTES} />
+        </span>
+        <input className="input" aria-invalid={bytes(title.trim()) > PR_TITLE_BYTES} value={title} disabled={gen.running} data-generating={gen.running || undefined} onChange={(e) => edit({ title: e.target.value })} placeholder={suggest ? '' : 'Загрузка…'} />
       </label>
+      <GenerateStatus g={gen} onRetry={() => void generate()} />
       <div className="field">
         <span className="row" style={{ justifyContent: 'space-between' }}>
           <span id="pr-body-label">Описание <ByteCount value={body} limit={PR_BODY_BYTES} /></span>
@@ -551,7 +574,7 @@ function PrDialog({ cwd, base: initBase }: { cwd: string; base?: string }) {
         </span>
         {preview
           ? <div className="md-preview">{body.trim() ? <Markdown text={body} /> : <p className="muted">Пусто</p>}</div>
-          : <textarea className="textarea" rows={10} aria-labelledby="pr-body-label" aria-invalid={bytes(body) > PR_BODY_BYTES} value={body} onChange={(e) => edit({ body: e.target.value })} />}
+          : <textarea className="textarea" rows={10} aria-labelledby="pr-body-label" aria-invalid={bytes(body) > PR_BODY_BYTES} value={body} disabled={gen.running} data-generating={gen.running || undefined} onChange={(e) => edit({ body: e.target.value })} />}
       </div>
       <Disclosure className="dialog-more" summary={<span>Ещё: в ветку <span className="mono">{base || '…'}</span></span>}>
         <label className="field">

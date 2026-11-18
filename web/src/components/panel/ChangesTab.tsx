@@ -14,6 +14,11 @@ import { runJob } from '../../lib/jobs'
 import { PrCard } from '../PrChip'
 import { openPrSettings, usePr } from '../../lib/pr'
 import { Skeleton } from '../bits'
+import { GenerateButton, GenerateStatus, useGenerate, type Generated } from '../GenerateMessage'
+import { useSettings } from '../../lib/agents'
+
+// what the agent wrote per change set: a remount (tab switch, panel toggle) shows it again without a new run
+const generatedCache = new Map<string, Generated>()
 
 const STATUS_LABEL: Record<GitFile['status'], string> = { M: 'изменён', A: 'добавлен', D: 'удалён', R: 'переименован', '?': 'новый, не в git', U: 'конфликт' }
 
@@ -28,6 +33,10 @@ export function ChangesTab({ cwd }: { cwd: string }) {
   const [title, setTitle] = useState(saved?.title ?? '')
   const [body, setBody] = useState(saved?.body ?? '')
   const touched = useRef(!!saved) // once the user edits, prefill never overwrites their text
+  const generated = useRef(false) // the fields hold the agent's text: the template prefill no longer replaces it
+  const gen = useGenerate(cwd, 'commit')
+  const settings = useSettings()
+  const autoGen = gen.on && settings?.git.generateMessages !== false
   const [busy, setBusy] = useState<'commit' | 'push' | null>(null)
   const [pushOutput, setPushOutput] = useState<string | null>(null)
   const [open, setOpen] = useState<Set<string>>(() => new Set())
@@ -44,17 +53,44 @@ export function ChangesTab({ cwd }: { cwd: string }) {
     api<GitSuggest>('GET', `/git/suggest${qs({ cwd })}`).then((s) => {
       if (!live) return
       setSuggest(s)
-      if (!touched.current) { setTitle(s.commit.title); setBody(s.commit.body) }
+      if (!touched.current && !generated.current) { setTitle(s.commit.title); setBody(s.commit.body) }
     }, () => undefined)
     api<GitCommit[]>('GET', `/git/log${qs({ cwd, n: 12 })}`).then((l) => { if (live) setLog(l) }, () => undefined)
     return () => { live = false }
   }, [cwd, filesSig, branch, ready])
+
+  // The change set: sorted paths with their status and the diff stat. A new one may get a new message.
+  const statSig = git?.files?.map((f) => `${f.added}/${f.removed}`).join(',') ?? ''
+  const changeSig = `${normPath(cwd)}|${[...(status?.files ?? [])].filter((f) => !f.service).map((f) => f.status + f.path).sort().join('|')}|${statSig}`
+  const hasChanges = (status?.files ?? []).some((f) => !f.service)
+  const generate = async (sig: string) => {
+    const r = await gen.run()
+    if (!r || touched.current) return // never over what the person typed meanwhile
+    generatedCache.set(sig, r)
+    generated.current = true
+    setTitle(r.title)
+    setBody(r.body)
+  }
+  // Auto: once per change set, 800 ms after it settles, while the fields are untouched and the panel is on screen.
+  const askedFor = useRef<string | null>(null)
+  useEffect(() => {
+    if (!autoGen || !hasChanges || touched.current || askedFor.current === changeSig) return
+    const cached = generatedCache.get(changeSig)
+    if (cached) { askedFor.current = changeSig; generated.current = true; setTitle(cached.title); setBody(cached.body); return }
+    const t = window.setTimeout(() => {
+      if (document.visibilityState !== 'visible' || touched.current) return
+      askedFor.current = changeSig
+      void generate(changeSig)
+    }, 800)
+    return () => window.clearTimeout(t)
+  }, [autoGen, hasChanges, changeSig]) // eslint-disable-line react-hooks/exhaustive-deps
 
   if (git?.error) return <LinkedWorktrees cwd={cwd} error={git.error} />
   if (!status) return <div className="wpanel-section"><Skeleton rows={4} /></div>
 
   const edit = (next: { title?: string; body?: string }) => {
     touched.current = true
+    if (gen.running) gen.cancel() // typing wins over a message still being written
     const d = { title, body, ...next }
     setTitle(d.title)
     setBody(d.body)
@@ -147,16 +183,21 @@ export function ChangesTab({ cwd }: { cwd: string }) {
           {taskKey && suggest?.taskId && (
             <button type="button" className="chip chip-mono" data-tip="Открыть задачу" onClick={() => openTask(suggest.taskId!)}>{taskKey}</button>
           )}
-          {suggest && (title !== suggest.commit.title || body !== suggest.commit.body) && (
+          {gen.on ? (
+            <span style={{ marginLeft: 'auto' }}>
+              <GenerateButton g={gen} onClick={() => { touched.current = false; saveDraft(draftKey, null); void generate(changeSig) }} />
+            </span>
+          ) : suggest && (title !== suggest.commit.title || body !== suggest.commit.body) && (
             <button type="button" className="btn btn-ghost btn-sm" style={{ marginLeft: 'auto' }} onClick={reapply} data-tip="Подставить предложенные заголовок и описание">
               <RotateCcw />
               Предложенный текст
             </button>
           )}
         </h3>
-        <div className="commit-box">
-          <input className="input" aria-label="Заголовок коммита" placeholder="Заголовок коммита" value={title} onChange={(e) => edit({ title: e.target.value })} />
-          <textarea className="textarea" aria-label="Описание коммита" placeholder="Описание (необязательно)" rows={4} value={body} onChange={(e) => edit({ body: e.target.value })} />
+        <div className="commit-box" data-generating={gen.running || undefined}>
+          <input className="input" aria-label="Сообщение коммита" placeholder="Сообщение коммита" value={title} disabled={gen.running} onChange={(e) => edit({ title: e.target.value })} />
+          <textarea className="textarea" aria-label="Описание коммита" placeholder="Описание — что и зачем (необязательно)" rows={4} value={body} disabled={gen.running} onChange={(e) => edit({ body: e.target.value })} />
+          <GenerateStatus g={gen} onRetry={() => void generate(changeSig)} />
           <div className="actions">
             <Button variant="primary" busy={busy === 'commit'} disabled={!title.trim() || !files.length || !!busy} onClick={commit}>
               {busy === 'commit' ? 'Коммит…' : `Закоммитить ${files.length ? files.length : ''}`.trim()}
