@@ -18,6 +18,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import { api, runAndWait } from '../mcp/harness-mcp.js';
 
 const argv = process.argv.slice(2);
@@ -127,6 +128,33 @@ if (generate) {
   const answer = prompt.includes('#gengarbage') ? 'Не могу написать сообщение.' : long || 'Готово: {"title":"PROJ-1 Тестовое сообщение","body":"Что и зачем."}';
   emit({ type: 'message', role: 'assistant', content: answer, delta: true });
   emit({ type: 'result', status: 'success', result: answer, stats: { input_tokens: 1, output_tokens: 1 } });
+  process.exit(0);
+}
+// the harness's commit / push request («Пользователь явно просит …»): really run git in the cwd, answer RESULT
+// (#gitfail in the request = RESULT: ERROR without touching anything)
+if (prompt.includes('Пользователь явно просит')) {
+  const run = (...args) => execFileSync('git', args, { encoding: 'utf8', windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] }).trim();
+  let line;
+  try {
+    if (prompt.includes('#gitfail')) throw new Error('mock: отказано (#gitfail)');
+    if (prompt.includes('закоммитить')) {
+      const message = prompt.match(/не меняй\):\n([\s\S]*?)\nВыполни:/)[1].trim();
+      const only = prompt.match(/закоммить только эти файлы: git add -- (.+?), затем/)?.[1].match(/"[^"]+"|\S+/g).map((p) => p.replace(/^"|"$/g, ''));
+      if (only) run('add', '--', ...only);
+      else if (!prompt.includes('только проиндексированные')) run('add', '-A');
+      execFileSync('git', ['commit', '-q', '-F', '-', ...(only ? ['--', ...only] : [])], { input: message, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+      const hash = run('rev-parse', 'HEAD');
+      if (prompt.includes('git push -u origin HEAD')) run('push', '-q', '-u', 'origin', 'HEAD');
+      line = prompt.includes('git push -u origin HEAD') ? `RESULT: ${hash} ${run('rev-parse', '--abbrev-ref', 'HEAD')}` : `RESULT: ${hash}`;
+    } else if (prompt.includes('отправить ветку')) {
+      run('push', '-q', '-u', 'origin', 'HEAD');
+      line = `RESULT: OK ${run('rev-parse', '--abbrev-ref', 'HEAD')}`;
+    } else line = 'RESULT: ERROR mock не создаёт PR';
+  } catch (e) {
+    line = `RESULT: ERROR ${String(e.message).split('\n')[0]}`;
+  }
+  emit({ type: 'message', role: 'assistant', content: `Сделано.\n${line}`, delta: true });
+  emit({ type: 'result', status: 'success', result: `Сделано.\n${line}`, stats: { input_tokens: 1, output_tokens: 1 } });
   process.exit(0);
 }
 if (prompt === '/models') {

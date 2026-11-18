@@ -746,9 +746,110 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
     ].join('\n');
   }
 
+  // ---- commit / push / PR through the agent (its hooks and skills run) ----
+
+  const gitWaits = new Map(); // session id -> [{ text, finish(s, stopped) }]
+  const quote = (p) => (/[\s"']/.test(p) ? `"${p}"` : p);
+
+  /** The instruction for the agent (Russian; ends with the RESULT line the harness reads). */
+  function gitInstruction(op, o) {
+    const keep = 'Больше ничего не меняй и не правь код.';
+    const excluded = (config.git.excludeFromCommit || []).join(', ');
+    if (op === 'commit') {
+      const add = o.staged ? 'закоммить только проиндексированные файлы (git commit без git add)'
+        : o.paths?.length ? `закоммить только эти файлы: git add -- ${o.paths.map(quote).join(' ')}, затем git commit с этим сообщением -- ${o.paths.map(quote).join(' ')}`
+          : `git add -A${excluded ? ` (кроме путей ${excluded})` : ''}, git commit с этим сообщением`;
+      return [
+        `Пользователь явно просит закоммитить изменения этого рабочего дерева${o.push ? ' и отправить ветку в origin' : ''}. Сообщение коммита (утверждено пользователем, не меняй):`,
+        o.message.trim(),
+        `Выполни: ${add}${o.push ? ', затем git push -u origin HEAD' : ''}. ${keep}`,
+        o.push ? 'В конце ответь строкой RESULT: <хэш коммита> <ветка> или RESULT: ERROR <причина>.' : 'В конце ответь строкой RESULT: <хэш коммита> или RESULT: ERROR <причина>.',
+      ].join('\n');
+    }
+    if (op === 'push') return `Пользователь явно просит отправить ветку этого рабочего дерева в origin. Выполни: git push -u origin HEAD. ${keep} В конце ответь строкой RESULT: OK <ветка> или RESULT: ERROR <причина>.`;
+    return [
+      `Пользователь явно просит создать pull request. Создай PR через MCP ${config.integrations.pr?.server || 'sourcecontrol'}: head ${o.branch}, base ${o.base}; заголовок и описание утверждены пользователем, не меняй:`,
+      `Заголовок: ${o.title}`,
+      `Описание:\n${o.body || ''}`,
+      `${keep} В конце ответь строкой RESULT: <ссылка на PR> или RESULT: ERROR <причина>.`,
+    ].join('\n');
+  }
+
+  /**
+   * POST /api/git/commit|push|pr with via "agent": the task's worker of that folder (queued if it runs) or a reusable
+   * «Коммит · <KEY|branch>» chat gets the instruction; the job stays open until that turn ends, then the harness checks
+   * the effect itself. → { via: 'agent', sessionId, job }
+   */
+  async function gitViaAgent(op, o, job) {
+    const cwd = path.resolve(o.cwd);
+    const sug = await gitSuggest(cwd).catch(() => ({ taskId: null, key: null, branch: null, base: config.git.defaultBase }));
+    const task = sug.taskId && tasks.find(sug.taskId);
+    const worker = task?.assigneeSessionId && sessions.find(task.assigneeSessionId);
+    let target = worker && worker.kind === 'chat' && !worker.archived && !worker.virtual && samePath(worker.cwd, cwd) ? worker : null;
+    target ||= db.sessions.find((s) => s.gitChat && !s.archived && s.kind === 'chat' && samePath(s.cwd, cwd)) || null;
+    if (!target) {
+      target = await sessions.create({ kind: 'chat', agent: config.defaultAgent, cwd, title: `Коммит · ${sug.key || sug.branch || path.basename(cwd)}` });
+      sessions.update(target.id, { gitChat: true });
+    }
+    const branch = o.branch || sug.branch || (await git.currentBranch(cwd));
+    const text = gitInstruction(op, { ...o, branch, base: o.base || sug.base || config.git.defaultBase });
+    const before = op === 'commit' ? (await git.git(cwd, ['rev-parse', '-q', '--verify', 'HEAD'], { ok: [0, 1, 128] })).stdout.trim() : null;
+    job?.step(`${config.agents[target.agent]?.label || target.agent} выполняет ${{ commit: 'коммит', push: 'push', pr: 'создание PR' }[op]}`);
+    const finish = async (s, stopped) => {
+      const said = sessions.messages(s.id).filter((m) => m.kind === 'assistant').map((m) => m.text).join('\n');
+      const result = [...said.matchAll(/RESULT:\s*(.+)/g)].at(-1)?.[1].trim() ?? null;
+      let out;
+      try {
+        out = stopped ? { ok: false, error: 'ход агента остановлен' } : await verifyGit(op, cwd, { before, result, branch, prLookup: o.prLookup });
+      } catch (e) {
+        out = { ok: false, error: e.message };
+      }
+      if (out.ok) return job?.done(out);
+      job?.fail(out.error, out);
+      notify({ kind: 'error', sessionId: s.id, taskId: s.taskId ?? null, text: `${{ commit: 'Коммит', push: 'Push', pr: 'PR' }[op]} через агента не выполнен: ${out.error}` });
+    };
+    gitWaits.set(target.id, [...(gitWaits.get(target.id) || []), { text, finish }]);
+    sessions.deliver(target.id, { from: 'user', text });
+    return { via: 'agent', sessionId: target.id, job: job?.id ?? null };
+  }
+
+  /** The turn that carried a git request ended: check what really happened. */
+  function settleGitRequests(s, stopped) {
+    const waits = gitWaits.get(s.id);
+    if (!waits?.length) return;
+    const msgs = sessions.messages(s.id);
+    const turn = sessions.find(s.id)?.turnCount ?? 0;
+    const due = waits.filter((w) => msgs.some((m) => m.kind === 'user' && m.text === w.text && m.turn <= turn));
+    if (!due.length) return; // still queued behind another turn
+    gitWaits.set(s.id, waits.filter((w) => !due.includes(w)));
+    for (const w of due) w.finish(s, stopped).catch((e) => console.error('[git via agent]', e));
+  }
+
+  /** The effect of a git request, checked by the harness (never trusted from the RESULT line alone). */
+  async function verifyGit(op, cwd, { before, result, branch, prLookup }) {
+    const failed = result && /^ERROR\b/i.test(result) ? result.replace(/^ERROR\s*/i, '') || 'агент сообщил об ошибке' : null;
+    if (op === 'commit') {
+      const hash = (await git.git(cwd, ['rev-parse', '-q', '--verify', 'HEAD'], { ok: [0, 1, 128] })).stdout.trim();
+      if (!hash || hash === before) return { ok: false, error: failed || 'коммит не создан' };
+      const claimed = result?.split(/\s+/)[0];
+      if (claimed && /^[0-9a-f]{7,40}$/i.test(claimed) && !hash.startsWith(claimed.toLowerCase())) return { ok: false, hash, error: `агент назвал коммит ${claimed}, а HEAD = ${hash.slice(0, 12)}` };
+      return { ok: true, hash };
+    }
+    if (op === 'push') {
+      const st = await git.status(cwd);
+      if (!st.upstream || st.ahead > 0) return { ok: false, branch: st.branch, error: failed || (st.upstream ? `в origin не отправлено коммитов: ${st.ahead}` : 'у ветки нет upstream — push не выполнен') };
+      return { ok: true, branch: st.upstream };
+    }
+    const url = result?.match(/https?:\/\/\S+/)?.[0];
+    if (url) return { ok: true, url };
+    const found = branch && prLookup ? await prLookup(branch).catch(() => null) : null; // the code host's own answer
+    return found ? { ok: true, url: found } : { ok: false, error: failed || 'PR не найден' };
+  }
+
   // ---- post-turn: escalation and error notifications ----
 
   function turnEnded(s, { reported, communicated, stopped, queueEmpty, userFollowUp }) {
+    settleGitRequests(s, stopped);
     if (s.ephemeral && !reported && queueEmpty) {
       const last = sessions.messages(s.id).filter((m) => m.kind === 'assistant').at(-1);
       settleRun(s, { status: stopped ? 'stopped' : 'no_report', summary: last?.text ?? '' });
@@ -1185,6 +1286,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
     promptTemplate,
     reworkTemplate,
     reworkPresets,
+    gitViaAgent,
     port: (taskId, target, o) => port(tasks.get(taskId), target, o, null),
     waitRun,
     /** MCP tool list; the built-in-compatible `agent` alias only in orchestration.subagents "harness" mode */

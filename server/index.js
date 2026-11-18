@@ -23,7 +23,7 @@ import { createModelCatalog, scanModelRefs } from './models.js';
 import { readSdd } from './sdd.js';
 import { generateMessage } from './generate.js';
 import { createHistory, historyMessages } from './history.js';
-import { runJob, jobStep, JOB_ID_RE } from './jobs.js';
+import { runJob, jobStep, JOB_ID_RE, holdJob } from './jobs.js';
 import { DEMO_PORT, demoOverrides, seedDemoRepos, seedDemoTasks } from './demo.js';
 import { importTasks, importIssue, transitionTask, getExternal, getTransitions, importChildren, syncColumn, getPath } from './integrations/tasks.js';
 import { createPullRequest, prStatus, refreshTaskPr, declinePullRequest, prEnabled, prMe, repoPulls, prAuthor } from './integrations/pr.js';
@@ -39,7 +39,7 @@ const NO_BUILD_HTML = '<!doctype html><meta charset="utf-8"><title>Harness</titl
 const GRADES = ['default', 'fast', 'review', 'explore'];
 // optional API groups this server implements (docs/ARCHITECTURE.md "Feature flags"); a flag ships with its route
 export const FEATURES = ['branches', 'fs-search', 'pr-status', 'agent-info', 'models-refresh', 'tracker-links', 'board-columns', 'review-loop',
-  'subagents', 'virtual-sessions', 'worker-run', 'skills-install', 'demo', 'worktree-meta', 'open', 'sdd', 'health', 'folders', 'include-dirs', 'questions', 'permissions', 'activity', 'rework', 'fs-raw', 'tracker-import', 'pr-decline', 'task-suggest', 'recovery', 'acp', 'worktree-lazy', 'cli-history', 'prs-mine', 'git-generate'];
+  'subagents', 'virtual-sessions', 'worker-run', 'skills-install', 'demo', 'worktree-meta', 'open', 'sdd', 'health', 'folders', 'include-dirs', 'questions', 'permissions', 'activity', 'rework', 'fs-raw', 'tracker-import', 'pr-decline', 'task-suggest', 'recovery', 'acp', 'worktree-lazy', 'cli-history', 'prs-mine', 'git-generate', 'git-via-agent'];
 // titles of operations the UI may follow by sending x-job-id (WS { t: 'job' } frames)
 const JOB_TITLES = {
   'POST /api/tasks/sync': 'Синхронизация с трекером',
@@ -49,6 +49,7 @@ const JOB_TITLES = {
   'POST /api/tasks/:id/import-children': 'Импорт подзадач',
   'POST /api/git/pr': 'Создание PR',
   'POST /api/git/push': 'git push',
+  'POST /api/git/commit': 'Коммит',
   'POST /api/git/generate': 'Сообщение коммита',
   'POST /api/git/checkout': 'Переключение ветки',
   'DELETE /api/workspaces/:id/worktrees': 'Удаление рабочего дерева',
@@ -372,7 +373,7 @@ export async function startServer(opts = {}) {
         resolved: resolveAgentView(a),
       }])),
       defaultAgent: config.defaultAgent,
-      git: { ...pick(config.git, GIT_KEYS), generateMessages: config.git.generateMessages !== false, generateTimeoutSec: config.git.generateTimeoutSec },
+      git: { ...pick(config.git, GIT_KEYS), generateMessages: config.git.generateMessages !== false, generateTimeoutSec: config.git.generateTimeoutSec, via: config.git.via === 'harness' ? 'harness' : 'agent' },
       tasks: { refreshSec: t.refreshSec ?? 0 },
       board: config.board,
       workspaces: {
@@ -654,7 +655,8 @@ export async function startServer(opts = {}) {
     if (body.git !== undefined) {
       const okKey = ([k, v]) => (GIT_KEYS.includes(k) && typeof v === 'string' && v.trim())
         || (k === 'generateMessages' && typeof v === 'boolean')
-        || (k === 'generateTimeoutSec' && Number.isInteger(v) && v >= 10 && v <= 600);
+        || (k === 'generateTimeoutSec' && Number.isInteger(v) && v >= 10 && v <= 600)
+        || (k === 'via' && ['agent', 'harness'].includes(v));
       if (!isObj(body.git) || !Object.entries(body.git).every(okKey)) {
         fail(400, `git: непустые строки для ${GIT_KEYS.join(', ')}; generateMessages: true/false; generateTimeoutSec: 10..600`);
       }
@@ -1292,20 +1294,34 @@ export async function startServer(opts = {}) {
     check(body, { cwd: 'string', kind: 'string', base: 'string?' });
     return generateMessage({ config, store, getUrl: () => url, tasks, suggest: orch.gitSuggest, cwd: path.resolve(body.cwd), kind: body.kind, base: body.base });
   });
+  // via "agent" (git.via, the default): the agent runs it (its hooks and skills) and the harness checks the result
+  const viaOf = (body) => {
+    const via = body.via ?? config.git.via ?? 'agent';
+    if (!['agent', 'harness'].includes(via)) fail(400, 'via: agent или harness');
+    if (via === 'agent' && !(path.isAbsolute(body.cwd) && fs.existsSync(body.cwd))) fail(400, `cwd должен быть существующей абсолютной папкой: ${body.cwd}`);
+    return via;
+  };
   route('POST', '/api/git/commit', ({ body }) => {
-    check(body, { cwd: 'string', message: 'string', paths: 'array?' });
+    check(body, { cwd: 'string', message: 'string', paths: 'array?', via: 'string?' });
+    if (!body.message.trim()) fail(400, 'нужно сообщение коммита');
+    if (viaOf(body) === 'agent') return orch.gitViaAgent('commit', { cwd: body.cwd, message: body.message, paths: body.paths }, holdJob());
     return git.commit(body.cwd, body.message, body.paths, config.git.excludeFromCommit);
   });
   route('POST', '/api/git/push', ({ body }) => {
-    check(body, { cwd: 'string' });
+    check(body, { cwd: 'string', via: 'string?' });
+    if (viaOf(body) === 'agent') return orch.gitViaAgent('push', { cwd: body.cwd }, holdJob());
     jobStep('git push');
     return git.push(body.cwd, { timeoutSec: config.git.networkTimeoutSec });
   });
   route('POST', '/api/git/pr', async ({ body }) => {
-    check(body, { cwd: 'string', title: 'string', body: 'string?', base: 'string?' });
+    check(body, { cwd: 'string', title: 'string', body: 'string?', base: 'string?', via: 'string?' });
     if (!prEnabled(config, mcp)) fail(501, 'создание PR выключено (integrations.pr.enabled)');
     const branch = (await git.currentBranch(body.cwd)) || fail(400, 'в cwd не выбрана ветка');
     const base = body.base || config.git.defaultBase;
+    if (viaOf(body) === 'agent') {
+      const prLookup = async (b) => (await prStatus({ config, mcp, branch: b, ...(await git.remoteInfo(body.cwd)) })).pr?.url ?? null;
+      return orch.gitViaAgent('pr', { cwd: body.cwd, title: body.title, body: body.body || '', base, branch, prLookup }, holdJob());
+    }
     const r = await createPullRequest({
       config, mcp, cwd: body.cwd, branch, base,
       title: body.title, body: body.body || '', ...(await git.remoteInfo(body.cwd)),

@@ -1235,6 +1235,9 @@ Durable state (all in `<dataDir>`, atomic writes):
   page), take into work (agent check → worktree → session), rework, port (worktree → cherry-pick 0/n…n/n → conflict
   worker), PR create (existing PR lookup → create), push, checkout, worktree removal (sessions i/n → git), models refresh,
   import children (per child). Steps of background work after the response are dropped.
+  A held job (git via the agent) stays open after the response: its final frame is `{ t: 'job', id, title, done: true,
+  result: { ok, hash | branch | url }, at }` or `{ …, done: true, error, result? }` once the agent's turn ended and the
+  harness checked the effect.
 - Event loop: SDD polling is async; transcripts are serialized per message (a streaming update re-serializes one message,
   not the whole transcript) and `.bak` copies are refreshed at most every 10 s; registry polling reads only small files.
 
