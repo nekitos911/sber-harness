@@ -50,8 +50,7 @@ function usePromptPreview(input: string, notes: string, agentId: string, targets
   const ref = text.match(REF)?.[0]
   const rest = [ref ? text.replace(ref, '').trim() : '', notes.trim()].filter(Boolean).join(' ')
   if (ref && conf?.taskPromptTemplate) return fill(conf.taskPromptTemplate, { taskUrl: ref, key: ref, title: '', notes: rest ? ` ${rest}` : '' }).trim()
-  // shortcut: gigacode's built-in free template until the server previews it (handoff-dry-run)
-  const free = conf?.freePromptTemplate ?? (agentId === 'gigacode' ? '/full-task {text}{notes}' : '{text}{notes}')
+  const free = conf?.freePromptTemplate ?? '{text}{notes}' // the server says the agent's default (settings)
   return fill(free, { text, notes: notes.trim() ? ` ${notes.trim()}` : '' }).trim()
 }
 
@@ -174,7 +173,8 @@ function Handoff() {
           <textarea className="handoff-notes" rows={2} value={notes} disabled={!!job} placeholder="Заметки для агента (необязательно)" aria-label="Заметки"
             onChange={(e) => editNotes(e.target.value)} onKeyDown={onKey} />
         )}
-        {preview && (
+        {/* only when it says more than what was typed (a command, the task's text): a copy of the phrase is noise */}
+        {preview && preview !== [input.trim(), notes.trim()].filter(Boolean).join(' ') && (
           <button type="button" className="handoff-preview" aria-expanded={previewOpen} onClick={() => setPreviewOpen(!previewOpen)}>
             <span className="handoff-preview-label">Будет отправлено:</span>
             <span className="mono handoff-preview-text" data-open={previewOpen || undefined}>{preview}</span>

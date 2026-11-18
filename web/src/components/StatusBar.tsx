@@ -2,10 +2,12 @@ import { useEffect, useRef, useState } from 'react'
 import { Check, X } from 'lucide-react'
 import { api } from '../api'
 import { useStore } from '../store'
-import { plural } from '../lib/format'
 import { Popover } from './ui'
 
 interface McpServer { name: string; enabled: boolean; ok: boolean; error?: string; problem?: string }
+
+/** What the usual services are for, in words; the id stays next to it. */
+const PURPOSE: Record<string, string> = { onework: 'Трекер задач', sourcecontrol: 'Пулл-реквесты' }
 
 export function StatusBar() {
   const conn = useStore((s) => s.conn)
@@ -27,16 +29,16 @@ export function StatusBar() {
       {mcp && (
         <>
           <button ref={mcpBtn} type="button" className="end sb-mcp" aria-expanded={open} data-bad={broken.length > 0 || undefined} onClick={() => setOpen(!open)}>
-            MCP: {enabled.length} {plural(enabled.length, 'сервер', 'сервера', 'серверов')}
+            Сервисы: {enabled.length}
             {broken.length > 0 && `, с ошибкой: ${broken.length}`}
           </button>
-          <Popover anchor={mcpBtn} open={open} onClose={() => setOpen(false)} placement="top-end" label="MCP-серверы харнесса" className="sb-mcp-pop">
-            <p className="sb-mcp-head">MCP-серверы харнесса (задачи из трекера и PR). Серверы агента — в Настройках → GigaCode.</p>
+          <Popover anchor={mcpBtn} open={open} onClose={() => setOpen(false)} placement="top-end" label="Сервисы для задач и PR" className="sb-mcp-pop">
+            <p className="sb-mcp-head">Сервисы, через которые приходят задачи и создаются PR (подключены по MCP). Сервисы самого агента — в «Настройках».</p>
             {enabled.length === 0 && <p className="muted">Не настроены.</p>}
             {enabled.map((m) => (
               <div key={m.name} className="sb-mcp-row" data-bad={!m.ok || !!m.problem || undefined}>
                 {m.ok && !m.problem ? <Check aria-hidden /> : <X aria-hidden />}
-                <span className="mono">{m.name}</span>
+                <span>{PURPOSE[m.name] ?? m.name}</span>{PURPOSE[m.name] && <span className="mono muted">{m.name}</span>}
                 {(m.problem || (!m.ok && m.error)) && <span className="sb-mcp-err">{m.problem ?? m.error}</span>}
               </div>
             ))}

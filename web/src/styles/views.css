@@ -667,7 +667,7 @@ button.prs-group[aria-expanded="true"] .chev { transform: rotate(90deg); }
 .firstrun-foot { display: flex; align-items: center; gap: 10px; }
 /* the changes panel's «Коммит → Push → PR → Влит» strip */
 .flow { display: grid; gap: 6px; padding: 8px 10px; border: 1px solid var(--rule); border-radius: var(--r-2); background: var(--deck); }
-.flow-steps { display: flex; gap: 4px; margin: 0; padding: 0; list-style: none; font-size: 11.5px; }
+.flow-steps { display: flex; gap: 4px; margin: 0; padding: 0; list-style: none; font-size: 12px; }
 .flow-steps li { flex: 1; padding-top: 6px; border-top: 2px solid var(--rule-strong); color: var(--ink-4); text-align: center; white-space: nowrap; }
 .flow-steps li[data-state="done"] { border-top-color: var(--lamp-done); color: var(--ink-3); }
 .flow-steps li[data-state="now"] { border-top-color: var(--signal); color: var(--ink); font-weight: 600; }
