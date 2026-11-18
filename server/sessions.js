@@ -46,8 +46,12 @@ const tail = (text) => (text ? `\n\nstderr:\n${text.slice(-2000).trim()}` : '');
 const fence = (lines) => `\`\`\`text\n${lines.join('\n')}\n\`\`\``;
 const REGISTRY_POLL_MS = 2000;
 const QUESTION_TOOLS = ['ask_user_question', 'ask_user', 'AskUserQuestion']; // VERIFY the real GigaCode name
+const FULL_ACCESS_MODES = new Set(['auto', 'yolo', 'bypassPermissions']); // «Полный доступ» (as web/src/lib/agents.ts)
 // confirmed: `GigaCode requires permission to use "run_shell_command", but that permission was declined (...)`
-const DENIAL_RE = /(requires permission to use|requires? (user )?(approval|confirmation)|not allowed|denied|permission|подтвержд|запрещ)/i;
+// What a CLI writes when it refused a call for lack of permission (GigaCode: «requires permission to use "X", but that
+// permission was declined (non-interactive mode cannot prompt for confirmation)»). Never bare words such as «permission»
+// or «запрещён»: an ordinary tool error that quotes its arguments (a sub-agent's prompt) is not a denial.
+const DENIAL_RE = /(requires permission to use|permission (was|has been) (declined|denied)|cannot prompt for confirmation|haven't granted it yet)/i;
 const EDIT_TOOLS = /^(write_file|replace|edit|edit_file|write|apply_patch|create_file)$/i;
 
 /** The allow-list entry for a denied call: run_shell_command(<first non-cd command word>), else the tool name. */
@@ -591,10 +595,27 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
           updateMessage(s, c.plan);
         } else c.plan = addMessage(s, { kind: 'system', text: ev.text });
         break;
-      case 'permission': // ACP session/request_permission: the agent waits for this answer
+      case 'permission': { // ACP session/request_permission: the agent waits for this answer
+        const asked = c.questions?.get(ev.toolId);
+        if (asked || Array.isArray(ev.input?.questions)) {
+          // the CLI's own question waits on this request: ONE card (the question). The request stays held — the agent
+          // really waits — and the answer pauses the turn and goes as the next message (deliver).
+          if (!asked) (c.questions ||= new Map()).set(ev.toolId ?? ev.id, addMessage(s, { kind: 'question', text: '', question: { id: ev.toolId ?? ev.id, ...parseQuestion(ev.input) } }));
+          c.heldQuestion = { id: ev.id, reject: ev.options.find((o) => /reject|deny|cancel/i.test(`${o.id} ${o.kind ?? ''}`))?.id ?? null };
+          setWaiting(s, 'answer');
+          break;
+        }
+        if (FULL_ACCESS_MODES.has(s.approvalMode || config.agents[s.agent]?.approvalMode)) {
+          // «Полный доступ»: the person chose not to be asked — allowed once, no card (never «always»: that writes CLI settings)
+          const allow = ev.options.find((o) => /allow_once/i.test(o.kind ?? ''))
+            ?? ev.options.find((o) => /^allow$/i.test(o.kind ?? o.id))
+            ?? ev.options.find((o) => !/reject|deny|cancel|always/i.test(`${o.id} ${o.kind ?? ''}`));
+          if (allow && acp.answer(s.id, ev.id, allow.id)) break;
+        }
         addMessage(s, { kind: 'permission', text: '', permission: { id: ev.id, toolId: ev.toolId, tool: ev.tool, input: ev.input, reason: '', transport: 'acp', options: ev.options, resolved: null } });
         setWaiting(s, 'permission');
         break;
+      }
       case 'permission_cancelled': // Stop: held requests were answered "cancelled"
         for (const m of store.messages(s.id)) {
           if (m.kind === 'permission' && m.permission.transport === 'acp' && !m.permission.resolved) {
@@ -994,7 +1015,9 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     clearInterval(r.registryTimer);
     r.running = false;
     r.handle = null;
-    const stopped = res.stopped || r.stopRequested;
+    const paused = r.pausedForAnswer; // ended by answering the CLI's question (ACP), not by Stop
+    r.pausedForAnswer = false;
+    const stopped = (res.stopped || r.stopRequested) && !paused;
     const unadopted = r.unadopted;
     r.stopRequested = false;
     r.unadopted = false;
@@ -1459,6 +1482,15 @@ ${note.trim()}` : text });
         updateMessage(s, q);
       }
       if (q || asked) hooks.questionAnswered?.(s); // its notification is answered (and read) too
+      const held = r.cur?.heldQuestion;
+      if (held && r.running) {
+        // ACP: the CLI's question still holds its request — decline it and end this turn quietly; the answer (queued
+        // below) starts the next one, so the agent reads exactly what the person wrote
+        r.cur.heldQuestion = null;
+        r.pausedForAnswer = true;
+        if (held.reject) acp.answer(sid, held.id, held.reject);
+        r.handle?.stop();
+      }
       if (s.interrupted) s.interrupted = null; // continued
       if (s.autoTitle && from === 'user') {
         s.title = titleFrom(text) || s.title;

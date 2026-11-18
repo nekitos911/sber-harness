@@ -227,7 +227,23 @@ export function ActivityLine({ session, list, starting }: { session: Session; li
   const [open, setOpen] = useState(false) // «Думает» unfolded
   if (session.waitingFor === 'answer' || session.waitingFor === 'permission') {
     const Icon = session.waitingFor === 'answer' ? CircleHelp : ShieldAlert
-    return <div className="chat-working chat-waiting" role="status"><Icon aria-hidden />{session.waitingFor === 'answer' ? 'Ждёт вашего ответа' : 'Ждёт вашего разрешения'}</div>
+    // the card may have scrolled far up while the agent kept writing: this line takes you to it
+    const jump = (e: MouseEvent) => {
+      const cards = e.currentTarget.closest('.chat')?.querySelectorAll<HTMLElement>('section.perm-card, section.ask-card')
+      const card = cards?.[cards.length - 1]
+      if (!card) return
+      card.scrollIntoView({ block: 'center', behavior: 'smooth' })
+      card.dataset.flash = ''
+      window.setTimeout(() => { delete card.dataset.flash }, 1200)
+      card.querySelector<HTMLElement>('button, input')?.focus({ preventScroll: true })
+    }
+    return (
+      <div className="chat-working chat-waiting" role="status">
+        <button type="button" className="working-toggle" onClick={jump}>
+          <Icon aria-hidden />{session.waitingFor === 'answer' ? 'Ждёт вашего ответа — показать вопрос' : 'Ждёт вашего разрешения — показать запрос'}
+        </button>
+      </div>
+    )
   }
   const act = starting ? { text: starting } : activityOf(list, session.lastEventKind, quiet * 1000)
   // A finished answer is not news for half a minute; after that silence is worth saying.

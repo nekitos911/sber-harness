@@ -81,6 +81,20 @@ async function prompt({ sessionId, prompt: parts }) {
       say(sessionId, ' отказано, иду другим путём');
     }
   }
+  if (/#ask\b/.test(text)) {
+    // GigaCode's own question over ACP (seen on the target): a tool call, then a permission request carrying the questions
+    const input = { questions: [{ header: 'Объект', question: 'Что проверяем?', options: [{ label: 'Конфиг' }, { label: 'Код' }] }] };
+    update(sessionId, { sessionUpdate: 'tool_call', toolCallId: 'q1', title: 'AskUserQuestion', kind: 'other', status: 'pending', rawInput: {} });
+    const answer = await request('session/request_permission', {
+      sessionId,
+      toolCall: { toolCallId: 'q1', title: 'Ask user 1 question', kind: 'other', rawInput: input },
+      options: [{ optionId: 'submit', name: 'Submit', kind: 'allow_once' }, { optionId: 'cancel', name: 'Cancel', kind: 'reject_once' }],
+    });
+    if (answer.outcome.outcome === 'cancelled') return { stopReason: 'cancelled' };
+    say(sessionId, ` вопрос: ${answer.outcome.optionId}`);
+    for (let i = 0; i < 20 && !cancelled.has(sessionId); i++) await sleep(100); // goes on unless the client cancels
+    if (cancelled.has(sessionId)) return { stopReason: 'cancelled' };
+  }
   if (/#late\b/.test(text)) {
     // tool calls announced with rawInput {} whose input arrives in a later tool_call_update
     const lines = fs.readFileSync(new URL('../test/fixtures/gigacode.acp-late-input.ndjson', import.meta.url), 'utf8').split('\n').filter(Boolean);

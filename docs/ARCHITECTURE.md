@@ -1091,7 +1091,11 @@ session (`<cli> --acp [--approval-mode m] [--model m] [--include-directories …
 `session/prompt {sessionId, prompt:[{type:'text',text}]}`; `session/update` notifications map to the same Messages
 (agent_message_chunk → assistant text delta, agent_thought_chunk → thought, tool_call/tool_call_update → tool (a call may come with rawInput {} and its real input in a later
 tool_call_update: the card, and for agent calls the sub-agent chat title and task message, are filled then), plan →
-system plan note); `session/request_permission {toolCall, options[{optionId,name,kind}]}` → a `permission` Message with
+system plan note); in «Полный доступ» (approvalMode auto/yolo/bypassPermissions) the harness answers every
+`session/request_permission` itself with the allow-once option (never «always»: that writes CLI settings), no card; a
+request that carries the CLI's own question (its toolCallId is a question tool call, or rawInput.questions) is ONE
+question card: the request stays held (the agent waits), the person's answer declines it, ends the turn quietly (no
+«Остановлено») and goes as the next message; otherwise `session/request_permission {toolCall, options[{optionId,name,kind}]}` → a `permission` Message with
 the agent's options (`transport: 'acp'`), the JSON-RPC request is held until `POST /api/sessions/:id/permission`
 answers `{outcome:{outcome:'selected', optionId}}` (or `cancelled` on Stop); `fs/read_text_file` / `fs/write_text_file`
 served inside cwd/includeDirs; Stop → `session/cancel`; the process is restarted lazily if it dies (load or new session +

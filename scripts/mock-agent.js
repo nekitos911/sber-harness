@@ -67,6 +67,11 @@ if (opt('--model') && catalogue.length && !catalogue.includes(model)) {
   process.stderr.write(`An unexpected critical error occurred:\nError: The selected model '${model}' is not present in the current backend catalogue\n`);
   process.exit(1);
 }
+if (has(/#toolerror\b/)) {
+  // an MCP tool error that quotes its arguments — words like «permission», «запрещён» inside are not a CLI denial
+  emit({ type: 'tool_use', tool_name: 'mcp__harness__agent', tool_id: 'err_1', parameters: { prompt: 'Права MCP: есть ли разрешения; если доступ запрещён — отметь' } });
+  emit({ type: 'tool_result', tool_id: 'err_1', status: 'error', output: 'MCP tool \'agent\' reported tool error: {"prompt":"Права MCP: есть ли разрешения (permission); если доступ запрещён — отметь"} with response: {"error":"boom"}' });
+}
 if (has(/#notoolresult\b/)) {
   // a built-in sub-agent call whose result never comes before the turn ends (seen on the target: cards spinning forever)
   emit({ type: 'tool_use', tool_name: 'agent', tool_id: 'lost_1', parameters: { subagent_type: 'general-purpose', prompt: 'проверка' } });

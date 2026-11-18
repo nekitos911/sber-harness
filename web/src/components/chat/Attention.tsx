@@ -1,6 +1,6 @@
 import { useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { subTitle } from '../../lib/format'
-import { CircleHelp, Eye, Pencil, Plug, ShieldAlert, SquareTerminal, Wrench } from 'lucide-react'
+import { Bot, CircleHelp, Eye, Pencil, Plug, ShieldAlert, SquareTerminal, Wrench } from 'lucide-react'
 import { tryApi } from '../../api'
 import { openSession, useStore } from '../../store'
 import { loadDraft, saveDraft } from '../../lib/draft'
@@ -113,6 +113,10 @@ export function MessageQuestion({ m }: { m: Message }) {
 /** «Выполнить команду: git push origin feature/T-1», «Изменить файл: src/sum.js», «Playwright / click». */
 function actionLine(tool: string, input: unknown): { icon: ReactNode; text: string } {
   const i = obj(input)
+  // GigaCode's ToolCall wrapper puts its JSON arguments in the request title: never show that as the tool's name
+  const name = /^\s*[{[]/.test(tool) ? '' : tool
+  if (typeof i.subagent_type === 'string') return { icon: <Bot />, text: `Запустить субагента ${i.subagent_type}: ${String(i.description ?? summarizeInput(input))}` }
+  if (!name) return { icon: <Wrench />, text: summarizeInput(input) || 'Вызов инструмента' }
   switch (toolKind(tool)) {
     case 'shell': return { icon: <SquareTerminal />, text: `Выполнить команду: ${String(i.command ?? i.cmd ?? summarizeInput(input))}` }
     case 'edit': return { icon: <Pencil />, text: `Изменить файл: ${pathOf(input) ?? summarizeInput(input)}` }

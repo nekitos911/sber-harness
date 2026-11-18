@@ -111,7 +111,30 @@ test('an error stop reason (max_tokens) is shown although the turn closes at its
   await waitFor(async () => { const s = await session(chat.id); return s.status === 'error' && !s.turnClosing; }, { what: 'error status' });
 });
 
+test('«Полный доступ»: a permission request is allowed once by the harness, no card; the CLI\'s question is ONE card that pauses the turn', async () => {
+  const full = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'acpmock', cwd, approvalMode: 'auto', prompt: '#perm' })).body;
+  await idle(full.id);
+  const msgs = await messages(full.id);
+  assert.ok(!msgs.some((m) => m.kind === 'permission'), 'no permission card in full access');
+  assert.ok((await said(full.id)).at(-1).includes('записано'));
+  fs.rmSync(path.join(cwd, 'out.txt'), { force: true });
+
+  await send(full.id, '#ask');
+  const q = await waitFor(async () => (await messages(full.id)).find((m) => m.kind === 'question' && !m.question.answered), { what: 'question card' });
+  assert.deepEqual(q.question.options?.map((o) => (typeof o === 'string' ? o : o.label)), ['Конфиг', 'Код']);
+  assert.ok(!(await messages(full.id)).some((m) => m.kind === 'permission'), 'not a second card for the same question');
+  assert.deepEqual([(await session(full.id)).status, (await session(full.id)).waitingFor], ['running', 'answer'], 'the agent really waits');
+  await send(full.id, 'Ответ на вопрос «Что проверяем?»: Код, и ещё тесты');
+  await waitFor(async () => (await said(full.id)).some((t) => t.includes('turn 3')), { what: 'the answer as the next turn' });
+  await idle(full.id);
+  const after = await messages(full.id);
+  assert.ok(!after.some((m) => m.text === 'Остановлено пользователем'), 'paused for the answer, not «stopped»');
+  assert.ok(!after.some((m) => m.text?.includes('вопрос: submit')), 'the question was not «submitted» with a default');
+  assert.equal((await session(full.id)).status, 'idle');
+});
+
 test('permission request: held until answered (allow writes the file, reject is reported), the card shows the answer', async () => {
+  await h.api('PATCH', `/api/sessions/${chat.id}`, { approvalMode: 'default' }); // asks (not «Полный доступ»)
   await send(chat.id, '#perm');
   const card = await waitFor(async () => (await messages(chat.id)).find((m) => m.kind === 'permission' && !m.permission.resolved), { what: 'permission card' });
   assert.deepEqual([card.permission.transport, card.permission.tool, card.permission.options.map((o) => o.id)], ['acp', 'Запись out.txt', ['allow', 'reject']]);

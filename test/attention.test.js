@@ -67,6 +67,15 @@ test('allow-list patterns from denied calls', () => {
   assert.equal(permissionPattern('write_file', { path: 'a' }), 'write_file');
 });
 
+test('an ordinary tool error that mentions «permission» / «запрещён» in its arguments is not a denial: no card', async () => {
+  const s = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', cwd: root, prompt: '#toolerror' })).body;
+  await idle(s.id);
+  const msgs = await messages(s.id);
+  assert.equal(msgs.find((m) => m.tool?.id === 'err_1').tool.status, 'error');
+  assert.ok(!msgs.some((m) => m.kind === 'permission'), 'no «CLI отклонил действие» card');
+  assert.ok(!(await h.api('GET', '/api/state')).body.sessions.find((x) => x.id === s.id).waitingFor);
+});
+
 test('headless denial: a card with the allow-list pattern; allow_once grants it for the next turn only; allow_session keeps it', async () => {
   const s = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', cwd: root, approvalMode: 'auto', prompt: '#deny run_shell_command cd /d C:\\x && git status' })).body;
   await idle(s.id);
