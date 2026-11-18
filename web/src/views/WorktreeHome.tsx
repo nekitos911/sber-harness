@@ -26,7 +26,7 @@ export function WorktreeHome({ cwd }: { cwd: string }) {
   const wt = wsId ? worktrees[wsId]?.find((w) => normPath(w.path) === p) : undefined
   const main = wt?.main ?? (!!ws && normPath(ws.path) === p)
   const branch = git?.status?.branch ?? wt?.branch ?? null
-  const changed = git?.status?.files.length ?? 0
+  const changed = git?.status?.files.filter((f) => !f.service).length ?? 0
 
   const here = useMemo(() => sessions.filter((s) => normPath(s.cwd) === p).sort((a, b) => b.lastActivityAt - a.lastActivityAt), [sessions, p])
   const linked = useMemo(() => {

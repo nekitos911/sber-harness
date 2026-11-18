@@ -13,7 +13,7 @@
     "portBranchTemplate": "{branch}-{targetSlug}",
     "commitTitleTemplate": "{key} {title}",
     "prTitleTemplate": "{key} {title}",
-    "excludeFromCommit": [".superpowers/"]
+    "excludeFromCommit": [".superpowers/", ".gigacode/tmp/"]
   },
   "tasks": {
     "promptTemplate": "{key}: {title}\n\n{description}\n\nСсылка: {taskUrl}{notes}"

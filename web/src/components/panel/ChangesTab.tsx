@@ -257,7 +257,7 @@ export function ChangesTab({ cwd }: { cwd: string }) {
           onAll={() => void stage('all', true)} onStage={(f) => void stage([f.path], true)} onDiscard={discard} />
       )}
       {service.length > 0 && (
-        <Disclosure className="service-files" summary={<span className="muted">Служебные, не коммитятся (.superpowers) · {service.length}</span>}>
+        <Disclosure className="service-files" summary={<span className="muted">Служебные, не коммитятся · {service.length}</span>}>
           <ul className="change-list">{service.map((f) => <ChangeRow key={f.path} cwd={cwd} f={f} git={git} />)}</ul>
         </Disclosure>
       )}
@@ -340,7 +340,7 @@ function ChangeRow({ cwd, f, git, staged = false, stageOn = false, onStage, onDi
         onClick={() => openTab({ kind: 'diff', cwd, path: f.path })} onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); openTab({ kind: 'diff', cwd, path: f.path }) } }}>
         <Icon className="change-icon" aria-hidden />
         <span className="change-name">{name}</span>
-        {dir && <span className="change-dir">{dir}</span>}
+        {dir && <span className="change-dir"><bdi>{dir}</bdi></span>}
         <span className="change-actions">
           <button type="button" className="icon-btn icon-btn-sm" aria-label={`Открыть ${name}`} data-tip="Открыть файл" onClick={stop(() => openTab({ kind: 'file', cwd, path: f.path }))}><File /></button>
           {stageOn && onDiscard && <button type="button" className="icon-btn icon-btn-sm" aria-label={`Отменить изменения в ${name}`} data-tip="Отменить изменения" onClick={stop(onDiscard)}><RotateCcw /></button>}

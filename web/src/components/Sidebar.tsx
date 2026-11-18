@@ -550,7 +550,7 @@ function WorktreeRow({ ws, wt, sessions, terminals, dup, kids, active, fromOf, p
   fromOf: (id: string) => Session | undefined
   project?: string
 }) {
-  const changed = useStore((s) => s.git[normPath(wt.path)]?.status?.files.length ?? wt.dirty ?? 0)
+  const changed = useStore((s) => s.git[normPath(wt.path)]?.status?.files.filter((f) => !f.service).length ?? wt.dirty ?? 0)
   const task = useStore((s) => (wt.taskId ? s.tasks.find((t) => t.id === wt.taskId) : s.tasks.find((t) => !!wt.branch && t.branch === wt.branch)))
   const activeSession = useStore((s) => (s.view.kind === 'wt' ? s.wt[normPath(s.view.cwd)]?.active : null))
   const [menu, setMenu] = useState(false)

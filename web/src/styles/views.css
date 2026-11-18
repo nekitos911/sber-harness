@@ -18,7 +18,7 @@
 .wpanel-where { display: grid; gap: 2px; padding: 8px 12px 9px; flex-shrink: 0; border-bottom: 1px solid var(--rule-soft); }
 .wpanel-where strong { font-size: 13px; font-weight: 600; }
 .wpanel-body > * { animation: fade-in 140ms var(--ease-out); }
-.wpanel-body { flex: 1; min-height: 0; overflow: auto; }
+.wpanel-body { flex: 1; min-height: 0; overflow: hidden auto; }
 
 .wpanel-section { display: grid; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--rule-soft); }
 .wpanel-section h3 { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 600; color: var(--ink-2); min-height: 24px; }
@@ -514,7 +514,7 @@ button.prs-group[aria-expanded="true"] .chev { transform: rotate(90deg); }
 .agent-git .icon-btn { margin-left: auto; }
 .via-switch { display: inline-flex; margin-top: 2px; }
 /* «Изменения», Orca-style */
-.scm { display: grid; gap: 8px; padding: 8px 12px 16px; align-content: start; }
+.scm { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; padding: 8px 12px 16px; align-content: start; } /* the column shrinks to the panel; long rows truncate */
 .scm-head { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .scm-head .btn svg { width: 13px; height: 13px; }
 .scm-branch, .scm-upstream { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 12px; }
@@ -536,7 +536,7 @@ button.prs-group[aria-expanded="true"] .chev { transform: rotate(90deg); }
 .split-btn > .split-more { width: 30px; padding: 0; border-top-left-radius: 0; border-bottom-left-radius: 0; border-left: 1px solid color-mix(in srgb, var(--primary-ink) 25%, transparent); }
 .scm-search { width: 100%; }
 .scm-clean { margin: 0; font-size: 12px; }
-.scm-group { display: grid; gap: 2px; }
+.scm-group { display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px; }
 .scm-group-head-row { display: flex; align-items: center; gap: 6px; }
 .scm-group-head { display: inline-flex; align-items: center; gap: 4px; padding: 2px 0; border: 0; background: none; color: var(--ink-3); font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; cursor: pointer; }
 .scm-group-head:hover { color: var(--ink); }

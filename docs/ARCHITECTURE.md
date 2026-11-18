@@ -622,7 +622,7 @@ runs implementer/reviewer sub-agents with cross-model review and writes a ledger
   the count of done items, or null when no item has a marker (`total` = item count; the UI then shows no fraction).
   While a session runs, the server polls (3 s) and broadcasts `{ t: 'sdd', cwd, sessionId, plans }` (that session's
   plans) on change.
-- `git.excludeFromCommit` (default `[".superpowers/"]`): `GET /api/git/status` marks matching files `service: true`;
+- `git.excludeFromCommit` (default `[".superpowers/", ".gigacode/tmp/"]`): `GET /api/git/status` marks matching files `service: true`;
   commit-all and the suggested file list skip them (pathspec `:(top,exclude)<pattern>`, so files staged earlier are skipped
   too); explicit `paths` drop them (400 when only service files are left); they are never pushed by the harness.
 - Model references check: `GET /api/agents/:id/info` adds `modelRefs: [{ file, model, available }]` from

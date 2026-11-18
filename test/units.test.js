@@ -70,3 +70,12 @@ test('registry: the agent.json example from the target machine, ISO timestamps, 
   const stale = readRegistry(reg, { idleWindowSec: 90, now: Date.parse('2026-11-17T16:30:00.000Z') }).items[0];
   assert.equal(stale.state, 'unverifiable');
 });
+
+test('excludeFromCommit: nested service folders (.gigacode/tmp/) are service files, the rest of .gigacode is not', async () => {
+  const { isService } = await import('../server/git.js');
+  const pats = ['.superpowers/', '.gigacode/tmp/'];
+  assert.ok(isService('.gigacode/tmp/acp-backup.js', pats));
+  assert.ok(isService('.gigacode/tmp/oldwt/.gitattributes', pats));
+  assert.ok(!isService('.gigacode/commands/full-task.md', pats));
+  assert.ok(!isService('server/index.js', pats));
+});
