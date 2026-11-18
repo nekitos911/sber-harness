@@ -1,10 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 
 /**
- * One tooltip for the whole app: any element with `data-tip` gets a styled tooltip on hover or keyboard
- * focus (not on mouse focus). The first one waits a moment; while one was just visible, the next shows at
- * once, so scanning a toolbar is fast. Lives in the top layer, so it also works inside dialogs.
+ * One tooltip for the whole app. Keyboard focus (focus-visible) shows any `data-tip`. The mouse is kept quiet on
+ * purpose (users found hover tips in the way everywhere): only icon-only buttons outside lists get one, after a
+ * deliberate ~1 s hover; rows, file names, tabs, cards, the sidebar and the side panel never pop anything up.
+ * Lives in the top layer, so it also works inside dialogs.
  */
+const QUIET = '.sidebar, .wpanel, [role="tablist"], [role="tree"], [role="listbox"], [data-tip-quiet]'
+const iconOnly = (el: HTMLElement) => !el.textContent?.trim()
 const MUTATING = '.btn-primary, .composer-send, [data-mutates]' // same as App: blocked while offline
 const offline = () => document.querySelector('.app')?.getAttribute('data-conn') === 'closed'
 
@@ -17,9 +20,12 @@ export function TooltipLayer() {
     let lastHidden = 0
     let current: HTMLElement | null = null
     let pressed: HTMLElement | null = null
-    const show = (el: HTMLElement) => {
-      const text = offline() && el.matches(MUTATING) ? 'Нет связи с сервером' : el.dataset.tip
+    const show = (el: HTMLElement, pointer = false) => {
+      const blocked = offline() && el.matches(MUTATING)
+      const text = blocked ? 'Нет связи с сервером' : el.dataset.tip
       if (!text || el === current || el === pressed) return
+      // mouse: only icon-only buttons outside lists (and the offline reason on a blocked action)
+      if (pointer && !blocked && (el.hasAttribute('data-tip-trunc') || !iconOnly(el) || el.closest(QUIET))) return
       // Rows and titles: a tooltip only when the visible label is actually truncated, and a bit later.
       const trunc = el.hasAttribute('data-tip-trunc')
       if (trunc) {
@@ -29,7 +35,7 @@ export function TooltipLayer() {
       current = el
       window.clearTimeout(timer)
       const warm = Date.now() - lastHidden < 400
-      timer = window.setTimeout(() => setTip({ text, el }), warm ? 0 : trunc ? 600 : 450)
+      timer = window.setTimeout(() => setTip({ text, el }), pointer ? (warm ? 150 : 1000) : warm ? 0 : 450)
     }
     const hide = () => {
       window.clearTimeout(timer)
@@ -41,7 +47,7 @@ export function TooltipLayer() {
       if (e.pointerType === 'touch') return
       const el = (e.target as Element).closest<HTMLElement>(offline() ? `${MUTATING}, [data-tip]` : '[data-tip]')
       if (pressed && el !== pressed) pressed = null // left what was clicked: its tooltip may come back next time
-      if (el) show(el)
+      if (el) show(el, true)
       else if (current) hide()
     }
     const focus = (e: FocusEvent) => {
