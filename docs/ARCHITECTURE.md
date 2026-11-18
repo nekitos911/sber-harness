@@ -93,7 +93,7 @@ data/                          runtime state (gitignored)
                "limit": 100, "refreshSec": 0, "urlTemplate": "",            // e.g. "https://<tracker>/swtr/units/all/unit/{key}"
                "statusMap": { "todo": "todo", "development": "in_progress", "qa": "review", "done": "done", ... },
                "priorityMap": { "low": "low", "mid": "medium", "high": "high" },
-               "closedStatuses": ["done", "cancelled", "declined"] },
+               "closedStatuses": ["done", "closed", "cancelled", "canceled", "declined", "resolved", "rejected"] },
                // format "json" (other providers): "itemsPath", "map", "transition": { "args": {...} } — see server/integrations/tasks.js
     "pr":    { "enabled": false, "server": "sourcecontrol", "tool": "git_create_pull_request",
                "args": { "project": "{project}", "repository": "{repository}", "head": "{branch}", "base": "{base}", "title": "{title}", "body": "{body}" },
@@ -911,7 +911,11 @@ sessions with their own chats).
   `snapshot: { title, description, externalStatus, at } | null` (frozen when taken into work).
 - Board = (imported, open, assigned to me) ∪ (taken into work through the harness, kept even if the tracker stops
   returning them) ∪ local tasks, minus `hidden`. Imported tasks whose status is in `integrations.tasks.closedStatuses`
-  are not added (existing ones are kept). `DELETE` of an imported task = `hidden: true` (re-import keeps it hidden);
+  are not added; a known task whose tracker status becomes closed: never taken into work (no takenAt, no assignee, no
+  worktrees) → `hidden: true` + log «Закрыта в трекере — скрыта с доски» (once); taken into work → status `done` (unless
+  `statusManual`), never auto-hidden. The same rule runs once on every start for tasks imported earlier. Default
+  closedStatuses (when unset): done, closed, cancelled, canceled, declined, resolved, rejected; the «К работе» column maps
+  todo, created, new, open. `DELETE` of an imported task = `hidden: true` (re-import keeps it hidden);
   local tasks are really deleted. Search by key also finds hidden/closed ones; UI has a "show hidden" toggle.
 - Column comes from `statusMap(externalStatus)` on import unless `statusManual`. Moving a card NEVER changes the
   tracker; changing tracker status is an explicit action: `GET /api/tasks/:id/transitions` then

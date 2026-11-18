@@ -33,7 +33,7 @@
   },
   "board": {
     "columns": [
-      { "status": "todo", "label": "К работе", "trackerStatuses": ["todo"] },
+      { "status": "todo", "label": "К работе", "trackerStatuses": ["todo", "created", "new", "open"] },
       { "status": "in_progress", "label": "В работе", "trackerStatuses": ["development", "to_code_review", "code_review", "discover_issue"] },
       { "status": "review", "label": "Тестирование", "trackerStatuses": ["qa", "ready_for_ift", "ift", "ready_for_uat"] }
     ],
@@ -155,7 +155,7 @@
         "done": "done"
       },
       "priorityMap": { "low": "low", "mid": "medium", "medium": "medium", "high": "high" },
-      "closedStatuses": ["done", "cancelled", "declined"],
+      "closedStatuses": ["done", "closed", "cancelled", "canceled", "declined", "resolved", "rejected"],
       "onStartTransition": null
     },
     "pr": {

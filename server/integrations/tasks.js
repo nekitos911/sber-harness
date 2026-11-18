@@ -47,10 +47,40 @@ export const getPath = (obj, p) => (!p ? obj : String(p).split('.').reduce((o, k
 
 const MAX_PAGES = 20;
 export const ONEWORK_STATUS_MAP = {
-  todo: 'todo', development: 'in_progress', to_code_review: 'review', code_review: 'review', qa: 'review',
+  todo: 'todo', created: 'todo', new: 'todo', open: 'todo', development: 'in_progress', to_code_review: 'review', code_review: 'review', qa: 'review',
   ready_for_ift: 'review', ift: 'review', ready_for_uat: 'review', done: 'done',
 };
 export const ONEWORK_PRIORITY_MAP = { low: 'low', mid: 'medium', medium: 'medium', high: 'high' };
+/** Tracker statuses that mean «closed» when integrations.tasks.closedStatuses is not set (onework uses `closed`). */
+export const DEFAULT_CLOSED_STATUSES = ['done', 'closed', 'cancelled', 'canceled', 'declined', 'resolved', 'rejected'];
+const closedSet = (cfg) => new Set((cfg?.closedStatuses ?? DEFAULT_CLOSED_STATUSES).map((x) => String(x).toLowerCase()));
+
+/**
+ * A task closed in the tracker: never taken into work (no takenAt, no assignee, no worktrees) → hidden from the board
+ * (once, with a log line); taken into work → done (a human-pinned column stays). Never auto-hidden once taken.
+ */
+function settleClosed(tasks, t) {
+  const taken = t.takenAt || t.assigneeSessionId || t.worktrees?.length;
+  if (!taken) {
+    if (t.hidden) return null;
+    tasks.update(t.id, { hidden: true }, 'harness');
+    tasks.addLog(t.id, 'harness', 'Закрыта в трекере — скрыта с доски', 'status', { externalStatus: t.externalStatus });
+    return 'updated';
+  }
+  if (t.status === 'done' || t.statusManual) return null;
+  tasks.update(t.id, { status: 'done' }, 'harness');
+  return 'updated';
+}
+
+/** Startup pass: the closed rule applied to tasks imported before it existed. → number changed */
+export function settleClosedTasks(config, tasks) {
+  const closed = closedSet(config.integrations?.tasks);
+  let n = 0;
+  for (const t of tasks.all()) {
+    if (t.externalId && t.externalStatus && closed.has(String(t.externalStatus).toLowerCase()) && settleClosed(tasks, t)) n++;
+  }
+  return n;
+}
 
 /** Board column of a tracker status: board.columns[].trackerStatuses first, statusMap as the fallback. */
 export function statusFor(config, ext) {
@@ -151,17 +181,21 @@ const toolOf = (cfg, name) => cfg.tools?.[name] || (name === 'find' ? cfg.tool :
 
 // ---- import ----
 
-function upsert(config, tasks, source, externalId, fields, existingOnlyIfClosed, createExtra = {}) {
+/** closed (sync only): a new closed issue is not imported; a known one gets the closed rule (settleClosed). */
+function upsert(config, tasks, source, externalId, fields, closed, createExtra = {}) {
   const mapped = statusFor(config, fields.externalStatus);
   const existing = tasks.all().find((t) => t.source === source && t.externalId === externalId);
   if (existing) {
     const patch = Object.fromEntries(Object.entries(fields).filter(([, v]) => v !== undefined));
     if (!existing.statusManual && STATUSES.includes(mapped)) patch.status = mapped;
-    if (!Object.entries(patch).some(([k, v]) => existing[k] !== v)) return null;
-    tasks.update(existing.id, patch, 'harness');
-    return 'updated';
+    let changed = null;
+    if (Object.entries(patch).some(([k, v]) => existing[k] !== v)) {
+      tasks.update(existing.id, patch, 'harness');
+      changed = 'updated';
+    }
+    return (closed && settleClosed(tasks, tasks.find(existing.id))) || changed;
   }
-  if (existingOnlyIfClosed) return null;
+  if (closed) return null;
   tasks.create({ ...fields, ...createExtra, status: STATUSES.includes(mapped) ? mapped : 'todo', externalId, source }, 'harness');
   return 'imported';
 }
@@ -169,7 +203,7 @@ function upsert(config, tasks, source, externalId, fields, existingOnlyIfClosed,
 export async function importTasks({ config, mcp, tasks }) {
   const cfg = settings(config);
   const source = cfg.source || cfg.server;
-  const closed = new Set((cfg.closedStatuses || []).map((x) => String(x).toLowerCase()));
+  const closed = closedSet(cfg);
   const counts = { imported: 0, updated: 0 };
   const count = (r) => { if (r) counts[r]++; };
 

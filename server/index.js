@@ -25,7 +25,7 @@ import { generateMessage } from './generate.js';
 import { createHistory, historyMessages } from './history.js';
 import { runJob, jobStep, JOB_ID_RE, holdJob } from './jobs.js';
 import { DEMO_PORT, demoOverrides, seedDemoRepos, seedDemoTasks } from './demo.js';
-import { importTasks, importIssue, transitionTask, getExternal, getTransitions, importChildren, syncColumn, getPath } from './integrations/tasks.js';
+import { importTasks, importIssue, transitionTask, getExternal, getTransitions, importChildren, syncColumn, getPath, settleClosedTasks } from './integrations/tasks.js';
 import { fillTemplate, createPullRequest, prStatus, refreshTaskPr, declinePullRequest, prEnabled, prMe, repoPulls, prAuthor } from './integrations/pr.js';
 
 const MAX_BODY = 1024 * 1024;
@@ -163,6 +163,9 @@ export async function startServer(opts = {}) {
   store.onNotice = (n) => bus.send({ t: 'notify', n }); // e.g. a transcript restored from its .bak
   let url = '';
   const tasks = createTasks({ store, bus, defaultBase: config.git.defaultBase });
+  // tasks closed in the tracker before the rule existed: never taken → hidden, taken → done
+  const settledClosed = settleClosedTasks(config, tasks);
+  if (settledClosed) console.log(`[harness] closed in the tracker: ${settledClosed} task(s) hidden or done`);
   const catalog = createModelCatalog({ config, store, getUrl: () => url });
   const sessions = createSessions({ config, store, bus, getUrl: () => url, catalog, crashed });
   catalog.useAcp((agent, text) => sessions.acpPrompt(agent, text)); // /models on a warm ACP process when there is one
