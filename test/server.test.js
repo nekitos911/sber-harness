@@ -403,3 +403,9 @@ test('settings: model catalogue objects, labels, presets, timeouts, flags and tr
   assert.equal(local.agents.mock.firstEventTimeoutMs, 60000);
   await h.api('PUT', '/api/settings', { agents: { mock: { inheritUserMcp: false, model: null } }, integrations: { pr: { enabled: false } } });
 });
+
+test('settings round trip: PUT with exactly what GET returned is accepted (read-only fields ignored)', async () => {
+  const s = (await h.api('GET', '/api/settings')).body;
+  const r = await h.api('PUT', '/api/settings', s);
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+});

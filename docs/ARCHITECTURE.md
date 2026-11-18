@@ -505,7 +505,7 @@ Config (`git` section):
   "prTitleTemplate": "{key} {title}"
 },
 "tasks": {
-  "promptTemplate": "{key}: {title}\n\n{description}\n\nTarget branches: {targets}\nLink: {taskUrl}{notes}"
+  "promptTemplate": "{key}: {title}\n\n{description}\n\nЦелевые ветки: {targets}\nСсылка: {taskUrl}{notes}"
   // per agent override: agents.<id>.taskPromptTemplate (gigacode: "/full-task {taskUrl}{notes}"); see "Prompt templates"
 }
 ```
