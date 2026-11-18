@@ -54,7 +54,8 @@ test('each feature flag has a working route (not 404/405)', async () => {
       'git-generate': ['POST', '/api/git/generate', null, { cwd: repo, kind: 'commit' }], // 400 here: nothing to commit
       'git-via-agent': ['POST', '/api/git/commit', null, { cwd: repo, message: '', via: 'agent' }], // 400: no message
       'git-stage': ['POST', '/api/git/unstage', null, { cwd: repo, all: true }],
-      handoff: ['POST', '/api/handoff', null, { input: 'сделай X' }], // 400 here: no projects folder // 501 here: no sourcecontrol server (enabled auto)
+      handoff: ['POST', '/api/handoff', null, { input: 'сделай X' }], // 400 here: no projects folder
+      'release-resolve': ['GET', '/api/releases/resolve?text=' + encodeURIComponent('релиз 54'), (b) => Array.isArray(b.refs)], // 501 here: no sourcecontrol server (enabled auto)
     };
     for (const flag of FEATURES) {
       const probe = probes[flag];

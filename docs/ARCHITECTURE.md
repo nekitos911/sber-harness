@@ -1388,6 +1388,16 @@ picks the repository itself. `POST /api/handoff { input, notes?, agent?, approva
   import (unknown, tracker down) falls back to the free-text chat with `trackerError` in the response. `approvalMode` /
   `model` apply to the started session. Job steps «Ищу задачу в трекере», «Запускаю агента».
 - No projects root → 400 «Укажите папку с проектами в Настройках».
+- Release references (`server/releases.js`, feature `release-resolve`): `GET /api/releases/resolve?text=&workspaceId=` →
+  `{ refs: [{ phrase, version, branch | null, repos, candidates }], onlyRelease }`. Phrases: «релиз 54», «релизную 1.54»,
+  «release 1.54.1», «release/1.54.0», «rel154» (→ 1.54; rel1541 → 1.54.1); «только в релиз …» = onlyRelease. Branches:
+  local and origin `release/*` / `release-*` of that workspace, or of every registered git repository (cached 5 min);
+  "54" = minor 54 of any major, newest first; "1.54" = the newest 1.54.x; "1.54.1" exact. Used by `/api/handoff` (text +
+  notes; body `targets` = the UI chips override), `/api/tasks/:id/start` and `/rework` (notes): a resolved release sets
+  the task's `targets` (onlyRelease → [release], else [git.defaultBase, release]) and the agent's notes get «Целевые ветки:
+  develop и release/1.54.1 (из «релиз 54»). Изменения нужны в обе: основная работа в develop, перенос в релиз — отдельной
+  веткой feature/<KEY>-rel154 → PR в release/1.54.1.» (onlyRelease: «Целевая ветка: … Изменения нужны только в релиз.»);
+  an unresolved one → the text stays, the response carries `releaseWarning` «ветка релиза 54 не найдена».
 `GET /api/now` is NOT needed — the UI derives «Сейчас» from sessions + tasks.
 
 ## Feature flags (client/server version skew)

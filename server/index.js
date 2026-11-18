@@ -22,6 +22,7 @@ import { isAlive, resolveCommand, spawnOptions } from './runner.js';
 import { createModelCatalog, scanModelRefs } from './models.js';
 import { readSdd } from './sdd.js';
 import { generateMessage } from './generate.js';
+import { resolveReleases, releasePlan } from './releases.js';
 import { createHistory, historyMessages } from './history.js';
 import { runJob, jobStep, JOB_ID_RE, holdJob } from './jobs.js';
 import { DEMO_PORT, demoOverrides, seedDemoRepos, seedDemoTasks } from './demo.js';
@@ -39,7 +40,7 @@ const NO_BUILD_HTML = '<!doctype html><meta charset="utf-8"><title>Harness</titl
 const GRADES = ['default', 'fast', 'review', 'explore'];
 // optional API groups this server implements (docs/ARCHITECTURE.md "Feature flags"); a flag ships with its route
 export const FEATURES = ['branches', 'fs-search', 'pr-status', 'agent-info', 'models-refresh', 'tracker-links', 'board-columns', 'review-loop',
-  'subagents', 'virtual-sessions', 'worker-run', 'skills-install', 'demo', 'worktree-meta', 'open', 'sdd', 'health', 'folders', 'include-dirs', 'questions', 'permissions', 'activity', 'rework', 'fs-raw', 'tracker-import', 'pr-decline', 'task-suggest', 'recovery', 'acp', 'worktree-lazy', 'cli-history', 'prs-mine', 'git-generate', 'git-via-agent', 'git-stage', 'handoff'];
+  'subagents', 'virtual-sessions', 'worker-run', 'skills-install', 'demo', 'worktree-meta', 'open', 'sdd', 'health', 'folders', 'include-dirs', 'questions', 'permissions', 'activity', 'rework', 'fs-raw', 'tracker-import', 'pr-decline', 'task-suggest', 'recovery', 'acp', 'worktree-lazy', 'cli-history', 'prs-mine', 'git-generate', 'git-via-agent', 'git-stage', 'handoff', 'release-resolve'];
 // titles of operations the UI may follow by sending x-job-id (WS { t: 'job' } frames)
 const JOB_TITLES = {
   'POST /api/tasks/sync': 'Синхронизация с трекером',
@@ -1205,8 +1206,32 @@ export async function startServer(opts = {}) {
    * «Передать агенту»: one input. A tracker key/link (and a working tracker) → that task, started at the projects root
    * (jumped when its worker already runs); anything else → a chat at the projects root with freePromptTemplate.
    */
+  // ---- release references in what the user writes («релиз 54», «1.54.1», «rel154», «только в релиз 54») ----
+  const gitRepos = (ws) => (ws ? [ws] : db.workspaces.filter((w) => w.isGit && !w.kind)).map((w) => ({ name: w.name, path: w.path }));
+  route('GET', '/api/releases/resolve', ({ query }) => {
+    const ws = query.workspaceId ? getWs(query.workspaceId) : null;
+    return resolveReleases(query.text || '', gitRepos(ws));
+  });
+  /**
+   * The release targets of a text (or explicit targets): the task's targets are set (onlyRelease → [release], else
+   * [defaultBase, release]); → { notes (with the «Целевые ветки: …» line), releaseWarning? }.
+   */
+  async function withReleases(text, notes, task, explicit = null) {
+    const ws = task?.workspaceId ? db.workspaces.find((w) => w.id === task.workspaceId && w.isGit) : null;
+    const resolved = explicit ? null : await resolveReleases(text, gitRepos(ws));
+    const plan = releasePlan({ resolved, base: config.git.defaultBase, key: task ? tasks.key(task) : null, explicit });
+    if (task && plan.targets) tasks.update(task.id, { targets: plan.targets }, 'user');
+    return { notes: [notes, plan.line].filter(Boolean).join('\n'), ...(plan.warning ? { releaseWarning: plan.warning } : {}) };
+  }
+  const targetsOf = (v) => {
+    if (v == null) return null;
+    if (!Array.isArray(v) || !v.length || v.some((b) => typeof b !== 'string' || !b.trim())) fail(400, 'targets: непустой массив веток');
+    return v.map((b) => b.trim());
+  };
+
   route('POST', '/api/handoff', async ({ body }) => {
-    check(body, { input: 'string', notes: 'string?', agent: 'string?', approvalMode: 'string?', model: 'string?' });
+    check(body, { input: 'string', notes: 'string?', agent: 'string?', approvalMode: 'string?', model: 'string?', targets: 'array?' });
+    const explicit = targetsOf(body.targets); // the UI's chips override what the text says
     const input = body.input.trim() || fail(400, 'нужен текст или ссылка на задачу');
     const root = db.workspaces.find((w) => w.kind === 'root') || fail(400, 'Укажите папку с проектами в Настройках');
     const agent = body.agent || config.defaultAgent;
@@ -1223,35 +1248,40 @@ export async function startServer(opts = {}) {
     }
     jobStep('Запускаю агента');
     if (task) {
-      const s = await orch.start(task.id, { agent, notes, location: 'root', approvalMode: body.approvalMode, model: body.model });
+      const rel = await withReleases(`${input} ${body.notes || ''}`, notes, task, explicit);
+      const s = await orch.start(task.id, { agent, notes: rel.notes, location: 'root', approvalMode: body.approvalMode, model: body.model });
       if (!s.jumped) await trackerOnStart(tasks.get(task.id));
-      return { session: s, task: tasks.get(task.id) };
+      return { session: s, task: tasks.get(task.id), ...(rel.releaseWarning ? { releaseWarning: rel.releaseWarning } : {}) };
     }
+    const rel = await withReleases(`${input} ${body.notes || ''}`, body.notes?.trim() || '', null, explicit);
     const tpl = agentCfg.freePromptTemplate ?? launchers[agentCfg.launcher]?.defaults.freePromptTemplate ?? '{text}{notes}';
-    const prompt = render(tpl, { text: input, notes: body.notes?.trim() ? ` ${body.notes.trim()}` : '' });
+    const prompt = render(tpl, { text: input, notes: rel.notes ? ` ${rel.notes}` : '' });
     const s = await sessions.create({
       kind: 'chat', agent, cwd: root.path, title: titleFrom(input) || 'Задача', atRoot: true, prompt,
       ...(body.approvalMode ? { approvalMode: body.approvalMode } : {}), ...(body.model ? { model: body.model } : {}),
     });
-    return { session: s, task: null, ...(trackerError ? { trackerError } : {}) };
+    return { session: s, task: null, ...(trackerError ? { trackerError } : {}), ...(rel.releaseWarning ? { releaseWarning: rel.releaseWarning } : {}) };
   });
   route('POST', '/api/tasks/:id/start', async ({ params, body }) => {
     check(body, { agent: 'string?', notes: 'string?', workspaceId: 'string?', location: 'string?' });
     if (body.location && body.location !== 'root') fail(400, 'location: "root" или не указывать');
-    const s = await orch.start(params.id, body);
+    const task = tasks.get(params.id);
+    const rel = body.notes?.trim() ? await withReleases(body.notes, body.notes.trim(), task) : null;
+    const s = await orch.start(params.id, rel ? { ...body, notes: rel.notes } : body);
     if (!s.jumped) await trackerOnStart(tasks.get(params.id));
-    return s;
+    return rel?.releaseWarning ? { ...s, releaseWarning: rel.releaseWarning } : s;
   });
   route('GET', '/api/tasks/:id/rework-preview', ({ params, query }) => orch.reworkPreview(params.id, { notes: query.notes || '', agent: query.agent || undefined }));
   route('POST', '/api/tasks/:id/rework', async ({ params, body }) => {
     check(body, { notes: 'string', agent: 'string?' });
     const before = tasks.get(params.id).status;
-    const s = await orch.rework(params.id, body);
+    const rel = body.notes.trim() ? await withReleases(body.notes, body.notes.trim(), tasks.get(params.id)) : null;
+    const s = await orch.rework(params.id, rel ? { ...body, notes: rel.notes } : body);
     const task = tasks.get(params.id);
     if (config.board?.moveSyncsTracker && before !== task.status && tracksTracker(task)) {
       trackerWrite(task, 'синхронизация в «in_progress»', () => syncColumn({ config, mcp, tasks, task, status: task.status })); // the normal move-sync
     }
-    return s;
+    return rel?.releaseWarning ? { ...s, releaseWarning: rel.releaseWarning } : s;
   });
   route('POST', '/api/tasks/:id/port', ({ params, body }) => {
     check(body, { target: 'string', agent: 'string?' });
