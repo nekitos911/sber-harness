@@ -342,3 +342,25 @@ svg.step-icon.spinner { color: var(--lamp-run); }
 .mcp-pop-list li { display: flex; align-items: center; gap: 6px; }
 .mcp-pop-list svg { width: 13px; height: 13px; color: var(--lamp-done); flex-shrink: 0; }
 .mcp-pop-list li[data-bad] svg { color: var(--lamp-fail); }
+
+/* context ring: how full the model's window is */
+.ctx-ring { display: grid; place-items: center; width: 24px; height: 24px; padding: 0; flex-shrink: 0; border: 0; border-radius: 50%; background: none; cursor: pointer; }
+.ctx-ring:hover { background: var(--deck-2); }
+.ctx-ring:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+.ctx-track { fill: none; stroke: var(--rule-strong); stroke-width: 2; }
+.ctx-fill { fill: none; stroke: var(--ink-3); stroke-width: 2; stroke-linecap: round; transition: stroke-dashoffset 400ms var(--ease-out), stroke 200ms ease; }
+.ctx-ring[data-level="mid"] .ctx-fill { stroke: var(--lamp-run); }
+.ctx-ring[data-level="high"] .ctx-fill { stroke: var(--lamp-fail); }
+@media (prefers-reduced-motion: reduce) { .ctx-fill { transition: none; } }
+.ctx-pop { width: 300px; padding: 12px; display: grid; gap: 10px; }
+.ctx-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.ctx-head .num { color: var(--ink-2); font-size: 12px; }
+.ctx-bar { height: 6px; border-radius: 3px; background: var(--deck-3); overflow: hidden; }
+.ctx-bar span { display: block; height: 100%; border-radius: 3px; background: var(--ink-3); }
+.ctx-bar[data-level="mid"] span { background: var(--lamp-run); }
+.ctx-bar[data-level="high"] span { background: var(--lamp-fail); }
+.ctx-rows { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 10px; margin: 0; font-size: 12px; }
+.ctx-rows dt { color: var(--ink-3); }
+.ctx-rows dd { margin: 0; color: var(--ink-2); }
+.ctx-pop .btn { justify-self: start; }
+.ctx-foot { margin: 0; color: var(--ink-3); font-size: 11px; }

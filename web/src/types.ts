@@ -125,6 +125,8 @@ export interface Session {
   lastEventKind?: 'text_delta' | 'assistant_final' | 'tool_running' | 'tool_done' | 'thought' | 'result' | null // the latest stream event (newer servers)
   turnClosing?: boolean // the answer is complete (result seen); the CLI is only shutting down
   warm?: boolean // ACP sessions only: the process is loaded (false = unloaded after idling)
+  context?: { tokens: number; input?: number; output?: number; cached?: number } | null // the context after the last turn
+  contextLimit?: number | null // the model's window
   mcpStatus?: { name: string; status: string }[] // MCP servers as the CLI reported them at the turn's start
   effectiveApprovalMode?: string | null // what the CLI really runs with (e.g. auto → auto-edit)
   system?: boolean // harness-internal (login terminal, discovery…): shown only under «Служебное»
@@ -213,6 +215,7 @@ export interface AgentInfo {
   approvalModeLabels?: Record<string, string>
   enabled: boolean
   models?: (ModelEntry | string)[]
+  compressCommand?: string | null // e.g. «/compress»: what «Сжать контекст» sends
 }
 
 /** GET /api/agents/:id/info: how the CLI resolves and what the last session reported (system/init). */

@@ -6,6 +6,7 @@ import type { Session } from '../../types'
 import { MenuButton, Select } from '../ui'
 import { MentionMirror, useComposerSuggest } from './Suggest'
 import { ModelPicker } from '../pickers/ModelPicker'
+import { ContextRing } from './ContextRing'
 import { FULL_ACCESS, modeShort, useSettings } from '../../lib/agents'
 
 export function Composer({ session, active }: { session: Session; active: boolean }) {
@@ -129,6 +130,7 @@ export function Composer({ session, active }: { session: Session; active: boolea
           value={session.model}
           onChange={(model) => void patch({ model })}
         />
+        <ContextRing session={session} running={running} />
         {running && (
           <button type="button" className="icon-btn composer-stop" onClick={stop} aria-label="Остановить агента" data-tip="Остановить">
             <Square />
