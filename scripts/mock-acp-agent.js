@@ -26,8 +26,9 @@ const update = (sessionId, u) => send({ method: 'session/update', params: { sess
 const say = (sessionId, text) => update(sessionId, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } });
 const cancelled = new Set();
 const loadedHere = new Set();
+let clientFs = false; // initialize: does the client (the harness) offer to read and write files for us?
 const record = (params) => {
-  if (process.env.MOCK_AGENT_ARGV_FILE) fs.appendFileSync(process.env.MOCK_AGENT_ARGV_FILE, `${JSON.stringify({ acp: true, pid: process.pid, argv: process.argv.slice(2), mcpServers: params.mcpServers, env: { HARNESS_SESSION_ID: process.env.HARNESS_SESSION_ID } })}\n`);
+  if (process.env.MOCK_AGENT_ARGV_FILE) fs.appendFileSync(process.env.MOCK_AGENT_ARGV_FILE, `${JSON.stringify({ acp: true, pid: process.pid, argv: process.argv.slice(2), mcpServers: params.mcpServers, clientFs, env: { HARNESS_SESSION_ID: process.env.HARNESS_SESSION_ID } })}\n`);
 };
 
 async function prompt({ sessionId, prompt: parts }) {
@@ -56,7 +57,7 @@ async function prompt({ sessionId, prompt: parts }) {
   const read = text.match(/#read\s+(\S+)/);
   if (read) {
     try {
-      const r = await request('fs/read_text_file', { sessionId, path: read[1] });
+      const r = clientFs ? await request('fs/read_text_file', { sessionId, path: read[1] }) : { content: fs.readFileSync(path.resolve(st.cwd, read[1]), 'utf8') };
       say(sessionId, ` прочитал: ${r.content}`);
     } catch (e) {
       say(sessionId, ` не прочитал: ${e.message}`);
@@ -73,7 +74,8 @@ async function prompt({ sessionId, prompt: parts }) {
     });
     if (answer.outcome.outcome === 'cancelled') return { stopReason: 'cancelled' };
     if (answer.outcome.optionId === 'allow') {
-      await request('fs/write_text_file', { sessionId, path: file, content: 'ok\n' });
+      if (clientFs) await request('fs/write_text_file', { sessionId, path: file, content: 'ok\n' });
+      else fs.writeFileSync(file, 'ok\n');
       update(sessionId, { sessionUpdate: 'tool_call_update', toolCallId: 't1', status: 'completed', content: [{ type: 'diff', path: file, oldText: null, newText: 'ok' }] });
       say(sessionId, ' записано');
     } else {
@@ -105,7 +107,7 @@ async function prompt({ sessionId, prompt: parts }) {
 }
 
 const handlers = {
-  initialize: () => ({ protocolVersion: 1, agentCapabilities: { loadSession: true }, authMethods: [] }),
+  initialize: (params) => { clientFs = !!params?.clientCapabilities?.fs?.readTextFile; return { protocolVersion: 1, agentCapabilities: { loadSession: true }, authMethods: [] }; },
   'session/new': (params) => {
     record(params);
     const sessionId = randomUUID();

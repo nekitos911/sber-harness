@@ -26,7 +26,7 @@ async function harness() {
     configOverrides: {
       defaultAgent: 'mock', mcpServersFrom: null, history: { adopt: false }, agents: {
         mock: { modelsDiscovery: null },
-        acpmock: { launcher: 'mock', label: 'ACP mock', transport: 'acp', command: [process.execPath, path.join(CODE_ROOT, 'scripts', 'mock-acp-agent.js')], approvalMode: 'auto', approvalModes: ['default', 'auto'], modelsDiscovery: { prompt: '/models', maxAgeHours: 24 } },
+        acpmock: { launcher: 'mock', label: 'ACP mock', transport: 'acp', acpClientFs: true, command: [process.execPath, path.join(CODE_ROOT, 'scripts', 'mock-acp-agent.js')], approvalMode: 'auto', approvalModes: ['default', 'auto'], modelsDiscovery: { prompt: '/models', maxAgeHours: 24 } },
         // the same mock, unloaded after 0.4 s idle
         acpidle: { launcher: 'mock', label: 'ACP idle', transport: 'acp', acpIdleMin: 0.4 / 60, command: [process.execPath, path.join(CODE_ROOT, 'scripts', 'mock-acp-agent.js')], approvalMode: 'auto', approvalModes: ['default', 'auto'] },
       },
@@ -207,6 +207,8 @@ test('an idle ACP process is unloaded (warm false) and reloaded with session/loa
   const s = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'acpidle', cwd, prompt: 'привет' })).body;
   await idle(s.id);
   await waitFor(async () => (await session(s.id)).warm === false, { what: 'unloaded after idle' });
+  // by default the agent keeps its own file system (GigaCode's «read before edit» guard sees its reads)
+  assert.equal(records().find((r) => r.env.HARNESS_SESSION_ID === s.id).clientFs, false);
   const before = records().length;
   await send(s.id, 'снова');
   await waitFor(async () => (await said(s.id)).some((t) => /^loaded, ACP mock, turn 2\. Done\.$/.test(t)), { what: 'reloaded' });

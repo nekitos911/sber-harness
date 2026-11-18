@@ -226,7 +226,9 @@ export function createAcp({ onWarm = () => {} } = {}) {
     });
     try {
       const init = await Promise.race([
-        c.rpc.request('initialize', { protocolVersion: PROTOCOL_VERSION, clientCapabilities: { fs: { readTextFile: true, writeTextFile: true }, terminal: false } }, o.initTimeoutMs || ACP_INIT_TIMEOUT_MS),
+        // files stay the agent's own business by default: with the harness as its file system, GigaCode's «read before
+        // edit» guard never saw the reads and refused every edit (agents.<id>.acpClientFs: true brings it back)
+        c.rpc.request('initialize', { protocolVersion: PROTOCOL_VERSION, clientCapabilities: { fs: { readTextFile: !!o.clientFs, writeTextFile: !!o.clientFs }, terminal: false } }, o.initTimeoutMs || ACP_INIT_TIMEOUT_MS),
         exited.then(({ code }) => { throw new Error(`ACP-агент завершился при запуске (код ${code})`); }),
       ]);
       const mcpServers = acpMcpServers(o.ctx.harnessMcp, o.ctx.agentMcpServers);
@@ -255,7 +257,7 @@ export function createAcp({ onWarm = () => {} } = {}) {
 
   /**
    * One prompt as a turn; returns the same handle shape as runner.runTurn ({ pid, startedAt, stop, detach, done }).
-   * o = { sid, launcher, ctx, command, cwd, env, logFile, roots, externalSessionId, prompt, onEvent, initTimeoutMs }
+   * o = { sid, launcher, ctx, command, cwd, env, logFile, roots, externalSessionId, prompt, onEvent, initTimeoutMs, clientFs }
    */
   function turn(o) {
     const res = { code: null, signal: null, sawResult: false, timedOut: false, stopped: false, detached: false, error: null, stderrTail: '', eventCount: 0, priorOutput: false };

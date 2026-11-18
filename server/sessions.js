@@ -706,7 +706,9 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
         // ACP announces a call with an empty rawInput and sends the real one in a later tool_call_update
         const q = c.questions?.get(ev.id);
         if (q) {
-          q.question = { ...q.question, ...parseQuestion(ev.input) };
+          const p = parseQuestion(ev.input);
+          // an empty (or partial) input never wipes what an earlier one already said
+          if (p.text) q.question = { ...q.question, ...p, options: p.options.length || p.parts ? p.options : q.question.options };
           updateMessage(s, q);
           break;
         }
@@ -933,7 +935,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
         handle = acp.turn({
           sid: s.id, agent: s.agent, launcher, ctx, command: exe, cwd: s.cwd, env, logFile: turnFiles(s, r.turn).logFile, roots: [s.cwd, ...(s.includeDirs || []), attachmentsDir(s.id)],
           idleMs: (agentCfg.acpIdleMin ?? agentCfg.acpIdleTimeoutMin ?? 30) * 60000,
-          externalSessionId: s.externalSessionId, prompt, initTimeoutMs: firstEventTimeoutMs, onEvent: (ev) => applyEvent(s, ev),
+          externalSessionId: s.externalSessionId, prompt, initTimeoutMs: firstEventTimeoutMs, onEvent: (ev) => applyEvent(s, ev), clientFs: !!agentCfg.acpClientFs,
         });
       } else {
         handle = runTurn({
