@@ -106,6 +106,17 @@ if (has(/#nopartial\b/) && argv.includes('--include-partial-messages')) {
 const stickyDir = process.env.MOCK_AGENT_STATE_DIR || path.join(os.tmpdir(), 'harness-mock-agent');
 const sticky = resume && path.join(stickyDir, `${resume.replace(/[^\w-]/g, '_')}.crash`);
 if (sticky && has(/#crashalways\b/)) { fs.mkdirSync(stickyDir, { recursive: true }); fs.writeFileSync(sticky, '1'); }
+const busy = lines.map((l) => l.match(/^\s*#busy\s+(\S+)\s+(\d+)/)).find(Boolean);
+if (busy) {
+  const counter = path.join(stickyDir, `busy-${busy[1]}`);
+  fs.mkdirSync(stickyDir, { recursive: true });
+  const n = Number(fs.existsSync(counter) ? fs.readFileSync(counter, 'utf8') : 0);
+  if (n < Number(busy[2])) {
+    fs.writeFileSync(counter, String(n + 1));
+    process.stderr.write('An unexpected critical error occurred:\nExtensionStoreBusyError: Extension store is busy at C:\\Users\\u\\.gigacode\\extension-store.\n');
+    process.exit(1);
+  }
+}
 if (has(/#crash\b/) || (sticky && fs.existsSync(sticky))) {
   process.stderr.write('mock-agent: simulated crash (#crash)\n');
   process.exit(1);

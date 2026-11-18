@@ -855,6 +855,18 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     r.lingerTimer = setTimeout(() => r.handle?.terminate?.('post_result_linger'), Math.max(0, grace - (Date.now() - r.resultAt)));
   }
 
+  const spawnAt = new Map(); // agent -> when its next process may start
+  /** Several processes of one agent started at the same moment collide on its own files (GigaCode: «Extension store is busy»). */
+  async function spawnSlot(agent, r) {
+    const gap = config.agents[agent]?.spawnGapMs ?? 1200;
+    const at = Math.max(Date.now(), (spawnAt.get(agent) || 0) + gap);
+    spawnAt.set(agent, at);
+    // Stop while waiting: wake at once (the turn then ends as stopped, nothing is spawned)
+    if (at > Date.now()) await new Promise((res) => { const t = setTimeout(res, at - Date.now()); r.slotWake = () => { clearTimeout(t); res(); }; });
+    r.slotWake = null;
+  }
+  const START_BUSY = /ExtensionStoreBusyError|store is busy|EBUSY|resource busy or locked/i;
+
   async function startTurn(s) {
     const r = runtime(s.id);
     if (r.running || (!s.queue?.length && !r.retryItems)) return;
@@ -926,6 +938,8 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
       const carrier = userMsgs.at(-1) || store.messages(s.id).findLast((m) => m.kind === 'user');
       if (carrier) updateMessage(s, Object.assign(carrier, { runInfo }));
       fs.mkdirSync(runDir(s.id), { recursive: true });
+      if (!(agentCfg.transport === 'acp' && s.warm)) await spawnSlot(s.agent, r); // a warm ACP process starts nothing
+      if (r.stopRequested) throw Object.assign(new Error('stopped before start'), { beforeStart: true }); // stopped while waiting for its slot
       launcher.prepare(ctx);
       r.registryTimer = setInterval(() => pollRegistry(s), REGISTRY_POLL_MS);
       const env = { ...process.env, ...agentCfg.env, ...secretEnv(config), ...exe.env, ...launcher.env(ctx), ...ctx.harnessMcp.env };
@@ -960,7 +974,24 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
       emit(s);
       res = await handle.done;
     } catch (e) {
-      res = { error: e.message, action: e.action };
+      res = e.beforeStart ? { stopped: true, stderrTail: '', eventCount: 0 } : { error: e.message, action: e.action };
+    }
+    // the start collided with another process of the agent («Extension store is busy»): the same messages again in a few
+    // seconds — not «Агент не запустился»
+    const busy = (`${res.error || ''} ${res.stderrTail || ''}`.match(START_BUSY) || [])[0];
+    if (busy && !res.eventCount && !res.sawResult && !r.stopRequested && find(s.id) && (r.startRetries || 0) < 4) {
+      const n = r.startRetries || 0;
+      r.startRetries = n + 1;
+      const sec = 2 + Math.round(Math.random() * 3) + n * 2; // spread: the others retry at other moments
+      s.queue.unshift(...items.map((it) => ({ ...it, recorded: true })));
+      clearInterval(r.registryTimer);
+      Object.assign(r, { running: false, handle: null });
+      Object.assign(s, { status: 'idle', pid: null, pidStartedAt: null, phase: null, turnOffset: null, queued: s.queue.length });
+      addMessage(s, { kind: 'system', text: `Агент был занят другим запуском (${busy}) — повторяю через ${sec} с (попытка ${n + 1} из 4)` });
+      emit(s);
+      const t = setTimeout(() => { if (find(s.id) && !runtime(s.id).running && s.queue.length) startTurn(s); }, sec * 1000);
+      t.unref?.();
+      return;
     }
     if (res.error && !res.eventCount && !res.sawResult && !handle?.pid && !r.stopRequested && find(s.id)) {
       // the process never started (spawn error, config, unknown model): the messages wait in the queue, not lost
@@ -969,6 +1000,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
       r.requeued = true;
       res.error += `\nСообщений в очереди: ${s.queue.length} — уйдут со следующим сообщением или после смены модели.`;
     }
+    if (res.eventCount) r.startRetries = 0; // it started: the next collision gets its retries again
     if (!res.detached) finishTurn(s, res);
   }
 
@@ -1630,6 +1662,7 @@ ${note.trim()}` : text });
       if (r.running) {
         r.stopRequested = true;
         r.handle?.stop();
+        r.slotWake?.();
         s.status = 'stopped';
       }
       return emit(s);

@@ -49,6 +49,10 @@ const messages = async (id) => (await h.api('GET', `/api/sessions/${id}/messages
 
 test('title and service filters', () => {
   assert.equal(cliTitle('Ты работаешь внутри harness. Субагентов…\n\n/full-task PROJ-1 поправь\nещё'), 'full-task PROJ-1 поправь');
+  // a helper the harness ran is not a CLI chat of the person (seen over ACP: two «Субагенты не з…» rows)
+  assert.equal(isServiceChat(['Субагенты не запускают своих субагентов: выполни это сам.\n\n[harness] Ты — субагент (сессия s_1), запущенный X.\n\n## Задание\nпрочитай']), true);
+  assert.equal(isServiceChat(['[harness] You are a WORKER session in a local multi-agent harness.\nTask: T-1']), true);
+  assert.equal(isServiceChat(['Ты работаешь внутри harness. Субагентов…\n\nсделай X']), false, 'a top-level chat of the harness may come back');
   assert.deepEqual([isServiceChat(['/models']), isServiceChat(['/compress']), isServiceChat(['HARNESS_GENERATE_MESSAGE\n…']), isServiceChat(['/clear']), isServiceChat(['/clear', 'дальше']), isServiceChat(['привет'])],
     [true, true, true, true, false, false]);
 });

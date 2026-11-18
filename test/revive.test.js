@@ -62,3 +62,18 @@ test('settings: attempts and the wake-up time; bad values are refused', async ()
   assert.deepEqual(s.session.revive, { attempts: 5, stallWakeMin: 30 });
   assert.equal((await h.api('PUT', '/api/settings', { session: { revive: { attempts: 99 } } })).status, 400);
 });
+
+test('«Extension store is busy» at start: the same message again a few seconds later, no «не запустился»', async () => {
+  const s = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', cwd: root, prompt: `#busy start-${Date.now()} 1 привет` })).body;
+  const ok = await waitFor(async () => (await messages(s.id)).some((m) => m.kind === 'assistant' && /Hello from mock agent/.test(m.text)), { timeout: 20000, what: 'started on the retry' });
+  assert.ok(ok);
+  const ms = await messages(s.id);
+  assert.ok(ms.some((m) => m.kind === 'system' && /занят другим запуском \(ExtensionStoreBusyError\) — повторяю через \d+ с \(попытка 1 из 4\)/.test(m.text)));
+  assert.ok(!ms.some((m) => m.kind === 'error'), 'no error card for a collision that cleared');
+});
+
+test('a helper that never starts ends its caller\'s wait with «failed» — the orchestrator does not hang', async () => {
+  const caller = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', cwd: root, prompt: `#run helper #busy never-${Date.now()} 99 #done ок` })).body;
+  const said = await waitFor(async () => (await messages(caller.id)).find((m) => m.kind === 'assistant' && /worker_run result:/.test(m.text)), { timeout: 60000, what: 'the wait ended' });
+  assert.match(said.text, /Субагент не смог работать/);
+});

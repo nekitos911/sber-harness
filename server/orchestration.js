@@ -955,6 +955,11 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
   function turnEnded(s, { reported, communicated, stopped, reviving, queueEmpty, userFollowUp }) {
     settleGitRequests(s, stopped);
     if (reviving) return; // the harness continues it by itself in a moment (sessions: revive)
+    if (s.ephemeral && !reported && s.status === 'error') {
+      const why = sessions.messages(s.id).filter((m) => m.kind === 'error').at(-1)?.text.split('\n')[0] || 'ошибка';
+      settleRun(s, { status: 'failed', summary: `Субагент не смог работать: ${why}` });
+      return;
+    }
     if (s.ephemeral && !reported && queueEmpty && s.waitingFor !== 'answer') { // asked its parent: not over, it waits
       const last = sessions.messages(s.id).filter((m) => m.kind === 'assistant').at(-1);
       settleRun(s, { status: stopped ? 'stopped' : 'no_report', summary: last?.text ?? '' });
@@ -1248,7 +1253,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
       inputSchema: obj({ session_id: str('worker session id') }, ['session_id']),
       run: (a, c) => {
         const w = ownDescendant(c, a.session_id);
-        if (!sessions.isRunning(w.id)) return { stopped: false, status: 'stop_unknown', sessionStatus: w.status };
+        if (!sessions.isRunning(w.id) || w.status === 'stopped') return { stopped: false, status: 'stop_unknown', sessionStatus: w.status }; // already stopped (maybe still unwinding)
         sessions.stop(w.id);
         return { stopped: true };
       },

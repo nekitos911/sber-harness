@@ -8,7 +8,10 @@ import * as git from './git.js';
 import { historyMessages } from './history.js';
 
 const HELPER_PROMPT = /^(\/models|\/context|\/compress|HARNESS_GENERATE_MESSAGE)\b/;
-const HARNESS_BLOCK = /^\s*(\[harness\]|Ты работаешь внутри harness)/;
+const HARNESS_BLOCK = /^\s*(\[harness\]|Ты работаешь внутри harness|Субагенты не запускают своих субагентов)/;
+// a helper / worker / reviewer the harness ran: its result already reached its parent — never a chat of its own again
+// (over ACP the CLI's record id is not the harness session's, so the owner match alone misses it)
+const HELPER_RUN = /\[harness\] (Ты — субагент|You are a (WORKER|REVIEWER))|^\s*Субагенты не запускают своих субагентов/m;
 const SETTLE_MS = 15000; // after a harness turn the CLI may still write that turn into its record
 const sha = (p) => createHash('sha256').update(p).digest('hex');
 const inside = (dir, p) => { const r = path.relative(dir, p); return !r.startsWith('..') && !path.isAbsolute(r); };
@@ -22,7 +25,7 @@ export function cliTitle(text) {
 /** A run of the harness itself or a one-command probe, not a conversation. */
 export function isServiceChat(userTexts) {
   const first = String(userTexts[0] ?? '').trim();
-  return !first || HELPER_PROMPT.test(first) || (userTexts.length === 1 && /^\/\S+$/.test(first));
+  return !first || HELPER_PROMPT.test(first) || HELPER_RUN.test(first) || (userTexts.length === 1 && /^\/\S+$/.test(first));
 }
 
 export function createAdopter({ config, store, sessions, history }) {
@@ -80,8 +83,10 @@ export function createAdopter({ config, store, sessions, history }) {
       if (rec.raw || /\.runtime\.json$/i.test(rec.file) || ignored.has(rec.id)) continue;
       const msgs = historyMessages(rec, agent);
       const users = msgs.filter((m) => m.kind === 'user').map((m) => m.text);
-      if (!users.length || isServiceChat(users)) continue;
       const own = owned.get(rec.id);
+      // adopted before this fix: a helper's run shown as a CLI chat goes to the archive (still openable)
+      if (own?.origin === 'cli' && !own.archived && users.length && HELPER_RUN.test(users[0])) { sessions.archive(own.id, true); continue; }
+      if (!users.length || isServiceChat(users)) continue;
       if (own) {
         if (own.origin === 'cli' && rec.startedAt && own.createdAt > rec.startedAt) sessions.update(own.id, { createdAt: rec.startedAt }); // adopted before this fix
         if (own.origin === 'cli' && refresh(own, rec, msgs)) refreshed++;
