@@ -197,6 +197,10 @@ others work. Transport per call. GigaCode's own encrypted store (`~/.gigacode/mc
 ## Open questions (verify on the target; each changes the implementation)
 
 1. `mcpServers` in the run settings file: merged with `~/.gigacode/settings.json` or replacing it? (→ `inheritUserMcp`)
+    SEEN on the target (ACP chat, 2026-11-18): the agent searched for `mcp__harness__agent` and found only built-ins
+    (`create_sub_session`, `send_message`, `task_stop`, `cron_create`, `loop_wakeup`) — the harness server was not in its
+    registry. Check the same in a headless chat; if it is missing there too, the run settings file is not read or replaces
+    nothing — find out which.
 2. Hooks in settings (PreToolUse-like): key, events, format, can deny a tool with a message? (→ `agentToolHook` to force
    `mcp__harness__agent` instead of the built-in `agent`)
 3. Built-in `agent` / `fork` exact inputSchema; do sub-agent events appear in stream-json with non-null

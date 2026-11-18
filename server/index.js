@@ -765,7 +765,7 @@ export async function startServer(opts = {}) {
     const a = config.agents[id] || fail(404, `агент ${id} не найден`);
     const meta = db.agentMeta?.[id] ?? null;
     catalog.ensureFresh(id);
-    const { catalog: cat, ...seen } = meta || {};
+    const { catalog: cat, partialUnsupported, ...seen } = meta || {};
     return {
       id, resolved: resolveAgentView(a), auth: meta?.auth ?? 'unknown', seen: meta ? seen : null, catalog: catalog.info(id), models: catalog.merged(id),
       commands: shippedStatus(a, 'commands'), skills: shippedStatus(a, 'skills'), identity: identityView(a), sandboxBroken: meta?.sandboxBroken ?? null,

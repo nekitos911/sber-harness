@@ -1,7 +1,7 @@
 // Run: node --test web/src/lib/sidebarPrefs.test.ts
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { DEFAULT_PREFS, compareRows, filteredOut, hidesSomething, isDefault, moveTo, orderProjects, prGroup, staleChat, statusGroup } from './sidebarPrefs.ts'
+import { DEFAULT_PREFS, compareChats, compareRows, filteredOut, hidesSomething, isDefault, moveTo, orderProjects, prGroup, staleChat, statusGroup } from './sidebarPrefs.ts'
 
 const wt = { main: false, detached: false, sleeping: false, createdBy: 'user', empty: false }
 
@@ -74,4 +74,16 @@ test('«Скрывать чаты старше N дней»: by last activity; a
   assert.equal(staleChat(p, { ...old, status: 'running' }, now), false)
   assert.equal(staleChat(p, { ...old, waitingFor: 'answer' }, now), false)
   assert.equal(hidesSomething(p), true)
+})
+
+test('chats in a folder follow «Сортировать по»: Новые = newest first, Активность = latest activity, Имя', () => {
+  const chats = [
+    { title: 'Б старый', createdAt: 1, lastActivityAt: 50 },
+    { title: 'А новый', createdAt: 3, lastActivityAt: 10 },
+    { title: 'В средний', createdAt: 2, lastActivityAt: 30 },
+  ]
+  const order = (s: 'new' | 'activity' | 'name') => [...chats].sort(compareChats(s)).map((c) => c.title[0])
+  assert.deepEqual(order('new'), ['А', 'В', 'Б'])
+  assert.deepEqual(order('activity'), ['Б', 'В', 'А'])
+  assert.deepEqual(order('name'), ['А', 'Б', 'В'])
 })

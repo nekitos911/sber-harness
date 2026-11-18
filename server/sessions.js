@@ -245,8 +245,9 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
    * The agent config a turn runs with: the launcher's autoSandbox default resolved, and — once the sandbox proved
    * unavailable on this machine (agentMeta.sandboxBroken) — no sandbox and auto -> auto-edit.
    */
-  function sandboxed(s, agentCfg) {
-    const defaults = launchers[agentCfg.launcher]?.defaults || {};
+  function sandboxed(s, cfg) {
+    const defaults = launchers[cfg.launcher]?.defaults || {};
+    const agentCfg = db.agentMeta[s.agent]?.partialUnsupported ? { ...cfg, partialMessagesFlag: null } : cfg; // the CLI rejected it once
     const sandbox = agentCfg.autoSandbox === undefined ? defaults.autoSandbox ?? null : agentCfg.autoSandbox;
     if (!db.agentMeta[s.agent]?.sandboxBroken) return sandbox === agentCfg.autoSandbox ? agentCfg : { ...agentCfg, autoSandbox: sandbox };
     return { ...agentCfg, autoSandbox: null, approvalModeMap: { ...(agentCfg.approvalModeMap ?? defaults.approvalModeMap ?? {}), auto: 'auto-edit' } };
@@ -974,6 +975,12 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
       const ms = config.agents[s.agent]?.firstEventTimeoutMs || launchers[s.launcherId]?.defaults.firstEventTimeoutMs;
       addMessage(s, { kind: 'error', text: `Нет вывода за ${Math.round(ms / 1000)} с — ход остановлен.${tail(res.stderrTail)}` });
       status = 'error';
+    } else if (!res.sawResult && !res.eventCount && /include-partial-messages/i.test(res.stderrTail) && !db.agentMeta[s.agent]?.partialUnsupported && r.lastItems) {
+      // an older CLI without live deltas: remember, and run the same turn again without the flag (never loops)
+      db.agentMeta[s.agent] = { ...db.agentMeta[s.agent], partialUnsupported: { at: Date.now() } };
+      store.save();
+      addMessage(s, { kind: 'system', text: '⚠ Этот CLI не отдаёт мысли по ходу (--include-partial-messages) — они появятся целиком после шага. Повторяю ход.' });
+      r.retryItems = r.lastItems;
     } else if (!res.sawResult && res.code !== 0 && !res.eventCount && /sandbox/i.test(res.stderrTail) && sandboxed(s, config.agents[s.agent] || {}).autoSandbox && r.lastItems) {
       const why = res.stderrTail.trim().split('\n').find((l) => /sandbox/i.test(l)) || res.stderrTail.trim().split('\n')[0];
       db.agentMeta[s.agent] = { ...db.agentMeta[s.agent], sandboxBroken: { at: Date.now(), error: why.slice(0, 500) } };

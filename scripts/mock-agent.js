@@ -82,6 +82,11 @@ if (generate && prompt.includes('#genfail') && argv.includes('--safe-mode')) {
   process.stderr.write('Error: unknown option --safe-mode\n');
   process.exit(1);
 }
+if (has(/#nopartial\b/) && argv.includes('--include-partial-messages')) {
+  // an older CLI: yargs strict mode rejects the flag before any output
+  process.stderr.write('Unknown argument: include-partial-messages\n');
+  process.exit(1);
+}
 if (has(/#crash\b/)) {
   process.stderr.write('mock-agent: simulated crash (#crash)\n');
   process.exit(1);

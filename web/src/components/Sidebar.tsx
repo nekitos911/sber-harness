@@ -11,7 +11,7 @@ import { basename, normPath, plural, relTime, subTitle, tokens } from '../lib/fo
 import { loadDraft, saveDraft } from '../lib/draft'
 import { newChat, newTerminal } from '../lib/actions'
 import type { Session, Task, Workspace, Worktree } from '../types'
-import { compareRows, filteredOut, moveTo, orderProjects, prGroup, PR_GROUPS, staleChat, statusGroup, STATUS_GROUPS, type SbPrefs } from '../lib/sidebarPrefs'
+import { compareChats, compareRows, filteredOut, moveTo, orderProjects, prGroup, PR_GROUPS, staleChat, statusGroup, STATUS_GROUPS, type SbPrefs, type SortBy } from '../lib/sidebarPrefs'
 import type { VisualState } from '../lib/sessionState'
 import { loadPr } from '../lib/pr'
 import { setSbPrefs, useSbPrefs, WorkspaceParams } from './WorkspaceParams'
@@ -55,7 +55,7 @@ export function Sidebar() {
   const openTab = useStore((s) => (s.view.kind === 'wt' ? s.wt[normPath(s.view.cwd)]?.active : null))
   const hourly = Math.floor(useNow() / 3600000) // the age filter moves on hourly, not every tick
   const tree = useMemo(() => buildTree(sessions.filter((s) => (!s.archived || leaving.has(s.id)) && (sbp.showCli || s.origin !== 'cli') &&
-    (openTab === `s:${s.id}` || !staleChat(sbp, s, hourly * 3600000))), query, allWorktrees), [sessions, query, allWorktrees, leaving, sbp, openTab, hourly])
+    (openTab === `s:${s.id}` || !staleChat(sbp, s, hourly * 3600000))), query, allWorktrees, sbp.sort), [sessions, query, allWorktrees, leaving, sbp, openTab, hourly])
   const filtering = !!query.trim()
   const rootWs = workspaces.find((w) => w.kind === 'root')
   const projects = workspaces.filter((w) => w.kind !== 'root')
@@ -238,7 +238,7 @@ export function worktreeOf(s: Session, paths: string[]): string | null {
   return paths.filter((p) => cwd === p || cwd.startsWith(`${p}/`)).sort((a, b) => b.length - a.length)[0] ?? null
 }
 
-function buildTree(sessions: Session[], query: string, worktrees: Record<string, Worktree[]>): Tree {
+function buildTree(sessions: Session[], query: string, worktrees: Record<string, Worktree[]>, sort: SortBy): Tree {
   // A known worktree decides the project (a folder workspace may contain another project's worktrees).
   const byPath = new Map<string, string>()
   for (const [id, list] of Object.entries(worktrees)) for (const w of list) byPath.set(normPath(w.path), id)
@@ -262,7 +262,7 @@ function buildTree(sessions: Session[], query: string, worktrees: Record<string,
   for (const s of sorted) {
     if (s.parentId && byId.has(s.parentId) && !from.has(s.id)) kids.set(s.parentId, [...(kids.get(s.parentId) ?? []), s])
   }
-  let roots = sorted.filter((s) => !s.parentId || !byId.has(s.parentId) || from.has(s.id))
+  let roots = sorted.filter((s) => !s.parentId || !byId.has(s.parentId) || from.has(s.id)).sort(compareChats(sort))
   const q = query.trim().toLowerCase()
   if (q) {
     const hit = (s: Session): boolean =>

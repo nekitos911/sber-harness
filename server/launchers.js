@@ -409,6 +409,9 @@ function geminiFamily(id, defaults, resolve) {
       const mode = cliApprovalMode(defaults, agentCfg, session.approvalMode || agentCfg.approvalMode);
       if (mode) args.push('--approval-mode', mode);
       args.push('--output-format', 'stream-json');
+      // live thinking/text deltas (stream_event); off once the CLI rejected the flag (agentMeta.partialUnsupported)
+      const partial = agentCfg.partialMessagesFlag === undefined ? defaults.partialMessagesFlag : agentCfg.partialMessagesFlag;
+      if (partial) args.push(partial);
       const model = session.model || agentCfg.model;
       if (model) args.push('--model', model);
       for (const dir of session.includeDirs || []) args.push(INCLUDE_FLAG, dir); // every turn: a new process
@@ -470,7 +473,7 @@ const claude = {
 export const launchers = {
   // cold start (hundreds of tools, ~9 MCP servers) can take 30-60 s before system/init
   // quickArgs: one-off helper runs (commit/PR messages) start without MCP/skills/hooks (VERIFY --safe-mode on the target)
-  gigacode: geminiFamily('gigacode', { freePromptTemplate: '/full-task {text}{notes}', quickArgs: ['--safe-mode'], compressCommand: '/compress', contextCommand: '/context', command: 'gigacode', settingsEnv: 'GIGACODE_SYSTEM_SETTINGS_PATH', firstEventTimeoutMs: 120000, continueArgs: ['-c'], approvalModeMap: { auto: 'auto-edit' }, allowedToolsFlag: '--allowed-tools', allowedTools: DEFAULT_ALLOWED_TOOLS, autoSandbox: null, reworkPromptTemplate: '/full-task {taskUrl} Задача готова, но нужны правки: {notes}' }, (cfg) => resolveGigacode(cfg)),
+  gigacode: geminiFamily('gigacode', { freePromptTemplate: '/full-task {text}{notes}', quickArgs: ['--safe-mode'], compressCommand: '/compress', contextCommand: '/context', command: 'gigacode', settingsEnv: 'GIGACODE_SYSTEM_SETTINGS_PATH', firstEventTimeoutMs: 120000, continueArgs: ['-c'], approvalModeMap: { auto: 'auto-edit' }, allowedToolsFlag: '--allowed-tools', allowedTools: DEFAULT_ALLOWED_TOOLS, autoSandbox: null, partialMessagesFlag: '--include-partial-messages', reworkPromptTemplate: '/full-task {taskUrl} Задача готова, но нужны правки: {notes}' }, (cfg) => resolveGigacode(cfg)),
   qwen: geminiFamily('qwen', { command: 'qwen', settingsEnv: 'QWEN_CODE_SYSTEM_SETTINGS_PATH', firstEventTimeoutMs: 30000, approvalModeMap: { auto: 'auto-edit' }, allowedToolsFlag: '--allowed-tools', allowedTools: DEFAULT_ALLOWED_TOOLS }),
   gemini: geminiFamily('gemini', { command: 'gemini', settingsEnv: 'GEMINI_CLI_SYSTEM_SETTINGS_PATH', firstEventTimeoutMs: 30000 }),
   claude,

@@ -78,6 +78,14 @@ export function prGroup(pr: { state: string; reviewers?: unknown[] } | null | un
   return (pr.reviewers?.length ?? 0) > 0 || taskStatus === 'review' ? 'review' : 'open'
 }
 
+/** Chats of a folder or worktree follow «Сортировать по» too (sub-agents under a chat keep their run order). */
+export function compareChats(sort: SortBy): (a: ChatFacts, b: ChatFacts) => number {
+  if (sort === 'name') return (a, b) => a.title.localeCompare(b.title, 'ru', { numeric: true }) || b.createdAt - a.createdAt
+  if (sort === 'new') return (a, b) => b.createdAt - a.createdAt
+  return (a, b) => b.lastActivityAt - a.lastActivityAt || b.createdAt - a.createdAt
+}
+export interface ChatFacts { title: string; createdAt: number; lastActivityAt: number }
+
 export interface RowFacts { rank: number; last: number; name: string; created: number; changes: number }
 const byName = (a: RowFacts, b: RowFacts) => a.name.localeCompare(b.name, 'ru', { numeric: true })
 

@@ -106,7 +106,7 @@ test('exact argv on new and resumed turns; settings.json without permissions; id
   await waitFor(async () => (await h.api('GET', `/api/sessions/${s.id}/messages`)).body.some((m) => m.kind === 'assistant' && m.text.includes(`resumed ${ext}, turn 2`)), { what: 'turn 2' });
 
   const [first, second] = runs().filter((r) => r.env.HARNESS_SESSION_ID === s.id);
-  const tail = ['--approval-mode', 'auto', '--output-format', 'stream-json']; // auto runs under the workspace sandbox
+  const tail = ['--approval-mode', 'auto', '--output-format', 'stream-json', '--include-partial-messages']; // auto runs under the workspace sandbox
   // orchestration.subagents "harness" (default): the sub-agent context block leads the first prompt of a CLI session
   assert.deepEqual(first.argv, ['--max-old-space-size=6144', entry, '-p', `${SUBAGENT_CONTEXT}\n\nhello`, ...tail]);
   assert.deepEqual(second.argv, ['--max-old-space-size=6144', entry, '--resume', ext, '-p', 'again', ...tail]);
@@ -141,6 +141,18 @@ test('exact argv on new and resumed turns; settings.json without permissions; id
   assert.equal((await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'giga', cwd: repo, approvalMode: 'yolo' })).status, 400);
   await h.api('DELETE', `/api/sessions/${s.id}`);
   assert.equal(fs.existsSync(s.settingsPath), false, 'settings removed with the session');
+});
+
+test('a CLI that rejects --include-partial-messages: remembered, the same turn runs again without it', async () => {
+  const s = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'giga', cwd: repo, prompt: '#nopartial привет' })).body;
+  await waitFor(async () => (await h.api('GET', `/api/sessions/${s.id}/messages`)).body.some((m) => m.kind === 'assistant'), { what: 'answer after the retry' });
+  const msgs = (await h.api('GET', `/api/sessions/${s.id}/messages`)).body;
+  assert.ok(msgs.some((m) => m.kind === 'system' && m.text.includes('--include-partial-messages')), 'says why it retried');
+  assert.ok(!msgs.some((m) => m.kind === 'error'), 'no error left behind');
+  const mine = runs().filter((r) => r.env.HARNESS_SESSION_ID === s.id);
+  assert.deepEqual(mine.map((r) => r.argv.includes('--include-partial-messages')), [true, false]);
+  await waitFor(async () => (await state()).sessions.find((x) => x.id === s.id).status === 'idle', { what: 'idle' });
+  await h.api('DELETE', `/api/sessions/${s.id}`);
 });
 
 test('a broken launcher fails before any worktree or session is created', async () => {
