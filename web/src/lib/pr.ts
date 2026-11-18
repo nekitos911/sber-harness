@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { api, ApiError, errorText, qs } from '../api'
 import { getState, hasFeature, openScreen, setState, useFeature, useStore, wtKey } from '../store'
 import type { PrInfo } from '../types'
+import { reviewKind } from './format'
 
 /** null = no PR for this branch; 'off' = PR integration disabled; error = could not ask. */
 export type PrState = PrInfo | null | 'off' | { error: string }
@@ -34,7 +35,7 @@ export const PR_STATE: Record<PrInfo['state'], string> = { open: 'открыт',
 export function reviewText(pr: Pick<PrInfo, 'reviewers' | 'state'>) {
   const all = pr.reviewers?.length ?? 0
   if (!all || pr.state !== 'open') return ''
-  const ok = pr.reviewers.filter((r) => /approv|принят|одобр/i.test(r.status)).length
+  const ok = pr.reviewers.filter((r) => reviewKind(r.status) === 'approved').length
   return `на ревью ${ok}/${all}`
 }
 

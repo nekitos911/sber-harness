@@ -8,6 +8,7 @@ import { useNow } from '../lib/useNow'
 import { loadWorktrees } from '../ws'
 import type { PrInfo, Task, TaskPr } from '../types'
 import { PrGlyph } from '../components/PrChip'
+import { MinePrs } from './MinePrs'
 import { Button, Dialog, MenuButton } from '../components/ui'
 
 interface Row { key: string; pr: PrInfo | TaskPr; repo: string; head: string | null; task: Task | null; cwd: string | null }
@@ -16,8 +17,13 @@ const GROUPS: { state: Row['pr']['state']; label: string }[] = [
   { state: 'open', label: 'Открытые' }, { state: 'merged', label: 'Влитые' }, { state: 'declined', label: 'Отклонённые' },
 ]
 
-/** Every PR the harness knows: of tasks (task.pr) and of the branch checked out in each worktree. */
+/** «Мои · По задачам» across repositories (GET /api/prs); older servers: the PRs of tasks and worktrees. */
 export function PrsView() {
+  return useFeature('prs-mine') ? <MinePrs /> : <WorktreePrs />
+}
+
+/** Every PR the harness knows: of tasks (task.pr) and of the branch checked out in each worktree. */
+function WorktreePrs() {
   const tasks = useStore((s) => s.tasks)
   const workspaces = useStore((s) => s.workspaces)
   const worktrees = useStore((s) => s.worktrees)

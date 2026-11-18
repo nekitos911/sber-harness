@@ -61,6 +61,13 @@ export const subTitle = (title: string): [string, string] | undefined => {
   return m ? [m[1], m[2]] : undefined
 }
 
+/** A reviewer's status in three kinds (UNAPPROVED is not approved: the negatives are checked first). */
+export function reviewKind(status: string): 'approved' | 'changes' | 'pending' {
+  if (/needs|change|reject|declin|замеч|отклон/i.test(status)) return 'changes'
+  if (/un.?approv|not.?approv|pending|waiting|не одобр/i.test(status)) return 'pending'
+  return /approv|одобр|принят/i.test(status) ? 'approved' : 'pending'
+}
+
 /** «только что» · «5 мин назад» · «3 ч назад» */
 export function ago(at: number, now = Date.now()) {
   const r = relTime(at, now)

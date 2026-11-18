@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from 'react'
+import type { PrListState, PrScope } from './lib/prsMine'
 import type { AgentInfo, AgentMeta, HistoryItem, RecoveryState, GitStatus, SddPlan, Settings, Integrations, Message, Notification, Session, SubAgent, Task, Workspace, Worktree } from './types'
 import type { DiffFile } from './lib/diff'
 import { normPath } from './lib/format'
@@ -79,6 +80,7 @@ export interface State extends Prefs {
   agentMeta: Record<string, AgentMeta | null> // null = this server has no /agents/:id/info
   settings: Settings | null // loaded on demand (pickers need grades; the settings screen edits it)
   prs: Record<string, PrState | undefined> // key = normPath(cwd): PR of the branch checked out there
+  prsMine: Partial<Record<PrScope, PrListState>> // GET /api/prs: «Мои» / «По задачам»
   sdd: Record<string, SddPlan[] | null> // key = normPath(cwd): /full-task plans and verdicts (null: server lacks it)
   recentFolders: string[]
   slowStarts: Record<string, number[]> // sessionId -> how long the last turns sat in phase «starting» (ms)
@@ -141,7 +143,7 @@ let state: State = {
   conn: 'connecting', loaded: false, authExpired: false, scheme: resolveScheme(prefs.theme),
   tasks: [], sessions: [], workspaces: [], notifications: [], agents: [], defaultAgent: null, shell: '',
   integrations: { tasks: false, pr: false },
-  messages: {}, subagents: {}, worktrees: {}, git: {}, agentMeta: {}, settings: null, prs: {}, sdd: {}, recentFolders: [], slowStarts: {}, sbOverlay: false, panelOverlay: false, history: {}, recovery: null, features: [], dirty: {}, toasts: [], jobs: [], focusTaskId: null, dialog: null, back: [], forward: [],
+  messages: {}, subagents: {}, worktrees: {}, git: {}, agentMeta: {}, settings: null, prs: {}, prsMine: {}, sdd: {}, recentFolders: [], slowStarts: {}, sbOverlay: false, panelOverlay: false, history: {}, recovery: null, features: [], dirty: {}, toasts: [], jobs: [], focusTaskId: null, dialog: null, back: [], forward: [],
 }
 
 const listeners = new Set<() => void>()
@@ -181,7 +183,7 @@ document.documentElement.dataset.theme = state.scheme
 
 export type Feature = 'sdd' | 'subagents' | 'virtual-sessions' | 'worker-run' | 'pr-status' | 'branches' | 'fs-search'
   | 'agent-info' | 'models-refresh' | 'tracker-links' | 'worktree-meta' | 'open' | 'board-columns' | 'review-loop' | 'skills-install' | 'demo'
-  | 'fs-raw' | 'rework' | 'tracker-import' | 'folders' | 'include-dirs' | 'acp' | 'pr-decline' | 'questions' | 'permissions' | 'activity' | 'recovery' | 'cli-history'
+  | 'fs-raw' | 'rework' | 'tracker-import' | 'folders' | 'include-dirs' | 'acp' | 'pr-decline' | 'questions' | 'permissions' | 'activity' | 'recovery' | 'cli-history' | 'prs-mine'
 
 /** Whether this server implements an optional API group (no flag list = an older server = none). */
 export const hasFeature = (f: Feature) => state.features.includes(f)

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react'
 import { Activity, ArrowUp, Bot, ChevronDown, Ellipsis, Folder, FolderTree, TriangleAlert, GitPullRequest, Pin, ChevronRight, FolderGit2, FolderPlus, GitBranch, GitBranchPlus, House, Inbox, MessageSquarePlus, Moon, Search, Settings, SquareKanban, SquareTerminal, Sun } from 'lucide-react'
-import { getState, openDialog, openScreen, openSession, openWorktree, setState, showPanel, useActiveCwd, useStore, wtKey, type Screen } from '../store'
+import { getState, useFeature, openDialog, openScreen, openSession, openWorktree, setState, showPanel, useActiveCwd, useStore, wtKey, type Screen } from '../store'
 import { useHistory } from '../lib/history'
 import { archiveSession, renameSession, sessionMenu } from '../lib/sessionActions'
 import { loadWorktrees } from '../ws'
@@ -22,6 +22,7 @@ import { ideEnabled, isUnread, onWorktreeKey, projectMenu, setUnread, worktreeMe
 import { useNow } from '../lib/useNow'
 import { useRail } from '../lib/useMedia'
 import { listedChat, pendingCount } from '../lib/pending'
+import { loadPrsMine } from '../lib/prsMine'
 
 const depth = (d: number) => ({ '--depth': d }) as CSSProperties
 const APP_START = Date.now() // rows for sessions born after this animate in; the initial list does not
@@ -43,7 +44,12 @@ export function Sidebar() {
   // the same set as the Agents screen: listed chats; «работают» = running, starting or silent
   const agents = sessions.filter(listedChat)
   const running = agents.filter((s) => BUSY.has(sessionVisualState(s)) || sessionVisualState(s) === 'stalled').length
-  const openPrs = useStore((s) => s.tasks.filter((t) => t.pr?.state === 'open').length)
+  // my open PRs across repositories (GET /api/prs, feature prs-mine), else the open PRs of tasks
+  const minePrs = useStore((s) => { const m = s.prsMine.mine; return m && typeof m === 'object' && 'items' in m ? m.items.filter((p) => p.state === 'open').length : null })
+  const taskPrs = useStore((s) => s.tasks.filter((t) => t.pr?.state === 'open').length)
+  const prsMineOn = useFeature('prs-mine')
+  useEffect(() => { if (prsMineOn) loadPrsMine('mine') }, [prsMineOn])
+  const openPrs = minePrs ?? taskPrs
   const chats = agents.length
   const allWorktrees = useStore((s) => s.worktrees)
   const leaving = useLeaving(sessions)
@@ -95,7 +101,7 @@ export function Sidebar() {
             ? <span className="count count-run" data-tip={`Работают: ${running} из ${chats}`}>{running}</span>
             : chats > 0 && <span className="count" data-tip={`Чатов: ${chats}`}>{chats}</span>}
         />
-        <NavItem screen="prs" icon={<GitPullRequest />} label="Пулл-реквесты" end={openPrs > 0 && <span className="count" data-tip={`Открытых PR задач: ${openPrs}`}>{openPrs}</span>} />
+        <NavItem screen="prs" icon={<GitPullRequest />} label="Пулл-реквесты" end={openPrs > 0 && <span className="count" data-tip={minePrs !== null ? `Моих открытых PR: ${openPrs}` : `Открытых PR задач: ${openPrs}`}>{openPrs}</span>} />
         <NavItem screen="inbox" icon={<Inbox />} label="Входящие" end={pending > 0
           ? <span className="count count-signal" aria-label={`ждёт меня: ${pending}`} data-tip="Ждёт меня: вопросы, разрешения, готовые задачи">{pending}</span>
           : unread > 0 && <span className="count" aria-label={`непрочитанных: ${unread}`}>{unread}</span>} />

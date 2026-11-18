@@ -480,3 +480,20 @@ button.chip.chip-mono[aria-pressed="true"] { background: var(--signal-soft); col
 .inbox-esc-head { flex-wrap: nowrap; align-items: flex-start; }
 .inbox-esc-head .inbox-esc-icon { margin-top: 3px; }
 .inbox-esc-text { flex: 1; min-width: 0; }
+/* «Мои PR» */
+.prs-view .view-head .segmented { margin-left: 8px; }
+.prs-repo + .prs-repo { margin-top: 6px; }
+button.prs-group { width: 100%; border: 0; background: none; text-align: left; cursor: pointer; }
+button.prs-group .chev { width: 12px; height: 12px; color: var(--ink-3); transition: transform 120ms var(--ease-out); }
+button.prs-group[aria-expanded="true"] .chev { transform: rotate(90deg); }
+.pr-row-link { cursor: pointer; border-radius: var(--r-1); }
+.pr-row-link:hover { background: var(--deck-2); }
+.pr-row-link:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.pr-reviewers { display: flex; flex-wrap: wrap; gap: 4px; justify-content: flex-end; max-width: 40%; }
+.pr-reviewer svg { width: 11px; height: 11px; }
+.pr-reviewer[data-k="approved"] { color: var(--lamp-done); }
+.pr-reviewer[data-k="changes"] { color: var(--lamp-fail); }
+.pr-reviewer[data-k="pending"] { color: var(--ink-3); }
+.pr-agent svg { width: 12px; height: 12px; }
+.prs-errors { margin-top: 16px; }
+.prs-errors ul { display: grid; gap: 4px; margin: 6px 0 0; padding-left: 18px; font-size: 12px; }
