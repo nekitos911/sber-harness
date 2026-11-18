@@ -22,6 +22,7 @@ import { isAlive, resolveCommand, spawnOptions } from './runner.js';
 import { createModelCatalog, scanModelRefs } from './models.js';
 import { pickFolder } from './pick-folder.js';
 import { runCheck, suggestCheck } from './checks.js';
+import { codeHints, hintsLine } from './hints.js';
 import { readSdd } from './sdd.js';
 import { generateMessage } from './generate.js';
 import { resolveReleases, releasePlan, listReleases } from './releases.js';
@@ -1363,10 +1364,13 @@ export async function startServer(opts = {}) {
     }
     const rel = await withReleases(relText, body.notes?.trim() || '', null, explicit);
     const prompt = freePrompt(rel.notes);
+    // the API paths it names, looked up in every repository: the agent (and the person) see where to start
+    const repoHints = atRoot ? await codeHints(`${input}\n${body.notes || ''}`, db.workspaces.filter((w) => w.isGit && !w.kind)).catch(() => []) : [];
     const s = await sessions.create({
-      kind: 'chat', agent, cwd: root.path, ...(atRoot ? {} : { workspaceId: root.id }), title: titleFrom(input) || 'Задача', atRoot, prompt,
+      kind: 'chat', agent, cwd: root.path, ...(atRoot ? {} : { workspaceId: root.id }), title: titleFrom(input) || 'Задача', atRoot, prompt, repoHints,
       ...(body.approvalMode ? { approvalMode: body.approvalMode } : {}), ...(body.model ? { model: body.model } : {}),
     });
+    if (repoHints.length) sessions.note(s.id, hintsLine(repoHints));
     return { session: s, task: null, ...(trackerError ? { trackerError } : {}), ...(rel.releaseWarning ? { releaseWarning: rel.releaseWarning } : {}) };
   });
   route('POST', '/api/tasks/:id/start', async ({ params, body }) => {

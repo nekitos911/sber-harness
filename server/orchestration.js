@@ -8,6 +8,7 @@ import { jobStep } from './jobs.js';
 import { FULL_ACCESS_MODES, newId, subagentTitle } from './sessions.js';
 import { launchers } from './launchers.js';
 import { runCheck } from './checks.js';
+import { codeHints, hintsLine } from './hints.js';
 
 const GENERIC_REWORK = '{key} {title}: нужны правки: {notes}'; // agents without a task command (/full-task)
 
@@ -311,7 +312,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions, addWo
       try {
         s = await sessions.create({
           kind: 'chat', agent, cwd, workspaceId: ws?.id, title, role: 'worker',
-          parentId: caller?.id ?? null, taskId: task?.id ?? null, model: o.model, ...(o.approvalMode ? { approvalMode: o.approvalMode } : {}), branch, inWorktree, includeDirs, autoIncludeDirs: true, atRoot: o.atRoot === true,
+          parentId: caller?.id ?? null, taskId: task?.id ?? null, model: o.model, ...(o.approvalMode ? { approvalMode: o.approvalMode } : {}), branch, inWorktree, includeDirs, autoIncludeDirs: true, atRoot: o.atRoot === true, repoHints: o.repoHints,
           persistent: !!caller && (placement !== 'current' || !task),
         });
         sessions.update(s.id, { placement, ...(auto ? { placementAuto: true } : {}), ...(name ? { worktreeName: name } : {}), ...(o.workspace ? { placementWorkspace: o.workspace } : {}), ...(o.retryOf ? { retryOf: o.retryOf } : {}) });
@@ -792,7 +793,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions, addWo
   function preamble(s) {
     const context = s.ephemeral && atDepthLimit(s) ? `${NO_SUBAGENTS}.` : SUBAGENT_CONTEXT;
     const block = config.orchestration?.subagents !== 'builtin' && CONTEXT_LAUNCHERS.has(s.launcherId) ? context : '';
-    return [block, rolePreamble(s)].filter(Boolean).join('\n\n');
+    return [block, rolePreamble(s), s.atRoot ? hintsLine(s.repoHints) : null].filter(Boolean).join('\n\n');
   }
 
   function rolePreamble(s) {
@@ -1575,7 +1576,11 @@ export function createOrchestration({ config, store, bus, tasks, sessions, addWo
         fail(400, 'нет папки проектов (workspaces.root) — выберите репозиторий для задачи');
       }
       tasks.update(task.id, { location: 'root' }, 'harness');
-      return startWorker(task, { agent: a, cwd: root.path, worktree: 'current', atRoot: true, notes, approvalMode, model }, null);
+      // the paths the task names, looked up in every repository: the agent starts in the right service
+      const repoHints = await codeHints(`${task.title}\n${task.description || ''}`, db.workspaces.filter((w) => w.isGit && !w.kind)).catch(() => []);
+      const started = await startWorker(task, { agent: a, cwd: root.path, worktree: 'current', atRoot: true, notes, approvalMode, model, repoHints }, null);
+      if (repoHints.length && started?.id) sessions.note(started.id, hintsLine(repoHints)); // the person sees the same hint
+      return started;
     },
 
     /**

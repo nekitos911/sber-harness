@@ -50,3 +50,21 @@ test('binding needs a key; a pushed branch keeps its name', async () => {
   assert.equal((await h.api('POST', `/api/sessions/${chat.id}/task`, { ref: 'без ключа' })).status, 400);
   await waitFor(async () => { const s = (await state()).sessions.find((x) => x.id === chat.id); return !s.pid && s.status !== 'running'; }, { what: 'settled' });
 });
+
+test('a task naming an API path: the harness finds it in the code and tells the projects-folder agent where to start', async () => {
+  const { needlesOf, codeHints } = await import('../server/hints.js');
+  assert.deepEqual(needlesOf('Ручка post /api/task/api/v1/templates/employee и GET /orders/{id}'), ['templates/employee', 'orders']);
+  const repo = makeRepo(path.join(projects, 'task-service'));
+  fs.mkdirSync(path.join(repo, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(repo, 'src', 'TemplateController.java'), 'class C {\n  @PostMapping("/api/v1/templates/employee")\n  void x() {}\n}\n');
+  gitIn(repo, 'add', '.');
+  gitIn(repo, 'commit', '-q', '-m', 'controller');
+  const hints = await codeHints('Ручка для получения шаблонов post /api/task/api/v1/templates/employee', [{ name: 'svc', path: svc }, { name: 'task-service', path: repo }]);
+  assert.deepEqual(hints, [{ repo: 'task-service', needle: 'templates/employee', hits: ['src/TemplateController.java:2'] }]);
+
+  await h.api('POST', '/api/workspaces', { path: repo });
+  const chat = (await h.api('POST', '/api/handoff', { input: 'добавь поле valueDisplayOnTile в ручку post /api/task/api/v1/templates/employee' })).body.session;
+  const s = (await state()).sessions.find((x) => x.id === chat.id);
+  assert.deepEqual(s.repoHints?.map((x) => x.repo), ['task-service']);
+  await waitFor(async () => { const x = (await state()).sessions.find((y) => y.id === chat.id); return !x.pid && x.status !== 'running'; }, { what: 'settled' });
+});

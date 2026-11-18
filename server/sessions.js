@@ -1483,6 +1483,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
         ...(o.ephemeral ? { ephemeral: true, waiter: true, report: null } : {}),
         ...(o.inWorktree === true ? { inWorktree: true } : {}), // a worker started inside its task's linked worktree
         ...(o.atRoot === true ? { atRoot: true } : {}), // a task worker started in the projects folder: it picks the repos
+        ...(Array.isArray(o.repoHints) && o.repoHints.length ? { repoHints: o.repoHints } : {}), // where the task's API paths are in the code
         ...(o.persistent === true ? { persistent: true } : {}), // a child in its own worktree/repo: kept, own depth
         ...(kind === 'chat' && !o.title ? { autoTitle: true } : {}), // the first user message names the chat
         createdAt: now,
