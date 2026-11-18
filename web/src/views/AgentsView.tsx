@@ -14,6 +14,9 @@ import { archiveSession, renameSession, sessionMenu } from '../lib/sessionAction
 import { MenuButton, Segmented, Select } from '../components/ui'
 
 /** Lanes by visual state; «Ждут вас» shows only when someone does. */
+const DAY = 86400000
+const BUSY_OR_WAITING = new Set<string>(['running', 'starting', 'stalled', 'waiting_answer', 'waiting_permission', 'auth'])
+
 const GROUPS: { id: string; label: string; hint: string; match: VisualState[]; optional?: boolean }[] = [
   { id: 'you', label: 'Ждут вас', hint: 'вопрос, разрешение, вход или прерваны', match: ['waiting_answer', 'waiting_permission', 'auth', 'interrupted'], optional: true },
   { id: 'run', label: 'Работают', hint: 'идёт ход', match: ['running', 'starting', 'stalled'] },
@@ -38,7 +41,11 @@ export function AgentsView() {
   const sessions = useStore((s) => s.sessions)
   const [archive, setArchive] = useState(false)
   // «Активные» = the set the sidebar counts (listedChat); «Архив» = archived ones
-  const chats = useMemo(() => sessions.filter((s) => (archive ? s.kind === 'chat' && !s.virtual && !s.system && !!s.archived : listedChat(s))).sort((a, b) => b.lastActivityAt - a.lastActivityAt), [sessions, archive])
+  // a CLI chat nobody continued here is history, not an agent: off the board unless it works or waits right now
+  const history = (s: Session) => s.origin === 'cli' && !s.cliImportedAt && !BUSY_OR_WAITING.has(sessionVisualState(s))
+  const chats = useMemo(() => sessions.filter((s) => (archive ? s.kind === 'chat' && !s.virtual && !s.system && !!s.archived : listedChat(s) && !history(s))).sort((a, b) => b.lastActivityAt - a.lastActivityAt), [sessions, archive])
+  const [allIn, setAllIn] = useState<Set<string>>(new Set()) // lanes opened past the last day
+  const now = useNow()
   const archivedCount = useMemo(() => sessions.filter((s) => s.kind === 'chat' && !s.virtual && s.archived).length, [sessions])
   const byId = useMemo(() => new Map(sessions.map((s) => [s.id, s])), [sessions])
   // built-in sub-agents (not archived yet: their parent's turn still runs) ride in the parent's lane, right under it
@@ -69,21 +76,30 @@ export function AgentsView() {
       ) : (
         <div className="lanes">
           {GROUPS.map((g) => {
-            const list = [...chats, ...subs].filter((s) => g.match.includes(laneState(s)))
-            if (g.optional && !list.length) return null
+            const lane = [...chats, ...subs].filter((s) => g.match.includes(laneState(s)))
+            // «Ответили» / «Готово» keep the last day; older ones wait behind «ещё N» (auto-archive takes them later)
+            const aged = (g.id === 'idle' || g.id === 'done') && !archive && !allIn.has(g.id)
+            const list = aged ? lane.filter((s) => now - s.lastActivityAt < DAY) : lane
+            const older = lane.length - list.length
+            if (g.optional && !lane.length) return null
             return (
               <section key={g.id} className="lane" aria-labelledby={`lane-${g.id}`}>
                 <header className="col-head">
                   <span className="lane-mark" data-g={g.id} aria-hidden />
                   <h2 id={`lane-${g.id}`}>{g.label}</h2>
-                  <span className="col-count num">{list.length}</span>
+                  <span className="col-count num">{lane.length}</span>
                   <span className="lane-hint">{g.hint}</span>
                 </header>
                 <div className="col-body">
                   {ordered(list).map(({ s, nested }) => (
                     <AgentCard key={s.id} s={s} nested={nested} parent={s.parentId ? byId.get(s.parentId) : undefined} />
                   ))}
-                  {list.length === 0 && <div className="col-empty">Пусто</div>}
+                  {list.length === 0 && !older && <div className="col-empty">Пусто</div>}
+                  {older > 0 && (
+                    <button type="button" className="btn btn-ghost btn-sm lane-more" onClick={() => setAllIn(new Set([...allIn, g.id]))}>
+                      Ещё {older} старше суток
+                    </button>
+                  )}
                 </div>
               </section>
             )

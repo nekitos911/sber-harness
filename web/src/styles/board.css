@@ -360,3 +360,4 @@
 .drawer-tracker-status { justify-self: start; margin-top: -8px; }
 .drawer-blocked { margin: -6px 0 0; color: var(--lamp-run); font-size: 12.5px; }
 .task-row .task-row-status { justify-self: start; width: max-content; max-width: 150px; }
+.lane-more { align-self: flex-start; margin-top: 4px; }

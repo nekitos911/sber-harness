@@ -130,6 +130,7 @@ export interface Session {
   context?: { tokens: number; at?: number; lastTurn?: { input?: number; output?: number; cacheRead?: number } | null; input?: number; output?: number; cached?: number } | null
   contextLimit?: number | null // the model's window
   cliModel?: string | null // the model the CLI reported at the turn start (when the chat uses the default)
+  cliImportedAt?: number | null // an adopted CLI chat the harness continued (null: untouched history)
   mcpStatus?: { name: string; status: string }[] // MCP servers as the CLI reported them at the turn's start
   effectiveApprovalMode?: string | null // what the CLI really runs with (e.g. auto → auto-edit)
   system?: boolean // harness-internal (login terminal, discovery…): shown only under «Служебное»

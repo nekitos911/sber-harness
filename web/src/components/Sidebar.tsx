@@ -115,6 +115,7 @@ export function Sidebar() {
       <MixedAgents.Provider value={new Set(tree.all.map((x) => x.agent)).size > 1}>
       <div className="tree" aria-label="Проекты и сессии">
         {!filtering && <AttentionSection tree={tree} />}
+        {!filtering && <WorkingSection tree={tree} />}
         <div className="sb-head">
           <span>Проекты <span className="num">· {projects.length}</span></span>
           <WorkspaceParams projects={projects} />
@@ -301,6 +302,20 @@ function AttentionSection({ tree }: { tree: Tree }) {
           </div>
         )
       })}
+    </section>
+  )
+}
+
+/** «В работе»: every chat whose turn runs now, with what it does — who works is seen at once (like Orca), not by digging. */
+function WorkingSection({ tree }: { tree: Tree }) {
+  const list = tree.all
+    .filter((s) => !s.virtual && (sessionVisualState(s) === 'running' || sessionVisualState(s) === 'starting'))
+    .sort((a, b) => b.lastActivityAt - a.lastActivityAt)
+  if (!list.length) return null
+  return (
+    <section className="attention attention-run" aria-label="В работе">
+      <div className="attention-head">В работе <span className="num">· {list.length}</span></div>
+      {list.map((s) => <SessionRow key={s.id} s={s} nested={false} level={0} />)}
     </section>
   )
 }
