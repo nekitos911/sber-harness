@@ -554,7 +554,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
       });
     }
     const now = sessions.find(sessionId);
-    if (now?.report) return { done: true, sessionId, status: now.report.status, summary: now.report.summary };
+    if (now?.report) return { done: true, sessionId, status: now.report.status, summary: clipResult(now.report.summary, sessionId) };
     const q = now?.pendingQuestion;
     if (q) {
       // the child asked its waiting parent: the call returns with the question; the child's result comes later as a message
@@ -569,10 +569,14 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
   }
 
   /** A child that asked its parent mid-run reports its result as a message: the parent's call already returned. */
+  /** What reaches the caller's context of a helper's report: ~4000 characters; the rest stays in the helper's chat. */
+  const RESULT_MAX = 4000;
+  const clipResult = (text, sid) => (String(text ?? '').length > RESULT_MAX ? `${String(text).slice(0, RESULT_MAX)}\n… (обрезано: полный отчёт — worker_inspect ${sid} или чат субагента)` : String(text ?? ''));
+
   function reportToAsker(s, { status, summary }) {
     if (!s?.askedParent || !s.parentId || !sessions.find(s.parentId)) return;
     sessions.update(s.id, { askedParent: false });
-    sessions.deliver(s.parentId, { from: s.id, text: fromSession(s, `Result (${status}):\n${summary}`) });
+    sessions.deliver(s.parentId, { from: s.id, text: fromSession(s, `Result (${status}):\n${clipResult(summary, s.id)}`) });
   }
 
   // ---- harness review loop (orchestration.reviewMode "harness") ----
@@ -790,7 +794,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
       const parent = s.parentId && sessions.find(s.parentId);
       return [
         `[harness] Ты — субагент (сессия ${s.id}), запущенный ${parent ? label(parent) : 'harness'}. Рабочая папка: ${s.cwd}.`,
-        'Выполни задание ниже. В конце вызови worker_done(summary, status: "done" | "failed") — summary вернётся вызвавшему агенту как результат.',
+        'Выполни задание ниже. В конце вызови worker_done(summary, status: "done" | "failed") — summary вернётся вызвавшему агенту как результат. Summary — коротко, до ~15 строк: что сделано, итог, где подробности (файлы, этот чат); не пересказывай ход работы — он забивает контекст вызвавшего.',
         tools,
       ].join('\n');
     }
@@ -800,7 +804,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
     const common = [
       '- Need a decision? Call ask(question, options?), then END YOUR TURN; the answer arrives as your next message.',
       helpers,
-      '- Finish with exactly one worker_done(summary, status: "done" | "failed"): what changed, evidence (commands and results), open blockers.',
+      '- Finish with exactly one worker_done(summary, status: "done" | "failed"): what changed, evidence (commands and results), open blockers — short (about 20 lines): the coordinator\'s context carries every report.',
       tools,
       registry,
     ];
@@ -1318,7 +1322,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
             // reported again (a short probe first, the full result now): the caller's wait is over — the update comes as a message
             sessions.update(c.id, { report: { status: a.status, summary: a.summary, at: Date.now() } });
             const parent = c.parentId && sessions.find(c.parentId);
-            if (parent) sessions.deliver(parent.id, { from: c.id, text: fromSession(c, `Updated result (${a.status}):\n${a.summary}`) });
+            if (parent) sessions.deliver(parent.id, { from: c.id, text: fromSession(c, `Updated result (${a.status}):\n${clipResult(a.summary, c.id)}`) });
             return { ok: true, note: 'the updated result was sent to the caller as a message' };
           }
           settleRun(sessions.get(c.id), { status: a.status, summary: a.summary });
