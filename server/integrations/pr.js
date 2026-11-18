@@ -33,6 +33,7 @@
  *  Vars: repo project repository branch head base title body cwd.
  * ============================================================================================
  */
+import os from 'node:os';
 import { toolResultValue, serverDefs } from '../mcp-client.js';
 import { remoteInfo } from '../git.js';
 import { getPath } from './tasks.js';
@@ -63,16 +64,29 @@ export function prEnabled(config, mcp = null) {
 
 let meCache = null; // { server, at, me }
 /** My login on the code host (meTool, default git_get_user with {}); cached 24 h. */
+/**
+ * My login on the code host → { login, source: 'config' | 'tool' | 'os', warning? }: integrations.pr.me wins; else the
+ * meTool (git_get_user); if that fails, the OS account name (corporate logins usually equal it) with a warning.
+ */
 export async function prMe({ config, mcp }) {
   const cfg = config.integrations.pr;
-  if (meCache?.server === cfg.server && Date.now() - meCache.at < 86400000) return meCache.me;
-  const v = toolResultValue(await mcp.callTool(cfg.server, cfg.meTool || 'git_get_user', {}));
-  const o = v?.user && typeof v.user === 'object' ? v.user : v;
-  // VERIFY the real shape of git_get_user; a text answer is searched for "login: <x>"
-  const me = (typeof o === 'object' && (o?.login || o?.username || o?.name)) || (typeof v === 'string' && v.match(/(?:login|username)["'\s:=]+([\w.@-]+)/i)?.[1]) || null;
-  if (!me) throw Object.assign(new Error(`${cfg.meTool || 'git_get_user'}: в ответе нет login/username/name`), { status: 502 });
-  meCache = { server: cfg.server, at: Date.now(), me: String(me) };
-  return meCache.me;
+  if (cfg.me) return { login: String(cfg.me), source: 'config' };
+  if (meCache?.server === cfg.server && Date.now() - meCache.at < 86400000) return meCache.who;
+  const tool = cfg.meTool || 'git_get_user';
+  let who;
+  try {
+    const v = toolResultValue(await mcp.callTool(cfg.server, tool, {}));
+    const o = v?.user && typeof v.user === 'object' ? v.user : v;
+    // VERIFY the real shape of git_get_user; a text answer is searched for "login: <x>"
+    const me = (typeof o === 'object' && (o?.login || o?.username || o?.name)) || (typeof v === 'string' && v.match(/(?:login|username)["'\s:=]+([\w.@-]+)/i)?.[1]) || null;
+    if (!me) throw new Error(`${tool}: в ответе нет login/username/name`);
+    who = { login: String(me), source: 'tool' };
+  } catch (e) {
+    const login = os.userInfo().username;
+    who = { login, source: 'os', warning: `${e.message} — использую имя пользователя ОС «${login}»; если PR не видны, укажите integrations.pr.me` };
+  }
+  meCache = { server: cfg.server, at: Date.now(), who };
+  return who;
 }
 
 /** The author of a sourcecontrol pull request (pr_creator / author, a string or { login|username|name }). */

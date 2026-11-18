@@ -3,7 +3,7 @@
   "title": "PROJ-14904 Оптимизация расчёта",
   "body": "",
   "state": "open",
-  "pr_creator": "***",
+  "pr_creator": "demo",
   "head": {
     "name": "feature/PROJ-14904",
     "protected": false

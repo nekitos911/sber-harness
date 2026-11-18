@@ -26,6 +26,7 @@ export function MinePrs() {
   const refresh = () => { setRefreshing(true); loadPrsMine(scope, true) }
 
   const list = data && typeof data === 'object' && 'items' in data ? data : null
+  const repoErrors = (list?.errors ?? []).filter((e): e is { repo: string; error: string } => !!e.repo)
   const repos = useMemo(() => {
     const by = new Map<string, PrItem[]>()
     for (const it of list?.items ?? []) by.set(it.repo, [...(by.get(it.repo) ?? []), it])
@@ -39,6 +40,7 @@ export function MinePrs() {
         {list && <span className="count">{list.items.length}</span>}
         <Segmented size="sm" label="Какие PR" value={scope} onChange={setScope}
           options={[{ value: 'mine', label: 'Мои', hint: 'Все мои открытые PR во всех репозиториях' }, { value: 'tracked', label: 'По задачам', hint: 'PR веток задач harness' }]} />
+        {scope === 'mine' && list?.me && <span className="muted">как <span className="mono">{list.me}</span>{list.meSource === 'os' && <> — по имени пользователя ОС, <button type="button" className="link" onClick={openPrSettings}>уточнить</button></>}</span>}
         <span className="grow" />
         {list && <span className="muted num">обновлено {ago(list.at, now)}</span>}
         {data !== 'off' && <Button size="sm" variant="ghost" icon={<RefreshCw className={refreshing ? 'spinner' : undefined} />} disabled={refreshing} onClick={refresh}>Обновить</Button>}
@@ -69,9 +71,9 @@ export function MinePrs() {
             </div>
           )}
           {repos.map(({ repo, items }) => <RepoGroup key={repo} repo={repo} items={items} now={now} />)}
-          {list!.errors.length > 0 && (
-            <Disclosure className="prs-errors" summary={<span className="muted">Не ответили {list!.errors.length} {plural(list!.errors.length, 'репозиторий', 'репозитория', 'репозиториев')}</span>}>
-              <ul>{list!.errors.map((e) => <li key={e.repo}><strong>{e.repo}</strong> <span className="muted mono">{e.error}</span></li>)}</ul>
+          {repoErrors.length > 0 && (
+            <Disclosure className="prs-errors" summary={<span className="muted">Не ответили {repoErrors.length} {plural(repoErrors.length, 'репозиторий', 'репозитория', 'репозиториев')}</span>}>
+              <ul>{repoErrors.map((e) => <li key={e.repo}><strong>{e.repo}</strong> <span className="muted mono">{e.error}</span></li>)}</ul>
             </Disclosure>
           )}
         </div>

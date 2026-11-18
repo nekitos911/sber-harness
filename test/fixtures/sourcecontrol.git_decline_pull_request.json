@@ -3,7 +3,7 @@
   "title": "PROJ-15311 BACK. S55. Увеличение количества символов в текстовом поле до 3000",
   "body": "",
   "state": "declined",
-  "pr_creator": "***",
+  "pr_creator": "demo",
   "head": {
     "name": "feature/PROJ-15311",
     "protected": false,

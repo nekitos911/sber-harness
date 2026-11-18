@@ -162,6 +162,7 @@
       "enabled": "auto",
       "server": "sourcecontrol",
       "meTool": "git_get_user",
+      "me": null,
       "tool": "git_create_pull_request",
       "args": {
         "project": "{project}",

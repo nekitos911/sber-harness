@@ -378,7 +378,7 @@ test('settings: model catalogue objects, labels, presets, timeouts, flags and tr
   assert.deepEqual([giga.firstEventTimeoutMs, giga.inheritUserMcp, giga.enabled], [120000, false, true]);
   assert.deepEqual(Object.keys(s.integrations.tasks).sort(), ['closedStatuses', 'enabled', 'onStartTransition', 'space', 'statusMap', 'urlTemplate']);
   // default "auto": off here (no console MCP server named sourcecontrol)
-  assert.deepEqual(s.integrations.pr, { enabled: 'auto', active: false, limits: { titleBytes: 100, bodyBytes: 512 } });
+  assert.deepEqual(s.integrations.pr, { enabled: 'auto', active: false, me: null, limits: { titleBytes: 100, bodyBytes: 512 } });
   assert.ok(!JSON.stringify(s).match(/secret|token/i));
 
   const bad = (body) => h.api('PUT', '/api/settings', body).then((r) => r.status);

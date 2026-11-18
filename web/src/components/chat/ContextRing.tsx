@@ -25,7 +25,9 @@ export function ContextRing({ session, running }: { session: Session; running: b
   const level = share > 0.85 ? 'high' : share >= 0.6 ? 'mid' : 'low'
   const ctx = session.context!
   const turn = { input: ctx.lastTurn?.input ?? ctx.input, output: ctx.lastTurn?.output ?? ctx.output, cached: ctx.lastTurn?.cacheRead ?? ctx.cached }
-  const model = agent?.models?.map((m) => (typeof m === 'string' ? { id: m, label: m } : m)).find((m) => m.id === session.model)
+  // the chat's model, else what the CLI reported it runs (the agent default)
+  const modelId = session.model || session.cliModel
+  const model = agent?.models?.map((m) => (typeof m === 'string' ? { id: m, label: m } : m)).find((m) => m.id === modelId)
   const compress = agent?.compressCommand
   const sendCompress = async () => {
     if (!compress) return
@@ -55,7 +57,7 @@ export function ContextRing({ session, running }: { session: Session; running: b
             </dd></>
           )}
           {session.tokensIn + session.tokensOut > 0 && <><dt>Всего в сессии</dt><dd className="num">вход {tokens(session.tokensIn)}, выход {tokens(session.tokensOut)}</dd></>}
-          <dt>Модель</dt><dd>{model?.label ?? session.model ?? agent?.label ?? session.agent} · окно {tokens(limit)}</dd>
+          <dt>Модель</dt><dd>{model?.label ?? modelId ?? 'по умолчанию CLI'} · окно {tokens(limit)}</dd>
         </dl>
         {share > 0.5 && compress && (
           <Button size="sm" busy={busy} disabled={running || busy} onClick={() => void sendCompress()} tip={running ? 'Дождитесь конца хода' : `Отправить агенту ${compress}`}>Сжать контекст</Button>

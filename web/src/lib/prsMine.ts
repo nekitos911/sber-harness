@@ -9,7 +9,8 @@ export interface PrItem {
   reviewers: { name: string; status: string }[]; mergeable: boolean | null; updatedAt: number; createdAt?: number
   taskId?: string | null; taskKey?: string | null; sessionId?: string | null; byAgent?: boolean
 }
-export interface PrList { me?: string | null; items: PrItem[]; errors: { repo: string; error: string }[]; at: number }
+// meSource: where my login came from — 'os' is a guess by the OS account name (Settings → PR → «Ваш логин» fixes it)
+export interface PrList { me?: string | null; meSource?: 'config' | 'tool' | 'os' | null; items: PrItem[]; errors: { repo: string | null; error: string }[]; at: number }
 /** null = loading; 'off' = no PR server on this machine; { error } = could not ask. */
 export type PrListState = PrList | null | 'off' | { error: string }
 

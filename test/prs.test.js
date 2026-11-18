@@ -1,3 +1,4 @@
+import os from 'node:os';
 // «Пулл-реквесты»: every open PR of mine across the registered repositories (sourcecontrol through the fixture stub),
 // linked to tasks and agents; the PR integration turns itself on when the console MCP server exists (enabled "auto").
 import { test, before, after } from 'node:test';
@@ -62,6 +63,7 @@ test('GET /api/prs?scope=mine: my open PRs of every repository, linked to tasks;
   ]);
   const r = (await h.api('GET', '/api/prs?scope=mine&refresh=1')).body;
   assert.equal(r.me, 'ivanov');
+  assert.equal(r.meSource, 'tool');
   assert.deepEqual(r.errors, []);
   assert.deepEqual(r.items.map((i) => [i.repo, i.index]).sort(), [['PROJ/demo-service', 561], ['PROJ/ledger-service', 12]]);
   const linked = r.items.find((i) => i.index === 561);
@@ -88,4 +90,23 @@ test('scope=tracked: PRs of task branches and worktrees, whoever opened them', a
   const r = (await h.api('GET', '/api/prs?scope=tracked&refresh=1')).body;
   assert.deepEqual(r.items.map((i) => [i.index, i.taskId]), [[580, task.id]]);
   assert.equal((await h.api('GET', '/api/prs?scope=все')).status, 400);
+});
+
+test('prMe: integrations.pr.me wins; a failing git_get_user falls back to the OS account name with a warning', async () => {
+  const { prMe } = await import('../server/integrations/pr.js');
+  const cfg = (pr) => ({ integrations: { pr: { meTool: 'git_get_user', ...pr } } });
+  const failing = { callTool: async () => { throw new Error('no such tool'); } };
+  assert.deepEqual(await prMe({ config: cfg({ server: 'sc-a', me: 'petrov' }), mcp: failing }), { login: 'petrov', source: 'config' });
+  const who = await prMe({ config: cfg({ server: 'sc-b' }), mcp: failing });
+  assert.deepEqual([who.login, who.source], [os.userInfo().username, 'os']);
+  assert.match(who.warning, /no such tool .*integrations.pr.me/);
+});
+
+test('settings: integrations.pr.me is saved, validated and used by /api/prs', async () => {
+  assert.equal((await h.api('PUT', '/api/settings', { integrations: { pr: { me: 42 } } })).status, 400);
+  assert.equal((await h.api('PUT', '/api/settings', { integrations: { pr: { me: ' petrov ' } } })).status, 200);
+  assert.equal((await h.api('GET', '/api/settings')).body.integrations.pr.me, 'petrov');
+  const r = (await h.api('GET', '/api/prs?scope=mine&refresh=1')).body;
+  assert.deepEqual([r.me, r.meSource], ['petrov', 'config']);
+  assert.equal((await h.api('PUT', '/api/settings', { integrations: { pr: { me: null } } })).status, 200);
 });

@@ -276,12 +276,11 @@ export async function startServer(opts = {}) {
     const data = (async () => {
       const errors = [];
       let me = null;
+      let meSource = null;
       if (scope === 'mine') {
-        try {
-          me = await prMe({ config, mcp });
-        } catch (e) {
-          return { me: null, items: [], errors: [{ repo: null, error: e.message }], at: Date.now() };
-        }
+        const who = await prMe({ config, mcp });
+        ({ login: me, source: meSource } = who);
+        if (who.warning) errors.push({ repo: null, error: who.warning });
       }
       const slots = limiter(4);
       const lists = await Promise.all(db.workspaces.filter((w) => w.isGit && !w.kind).map((ws) => slots(async () => {
@@ -296,7 +295,7 @@ export async function startServer(opts = {}) {
         }
       })));
       const items = lists.flat().sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
-      return { me, items, errors, at: Date.now() };
+      return { me, meSource, items, errors, at: Date.now() };
     })();
     prsCache.set(scope, { at: Date.now(), data });
     data.catch(() => prsCache.delete(scope));
@@ -393,7 +392,7 @@ export async function startServer(opts = {}) {
       integrations: {
         tasks: { enabled: !!t.enabled, space: t.space ?? null, urlTemplate: t.urlTemplate ?? '', statusMap: t.statusMap || {}, closedStatuses: t.closedStatuses || [], onStartTransition: t.onStartTransition ?? null },
         // enabled: true | false | "auto" (on when the console MCP server `server` exists); active = the effective state
-        pr: { enabled: pr.enabled ?? 'auto', active: prEnabled(config, mcp), limits: pr.limits || null },
+        pr: { enabled: pr.enabled ?? 'auto', active: prEnabled(config, mcp), me: pr.me ?? null, limits: pr.limits || null },
       },
     };
   }
@@ -556,6 +555,10 @@ export async function startServer(opts = {}) {
     if (i.pr !== undefined) {
       if (!isObj(i.pr) || ('enabled' in i.pr && typeof i.pr.enabled !== 'boolean' && i.pr.enabled !== 'auto')) fail(400, 'integrations.pr.enabled: true, false или "auto"');
       if ('enabled' in i.pr) out.pr = { enabled: i.pr.enabled };
+      if ('me' in i.pr) {
+        if (i.pr.me !== null && (typeof i.pr.me !== 'string' || i.pr.me.trim().length > 100)) fail(400, 'integrations.pr.me: логин (строка до 100 символов) или null');
+        out.pr = { ...out.pr, me: i.pr.me?.trim() || null };
+      }
     }
     return out;
   }
