@@ -287,7 +287,7 @@ function AgentSection({ id, form, update, fieldError, primary }: SectionProps & 
     <section className="settings-section" id={primary ? 'set-gigacode' : `set-${id}`}>
       <h2>{label}{!primary && <span className="mono muted"> {id}</span>}</h2>
       {primary && <AgentStatus id={id} />}
-      <div className="set-rows">
+      {!primary && <div className="set-rows">
         <Row label="Модель по умолчанию" hint="Если пусто, модель выбирает сам CLI.">
           <ModelPicker variant="field" agentId={id} label="Модель по умолчанию" value={a.model} onChange={(m) => set({ model: m })} placement="bottom-start" emptyText="как в CLI" />
         </Row>
@@ -297,7 +297,7 @@ function AgentSection({ id, form, update, fieldError, primary }: SectionProps & 
               options={a.approvalModes.map((m) => ({ value: m, label: modeShort(m), hint: modeLabels[m] ?? m, tone: FULL_ACCESS.has(m) ? 'access' : undefined }))} />
           </Row>
         )}
-      </div>
+      </div>}
 
       {primary && (
         <div className="set-rows">
@@ -349,16 +349,7 @@ function AgentSection({ id, form, update, fieldError, primary }: SectionProps & 
       <div className="set-rows">
         <CommandRow id={id} a={a} set={set} error={fieldError('command')} />
         {primary && reworkOn && <ReworkRow a={a} set={set} />}
-        {primary && acpOn && (
-          <Row label={<>Как запускать агента <span className="badge-verify">ACP — экспериментально</span></>}
-            hint={<>
-              <span className="set-line">Каждое сообщение — новый запуск: как <code>gigacode -p</code> в консоли. Проверено, но каждый ответ начинается с запуска MCP (10–60 с), а запрещённые команды отклоняются сразу — их можно разрешить и повторить.</span>
-              <span className="set-line">Процесс на весь чат: как интерактивный <code>gigacode</code>. MCP запускаются один раз, ответы быстрее, агент ждёт ваше разрешение. Ещё не проверено с GigaCode — попробуйте на тестовом чате; если что-то не так, верните первый вариант.</span>
-            </>} wide>
-            <Segmented label="Как запускать агента" value={a.transport ?? 'headless'} onChange={(v) => set({ transport: v })}
-              options={[{ value: 'headless', label: 'Новый запуск на сообщение' }, { value: 'acp', label: 'Процесс на весь чат (ACP)' }]} />
-          </Row>
-        )}
+        {/* «Как запускать агента» itself is in «Основное» */}
         {primary && acpOn && a.transport === 'acp' && (
           <Row label="Простой выгружает процесс через" hint="Неактивный чат освобождает память; следующее сообщение снова запустит процесс.">
             <Select label="Простой выгружает процесс через" value={!a.acpIdleMin ? 'never' : String(a.acpIdleMin)}
@@ -642,17 +633,6 @@ function TrackerSection({ form, update, fieldError }: SectionProps) {
     <section className="settings-section" id="set-tracker">
       <h2>Трекер (onework)</h2>
       <div className="set-rows">
-        {t && (
-          <Row label="Импорт задач" hint="Задачи пространства появляются на доске; статус в трекере меняется только явно.">
-            <Switch label="Импорт задач из трекера" checked={!!t.enabled} onChange={(v) => set({ enabled: v })} />
-          </Row>
-        )}
-        {t && (
-          <Row label="Пространства" hint="Коды пространств в трекере: задачи на вас импортируются из каждого. Enter или запятая — добавить." error={fieldError('space')}>
-            <ChipsInput label="пространство" values={spaces}
-              onChange={(v) => { const up = [...new Set(v.map((x) => x.trim().toUpperCase()).filter(Boolean))]; set({ space: up.length === 1 ? up[0] : up }) }} />
-          </Row>
-        )}
         <Row label="Синхронизация" hint="Как часто перечитывать задачи из трекера." error={fieldError('sync')}>
           <Select label="Интервал синхронизации" value={String(refresh)} onChange={(v) => update({ ...form, tasks: { ...form.tasks, refreshSec: Number(v) } })}
             options={[...SYNC, ...(SYNC.some((s) => s.v === refresh) ? [] : [{ v: refresh, l: `каждые ${refresh} с` }])].map((s) => ({ value: String(s.v), label: s.l }))} />
@@ -791,36 +771,38 @@ function OrchestrationSection({ form, update }: Omit<SectionProps, 'fieldError'>
   const agentId = mainAgent(form)
   return (
     <section className="settings-section" id="set-orchestration">
-      <h2>Оркестрация</h2>
+      <h2>Помощники агента</h2>
       <div className="set-rows">
-        <Row label="Субагенты отдельными чатами (через harness)" wide
-          hint="Агент сам запускает субагентов через harness: каждый откроется отдельным чатом. Если модель всё же использует встроенного субагента, он покажется чатом только для чтения.">
-          <Switch label="Субагенты отдельными чатами" checked={(o.subagents ?? 'harness') === 'harness'}
+        <Row label="Показывать помощников отдельными чатами"
+          hint="Когда агент зовёт на помощь другого агента (ревью, исследование кода), тот открывается здесь отдельным чатом: видно, что он делает, ему можно ответить или остановить. Для этого агенту нужен навык ниже.">
+          <Switch label="Показывать помощников отдельными чатами" checked={(o.subagents ?? 'harness') === 'harness'}
             onChange={(v) => update({ ...form, orchestration: { ...o, subagents: v ? 'harness' : 'builtin' } })} />
           {(o.subagents ?? 'harness') === 'harness' && (
-            <InstallFile id={agentId} kind="skills" name="harness-orchestration" target="~/.gigacode/skills/harness-orchestration/SKILL.md" title="навык harness-orchestration" action="Установить навык в GigaCode" />
+            <InstallFile id={agentId} kind="skills" name="harness-orchestration" target="~/.gigacode/skills/harness-orchestration/SKILL.md" title="навык для помощников" action="Установить навык" />
           )}
         </Row>
         {o.subagentRetention !== undefined && (
-          <Row label="Хранить завершённых субагентов в боковой панели" hint="Временные субагенты (в том же рабочем дереве) убираются после завершения; дочерние оркестраторы в других деревьях остаются. Чат убранного открывается из карточки в чате оркестратора.">
-            <Switch label="Хранить завершённых субагентов" checked={o.subagentRetention === 'keep'}
+          <Row label="Оставлять закончивших помощников в боковой панели" hint="Иначе закончивший помощник уходит в архив; его чат открывается по ссылке в чате агента.">
+            <Switch label="Оставлять закончивших помощников" checked={o.subagentRetention === 'keep'}
               onChange={(v) => update({ ...form, orchestration: { ...o, subagentRetention: v ? 'keep' : 'archive' } })} />
           </Row>
         )}
-        {o.maxSubagentDepth !== undefined && (
-          <Row label="Глубина субагентов" hint="Может ли субагент запускать своих субагентов. 1 — только оркестратор.">
-            <Select label="Глубина субагентов" value={String(o.maxSubagentDepth)} onChange={(v) => update({ ...form, orchestration: { ...o, maxSubagentDepth: Number(v) } })}
-              options={[{ value: '1', label: '1' }, { value: '2', label: '2' }, { value: '3', label: '3' }]} />
-          </Row>
-        )}
-        <Row label="Ревью" wide hint={mode === 'builtin'
-          ? 'Для /full-task оставьте «Внутри агента»: команда сама делает кросс-модельное ревью, харнесс показывает его в карточках субагентов и во вкладке «Вердикты».'
-          : '«Через харнесс»: для задач без такой команды. Ревью идёт отдельным чатом-ревьюером другой моделью.'}>
-          <Segmented label="Режим ревью" value={mode} onChange={(v) => update({ ...form, orchestration: { ...o, reviewMode: v } })}
-            options={[{ value: 'builtin', label: 'Внутри агента (как в CLI)' }, { value: 'harness', label: 'Через харнесс (отдельные чаты)' }]} />
+        <Row label="Ревью готовой задачи" wide hint={mode === 'builtin'
+          ? 'Агент проверяет свою работу сам (или его команда для задач, если она это умеет).'
+          : 'Когда агент сдал задачу, её проверяет отдельный агент-ревьюер другой моделью, в своём чате; замечания уходят обратно агенту.'}>
+          <Segmented label="Ревью готовой задачи" value={mode} onChange={(v) => update({ ...form, orchestration: { ...o, reviewMode: v } })}
+            options={[{ value: 'builtin', label: 'Агент сам' }, { value: 'harness', label: 'Отдельный ревьюер' }]} />
         </Row>
       </div>
       <Advanced id="orchestration">
+        {o.maxSubagentDepth !== undefined && (
+          <div className="set-rows">
+            <Row label="Помощники помощников" hint="Может ли помощник звать своих помощников. 1 — помощников зовёт только сам агент.">
+              <Select label="Глубина помощников" value={String(o.maxSubagentDepth)} onChange={(v) => update({ ...form, orchestration: { ...o, maxSubagentDepth: Number(v) } })}
+                options={[{ value: '1', label: '1' }, { value: '2', label: '2' }, { value: '3', label: '3' }]} />
+            </Row>
+          </div>
+        )}
         {form.session?.stallSec !== undefined && (
           <div className="set-rows">
             <Row label="«Нет вывода» через" hint="Работающий агент без единого события дольше этого считается зависшим: красный значок и предложение остановить.">
@@ -830,8 +812,6 @@ function OrchestrationSection({ form, update }: Omit<SectionProps, 'fieldError'>
           </div>
         )}
         {mode === 'harness' && <div className="set-rows"><ReviewRows form={form} update={update} /></div>}
-        <p className="set-note">Ручная команда /full-task-harness больше не нужна: субагенты идут через harness автоматически. Её можно установить для старых сценариев.</p>
-        <InstallFile id={agentId} kind="commands" name="full-task-harness" target="~/.gigacode/commands/full-task-harness.md" title="команда /full-task-harness" action="Установить в ~/.gigacode/commands" />
       </Advanced>
     </section>
   )
@@ -975,7 +955,6 @@ function ProjectsFolder({ value, onChange }: { value: string | null; onChange: (
 
 function GeneralSection({ form, update }: Omit<SectionProps, 'fieldError'>) {
   const labels = useStore((s) => s.agents)
-  const foldersOn = useFeature('folders')
   const scheme = useStore((s) => s.scheme)
   const [on, setOn] = useState(desktopNotifyOn)
   const supported = 'Notification' in window
@@ -989,11 +968,6 @@ function GeneralSection({ form, update }: Omit<SectionProps, 'fieldError'>) {
             options={Object.keys(form.agents).filter((k) => form.agents[k].enabled !== false || k === form.defaultAgent)
               .map((k) => ({ value: k, label: labels.find((x) => x.id === k)?.label ?? k, hint: k }))} />
         </Row>
-        {foldersOn && form.workspaces !== undefined && ( // only when the server's settings carry it (else a save would drop it)
-          <Row label="Папка с проектами" hint="«Все проекты» в боковой панели и место нового чата, когда ничего не выбрано.">
-            <ProjectsFolder value={form.workspaces?.root ?? null} onChange={(root) => update({ ...form, workspaces: { ...form.workspaces, root } })} />
-          </Row>
-        )}
         {form.sessions !== undefined && (
           <Row label="Автоархив неактивных чатов через" hint="Чаты без активности дольше этого уходят в архив (история сохраняется, вернуть — на экране «Агенты»).">
             <Select label="Автоархив неактивных чатов" value={!form.sessions.autoArchiveDays ? 'off' : String(form.sessions.autoArchiveDays)}
@@ -1086,7 +1060,7 @@ export function CliPathFix({ id, error, onChecked, initial }: { id: string; erro
   }
   return (
     <div className="cli-fix">
-      {error && <p className="status-error">{/not found|не найден/i.test(error) ? <>Не найден {exe}{quoted && <>: <span className="mono">{quoted}</span></>}</> : 'CLI не запускается.'}</p>}
+      {error && <p className="status-error">{/not found|не найден/i.test(error) ? <>Не найден {exe}. Укажите, где он лежит, и нажмите «Проверить»:</> : 'Агент не запускается: проверьте путь и нажмите «Проверить».'}</p>}
       <div className="cli-fix-row">
         <Input mono aria-label="Путь к gigacode.cmd" value={path} placeholder="C:/Program Files/.gigacode/bin/gigacode.cmd" onChange={(e) => setPath(e.target.value)} />
         <Button disabled={busy || !path.trim()} onClick={() => void check()}>{busy ? 'Проверяем…' : 'Проверить'}</Button>
