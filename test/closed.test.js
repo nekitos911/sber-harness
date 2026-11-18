@@ -49,13 +49,17 @@ test('created goes to «К работе»; a new closed issue is not imported', 
 });
 
 test('closed later: never taken → hidden (once, logged); taken into work → done, not hidden', async () => {
-  tasks.update(byKey('PROJ-3').id, { takenAt: Date.now() }, 'harness');
+  tasks.update(byKey('PROJ-3').id, { takenAt: Date.now(), status: 'review', statusManual: true }, 'harness'); // a hand-placed column
   listing([['PROJ-1', 'Новая', 'created'], ['PROJ-2', 'Пока открыта', 'closed'], ['PROJ-3', 'Взята', 'closed']]);
   await sync();
   const two = byKey('PROJ-2');
   const three = byKey('PROJ-3');
   assert.deepEqual([two.hidden, two.log.at(-1).text], [true, 'Закрыта в трекере — скрыта с доски']);
-  assert.deepEqual([three.hidden, three.status], [false, 'done']);
+  assert.deepEqual([three.hidden, three.status, three.log.at(-1).text], [false, 'done', 'Закрыта в трекере — перенесена в «Готово»'], 'closing wins over a hand-placed column');
+  const open = byKey('PROJ-1');
+  tasks.update(open.id, { status: 'review', statusManual: true }, 'harness');
+  await sync();
+  assert.equal(byKey('PROJ-1').status, 'review', 'any other tracker status keeps the hand-placed column');
   const logs = two.log.length;
   await sync();
   assert.equal(byKey('PROJ-2').log.length, logs, 'hidden once');

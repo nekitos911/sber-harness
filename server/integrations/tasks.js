@@ -57,7 +57,8 @@ const closedSet = (cfg) => new Set((cfg?.closedStatuses ?? DEFAULT_CLOSED_STATUS
 
 /**
  * A task closed in the tracker: never taken into work (no takenAt, no assignee, no worktrees) → hidden from the board
- * (once, with a log line); taken into work → done (a human-pinned column stays). Never auto-hidden once taken.
+ * (once, with a log line); taken into work → done, even from a hand-placed column (closing in the tracker wins). Never
+ * auto-hidden once taken.
  */
 function settleClosed(tasks, t) {
   const taken = t.takenAt || t.assigneeSessionId || t.worktrees?.length;
@@ -67,8 +68,9 @@ function settleClosed(tasks, t) {
     tasks.addLog(t.id, 'harness', 'Закрыта в трекере — скрыта с доски', 'status', { externalStatus: t.externalStatus });
     return 'updated';
   }
-  if (t.status === 'done' || t.statusManual) return null;
+  if (t.status === 'done') return null;
   tasks.update(t.id, { status: 'done' }, 'harness');
+  tasks.addLog(t.id, 'harness', 'Закрыта в трекере — перенесена в «Готово»', 'status', { externalStatus: t.externalStatus });
   return 'updated';
 }
 
