@@ -1372,6 +1372,25 @@ With `via: "agent"`:
   an explicit request — the instruction says it is one.
 Feature flag `git-via-agent`.
 
+## CLI chats are ordinary chats (no separate screen)
+
+The user wants dialogs started in the GigaCode CLI to be continuable in the UI and never lost — not a separate list.
+- Adoption: on startup, every 60 s while a UI client is connected, and on demand (`POST /api/history/adopt`), the
+  history reader (server/history.js) scans CLI chat records updated within `history.adoptDays` (default 14) and, for each
+  real chat (≥ 1 user message; not `*.runtime.json`; not owned by a harness session — its sessionId is no harness
+  session's externalSessionId; not a service run — cwd outside the harness dataDir, first user text not a helper prompt
+  (/models, /context, /compress, HARNESS_GENERATE_MESSAGE); title without the harness preamble), creates or refreshes a
+  harness chat session `{ origin: 'cli', externalSessionId: <record id>, cwd, title (first meaningful line ≤ 80),
+  lastActivityAt: record updated, status: idle, agent: the CLI's agent }` grouped by worktreePath/workspace like any
+  session. Archived or deleted adopted sessions are remembered (`db.cliIgnored`) and never re-adopted.
+- Transcript: until the first harness turn, `GET /api/sessions/:id/messages` serves the record's messages (mapped like
+  `/api/history/:agent/:id/messages`), refreshed when the record's mtime changes; the first harness turn imports them
+  into the harness transcript (`cliImportedAt`) and continues with `--resume <id>` as any chat. Later CLI-side activity
+  on an idle adopted session (record mtime newer than the harness transcript's last message) appends the new record
+  messages before the next harness turn.
+- Feature flag `cli-adopt`; config `history.adopt: true`, `history.adoptDays: 14`. `/api/history` (all/per-folder) stays
+  for the «История» tab (older chats).
+
 ## Handoff: one input, the orchestrator decides (the main scenario)
 
 The user's CLI habit: in the projects folder, `/full-task <task link> [notes]` or `/full-task <what to do>`, and the agent

@@ -59,35 +59,23 @@ what remains open.
 
 ---
 
-## Prompt: finish the local «CLI» screen (CLI chats) and bring it to GitHub
+## Prompt: drop the local «CLI» screen (CLI chats are now ordinary chats)
 
 ```text
-In sber-harness on this machine I added a «CLI» screen (a list of GigaCode chats started in the terminal). Finish it and
-bring it in line with upstream so it does not diverge from GitHub.
-
-1. git status / git log: commit your local changes (the CLI screen) to a separate branch, local/cli-screen. Then
-   git checkout main && git pull, and rebase your branch onto main. Upstream has changed a lot: sidebar, «Главная» /
-   handoff, the «Изменения» panel, tooltips, history. On conflicts, keep upstream everywhere except the CLI screen itself.
-2. Build the screen on top of the existing history API (server/history.js, GET /api/history, feature cli-history),
-   which the worktree's «История» tab already uses. Do not keep a parallel reader. Extend the API: GET /api/history?all=1&q=&offset=&limit=
-   (all folders, server-side search, paging), with a test.
-3. Clean up the list (in the reader, with tests):
-   - only real chat records: session files with at least one user message; *.runtime.json and empty ones are not listed;
-   - chats the harness started itself (the record's sessionId = some harness session's externalSessionId) are not
-     shown as CLI chats: they already exist in the harness;
-   - service runs are not shown: records whose cwd is inside the harness's data/, the model catalog /models, message
-     generation (the HARNESS_GENERATE_MESSAGE marker), /context and /compress probes.
-4. Titles: remove the harness preamble from the first message (lines starting with "[harness]" and the block
-   "Ты работаешь внутри harness…"); title = the first meaningful line, at most 80 characters.
-5. Grouping: by project (cwd → registered repository; the projects folder → «Все проекты»), inside a group
-   «Сегодня / Вчера / Ранее»; a project filter next to the search.
-6. Actions: «Продолжить» opens the existing linked harness chat if there is one, otherwise creates one (as now). A record
-   without a folder offers «Продолжить в папке…» (FolderPicker) instead of a dead row.
-7. The «CLI» menu item has no counter (we keep badges only for things that need the user's action); allowed: a dot
-   when new CLI chats appeared since the last visit (remember the time in localStorage).
-8. Instead of the 200 cap: «Показать ещё» (offset/limit) and server-side search.
-9. npm test and npm run build green → commit → merge into main → git push.
-Report: what changed, which records are now filtered and how many remain, test results.
+In sber-harness on this machine I added a separate «CLI» screen. It is no longer needed: upstream now pulls CLI chats into
+the sidebar as ordinary chats (feature cli-adopt: under their project/worktree, continued by simply writing a message
+via --resume, not lost after restarts).
+1. git status: save the local CLI screen to a branch (git switch -c local/cli-screen && git add -A && git commit
+   -m "local CLI screen"), then git switch main.
+2. git pull. If main has local commits with the CLI screen, return main to origin/main
+   (git reset --hard origin/main, ONLY after the branch from step 1 is saved). Do not lose other local edits:
+   show them to me before the reset.
+3. npm install && npm test && npm run build, restart the harness.
+4. Check: your recent GigaCode chats from the terminal are visible in the sidebar under their projects (a small
+   terminal icon); open one, write "продолжи": the answer continues the same session with context. Service runs
+   (/models, /context, the harness's own chats) are not in the list. If the CLI chat record format differs and nothing
+   is adopted, fix only server/history.js (the reader and the filters) with a test, then commit and push.
+Report: how many CLI chats were adopted, whether continuation worked, what was fixed.
 ```
 
 ## Prompt for updating an existing installation (the machine already has the harness)
