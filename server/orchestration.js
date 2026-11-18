@@ -287,7 +287,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
       try {
         s = await sessions.create({
           kind: 'chat', agent, cwd, workspaceId: ws?.id, title, role: 'worker',
-          parentId: caller?.id ?? null, taskId: task?.id ?? null, model: o.model, branch, inWorktree, includeDirs, autoIncludeDirs: true, atRoot: o.atRoot === true,
+          parentId: caller?.id ?? null, taskId: task?.id ?? null, model: o.model, ...(o.approvalMode ? { approvalMode: o.approvalMode } : {}), branch, inWorktree, includeDirs, autoIncludeDirs: true, atRoot: o.atRoot === true,
           persistent: !!caller && (placement !== 'current' || !task),
         });
         sessions.update(s.id, { placement, ...(auto ? { placementAuto: true } : {}), ...(name ? { worktreeName: name } : {}), ...(o.workspace ? { placementWorkspace: o.workspace } : {}), ...(o.retryOf ? { retryOf: o.retryOf } : {}) });
@@ -686,6 +686,8 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
         tools,
       ].join('\n');
     }
+    // «Передать агенту» with free text: a chat in the projects folder picks the repositories itself
+    if (s.role === 'solo' && s.atRoot) return `[harness] Ты в папке со всеми проектами (${s.cwd}). Определи затронутые репозитории по SDD/описанию задачи (или спроси пользователя); рабочие деревья создавай по правилам своей команды.`;
     if (s.role !== 'worker') return '';
     if (s.ephemeral) {
       const parent = s.parentId && sessions.find(s.parentId);
@@ -1370,7 +1372,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
      * projects folder; else a HIGH-confidence suggestion; else the projects folder (never a low-confidence guess); with
      * no projects folder the only repository. A parent of subtasks is coordinated as before.
      */
-    async start(taskId, { agent, notes, workspaceId, location } = {}) {
+    async start(taskId, { agent, notes, workspaceId, location, approvalMode, model } = {}) {
       const task = tasks.get(taskId);
       const live = activeWorker(task);
       if (live) return { ...live, jumped: true };
@@ -1389,7 +1391,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
         fail(400, 'нет папки проектов (workspaces.root) — выберите репозиторий для задачи');
       }
       tasks.update(task.id, { location: 'root' }, 'harness');
-      return startWorker(task, { agent: a, cwd: root.path, worktree: 'current', atRoot: true, notes }, null);
+      return startWorker(task, { agent: a, cwd: root.path, worktree: 'current', atRoot: true, notes, approvalMode, model }, null);
     },
 
     /**

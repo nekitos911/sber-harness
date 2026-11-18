@@ -1379,6 +1379,9 @@ picks the repository itself. `POST /api/handoff { input, notes?, agent?, approva
   text) whose first prompt = `agents.<id>.freePromptTemplate` (gigacode default `"/full-task {text}{notes}"`,
   generic `"{text}{notes}"`; same template rules, slash first) + the root preamble (pick repos from the SDD/task or ask;
   create worktrees by your own rules).
+- Text next to the key/link joins `notes` («<link> и проверь кеш» → notes «и проверь кеш»). A key/link the tracker cannot
+  import (unknown, tracker down) falls back to the free-text chat with `trackerError` in the response. `approvalMode` /
+  `model` apply to the started session. Job steps «Ищу задачу в трекере», «Запускаю агента».
 - No projects root → 400 «Укажите папку с проектами в Настройках».
 `GET /api/now` is NOT needed — the UI derives «Сейчас» from sessions + tasks.
 

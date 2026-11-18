@@ -12,8 +12,8 @@ import { loadConfig, CODE_ROOT, deepMerge, readJsonFile, findLiteralSecrets, exp
 import { createStore, writeAtomic } from './store.js';
 import { createBus } from './bus.js';
 import { createTasks, STATUSES } from './tasks.js';
-import { createSessions, newId } from './sessions.js';
-import { createOrchestration, commonDir } from './orchestration.js';
+import { createSessions, newId, titleFrom } from './sessions.js';
+import { createOrchestration, commonDir, render } from './orchestration.js';
 import * as git from './git.js';
 import * as wfs from './fs.js';
 import { createMcpManager, loadSecrets, secretsFile, serverDefs } from './mcp-client.js';
@@ -39,11 +39,12 @@ const NO_BUILD_HTML = '<!doctype html><meta charset="utf-8"><title>Harness</titl
 const GRADES = ['default', 'fast', 'review', 'explore'];
 // optional API groups this server implements (docs/ARCHITECTURE.md "Feature flags"); a flag ships with its route
 export const FEATURES = ['branches', 'fs-search', 'pr-status', 'agent-info', 'models-refresh', 'tracker-links', 'board-columns', 'review-loop',
-  'subagents', 'virtual-sessions', 'worker-run', 'skills-install', 'demo', 'worktree-meta', 'open', 'sdd', 'health', 'folders', 'include-dirs', 'questions', 'permissions', 'activity', 'rework', 'fs-raw', 'tracker-import', 'pr-decline', 'task-suggest', 'recovery', 'acp', 'worktree-lazy', 'cli-history', 'prs-mine', 'git-generate', 'git-via-agent', 'git-stage'];
+  'subagents', 'virtual-sessions', 'worker-run', 'skills-install', 'demo', 'worktree-meta', 'open', 'sdd', 'health', 'folders', 'include-dirs', 'questions', 'permissions', 'activity', 'rework', 'fs-raw', 'tracker-import', 'pr-decline', 'task-suggest', 'recovery', 'acp', 'worktree-lazy', 'cli-history', 'prs-mine', 'git-generate', 'git-via-agent', 'git-stage', 'handoff'];
 // titles of operations the UI may follow by sending x-job-id (WS { t: 'job' } frames)
 const JOB_TITLES = {
   'POST /api/tasks/sync': 'Синхронизация с трекером',
   'POST /api/tasks/:id/start': 'Взять в работу',
+  'POST /api/handoff': 'Передать агенту',
   'POST /api/tasks/:id/rework': 'Доработка',
   'POST /api/tasks/:id/port': 'Перенос в другую ветку',
   'POST /api/tasks/:id/import-children': 'Импорт подзадач',
@@ -1196,6 +1197,40 @@ export async function startServer(opts = {}) {
   route('POST', '/api/tasks/:id/assign', ({ params, body }) => {
     check(body, { agent: 'string?', workspaceId: 'string?', cwd: 'string?', worktree: 'string?', sessionId: 'string?' });
     return orch.assign(params.id, body);
+  });
+  /**
+   * «Передать агенту»: one input. A tracker key/link (and a working tracker) → that task, started at the projects root
+   * (jumped when its worker already runs); anything else → a chat at the projects root with freePromptTemplate.
+   */
+  route('POST', '/api/handoff', async ({ body }) => {
+    check(body, { input: 'string', notes: 'string?', agent: 'string?', approvalMode: 'string?', model: 'string?' });
+    const input = body.input.trim() || fail(400, 'нужен текст или ссылка на задачу');
+    const root = db.workspaces.find((w) => w.kind === 'root') || fail(400, 'Укажите папку с проектами в Настройках');
+    const agent = body.agent || config.defaultAgent;
+    const agentCfg = config.agents[agent] || fail(400, `неизвестный агент «${agent}»`);
+    const ref = input.match(/https?:\/\/\S+/)?.[0] || input.match(/[A-Z][A-Z0-9_]+-\d+/)?.[0];
+    // the rest of the input next to the key/link is a note for the agent («/full-task <link> поправь ещё X»)
+    const notes = [ref ? input.replace(ref, '').trim() : '', body.notes?.trim()].filter(Boolean).join(' ');
+    let trackerError = null;
+    let task = null;
+    if (ref && config.integrations.tasks?.enabled) {
+      jobStep('Ищу задачу в трекере');
+      // not in the tracker / tracker down: the agent still gets the text as is (it can read the link itself)
+      task = await importIssue({ config, mcp, tasks, ref }).catch((e) => { trackerError = e.message; return null; });
+    }
+    jobStep('Запускаю агента');
+    if (task) {
+      const s = await orch.start(task.id, { agent, notes, location: 'root', approvalMode: body.approvalMode, model: body.model });
+      if (!s.jumped) await trackerOnStart(tasks.get(task.id));
+      return { session: s, task: tasks.get(task.id) };
+    }
+    const tpl = agentCfg.freePromptTemplate ?? launchers[agentCfg.launcher]?.defaults.freePromptTemplate ?? '{text}{notes}';
+    const prompt = render(tpl, { text: input, notes: body.notes?.trim() ? ` ${body.notes.trim()}` : '' });
+    const s = await sessions.create({
+      kind: 'chat', agent, cwd: root.path, title: titleFrom(input) || 'Задача', atRoot: true, prompt,
+      ...(body.approvalMode ? { approvalMode: body.approvalMode } : {}), ...(body.model ? { model: body.model } : {}),
+    });
+    return { session: s, task: null, ...(trackerError ? { trackerError } : {}) };
   });
   route('POST', '/api/tasks/:id/start', async ({ params, body }) => {
     check(body, { agent: 'string?', notes: 'string?', workspaceId: 'string?', location: 'string?' });
