@@ -1,8 +1,8 @@
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
 import { ArrowUpToLine, Ellipsis, GitBranch, ExternalLink, EyeOff, GitMerge, Lock, Pencil, Play, Plus, Send, SquareArrowOutUpRight, Trash2, UserPlus, Wrench, X } from 'lucide-react'
-import { api, ApiError, errorText, tryApi } from '../../api'
+import { api, ApiError, errorText, qs, tryApi } from '../../api'
 import { getState, openDialog, openSession, openWorktree, setState, toast, upsert, useFeature, useStore, without, upsertSession } from '../../store'
-import { COLUMNS, fullTime, PRIORITY, relTime } from '../../lib/format'
+import { COLUMNS, fullTime, PRIORITY, relTime, statusLabel } from '../../lib/format'
 import { isImported, pendingDeps, taskKey } from '../../lib/tasks'
 import { useNow } from '../../lib/useNow'
 import { loadDraft, saveDraft } from '../../lib/draft'
@@ -12,7 +12,7 @@ import { Markdown } from '../Markdown'
 import { ChipsInput } from '../ChipsInput'
 import { Checkbox, Disclosure, IconButton, MenuButton, Segmented, Select, SuggestInput } from '../ui'
 import { useSettings } from '../../lib/agents'
-import { ReworkPopover, StartPopover } from './Rework'
+import { HandoffPopover, ReworkPopover, StartPopover } from './Rework'
 import { PrChip } from '../PrChip'
 import { openPrSettings, usePr } from '../../lib/pr'
 import type { BoardCtx } from './TaskCard'
@@ -69,7 +69,8 @@ export function TaskDrawer({ task, ctx, onClose }: { task: Task; ctx: BoardCtx; 
   const blocked = pendingDeps(task, ctx.byId)
   const reworkOn = useFeature('rework')
   const reworkable = reworkOn && !!session && (session.status !== 'running' || task.status === 'review')
-  const [pop, setPop] = useState<'start' | 'rework' | null>(null)
+  const [pop, setPop] = useState<'start' | 'rework' | 'handoff' | null>(null)
+  const startRef = useRef<HTMLButtonElement>(null)
   const primaryRef = useRef<HTMLButtonElement>(null)
   const patch = (fields: Partial<Task>) => patchTask(task.id, fields)
 
@@ -110,6 +111,7 @@ export function TaskDrawer({ task, ctx, onClose }: { task: Task; ctx: BoardCtx; 
           </button>
         )}
         <TitleField id={titleId} task={task} />
+        {(task.externalStatus || imported) && <span className="chip drawer-tracker-status">{task.externalStatus ?? statusLabel(task.status)}</span>}
         {task.hidden && (
           <div className="drawer-note">
             Задача скрыта с доски.
@@ -125,10 +127,9 @@ export function TaskDrawer({ task, ctx, onClose }: { task: Task; ctx: BoardCtx; 
         <div className="drawer-actions">
           {/* One primary action: take into work → open the running session → send back for rework once it finished. */}
           {!session ? (
-            <button ref={primaryRef} type="button" className="btn btn-primary" disabled={blocked.length > 0} data-tip={blocked.length ? `Ждёт: ${blocked.join(', ')}` : undefined}
-              onClick={() => setPop('start')}>
+            <button ref={primaryRef} type="button" className="btn btn-primary" disabled={blocked.length > 0} onClick={() => setPop('handoff')}>
               <Play />
-              Взять в работу
+              Передать агенту
             </button>
           ) : reworkable ? (
             <>
@@ -147,13 +148,10 @@ export function TaskDrawer({ task, ctx, onClose }: { task: Task; ctx: BoardCtx; 
               Открыть сессию
             </button>
           )}
-          {!session && <StartPopover task={task} anchor={primaryRef} open={pop === 'start'} onClose={() => setPop(null)} />}
+          {!session && <HandoffPopover task={task} anchor={primaryRef} open={pop === 'handoff'} onClose={() => setPop(null)} />}
           {reworkable && <ReworkPopover task={task} anchor={primaryRef} open={pop === 'rework'} onClose={() => setPop(null)} />}
-          <span className="grow" />
-          <Select size="sm" className="chip-select" label="Статус" value={task.status} onChange={(v) => void patch({ status: v as TaskStatus })} options={COLUMNS.map((c) => ({ value: c.id, label: c.label }))} />
-          <Select size="sm" className="chip-select" label="Приоритет" value={task.priority ?? ''} onChange={(v) => void patch({ priority: (v || null) as Task['priority'] })}
-            options={[{ value: '', label: 'Без приоритета' }, ...(['high', 'medium', 'low'] as const).map((p) => ({ value: p, label: PRIORITY[p] }))]} />
         </div>
+        {blocked.length > 0 && <p className="drawer-blocked">Ждёт задач: {blocked.join(', ')}</p>}
         {confirmDelete && (
           <div className="drawer-note drawer-confirm">
             <span>{imported ? `Скрыть ${key} с доски? В трекере задача останется.` : `Удалить ${task.id} без возможности восстановления?`}</span>
@@ -169,17 +167,32 @@ export function TaskDrawer({ task, ctx, onClose }: { task: Task; ctx: BoardCtx; 
           </p>
         )}
 
-        <WorkSummary task={task} />
+        {imported ? (task.description.trim() ? <div className="md-preview drawer-desc"><Markdown text={task.description} /></div> : <ExternalCard task={task} full />) : <DescriptionField task={task} />}
         <TaskWorktrees task={task} />
-
-        {imported && <ExternalCard task={task} full={!task.description.trim()} />}
-        {imported ? (task.description.trim() && <div className="md-preview drawer-desc"><Markdown text={task.description} /></div>) : <DescriptionField task={task} />}
-        {trackerOn && task.externalId && <TrackerStatus task={task} />}
         <TaskPrs task={task} />
-        {task.targets.length > 1 && <Ports task={task} />}
         {(ctx.kids.get(task.id)?.length ?? 0) > 0 && <Subtasks task={task} ctx={ctx} />}
-        <Disclosure className="drawer-more" summary={<h3>Ещё: зависимости, метки, подзадачи</h3>}>
+
+        <Disclosure className="drawer-more" summary={<h3>Настроить запуск</h3>}>
+          <WorkSummary task={task} />
+          {task.targets.length > 1 && <Ports task={task} />}
+          {!session && (
+            <div className="row">
+              <button ref={startRef} type="button" className="btn btn-sm" disabled={blocked.length > 0} onClick={() => setPop('start')}><Play />Взять в работу в репозитории…</button>
+              <StartPopover task={task} anchor={startRef} open={pop === 'start'} onClose={() => setPop(null)} />
+            </div>
+          )}
+        </Disclosure>
+        {trackerOn && task.externalId && (
+          <Disclosure className="drawer-more" summary={<h3>Статус в трекере</h3>}>
+            <TrackerStatus task={task} />
+            {imported && task.description.trim() && <ExternalCard task={task} full={false} />}
+          </Disclosure>
+        )}
+        <Disclosure className="drawer-more" summary={<h3>Ещё: колонка, приоритет, зависимости, метки</h3>}>
           <div className="props">
+            <Prop label="Колонка"><Select size="sm" label="Колонка на доске" value={task.status} onChange={(v) => void patch({ status: v as TaskStatus })} options={COLUMNS.map((c) => ({ value: c.id, label: c.label }))} /></Prop>
+            <Prop label="Приоритет"><Select size="sm" label="Приоритет" value={task.priority ?? ''} onChange={(v) => void patch({ priority: (v || null) as Task['priority'] })}
+              options={[{ value: '', label: 'Без приоритета' }, ...(['high', 'medium', 'low'] as const).map((p) => ({ value: p, label: PRIORITY[p] }))]} /></Prop>
             <Prop label="Зависимости"><DepsField task={task} ctx={ctx} onChange={(deps) => void patch({ deps })} /></Prop>
             <Prop label="Метки"><ChipsInput values={task.labels} label="метку" onChange={(labels) => void patch({ labels })} /></Prop>
           </div>
@@ -332,7 +345,8 @@ function TargetsField({ task, onChange }: { task: Task; onChange: (t: string[]) 
   const allTasks = useStore((s) => s.tasks)
   const [v, setV] = useState('')
   // Team branches: develop, release/1.54.0; typing "rel" offers the release/ prefix.
-  const known = useMemo(() => [...new Set(['develop', 'main', 'release/', ...allTasks.flatMap((t) => t.targets)])], [allTasks])
+  const releases = useReleaseSuggestions(v, task.workspaceId)
+  const known = useMemo(() => [...new Set([...releases, 'develop', 'main', 'release/', ...allTasks.flatMap((t) => t.targets)])], [allTasks, releases])
   const targets = task.targets
   const add = () => {
     const t = v.trim()
@@ -375,6 +389,23 @@ function TargetsField({ task, onChange }: { task: Task; onChange: (t: string[]) 
       <p className="field-hint">Первая — где делается работа, остальные — куда портируется cherry-pick'ом.</p>
     </div>
   )
+}
+
+/** «54», «1.54», «rel154» typed into the targets: the release branches it names (GET /releases/resolve). */
+function useReleaseSuggestions(v: string, workspaceId: string | null) {
+  const on = useFeature('release-resolve')
+  const [list, setList] = useState<string[]>([])
+  useEffect(() => {
+    const t = v.trim()
+    if (!on || !/\d/.test(t)) { setList([]); return }
+    let live = true
+    const timer = window.setTimeout(() => {
+      api<{ refs: { candidates: string[] }[] }>('GET', `/releases/resolve${qs({ text: /^\d+(\.\d+)*$/.test(t) ? `релиз ${t}` : t, workspaceId: workspaceId ?? undefined })}`)
+        .then((r) => { if (live) setList((r?.refs ?? []).flatMap((x) => x.candidates ?? [])) }, () => { if (live) setList([]) })
+    }, 300)
+    return () => { live = false; window.clearTimeout(timer) }
+  }, [on, v, workspaceId])
+  return list
 }
 
 function DepsField({ task, ctx, onChange }: { task: Task; ctx: BoardCtx; onChange: (d: string[]) => void }) {

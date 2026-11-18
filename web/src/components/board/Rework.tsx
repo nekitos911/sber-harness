@@ -121,6 +121,37 @@ export function ReworkPopover({ task, anchor, open, onClose, onSent, onMoveOnly 
   )
 }
 
+/**
+ * «Передать агенту»: the task goes to the agent the way «Главная» does it (/full-task <link> at the projects folder; the
+ * agent picks the repository), optional notes. Older servers: a start at the projects folder.
+ */
+export function HandoffPopover({ task, anchor, open, onClose }: { task: Task; anchor: RefObject<HTMLElement | null>; open: boolean; onClose: () => void }) {
+  const handoffOn = useStore((s) => s.features.includes('handoff'))
+  return (
+    <NotesPopover
+      anchor={anchor} open={open} onClose={onClose}
+      label="Заметки для агента" draftKey={`handoff:${task.id}`}
+      placeholder="необязательно: например «только бэкенд» или «релиз 54»"
+      primary={{
+        label: 'Передать агенту', icon: <Play />,
+        run: async (notes) => {
+          const st = getState()
+          const r = handoffOn
+            ? await runJob('Передать агенту', (jobId) => api<{ session: Session; jumped?: boolean; releaseWarning?: string }>('POST', '/handoff',
+              { input: task.externalUrl ?? task.externalId ?? task.id, notes: notes || undefined }, { jobId }))
+            : await runJob('Передать агенту', (jobId) => api<Session & { jumped?: boolean }>('POST', `/tasks/${encodeURIComponent(task.id)}/start`,
+              { agent: st.defaultAgent ?? undefined, notes: notes || undefined, location: 'root' }, { jobId })).then((s) => (s ? { session: s, jumped: s.jumped } : undefined))
+          if (!r) return false
+          if (r.jumped) toast('Задача уже в работе: открыл текущую сессию')
+          if ('releaseWarning' in r && r.releaseWarning) toast(r.releaseWarning, 'info')
+          adoptSession(r.session)
+          return true
+        },
+      }}
+    />
+  )
+}
+
 /** A suggestion strong enough to preselect (the server says high, or a score ≥ 0.8). */
 export const confident = (c: unknown) => c === 'high' || (typeof c === 'number' && c >= 0.8)
 

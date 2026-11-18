@@ -1,4 +1,5 @@
 import { memo, useEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from 'react'
+import { loadDraft, saveDraft } from '../lib/draft'
 import { runJob } from '../lib/jobs'
 import { Skeleton } from '../components/bits'
 import { ReworkPopover } from '../components/board/Rework'
@@ -17,7 +18,8 @@ import { byOrder } from '../lib/tasks'
 import type { Task, TaskStatus } from '../types'
 import { TaskCard, type BoardCtx } from '../components/board/TaskCard'
 import { TaskDrawer } from '../components/board/TaskDrawer'
-import { Button, Popover, Select } from '../components/ui'
+import { Button, Popover, Segmented, Select } from '../components/ui'
+import { TaskList } from '../components/board/TaskList'
 import { ErrorBoundary } from '../components/ErrorBoundary'
 import { useSettings } from '../lib/agents'
 
@@ -47,6 +49,9 @@ export function BoardView() {
   const hiddenStatuses = (board?.columns?.length ?? 5) < 5
 
   const [query, setQuery] = useState('')
+  // «Список · Доска»: the list by default (hand tasks to the agent), the kanban for those who want it
+  const [layout, setLayoutState] = useState<'list' | 'board'>(() => loadDraft<'list' | 'board'>('board:layout') ?? 'list')
+  const setLayout = (v: 'list' | 'board') => { setLayoutState(v); saveDraft('board:layout', v === 'list' ? null : v) }
   const [repo, setRepo] = useState('')
   const [showHidden, setShowHidden] = useState(false)
   const [openId, setOpenId] = useState<string | null>(null)
@@ -238,6 +243,7 @@ export function BoardView() {
       <header className="view-head">
         <h1>Задачи</h1>
         <span className="count">{tasks.length}</span>
+        <Segmented size="sm" label="Вид" value={layout} onChange={setLayout} options={[{ value: 'list', label: 'Список' }, { value: 'board', label: 'Доска' }]} />
         <span className="grow" />
         <div className="search">
           <Search aria-hidden />
@@ -278,6 +284,9 @@ export function BoardView() {
       )}
 
       <div className="board-area">
+      {layout === 'list' && tasks.length > 0 ? (
+        <TaskList ids={lanes.flatMap((c) => shown[c.status] ?? [])} byId={byId} sessions={ctx.sessions} onOpen={setOpenId} />
+      ) : (
       <DndContext
         sensors={sensors}
         collisionDetection={closestCorners}
@@ -311,6 +320,7 @@ export function BoardView() {
           {dragged && <div className="card card-overlay"><TaskCard task={dragged} ctx={ctx} /></div>}
         </DragOverlay>
       </DndContext>
+      )}
 
       {reworkDrop && byId.get(reworkDrop.id) && (
         <ReworkPopover task={byId.get(reworkDrop.id)!} anchor={dropAnchor} open onClose={() => setReworkDrop(null)}
