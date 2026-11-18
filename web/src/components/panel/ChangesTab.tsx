@@ -16,6 +16,7 @@ import { currentVia, gitAction, type GitVia } from '../../lib/agentGit'
 import { useSettings } from '../../lib/agents'
 import { BranchPicker } from '../pickers/BranchPicker'
 import { openFolder } from '../WorktreeMenu'
+import { flowState } from '../../lib/flow'
 
 // what the agent wrote per change set: a remount (tab switch, panel toggle) shows it again without a new run
 const generatedCache = new Map<string, Generated>()
@@ -205,6 +206,9 @@ export function ChangesTab({ cwd }: { cwd: string }) {
         <button ref={moreRef} type="button" className="icon-btn icon-btn-sm" aria-label="Ещё" aria-expanded={menu === 'more'} onClick={() => setMenu(menu === 'more' ? null : 'more')}><Ellipsis /></button>
         <Menu anchor={moreRef} open={menu === 'more'} onClose={() => setMenu(null)} items={moreItems} label="Изменения" placement="bottom-end" />
       </div>
+
+      <FlowStrip cwd={cwd} changed={files.length} ahead={status.ahead} upstream={!!status.upstream} branch={branch} base={suggest?.pr.base ?? null}
+        pr={prInfo} prEnabled={prEnabled} onCreatePr={createPr} />
 
       <div className="scm-branch">
         <BranchPicker cwd={cwd} branch={branch} placement="bottom-start" label="Сменить ветку">
@@ -398,6 +402,46 @@ function LinkedWorktrees({ cwd, error }: { cwd: string; error: string }) {
           </li>
         ))}
       </ul>
+    </div>
+  )
+}
+
+/**
+ * Where this worktree is on the way to a merged PR: Коммит → Push → PR → Влит, the current step lit, and one line on what
+ * comes next. Its button only where nothing nearby does it (create the PR, clean up once merged); commit and push are the
+ * panel's own primary button right below.
+ */
+function FlowStrip({ cwd, changed, ahead, upstream, branch, base, pr, prEnabled, onCreatePr }: {
+  cwd: string; changed: number; ahead: number; upstream: boolean; branch: string | null | undefined; base: string | null
+  pr: { state: 'open' | 'merged' | 'declined'; reviewers?: unknown[] } | null; prEnabled: boolean; onCreatePr: () => void
+}) {
+  // a primitive per selector: a new object from a store selector re-renders forever (React #185)
+  const wsId = useStore((s) => Object.entries(s.worktrees).find(([, list]) => list.some((w) => normPath(w.path) === normPath(cwd)))?.[0] ?? null)
+  const isMain = useStore((s) => Object.values(s.worktrees).flat().some((w) => !!w.main && normPath(w.path) === normPath(cwd)))
+  const place = wsId ? { ws: wsId, main: isMain } : null
+  const st = flowState({ changed, ahead, upstream, onBase: !!branch && branch === base, pr, prEnabled })
+  if (!branch || !st) return null // the base branch at rest: nothing to walk through
+  const cleanup = place && !place.main ? { label: 'Убрать дерево…', run: () => openDialog({ kind: 'wt-delete', workspaceId: place.ws, path: cwd }) } : undefined
+  const next: { text: string; action?: { label: string; run: () => void } } = {
+    commit: { text: `закоммитить ${changed} ${plural(changed, 'файл', 'файла', 'файлов')} — кнопка ниже` },
+    push: { text: ahead ? `отправить ${ahead} ${plural(ahead, 'коммит', 'коммита', 'коммитов')} — кнопка ниже` : 'отправить ветку в origin — кнопка ниже' },
+    pushed: { text: 'всё отправлено' },
+    'create-pr': { text: 'открыть пулл-реквест', action: { label: 'Создать PR', run: onCreatePr } },
+    'pr-off': { text: 'открыть PR в сервере кода (интеграция не настроена)' },
+    review: { text: (pr?.reviewers?.length ?? 0) > 0 ? 'дождаться ревью и вливания' : 'назначить ревьюеров и дождаться вливания' },
+    merged: cleanup ? { text: 'PR влит — рабочее дерево больше не нужно', action: cleanup } : { text: 'PR влит' },
+    declined: { text: 'PR отклонён — поправить и создать заново' },
+  }[st.next]
+  const steps = st.steps
+  return (
+    <div className="flow" aria-label="Путь до вливания">
+      <ol className="flow-steps">
+        {steps.map((s) => <li key={s.label} data-state={s.state}>{s.label}</li>)}
+      </ol>
+      <div className="flow-next">
+        <span><span className="muted">Дальше:</span> {next.text}</span>
+        {next.action && <button type="button" className="btn btn-sm" onClick={next.action.run}>{next.action.label}</button>}
+      </div>
     </div>
   )
 }

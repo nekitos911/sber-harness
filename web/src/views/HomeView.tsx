@@ -19,6 +19,7 @@ import { ModelPicker } from '../components/pickers/ModelPicker'
 import { FolderPicker } from '../components/FolderPicker'
 import { ReworkPopover } from '../components/board/Rework'
 import { TargetsLine } from '../components/ReleaseTargets'
+import { GettingStarted } from '../components/GettingStarted'
 
 const LINK = /https?:\/\/\S+|\b[A-Z][A-Z0-9_]+-\d+\b/
 const REF = /https?:\/\/\S+|[A-Z][A-Z0-9_]+-\d+/
@@ -62,6 +63,7 @@ export function HomeView() {
   return (
     <div className="home-view">
       <div className="home-col">
+        <GettingStarted />
         <Handoff />
         <Now />
       </div>
