@@ -125,6 +125,7 @@ export interface Session {
   lastEventKind?: 'text_delta' | 'assistant_final' | 'tool_running' | 'tool_done' | 'thought' | 'result' | null // the latest stream event (newer servers)
   turnClosing?: boolean // the answer is complete (result seen); the CLI is only shutting down
   warm?: boolean // ACP sessions only: the process is loaded (false = unloaded after idling)
+  origin?: 'cli' | null // adopted from the GigaCode CLI history: an ordinary chat, its first message continues that session
   // the context after the last turn; lastTurn = that turn's own usage (older drafts sent input/output/cached flat)
   context?: { tokens: number; at?: number; lastTurn?: { input?: number; output?: number; cacheRead?: number } | null; input?: number; output?: number; cached?: number } | null
   contextLimit?: number | null // the model's window

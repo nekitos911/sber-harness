@@ -51,7 +51,8 @@ export function Sidebar() {
   const waiting = agents.filter((s) => WAITING_YOU.has(sessionVisualState(s))).length
   const allWorktrees = useStore((s) => s.worktrees)
   const leaving = useLeaving(sessions)
-  const tree = useMemo(() => buildTree(sessions.filter((s) => !s.archived || leaving.has(s.id)), query, allWorktrees), [sessions, query, allWorktrees, leaving])
+  const showCli = useSbPrefs().showCli // «Чаты из CLI» in the workspace parameters
+  const tree = useMemo(() => buildTree(sessions.filter((s) => (!s.archived || leaving.has(s.id)) && (showCli || s.origin !== 'cli')), query, allWorktrees), [sessions, query, allWorktrees, leaving, showCli])
   const filtering = !!query.trim()
   const rootWs = workspaces.find((w) => w.kind === 'root')
   const projects = workspaces.filter((w) => w.kind !== 'root')
@@ -764,6 +765,7 @@ function SessionRow({ s, nested, level = 0, caret, via, from }: {
           <span className="sess-l1">
             {nested && <span className="sub-glyph" aria-hidden>↳ </span>}
             {s.role === 'reviewer' && <span className="sess-doing">ревью · </span>}
+            {s.origin === 'cli' && <CliGlyph />}
             {sub ? <>{sub[0]}<span className="sess-doing"> · {sub[1]}</span></> : <span className="sess-title">{s.title || s.id}</span>}
             {via && <span className="sess-doing"> · через {via}</span>}
             {from && <span className="sess-doing"> · от: <button type="button" className="sess-from" onClick={(e) => { e.stopPropagation(); openSession(from.id) }}>{from.title}</button></span>}
@@ -793,6 +795,11 @@ function SessionRow({ s, nested, level = 0, caret, via, from }: {
     <Menu anchor={row} open={menu} onClose={() => setMenu(false)} items={items} label={`Чат ${s.title}`} placement="bottom-end" />
     </>
   )
+}
+
+/** A chat adopted from the GigaCode CLI history: a small muted terminal mark before its title, nothing more. */
+export function CliGlyph() {
+  return <SquareTerminal className="cli-glyph" aria-label="из CLI" />
 }
 
 /** A small mark of the agent CLI (GigaCode, Claude, mock…): its first letter, tinted per agent. */

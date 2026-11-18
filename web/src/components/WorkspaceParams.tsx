@@ -60,6 +60,7 @@ export function WorkspaceParams({ projects }: { projects: Workspace[] }) {
             </div>
           </Sub>
           <SwitchRow label="Папки" hint="«Все проекты» и простые папки" checked={p.folders} onChange={toggle('folders')} />
+          <SwitchRow label="Чаты из CLI" hint="Сессии, начатые в GigaCode CLI" checked={p.showCli} onChange={toggle('showCli')} />
           <div className="sbp-sec">Группировать по</div>
           <div className="sbp-seg">
             <Segmented size="sm" label="Группировать по" value={p.group} onChange={(group) => setSbPrefs({ group })}

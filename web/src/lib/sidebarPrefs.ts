@@ -21,17 +21,19 @@ export interface SbPrefs {
   hideExternal: boolean
   hideDetached: boolean
   hideEmpty: boolean // without sessions and changes
+  showCli: boolean // chats adopted from the CLI history
 }
 
 export const DEFAULT_PREFS: SbPrefs = {
   hiddenProjects: [], folders: true, group: 'project', sort: 'activity', order: 'manual', projectOrder: [],
   cards: 'compact', showAction: true, showModel: true, showTime: true,
   hideSleeping: false, hideMain: false, hideAgentMade: false, hideExternal: false, hideDetached: false, hideEmpty: false,
+  showCli: true,
 }
 
 /** Something is hidden by the choice: the dot on the sliders button. */
 export const hidesSomething = (p: SbPrefs) =>
-  p.hiddenProjects.length > 0 || !p.folders || p.hideSleeping || p.hideMain || p.hideAgentMade || p.hideExternal || p.hideDetached || p.hideEmpty
+  p.hiddenProjects.length > 0 || !p.folders || !p.showCli || p.hideSleeping || p.hideMain || p.hideAgentMade || p.hideExternal || p.hideDetached || p.hideEmpty
 
 /** Every setting at its default (the manual order is the user's arrangement, not a setting). */
 export const isDefault = (p: SbPrefs) =>

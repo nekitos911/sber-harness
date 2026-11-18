@@ -61,7 +61,7 @@ export function WorkspacePanel() {
         {historyOn && (
           <button type="button" role="tab" className="wpanel-tab" aria-selected={tab === 'history'} onClick={() => setState({ panelTab: 'history' })} data-tip="История GigaCode: сессии, начатые в CLI">
             <History aria-hidden />
-            <span className="wtab-text ellipsis">История</span>
+            <span className="wtab-text ellipsis">История CLI</span>
           </button>
         )}
         <span className="grow" />

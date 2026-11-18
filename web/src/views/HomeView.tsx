@@ -13,6 +13,7 @@ import { useNow } from '../lib/useNow'
 import { listedChat } from '../lib/pending'
 import type { Session, Settings, Task } from '../types'
 import { StatusIcon } from '../components/bits'
+import { CliGlyph } from '../components/Sidebar'
 import { Select } from '../components/ui'
 import { ModelPicker } from '../components/pickers/ModelPicker'
 import { FolderPicker } from '../components/FolderPicker'
@@ -262,6 +263,7 @@ function NowRow({ s, task }: { s: Session; task?: Task }) {
       <StatusIcon session={s} />
       <span className="now-title">
         {key && <span className="mono now-key">{key}</span>}
+        {s.origin === 'cli' && <CliGlyph />}
         <span className="ellipsis">{task?.title ?? s.title}</span>
       </span>
       <span className="now-activity ellipsis">{activity}</span>

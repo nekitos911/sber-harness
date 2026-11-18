@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { CliGlyph } from '../components/Sidebar'
 import { listedChat } from '../lib/pending'
 import { ArchiveRestore, Bot, Ellipsis, ListPlus, MessageSquarePlus, Send } from 'lucide-react'
 import { tryApi } from '../api'
@@ -121,7 +122,7 @@ function AgentCard({ s, nested, parent }: { s: Session; nested: boolean; parent?
           ? <input className="input agent-rename" autoFocus defaultValue={s.title} aria-label="Название чата"
               onBlur={(e) => { setEditing(false); void renameSession(s, e.currentTarget.value) }}
               onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') { e.currentTarget.value = s.title; setEditing(false) } }} />
-          : <button type="button" className="agent-title ellipsis" onClick={() => openSession(s.id)} data-tip={s.title || s.id} data-tip-trunc>{s.title || s.id}</button>}
+          : <button type="button" className="agent-title ellipsis" onClick={() => openSession(s.id)}>{s.origin === 'cli' && <CliGlyph />}{s.title || s.id}</button>}
         {s.role !== 'solo' && <span className="role" data-role={s.role}>{ROLE[s.role]}</span>}
       </div>
       <div className="agent-meta">

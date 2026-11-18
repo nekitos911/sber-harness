@@ -285,3 +285,4 @@
 .nav-dot::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--lamp-run); }
 .nav-dot[data-k="wait"]::before { background: var(--lamp-ask); }
 .app[data-rail] .nav-dots { flex-direction: column; gap: 0; font-size: 9px; }
+.cli-glyph { display: inline-block; width: 12px; height: 12px; margin-right: 5px; vertical-align: -1.5px; color: var(--ink-3); }
