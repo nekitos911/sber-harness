@@ -24,7 +24,7 @@ export interface AgentGitJob {
 interface JobDone { error?: string; result?: { ok?: boolean; hash?: string; url?: string; branch?: string; index?: number; error?: string }; ok?: boolean; hash?: string; url?: string; branch?: string; index?: number }
 
 const DONE_TEXT: Record<GitKind, (r: NonNullable<JobDone['result']>) => string> = {
-  commit: (r) => `Коммит ${r.hash ? shortHash(r.hash) + ' ' : ''}создан`,
+  commit: (r) => `Коммит ${r.hash ? shortHash(r.hash) + ' ' : ''}создан${r.branch ? ` и отправлен в ${r.branch}` : ''}`,
   push: (r) => (r.branch ? `Ветка ${r.branch} отправлена` : 'Ветка отправлена'),
   pr: (r) => { const n = r.index ?? Number(/(\d+)\/?$/.exec(r.url ?? '')?.[1] ?? NaN); return Number.isFinite(n) ? `PR #${n} создан` : 'PR создан' },
 }
@@ -35,6 +35,7 @@ const DONE_TEXT: Record<GitKind, (r: NonNullable<JobDone['result']>) => string> 
  */
 export async function gitAction<T>(cwd: string, kind: GitKind, body: Record<string, unknown>, via: GitVia | undefined, onOk?: () => void): Promise<T | 'agent' | undefined> {
   const jobId = startJob('', true)
+  clear(cwd) // the previous action's line goes: this one is what matters now
   try {
     const res = await api<T & { via?: string; sessionId?: string; job?: string }>('POST', `/git/${kind}`, { cwd, ...body, ...(via ? { via } : {}) }, { jobId })
     if (res?.via !== 'agent') return res

@@ -339,6 +339,7 @@ export interface GitFile {
   path: string; x: string; y: string; status: 'M' | 'A' | 'D' | 'R' | '?' | 'U'
   service?: boolean // .superpowers etc.: never committed
   staged?: boolean // in the index (servers with staging, feature git-stage)
+  added?: number; removed?: number // its lines (status with line counts)
 }
 export interface GitStatus {
   branch: string | null; upstream: string | null; ahead: number; behind: number; files: GitFile[]

@@ -125,17 +125,17 @@ export function ChangesTab({ cwd }: { cwd: string }) {
   const { title } = split(msg)
   const via = currentVia()
 
-  const commit = async (then?: () => void) => {
+  // staged: only what is in the index; push: then push (one request, the agent too)
+  const commit = async (andPush = false) => {
     setBusy('commit')
-    const paths = staged.length ? staged.map((f) => f.path) : undefined
     // through the agent (git.via «agent»): its hooks and skills run; the line under the button follows it
-    const res = await gitAction<{ hash: string }>(cwd, 'commit', { message: join(split(msg)), ...(paths ? { paths } : {}) }, via, () => { committed(); then?.() })
+    const res = await gitAction<{ hash: string; push?: { summary?: string; output?: string } }>(cwd, 'commit',
+      { message: join(split(msg)), ...(staged.length ? { staged: true } : {}), ...(andPush ? { push: true } : {}) }, via, committed)
     setBusy(null)
     if (!res || res === 'agent') return
-    toast(`Закоммичено ${shortHash(res.hash)}`, 'ok')
+    toast(`Закоммичено ${shortHash(res.hash)}${res.push ? ` · ${res.push.summary || 'отправлено'}` : ''}`, 'ok')
     committed()
     refreshGit(cwd)
-    then?.()
   }
   const push = async () => {
     setBusy('push')
@@ -165,7 +165,7 @@ export function ChangesTab({ cwd }: { cwd: string }) {
   const primaryDisabled = !!busy || gen.running || (mode === 'push' ? false : !files.length || !title)
   const primary = () => (mode === 'push' ? void push() : void commit())
   const splitItems: MenuItem[] = [
-    { label: 'Закоммитить и отправить', disabled: !files.length || !title, onSelect: () => void commit(() => void push()) },
+    { label: 'Закоммитить и отправить', disabled: !files.length || !title, onSelect: () => void commit(true) },
     { label: 'Только push', onSelect: () => void push() },
     { label: 'Создать PR', disabled: !prEnabled, onSelect: createPr },
     ...(stageOn ? [
@@ -287,8 +287,9 @@ async function saveVia(v: GitVia) {
   const settings = getState().settings
   if (!settings) return
   try {
-    const saved = await api<Settings>('PUT', '/settings', { ...settings, git: { ...settings.git, via: v } })
-    setState({ settings: saved ?? { ...settings, git: { ...settings.git, via: v } } })
+    // only the changed field: a full round-trip of the settings may not validate on every server
+    await api<Settings>('PUT', '/settings', { git: { via: v } })
+    setState({ settings: { ...settings, git: { ...settings.git, via: v } } })
   } catch (e) {
     toast(`Не удалось сохранить: ${(e as Error).message}`, 'error')
   }
@@ -345,7 +346,7 @@ function ChangeRow({ cwd, f, git, staged = false, stageOn = false, onStage, onDi
           {stageOn && onDiscard && <button type="button" className="icon-btn icon-btn-sm" aria-label={`Отменить изменения в ${name}`} data-tip="Отменить изменения" onClick={stop(onDiscard)}><RotateCcw /></button>}
           {stageOn && onStage && <button type="button" className="icon-btn icon-btn-sm" aria-label={staged ? `Убрать ${name} из индекса` : `Добавить ${name} в индекс`} data-tip={staged ? 'Убрать из индекса' : 'Добавить в индекс'} onClick={stop(onStage)}>{staged ? <Minus /> : <Plus />}</button>}
         </span>
-        <span className="diff-stat num">{diff ? <><span className="add">+{diff.added}</span> <span className="del">−{diff.removed}</span></> : ''}</span>
+        <span className="diff-stat num">{(f.added ?? diff?.added) !== undefined ? <><span className="add">+{f.added ?? diff!.added}</span> <span className="del">−{f.removed ?? diff!.removed}</span></> : ''}</span>
         <span className="gs" data-s={f.status} aria-label={STATUS_LABEL[f.status]}>{gsLetter(f.status)}</span>
       </div>
     </li>
