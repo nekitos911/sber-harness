@@ -47,7 +47,8 @@ test('worker_run: a nested ephemeral chat with the profile, the caller gets the 
   const said = await waitFor(async () => (await messages(caller.id)).find((m) => m.kind === 'assistant' && m.text.includes('worker_run result:')), { timeout: 20000, what: 'tool result' });
   assert.match(said.text, /worker_run result: всё чисто/);
   const child = (await state()).sessions.find((s) => s.parentId === caller.id && s.ephemeral);
-  assert.deepEqual([child.role, child.model, child.approvalMode, child.title, child.taskId], ['worker', 'GLM-5.3-Flash-262k', 'plan', 'java-reviewer · Проверь diff #done всё чисто', null]);
+  // a «plan» profile runs as default + read-only allow-list: GigaCode's plan mode refuses worker_done itself
+  assert.deepEqual([child.role, child.model, child.approvalMode, child.readOnly, child.title, child.taskId], ['worker', 'GLM-5.3-Flash-262k', 'default', true, 'java-reviewer · Проверь diff #done всё чисто', null]);
   assert.deepEqual([child.report.status, child.report.summary, child.waiter], ['done', 'всё чисто', true]);
   const first = (await messages(child.id)).find((m) => m.kind === 'user');
   assert.match(first.text, /^Ты ревьюер Java-кода\.\n\n## Задание\nПроверь diff #done всё чисто$/);
@@ -169,4 +170,42 @@ test('a child in a new worktree is persistent: never archived, may start its own
   await waitFor(async () => (await state()).sessions.find((s) => s.id === child.id).report, { what: 'child settled' });
   assert.ok(!(await state()).sessions.find((s) => s.id === child.id).archived, 'the persistent child stays');
   for (const s of (await state()).sessions) if (s.pid) await h.api('POST', `/api/sessions/${s.id}/stop`);
+});
+
+test('a sub-agent asks its WAITING coordinator: the worker_run call returns the question; the answer goes on, the result comes as a message', async () => {
+  const caller = await chat('#run helper Сначала уточни. #ask Какую ветку проверять? | develop | release');
+  const said = await waitFor(async () => (await messages(caller.id)).find((m) => m.kind === 'assistant' && m.text.includes('worker_run result:')), { timeout: 20000, what: 'the call returns' });
+  assert.match(said.text, /Субагент спрашивает: Какую ветку проверять\?/);
+  assert.match(said.text, /send_message to "s_/);
+  const child = (await state()).sessions.find((s) => s.parentId === caller.id);
+  assert.ok(!child.archived && !child.report, 'not settled while it waits for the answer');
+  assert.equal(child.waitingFor, 'answer');
+  await waitFor(async () => (await state()).sessions.find((s) => s.id === caller.id).status === 'idle', { what: 'caller idle' });
+
+  await h.api('POST', `/api/sessions/${child.id}/messages`, { text: 'develop #done проверил develop' }); // what send_message does
+  const result = await waitFor(async () => (await messages(caller.id)).find((m) => m.kind === 'user' && /Result \(done\):\nпроверил develop/.test(m.text)), { timeout: 20000, what: 'the result as a message' });
+  assert.ok(result);
+});
+
+test('read-only sub-agents get a read-only allow-list; the harness marks its non-mutating tools readOnlyHint', async () => {
+  const { launchers, READ_ONLY_ALLOWED_TOOLS } = await import('../server/launchers.js');
+  const allowed = (session) => { const a = launchers.gigacode.buildArgs({ prompt: 'x', session: { approvalMode: 'default', ...session }, agentCfg: {} }); return a.flatMap((x, i) => (x === '--allowed-tools' ? [a[i + 1]] : [])); };
+  assert.deepEqual(allowed({ readOnly: true }), READ_ONLY_ALLOWED_TOOLS);
+  assert.ok(!allowed({ readOnly: true }).includes('run_shell_command(git)'), 'no git commit / push');
+  assert.ok(allowed({}).includes('run_shell_command(git)'), 'an ordinary chat keeps the usual list');
+  const tools = (await h.api('GET', '/api/agent/tools')).body;
+  const hint = (n) => tools.find((t) => t.name === n)?.annotations?.readOnlyHint === true;
+  assert.deepEqual(['worker_done', 'ask', 'send_message', 'worker_inspect', 'agent', 'worker_start'].map(hint), [true, true, true, true, false, false]);
+});
+
+test('a sub-agent without a mode of its own inherits the caller\'s («Полный доступ» helpers do not ask); a plan profile stays read-only', async () => {
+  const caller = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', cwd: root, approvalMode: 'auto', prompt: '#run helper посмотри #done ок' })).body;
+  await waitFor(async () => (await messages(caller.id)).some((m) => m.kind === 'assistant' && m.text.includes('worker_run result:')), { timeout: 20000, what: 'helper done' });
+  const helper = (await state()).sessions.find((s) => s.parentId === caller.id);
+  assert.deepEqual([helper.approvalMode, !!helper.readOnly], ['auto', false]);
+
+  const strict = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', cwd: root, approvalMode: 'auto', prompt: '#run java-reviewer глянь #done ок' })).body;
+  await waitFor(async () => (await messages(strict.id)).some((m) => m.kind === 'assistant' && m.text.includes('worker_run result:')), { timeout: 20000, what: 'reviewer done' });
+  const reviewer = (await state()).sessions.find((s) => s.parentId === strict.id);
+  assert.deepEqual([reviewer.approvalMode, reviewer.readOnly], ['default', true], 'the profile\'s plan wins over the caller\'s full access');
 });

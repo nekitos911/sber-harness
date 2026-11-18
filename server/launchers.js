@@ -380,10 +380,15 @@ const INCLUDE_FLAG = '--include-directories'; // the headless form of the intera
 export const DEFAULT_ALLOWED_TOOLS = ['git', 'mvn', 'mvnw', 'gradle', 'gradlew', 'npm', 'npx', 'node', 'java', 'python', 'py', 'pytest', 'dir', 'ls', 'type', 'cat', 'findstr', 'rg', 'where', 'echo']
   .map((c) => `run_shell_command(${c})`);
 
+/** A read-only sub-agent (a «plan» profile, run as default because plan mode refuses the harness tools): looks, never changes. */
+export const READ_ONLY_ALLOWED_TOOLS = ['git status', 'git diff', 'git log', 'git show', 'git branch', 'git ls-files', 'git rev-parse', 'git blame', 'dir', 'ls', 'type', 'cat', 'findstr', 'rg', 'where']
+  .map((c) => `run_shell_command(${c})`); // VERIFY on the target: a «git status» pattern matches by prefix
+
 /** The turn's allow-list: the agent's list (auto-edit/default turns) + the chat's + one-turn grants, deduplicated. */
 function allowedList(defaults, { session, agentCfg }) {
   const mode = cliApprovalMode(defaults, agentCfg, session.approvalMode || agentCfg.approvalMode);
-  const base = ['auto-edit', 'default'].includes(mode) ? agentCfg.allowedTools ?? defaults.allowedTools ?? [] : []; // auto+sandbox needs none, plan only reads
+  const agentList = session.readOnly ? READ_ONLY_ALLOWED_TOOLS : agentCfg.allowedTools ?? defaults.allowedTools ?? [];
+  const base = ['auto-edit', 'default'].includes(mode) ? agentList : []; // auto+sandbox needs none, plan only reads
   return [...new Set([...base, ...(session.allowedTools || []), ...(session.grantsOnce || [])])];
 }
 

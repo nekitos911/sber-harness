@@ -733,6 +733,19 @@ is added to `taskPromptPresets`.
 
 ### Orca-style workers: placements, inspection, retries, groups
 
+- A child started by worker_run/agent is `awaitedBy` its caller. Its `ask` then does not queue a message behind the
+  caller's blocked call: it sets `pendingQuestion` and the wait returns `{ status: "asked", summary: "Субагент спрашивает: …
+Ответь ему: send_message to <id>…" }`; the child stays alive (`waitingFor: answer`, not settled as no_report), and its
+  result later reaches the caller as a message («Result (done): …», `askedParent`). Unpicked for 60 s (the call timed
+  out) — it goes as an ordinary queued question.
+- A child's approval mode: the argument, else its profile's, else the CALLER's (a «Полный доступ» coordinator's helpers
+  run in full access too — over ACP the harness answers their requests itself).
+- A `plan` profile runs as `default` + `readOnly` (allow-list `READ_ONLY_ALLOWED_TOOLS`: git status/diff/log/show…,
+  dir/type/rg): GigaCode's plan mode refuses the harness tools («Plan mode is active. The tool "mcp__harness__worker_done"
+  cannot be executed because it modifies the system»). tools/list marks non-mutating tools `annotations.readOnlyHint`.
+- The chat's workers panel lists every non-archived child while the chat's turn runs; after it, only children still
+  running or waiting (a finished one in its own worktree stays in the sidebar, unarchived).
+
 - `worker_start(..., worktree: current | new-child | new-top-level, name?, workspace?)` (`new` = `new-child`): new-child = a new
   worktree of the caller's repository (`<repo>-worktrees/<name>`, branch from the task key), `meta.parentWorktree` = the
   caller's worktree (the UI nests it); new-top-level = a new worktree in the repository `workspace` (400 without it). Both

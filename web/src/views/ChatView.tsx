@@ -33,8 +33,11 @@ export function ChatView({ id, active }: { id: string; active: boolean }) {
   const session = useStore((s) => s.sessions.find((x) => x.id === id))
   const messages = useStore((s) => s.messages[id])
   const allSessions = useStore((s) => s.sessions)
-  // archived ones (settled sub-agents once the turn is over) leave the panel; their chats open from the transcript card
-  const workers = useMemo(() => allSessions.filter((s) => s.parentId === id && !s.archived), [allSessions, id])
+  // archived ones (settled sub-agents once the turn is over) leave the panel; their chats open from the transcript card.
+  // Once this chat's turn is over only children still working or waiting stay — a finished one in its own worktree is
+  // not archived (a per-service orchestrator lives on), it is in the sidebar under that worktree.
+  const parentBusy = allSessions.find((s) => s.id === id)?.status === 'running'
+  const workers = useMemo(() => allSessions.filter((s) => s.parentId === id && !s.archived && (parentBusy || s.status === 'running' || !!s.waitingFor)), [allSessions, id, parentBusy])
   const [loadError, setLoadError] = useState<string | null>(null)
   const [limit, setLimit] = useState(PAGE)
   const [log, setLog] = useState<string | null>(null)

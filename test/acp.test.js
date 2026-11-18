@@ -123,7 +123,8 @@ test('«Полный доступ»: a permission request is allowed once by the
   const q = await waitFor(async () => (await messages(full.id)).find((m) => m.kind === 'question' && !m.question.answered), { what: 'question card' });
   assert.deepEqual(q.question.options?.map((o) => (typeof o === 'string' ? o : o.label)), ['Конфиг', 'Код']);
   assert.ok(!(await messages(full.id)).some((m) => m.kind === 'permission'), 'not a second card for the same question');
-  assert.deepEqual([(await session(full.id)).status, (await session(full.id)).waitingFor], ['running', 'answer'], 'the agent really waits');
+  // the card is written a moment before waitingFor: wait for the state instead of reading it at once (a flake under load)
+  await waitFor(async () => { const x = await session(full.id); return x.status === 'running' && x.waitingFor === 'answer'; }, { what: 'the agent really waits' });
   await send(full.id, 'Ответ на вопрос «Что проверяем?»: Код, и ещё тесты');
   await waitFor(async () => (await said(full.id)).some((t) => t.includes('turn 3')), { what: 'the answer as the next turn' });
   await idle(full.id);

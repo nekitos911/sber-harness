@@ -91,7 +91,10 @@ function stopWorker(w: Session) {
 function WorkerRow({ w, now, nested }: { w: Session; now: number; nested?: boolean }) {
   const tool = useCurrentTool(w)
   const starting = useStartingLabel(w)
-  const last = w.preview.split('\n').map((l) => l.trim()).filter(Boolean).pop()
+  const lines = w.preview.split('\n').map((l) => l.trim()).filter(Boolean)
+  // the server keeps the last 200 characters: a one-line tail starts mid-word («обы дожать…») — cut to a word, mark it
+  const cut = lines.length === 1 && w.preview.length >= 200
+  const last = cut ? `…${lines[0].replace(/^\S*\s+/, '')}` : lines.pop()
   const doing = starting || tool || (w.status === 'running' ? 'работает' : last)
   return (
     <div className="worker-row" data-nested={nested || undefined} data-enter={w.createdAt > Date.now() - 3000 || undefined}>

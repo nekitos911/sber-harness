@@ -440,6 +440,8 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
   // ---- sub-agents as real chats: worker_run / harness `agent` (Level 2) ----
 
   const runWaiters = new Map(); // sessionId -> [resolve]
+  const READ_ONLY_TOOLS = new Set(['whoami', 'task_list', 'task_get', 'workspace_list', 'worker_list', 'worker_inspect', 'send_message', 'ask', 'worker_done']);
+  const QUESTION_PICKUP_MS = 60000; // a waiting parent polls every ≤25 s (harness-mcp WAIT_SLICE_MS)
 
   function loadProfile(agentCfg, name) {
     if (!name || !/^[\w.-]+$/.test(name)) return null;
@@ -454,6 +456,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
   /** Result of an ephemeral run: worker_done, or its turn ended without one (no_report). Wakes worker_wait callers. */
   function settleRun(s, result) {
     if (!s.report) sessions.update(s.id, { report: { ...result, at: Date.now() } });
+    reportToAsker(s, result);
     for (const resolve of runWaiters.get(s.id) || []) resolve();
     runWaiters.delete(s.id);
     retire(s);
@@ -491,8 +494,14 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
     const grades = agentCfg.settings?.agents?.modelGrades || {};
     if (model && grades[model]) model = grades[model]; // a grade name ("review") -> its model id
     if (model && sessions.unavailableModels(agent).has(model)) model = null; // the CLI default instead of a doomed run
-    let mode = a.approvalMode ?? profile?.meta.approvalMode ?? null;
+    // no mode of its own (argument, profile): the caller's — a «Полный доступ» coordinator's helpers do not ask either
+    let mode = a.approvalMode ?? profile?.meta.approvalMode ?? caller.approvalMode ?? null;
     if (mode && agentCfg.approvalModes?.length && !agentCfg.approvalModes.includes(mode)) mode = null;
+    // GigaCode's plan mode refuses the harness's own tools («Plan mode is active. The tool "mcp__harness__worker_done"
+    // cannot be executed because it modifies the system»): such a sub-agent could never report or ask. «Read only» =
+    // default mode + a read-only allow-list (headless declines every other change by itself).
+    const readOnly = mode === 'plan';
+    if (readOnly) mode = 'default';
     // a child in its own worktree or repository is persistent (a per-service orchestrator); a same-worktree helper is
     // ephemeral: archived once settled and depth-limited
     const other = a.workspace ? workspaceRef(a.workspace) : null;
@@ -520,6 +529,8 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
         title: a.title || subagentTitle(a.profile || 'agent', a.description || a.spec),
       });
       if (!persistent && (s.worktreePath ?? s.cwd) !== (caller.worktreePath ?? caller.cwd)) sessions.update(s.id, { persistent: true });
+      // awaitedBy: the caller waits inside worker_run/agent — a question of this child must reach it there (ask, waitRun)
+      sessions.update(s.id, { awaitedBy: caller.id, ...(readOnly ? { readOnly: true } : {}) });
       sessions.deliver(s.id, { from: caller.id, text: [profile?.body, `## Задание\n${a.spec}`].filter(Boolean).join('\n\n') });
     } catch (e) {
       // never an orphan: no sub-agent chat or worktree stays behind a failed start
@@ -542,7 +553,25 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
       });
     }
     const now = sessions.find(sessionId);
-    return now?.report ? { done: true, sessionId, status: now.report.status, summary: now.report.summary } : { done: false, sessionId, status: now?.status ?? null };
+    if (now?.report) return { done: true, sessionId, status: now.report.status, summary: now.report.summary };
+    const q = now?.pendingQuestion;
+    if (q) {
+      // the child asked its waiting parent: the call returns with the question; the child's result comes later as a message
+      sessions.update(sessionId, { pendingQuestion: null, awaitedBy: null, askedParent: true });
+      const choices = q.options?.length ? `\nВарианты: ${q.options.map((o) => `«${o}»`).join(', ')}` : '';
+      return {
+        done: true, sessionId, status: 'asked',
+        summary: `Субагент спрашивает: ${q.text}${choices}\nОтветь ему: send_message to "${sessionId}". Он продолжит работу, а его итог придёт тебе отдельным сообщением.`,
+      };
+    }
+    return { done: false, sessionId, status: now?.status ?? null };
+  }
+
+  /** A child that asked its parent mid-run reports its result as a message: the parent's call already returned. */
+  function reportToAsker(s, { status, summary }) {
+    if (!s?.askedParent || !s.parentId || !sessions.find(s.parentId)) return;
+    sessions.update(s.id, { askedParent: false });
+    sessions.deliver(s.parentId, { from: s.id, text: fromSession(s, `Result (${status}):\n${summary}`) });
   }
 
   // ---- harness review loop (orchestration.reviewMode "harness") ----
@@ -856,7 +885,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
 
   function turnEnded(s, { reported, communicated, stopped, queueEmpty, userFollowUp }) {
     settleGitRequests(s, stopped);
-    if (s.ephemeral && !reported && queueEmpty) {
+    if (s.ephemeral && !reported && queueEmpty && s.waitingFor !== 'answer') { // asked its parent: not over, it waits
       const last = sessions.messages(s.id).filter((m) => m.kind === 'assistant').at(-1);
       settleRun(s, { status: stopped ? 'stopped' : 'no_report', summary: last?.text ?? '' });
       return;
@@ -1165,9 +1194,25 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
         const options = a.options?.length ? a.options : undefined;
         if (c) sessions.flag(c.id, 'communicated');
         const parent = c?.parentId && sessions.find(c.parentId);
+        const choices = options ? `\nOptions: ${options.map((o) => `"${o}"`).join(', ')}` : '';
+        const toParent = () => sessions.deliver(parent.id, { from: c.id, options, text: fromSession(c, `Question: ${a.question}${choices}\n(Answer with send_message to "${c.id}".)`) });
+        if (parent && c.awaitedBy === parent.id && !c.report) {
+          // the parent waits inside worker_run/agent for this child: a queued message would sit behind that call until the
+          // child finishes — which it cannot without the answer. The wait returns the question instead (waitRun).
+          const at = Date.now();
+          sessions.update(c.id, { waitingFor: 'answer', pendingQuestion: { text: a.question, options: options ?? null, at } });
+          for (const resolve of runWaiters.get(c.id) || []) resolve();
+          runWaiters.delete(c.id);
+          // nobody picked it up (the parent's call already timed out): it goes as an ordinary message after all
+          setTimeout(() => {
+            if (sessions.find(c.id)?.pendingQuestion?.at !== at || !sessions.find(parent.id)) return;
+            sessions.update(c.id, { pendingQuestion: null, awaitedBy: null });
+            toParent();
+          }, QUESTION_PICKUP_MS).unref?.();
+          return { delivered: parent.id, note };
+        }
         if (parent) {
-          const choices = options ? `\nOptions: ${options.map((o) => `"${o}"`).join(', ')}` : '';
-          sessions.deliver(parent.id, { from: c.id, options, text: fromSession(c, `Question: ${a.question}${choices}\n(Answer with send_message to "${c.id}".)`) });
+          toParent();
           sessions.update(c.id, { waitingFor: 'answer' }); // until a reply is delivered to it
           return { delivered: parent.id, note };
         }
@@ -1189,6 +1234,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
           return { ok: true };
         }
         sessions.update(c.id, { report: { status: a.status, summary: a.summary, at: Date.now() } }); // picked up after a restart
+        reportToAsker(c, a);
         if (c.role === 'reviewer') return reviewerDone(a.summary, c);
         const status = a.status;
         sessions.flag(c.id, 'reported');
@@ -1305,7 +1351,11 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
     toolsFor(callerId) {
       const caller = callerId ? sessions.find(callerId) : null;
       const noAgent = config.orchestration?.subagents === 'builtin' || atDepthLimit(caller);
-      return TOOLS.filter((t) => !(noAgent && t.name === 'agent')).map(({ name, description, inputSchema }) => ({ name, description, inputSchema }));
+      return TOOLS.filter((t) => !(noAgent && t.name === 'agent')).map(({ name, description, inputSchema }) => ({
+        name, description, inputSchema,
+        // MCP hint: these touch no file (a report, a question, a message, a look) — a CLI plan mode may let them through
+        ...(READ_ONLY_TOOLS.has(name) ? { annotations: { readOnlyHint: true } } : {}),
+      }));
     },
 
     async call(name, args, callerId) {
