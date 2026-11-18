@@ -21,6 +21,7 @@ import { launchers, gigacodeCommand } from './launchers.js';
 import { isAlive, resolveCommand, spawnOptions } from './runner.js';
 import { createModelCatalog, scanModelRefs } from './models.js';
 import { pickFolder } from './pick-folder.js';
+import { runCheck, suggestCheck } from './checks.js';
 import { readSdd } from './sdd.js';
 import { generateMessage } from './generate.js';
 import { resolveReleases, releasePlan, listReleases } from './releases.js';
@@ -42,7 +43,7 @@ const NO_BUILD_HTML = '<!doctype html><meta charset="utf-8"><title>Harness</titl
 const GRADES = ['default', 'fast', 'review', 'explore'];
 // optional API groups this server implements (docs/ARCHITECTURE.md "Feature flags"); a flag ships with its route
 export const FEATURES = ['branches', 'fs-search', 'pr-status', 'agent-info', 'models-refresh', 'tracker-links', 'board-columns', 'review-loop',
-  'subagents', 'virtual-sessions', 'worker-run', 'skills-install', 'demo', 'worktree-meta', 'open', 'sdd', 'health', 'folders', 'include-dirs', 'questions', 'permissions', 'activity', 'rework', 'fs-raw', 'tracker-import', 'pr-decline', 'task-suggest', 'recovery', 'acp', 'worktree-lazy', 'cli-history', 'prs-mine', 'git-generate', 'git-via-agent', 'git-stage', 'handoff', 'release-resolve', 'cli-adopt', 'handoff-dry-run', 'integrations-check', 'pick-folder'];
+  'subagents', 'virtual-sessions', 'worker-run', 'skills-install', 'demo', 'worktree-meta', 'open', 'sdd', 'health', 'folders', 'include-dirs', 'questions', 'permissions', 'activity', 'rework', 'fs-raw', 'tracker-import', 'pr-decline', 'task-suggest', 'recovery', 'acp', 'worktree-lazy', 'cli-history', 'prs-mine', 'git-generate', 'git-via-agent', 'git-stage', 'handoff', 'release-resolve', 'cli-adopt', 'handoff-dry-run', 'integrations-check', 'pick-folder', 'checks', 'revive'];
 // titles of operations the UI may follow by sending x-job-id (WS { t: 'job' } frames)
 const JOB_TITLES = {
   'POST /api/tasks/sync': 'Синхронизация с трекером',
@@ -401,11 +402,16 @@ export async function startServer(opts = {}) {
         rootResolved: db.workspaces.find((w) => w.kind === 'root')?.path ?? null, // «Авто: <path>» when rootAuto
         rootAuto: !config.workspaces?.root,
       },
-      session: { stallSec: config.session.stallSec },
+      session: { stallSec: config.session.stallSec, revive: { attempts: config.session.revive?.attempts ?? 3, stallWakeMin: config.session.revive?.stallWakeMin ?? 15 } },
       sessions: { autoArchiveDays: config.sessions.autoArchiveDays },
       history: { adopt: config.history.adopt !== false, adoptDays: config.history.adoptDays },
       // «Разрешать всегда в этом проекте»: allow-list patterns per workspace id (stored in the db, not the config)
       permissions: { allowedToolsByWorkspace: db.prefs?.allowedToolsByWorkspace || {} },
+      // «Проверка перед готово»: what the harness runs in a worker's worktree after it reports; `suggested` from the repo's files
+      checks: {
+        byWorkspace: db.prefs?.checksByWorkspace || {}, maxRounds: config.checks?.maxRounds ?? 2, timeoutMin: config.checks?.timeoutMin ?? 15,
+        suggested: Object.fromEntries(db.workspaces.filter((w) => !w.kind && w.isGit).map((w) => [w.id, suggestCheck(w.path)]).filter(([, c]) => c)),
+      },
       recovery: { autoResume: !!config.recovery.autoResume, message: config.recovery.message },
       ide: config.ide ?? null,
       orchestration: {
@@ -709,9 +715,13 @@ export async function startServer(opts = {}) {
       patch.recovery = rc;
     }
     if (body.session !== undefined) {
-      const sec = body.session?.stallSec;
-      if (!isObj(body.session) || Object.keys(body.session).some((k) => k !== 'stallSec') || !Number.isInteger(sec) || sec < 30) fail(400, 'session: { stallSec: целое число ≥ 30 }');
-      patch.session = { stallSec: sec };
+      const ss = body.session;
+      const rv = ss?.revive;
+      const revOk = rv === undefined || (isObj(rv) && Object.entries(rv).every(([k, v]) => (k === 'attempts' && Number.isInteger(v) && v >= 0 && v <= 10) || (k === 'stallWakeMin' && Number.isInteger(v) && v >= 0 && v <= 240)));
+      if (!isObj(ss) || Object.keys(ss).some((k) => !['stallSec', 'revive'].includes(k)) || (ss.stallSec !== undefined && (!Number.isInteger(ss.stallSec) || ss.stallSec < 30)) || !revOk) {
+        fail(400, 'session: { stallSec: целое число ≥ 30, revive: { attempts: 0..10, stallWakeMin: 0..240 (0 — не будить) } }');
+      }
+      patch.session = { ...(ss.stallSec !== undefined ? { stallSec: ss.stallSec } : {}), ...(rv ? { revive: rv } : {}) };
     }
     if (body.sessions !== undefined) {
       const d = body.sessions?.autoArchiveDays ?? 0; // null = off, stored as 0
@@ -732,6 +742,21 @@ export async function startServer(opts = {}) {
       db.prefs ||= {};
       db.prefs.allowedToolsByWorkspace = Object.fromEntries(Object.entries(byWs).map(([id, list]) => [id, [...new Set(list.map((x) => x.trim()))]]).filter(([, list]) => list.length));
       store.save();
+    }
+    if (body.checks !== undefined) {
+      const c = body.checks;
+      const okKeys = isObj(c) && Object.keys(c).every((k) => ['byWorkspace', 'maxRounds', 'timeoutMin', 'suggested'].includes(k));
+      const byOk = c?.byWorkspace === undefined || (isObj(c.byWorkspace) && Object.entries(c.byWorkspace).every(([id, v]) => db.workspaces.some((w) => w.id === id) && (v === null || typeof v === 'string')));
+      const n = (v, lo, hi) => v === undefined || (Number.isInteger(v) && v >= lo && v <= hi);
+      if (!okKeys || !byOk || !n(c.maxRounds, 1, 5) || !n(c.timeoutMin, 1, 180)) fail(400, 'checks: { byWorkspace: { <id проекта>: команда | null }, maxRounds: 1..5, timeoutMin: 1..180 }');
+      if (c.byWorkspace) {
+        db.prefs ||= {};
+        const next = { ...db.prefs.checksByWorkspace, ...Object.fromEntries(Object.entries(c.byWorkspace).map(([id, v]) => [id, v?.trim() || null])) };
+        db.prefs.checksByWorkspace = Object.fromEntries(Object.entries(next).filter(([, v]) => v));
+        store.save();
+      }
+      const cfg = { ...(c.maxRounds !== undefined ? { maxRounds: c.maxRounds } : {}), ...(c.timeoutMin !== undefined ? { timeoutMin: c.timeoutMin } : {}) };
+      if (Object.keys(cfg).length) patch.checks = cfg;
     }
     if (body.ide !== undefined) {
       const ide = body.ide;
@@ -1409,6 +1434,7 @@ export async function startServer(opts = {}) {
   });
   route('POST', '/api/sessions/:id/permission', ({ params, body }) => sessions.permission(params.id, check(body, { permissionId: 'string', optionId: 'string', note: 'string?' })));
   route('POST', '/api/sessions/:id/stop', ({ params }) => sessions.stop(params.id));
+  route('POST', '/api/sessions/:id/revive', ({ params }) => sessions.revive(params.id)); // «Повторить»: continue a broken chat
   route('DELETE', '/api/sessions/:id/queue/:qid', ({ params }) => sessions.unqueue(params.id, params.qid));
   route('POST', '/api/sessions/:id/queue/send', ({ params }) => sessions.sendQueue(params.id));
   route('POST', '/api/sessions/:id/restart', ({ params }) => sessions.restart(params.id));
@@ -1596,6 +1622,14 @@ export async function startServer(opts = {}) {
    * «Проверить подключение» of the tracker and the code host: is their MCP server defined (the harness's config or the
    * agent's ~/.gigacode/settings.json), does it answer, has it the tools the harness calls. → { tasks, pr, servers }
    */
+  route('POST', '/api/checks/run', async ({ body }) => {
+    check(body, { workspaceId: 'string', command: 'string' });
+    const ws = db.workspaces.find((w) => w.id === body.workspaceId) || fail(404, `проект ${body.workspaceId} не найден`);
+    const command = body.command.trim() || fail(400, 'нужна команда проверки');
+    const r = await runCheck({ cwd: ws.path, command, timeoutMs: (config.checks?.timeoutMin ?? 15) * 60000 });
+    return { ...r, output: r.output.slice(-6000) };
+  });
+
   route('GET', '/api/integrations/check', async () => {
     const defs = serverDefs(config);
     const check = async (server, need) => {
@@ -1845,6 +1879,7 @@ export async function startServer(opts = {}) {
   // turns that kept running while the harness was down (needs the URL for follow-up turns), queues, terminals, reviews
   await sessions.resumeRuns();
   orch.resumeReviews();
+  orch.resumeChecks();
   scheduleSync();
   // best-effort: folders renamed to *.stale-<ts> by earlier deletions (files held by antivirus/indexer)
   for (const dir of [config.dataDir, path.join(config.dataDir, 'runs'), ...db.workspaces.map((w) => git.worktreeRootFor(w.path, config.worktreeRoot))]) {

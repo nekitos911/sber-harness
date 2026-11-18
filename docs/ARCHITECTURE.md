@@ -468,6 +468,9 @@ POST   /api/sessions/:id/attachments?name=  (raw bytes, any type, ≤10 MB) -> {
                                     gets it in includeDirs (ACP: fs roots)
 GET    /api/mcp/servers         -> [{ name, enabled, transport, ok, error?, problem?, tools: [{name, description}] }]
 GET    /api/integrations/check  -> { tasks: Check, pr: Check, servers: string[] }   // флаг integrations-check
+POST   /api/checks/run { workspaceId, command } -> { ok, code, output, ms, timedOut }   // флаг checks: «Проверить сейчас» в папке проекта
+POST   /api/sessions/:id/revive  -> Session   // флаг revive: «Повторить» — продолжить оборвавшийся чат сейчас (409, если он работает)
+POST   /api/fs/pick-folder { title?, initial? } -> { path | null }   // флаг pick-folder: системное окно выбора папки на этой машине; null — отмена
        // Check = { server, found, ok, missing: string[], error? }: найден ли MCP-сервер трекера / PR (конфиг харнесса или
        // ~/.gigacode/settings.json агента), отвечает ли, есть ли у него инструменты, которые вызывает харнесс
        // (tasks.tools.find/get, pr.tool). Сервер меняется в PUT /api/settings: integrations.tasks.server / integrations.pr.server.
@@ -779,6 +782,35 @@ model/approvalMode по умолчанию берутся из frontmatter (яв
   agent; всё остальное → external) и `detached`. Неудавшиеся операции с рабочими деревьями сохраняют `meta.lastError { text, at }`
   (создание → в основном рабочем дереве репозитория; очищается при следующем успехе); изменения meta рассылаются как
   `{ t: "worktree.meta", path, meta }`.
+
+## Проверка перед «готово» (флаг `checks`)
+
+Команда проверки проекта (тесты, линтер, типы) хранится по проекту в `db.prefs.checksByWorkspace` (`PUT /api/settings`
+`checks.byWorkspace: { <id проекта>: команда | null }`; `GET` отдаёт ещё `suggested` — что предлагают файлы репозитория:
+`npm test && npm run lint`, `mvn -q test`, `gradlew test`, `go test ./...` …). `checks.maxRounds` (1..5, по умолчанию 2) и
+`checks.timeoutMin` (1..180, по умолчанию 15) — в конфиге.
+
+- Когда исполнитель задачи вызывает `worker_done(status: "done")`, а у его рабочего дерева есть проверка (у исполнителя в папке
+  проектов — у рабочих деревьев задачи из `task.worktrees`), harness сам запускает команду в рабочем дереве (системная оболочка,
+  `CI=1`) — `server/checks.js`. Пока идёт: `task.checks = { workerSessionId, round, state: "running" }`, `agentState: "checking"`.
+- Прошла — `checks.state: "passed"`, дальше как обычно: ревью harness (если включено), иначе отчёт координатору и уведомление.
+- Не прошла — вывод (хвост до 4000 символов) уходит исполнителю: «Проверка проекта не прошла (раунд N из M) … Исправь причину —
+  не отключай и не пропускай проверки — и снова вызови worker_done». После последнего раунда — `agentState: "failed"`, уведомление
+  `failed`, координатору — отчёт с тем, что упало.
+- Каждый раунд пишется в журнал задачи (`type: "checks"`, `data: { round, ok, results }`) и заметкой в чат исполнителя.
+- Исполнитель знает о проверке заранее: в его преамбуле строка «Проверка проекта: `<команда>` — запусти её сам перед worker_done».
+- После перезапуска проверка в состоянии `running` запускается снова (тот же раунд).
+
+## Оживление оборвавшегося хода (флаг `revive`)
+
+Ход, который оборвался (ошибка хода `errorKind: "turn"`, обрыв связи), или агент, который молчит (`session.revive.stallWakeMin`,
+по умолчанию 15 мин без событий **и** без выполняющегося инструмента — долгая сборка не трогается; процесс останавливается
+харнессом, это не «Остановлено пользователем»), продолжается сам: в ту же сессию (`--resume`) уходит сообщение «Предыдущий ход
+оборвался (<причина>). Продолжи с того места, где остановился…». Попытки — `session.revive.attempts` (по умолчанию 3) с паузами
+30 с, 2 мин, 5 мин; в чате — заметка «продолжу сам через … (попытка N из M)». Не продолжаются: остановленные человеком, ждущие
+ответа/разрешения/входа, не запустившиеся ни разу, без исполняемого файла или модели. Пока продолжение запланировано, координатор
+и «Входящие» о падении не слышат. Попытки кончились — эскалация во «Входящие» с `actions: ["retry", "open"]`; «Повторить» —
+`POST /api/sessions/:id/revive`. Удачный ход обнуляет счётчик (`session.revive`).
 
 ## Цикл ревью, который ведёт harness (`orchestration.reviewMode: "harness"`)
 

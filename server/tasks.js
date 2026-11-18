@@ -5,8 +5,8 @@ export const STATUSES = ['backlog', 'todo', 'in_progress', 'review', 'done'];
 export const PRIORITIES = ['low', 'medium', 'high'];
 const EDITABLE = ['title', 'description', 'status', 'order', 'priority', 'deps', 'labels', 'workspaceId', 'parentId',
   'targets', 'branch', 'ports', 'assigneeSessionId', 'externalId', 'externalUrl', 'source',
-  'externalStatus', 'statusManual', 'hidden', 'takenAt', 'snapshot', 'pr', 'agentState', 'review', 'includeDirs', 'externalFields', 'worktrees', 'location'];
-const DEFAULTS = { parentId: null, targets: null, branch: null, ports: [], externalStatus: null, statusManual: false, hidden: false, takenAt: null, snapshot: null, pr: null, agentState: null, review: null };
+  'externalStatus', 'statusManual', 'hidden', 'takenAt', 'snapshot', 'pr', 'agentState', 'review', 'checks', 'includeDirs', 'externalFields', 'worktrees', 'location'];
+const DEFAULTS = { parentId: null, targets: null, branch: null, ports: [], externalStatus: null, statusManual: false, hidden: false, takenAt: null, snapshot: null, pr: null, agentState: null, review: null, checks: null };
 
 const fail = (status, message) => { throw Object.assign(new Error(message), { status }); };
 const isStrArr = (v) => Array.isArray(v) && v.every((x) => typeof x === 'string');
@@ -76,7 +76,7 @@ export function createTasks({ store, bus, defaultBase = 'main' }) {
     if ('ports' in f && !Array.isArray(f.ports)) fail(400, 'ports: нужен массив');
     for (const k of ['statusManual', 'hidden']) if (k in f && typeof f[k] !== 'boolean') fail(400, `${k}: нужно true или false`);
     if ('takenAt' in f && f.takenAt !== null && !Number.isFinite(f.takenAt)) fail(400, 'takenAt: число или null');
-    for (const k of ['snapshot', 'pr', 'review']) if (k in f && f[k] !== null && (typeof f[k] !== 'object' || Array.isArray(f[k]))) fail(400, `${k}: объект или null`);
+    for (const k of ['snapshot', 'pr', 'review', 'checks']) if (k in f && f[k] !== null && (typeof f[k] !== 'object' || Array.isArray(f[k]))) fail(400, `${k}: объект или null`);
     if ('deps' in f && f.deps !== undefined) {
       if (!isStrArr(f.deps)) fail(400, 'deps: нужен массив id задач');
       for (const d of f.deps) {

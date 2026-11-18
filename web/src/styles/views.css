@@ -690,3 +690,8 @@ button.prs-group[aria-expanded="true"] .chev { transform: rotate(90deg); }
 /* while the system's folder window is open */
 .pick-wait { position: fixed; left: 50%; bottom: 24px; z-index: 60; transform: translateX(-50%); display: flex; align-items: center; gap: 10px; padding: 8px 10px 8px 14px; border: 1px solid var(--rule-strong); border-radius: var(--r-3); background: var(--deck); box-shadow: var(--shadow-2, 0 8px 24px rgb(0 0 0 / .3)); font-size: 13px; }
 .pick-wait > svg { width: 16px; height: 16px; color: var(--ink-3); }
+/* «Проверка перед готово»: the command and «Проверить сейчас» in one line, the output folded under it */
+.check-row { display: flex; gap: 6px; align-items: center; }
+.check-row .input { flex: 1; min-width: 0; }
+.check-result { margin-top: 6px; }
+.check-result pre { max-height: 240px; overflow: auto; margin: 6px 0 0; padding: 8px; border-radius: var(--r-2); background: var(--deck-2); font-size: 11.5px; white-space: pre-wrap; }

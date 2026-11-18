@@ -43,11 +43,12 @@ export interface Task {
   log: TaskLogEntry[]
   pr?: TaskPr | null // newer servers: PR of task.branch, refreshed in the background
   agentState?: AgentState | null // what the assigned agent (and the harness review) is doing
+  checks?: { round: number; state: 'running' | 'passed' | 'failed'; workerSessionId: string; at?: number } | null // «Проверка перед готово»
   createdAt: number
   updatedAt: number
 }
 
-export type AgentState = 'running' | 'waiting' | 'done' | 'failed' | 'reviewing' | 'approved' | 'changes_requested'
+export type AgentState = 'running' | 'waiting' | 'done' | 'failed' | 'checking' | 'reviewing' | 'approved' | 'changes_requested'
 
 export interface BoardColumn { status: TaskStatus; label: string; trackerStatuses: string[] }
 export interface BoardSettings {
@@ -203,7 +204,7 @@ export interface Notification {
   text: string
   options?: string[] | null
   link?: string | null
-  actions?: ('open' | 'rework' | 'accept')[] // escalations: what the person can do right from the inbox
+  actions?: ('open' | 'rework' | 'accept' | 'retry')[] // escalations: what the person can do right from the inbox
   answered?: boolean // a question answered (in its chat or elsewhere)
   count?: number // the same escalation again: ×N
 }
@@ -314,10 +315,13 @@ export interface AgentSettings {
 
 export interface Settings {
   user?: { setupDone?: boolean } // the first-run setup was finished or skipped
+  // «Проверка перед готово»: the project's own command the harness runs after the agent reports (suggested: from the repo's files)
+  checks?: { byWorkspace: Record<string, string>; maxRounds: number; timeoutMin: number; suggested?: Record<string, string> }
   permissions?: { allowedToolsByWorkspace?: Record<string, string[]> } // «Разрешать всегда в этом проекте»
   reworkPromptPresets?: string[] // «Доработать» templates offered for every agent
   workspaces?: { root?: string | null } // projects folder; null = auto (deepest common parent)
-  session?: { stallSec?: number } // «нет вывода» after this many seconds of silence (≥ 30)
+  // «нет вывода» after stallSec of silence (≥ 30); revive: a broken turn is continued by itself (attempts), a silent one woken
+  session?: { stallSec?: number; revive?: { attempts: number; stallWakeMin: number } }
   recovery?: { autoResume?: boolean; message?: string } // interrupted sessions after a restart
   sessions?: { autoArchiveDays?: number | null } // archive chats idle longer than this (null = never)
   agents: Record<string, AgentSettings>

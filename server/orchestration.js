@@ -7,6 +7,7 @@ import * as git from './git.js';
 import { jobStep } from './jobs.js';
 import { newId, subagentTitle } from './sessions.js';
 import { launchers } from './launchers.js';
+import { runCheck } from './checks.js';
 
 const GENERIC_REWORK = '{key} {title}: нужны правки: {notes}'; // agents without a task command (/full-task)
 
@@ -585,6 +586,72 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
     return /\b(CRITICAL|HIGH)\b/.test(summary) ? 'CHANGES_REQUESTED' : 'APPROVED';
   }
 
+  /** A worker's task is over (its checks passed, if any): the harness review, else its parent and the person hear about it. */
+  function afterDone(c, task, { status, summary, report, port = false, ready = [] }) {
+    if (task && !port && status === 'done' && c.role === 'worker' && config.orchestration?.reviewMode === 'harness') {
+      // the parent hears about it after the review verdict
+      startReview(task, c, report).catch((e) => notify({ kind: 'error', sessionId: c.id, taskId: task.id, text: `${tasks.key(task)}: не удалось запустить ревью: ${e.message}` }));
+      return { ok: true, review: 'started', taskStatus: task.status, readyTasks: ready.map((t) => t.id) };
+    }
+    const parent = c.parentId && sessions.find(c.parentId);
+    if (parent) sessions.deliver(parent.id, { from: c.id, text: fromSession(c, report) });
+    notify({ kind: status, sessionId: c.id, taskId: task?.id ?? null, text: `${c.title}: ${summary}` });
+    return { ok: true, taskStatus: port ? null : task?.status ?? null, readyTasks: ready.map((t) => t.id) };
+  }
+
+  // ---- «Проверка перед готово»: the project's own command, run by the harness after the worker reports ----
+
+  const checkCfg = () => ({ maxRounds: 2, timeoutMin: 15, ...config.checks });
+  const checkOf = (wsId) => (wsId && db.prefs?.checksByWorkspace?.[wsId]) || null;
+  /** Where to check: the worker's own worktree; a worker in the projects folder — the worktrees it made for the task. */
+  function checkTargets(task, worker) {
+    const list = worker.atRoot ? (task.worktrees || []).map((w) => ({ cwd: w.path, wsId: w.workspaceId })) : [{ cwd: worker.cwd, wsId: worker.workspaceId }];
+    return list.map((t) => ({ ...t, command: checkOf(t.wsId) })).filter((t) => t.command && fs.existsSync(t.cwd));
+  }
+
+  async function runChecks(task, worker, { summary, report }) {
+    const prev = task.checks?.workerSessionId === worker.id ? task.checks : null;
+    const round = (prev?.round || 0) + 1;
+    const list = checkTargets(task, worker);
+    const key = tasks.key(task);
+    tasks.update(task.id, { checks: { workerSessionId: worker.id, round, state: 'running', startedAt: Date.now(), summary, report }, agentState: 'checking' }, 'harness');
+    sessions.note(worker.id, `Проверка проекта (раунд ${round}): ${list.map((t) => t.command).join('; ')}`);
+    const results = [];
+    for (const t of list) results.push({ ...t, ...(await runCheck({ cwd: t.cwd, command: t.command, timeoutMs: checkCfg().timeoutMin * 60000 })) });
+    const fresh = tasks.find(task.id);
+    if (!fresh || fresh.checks?.workerSessionId !== worker.id || fresh.checks.round !== round) return; // the task moved on meanwhile
+    const failed = results.filter((r) => !r.ok);
+    const line = (r) => `${r.command} (${path.basename(r.cwd)}): ${r.ok ? 'ок' : r.timedOut ? `не уложилась в ${checkCfg().timeoutMin} мин` : `код ${r.code}`}, ${Math.round(r.ms / 1000)} с`;
+    tasks.addLog(task.id, 'harness', `Проверка, раунд ${round}: ${failed.length ? 'не прошла' : 'пройдена'}`, 'checks', { round, ok: !failed.length, results: results.map((r) => ({ command: r.command, cwd: r.cwd, ok: r.ok, code: r.code, ms: r.ms })) });
+    if (!failed.length) {
+      tasks.update(task.id, { checks: { ...fresh.checks, state: 'passed', at: Date.now() }, agentState: 'done' }, 'harness');
+      sessions.note(worker.id, `Проверка пройдена:\n${results.map(line).join('\n')}`);
+      return afterDone(sessions.get(worker.id), tasks.get(task.id), { status: 'done', summary, report: `${report}\nПроверка проекта: пройдена (${results.map((r) => r.command).join('; ')})` });
+    }
+    tasks.update(task.id, { checks: { ...fresh.checks, state: 'failed', at: Date.now() } }, 'harness');
+    const out = failed.map((r) => `$ ${r.command}   (${r.cwd})\n${r.timedOut ? `[остановлена: дольше ${checkCfg().timeoutMin} мин]\n` : ''}${r.output.trim().slice(-4000) || '(нет вывода)'}`).join('\n\n');
+    if (round < checkCfg().maxRounds && sessions.find(worker.id)) {
+      sessions.deliver(worker.id, { from: 'harness', text: `Проверка проекта не прошла (раунд ${round} из ${checkCfg().maxRounds}):\n\n${out}\n\nИсправь причину — не отключай и не пропускай проверки — и снова вызови worker_done.` });
+      return;
+    }
+    tasks.update(task.id, { agentState: 'failed' }, 'harness');
+    notify({ kind: 'failed', sessionId: worker.id, taskId: task.id, text: `${key}: проверка проекта не прошла за ${round} раунд(а): ${failed.map(line).join('; ')}` });
+    // the coordinator must not wait forever: it gets the report with what failed
+    const parent = worker.parentId && sessions.find(worker.parentId);
+    if (parent) sessions.deliver(parent.id, { from: worker.id, text: fromSession(worker, `${report}\nПроверка проекта не прошла за ${round} раунд(а):\n${failed.map(line).join('\n')}`) });
+  }
+
+  /** After a restart: a check that was running when the harness went down runs again (same round). */
+  function resumeChecks() {
+    for (const task of db.tasks) {
+      const ck = task.checks;
+      const worker = ck?.state === 'running' && sessions.find(ck.workerSessionId);
+      if (!worker) continue;
+      tasks.update(task.id, { checks: { ...ck, round: ck.round - 1 } }, 'harness');
+      runChecks(tasks.get(task.id), worker, { summary: ck.summary || '', report: ck.report || '' }).catch(() => {});
+    }
+  }
+
   function setReview(task, patch) {
     const review = { ...task.review, ...patch };
     tasks.update(task.id, { review, agentState: review.state }, 'harness');
@@ -672,8 +739,9 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
     const task = db.tasks.find((t) => t.assigneeSessionId === s.id);
     if (!task) return;
     const reviewState = task.review?.workerSessionId === s.id ? task.review.state : null;
+    const checking = task.checks?.workerSessionId === s.id && task.checks.state === 'running' ? 'checking' : null;
     const state = s.status === 'running' ? 'running'
-      : reviewState || ({ idle: 'waiting', stopped: 'waiting', done: 'done', failed: 'failed', error: 'failed' }[s.status] ?? null);
+      : checking || reviewState || ({ idle: 'waiting', stopped: 'waiting', done: 'done', failed: 'failed', error: 'failed' }[s.status] ?? null);
     if (task.agentState !== state) tasks.update(task.id, { agentState: state }, 'harness');
   }
 
@@ -770,6 +838,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
       '- Do only this task and only inside the working directory.',
       ...(s.atRoot ? [] : ['- Stay on your branch: do not switch or create branches.']),
       commitRule,
+      ...checkTargets(task, s).map((t) => `- Проверка проекта${s.atRoot ? ` ${path.basename(t.cwd)}` : ''}: \`${t.command}\` — запусти её сам перед worker_done; harness запустит её после твоего worker_done и вернёт тебе вывод, если она упадёт.`),
       ...(config.orchestration?.reviewMode === 'harness'
         ? ['- Ревью выполняет harness другой моделью после твоего worker_done; пропусти шаги внутреннего ревью твоей команды (не запускай встроенных субагентов-ревьюеров).']
         : []),
@@ -883,8 +952,9 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
 
   // ---- post-turn: escalation and error notifications ----
 
-  function turnEnded(s, { reported, communicated, stopped, queueEmpty, userFollowUp }) {
+  function turnEnded(s, { reported, communicated, stopped, reviving, queueEmpty, userFollowUp }) {
     settleGitRequests(s, stopped);
+    if (reviving) return; // the harness continues it by itself in a moment (sessions: revive)
     if (s.ephemeral && !reported && queueEmpty && s.waitingFor !== 'answer') { // asked its parent: not over, it waits
       const last = sessions.messages(s.id).filter((m) => m.kind === 'assistant').at(-1);
       settleRun(s, { status: stopped ? 'stopped' : 'no_report', summary: last?.text ?? '' });
@@ -1260,15 +1330,12 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
           `Summary: ${a.summary}`,
           `Ready tasks: ${ready.length ? ready.map((t) => `${t.id} "${t.title}"`).join(', ') : 'none'}`,
         ].join('\n');
-        if (task && !portRec && status === 'done' && c.role === 'worker' && config.orchestration?.reviewMode === 'harness') {
-          // the parent hears about it after the review verdict
-          startReview(task, c, report).catch((e) => notify({ kind: 'error', sessionId: c.id, taskId: task.id, text: `${tasks.key(task)}: не удалось запустить ревью: ${e.message}` }));
-          return { ok: true, review: 'started', taskStatus: task.status, readyTasks: ready.map((t) => t.id) };
+        if (task && !portRec && status === 'done' && c.role === 'worker' && checkTargets(task, c).length) {
+          // the project's own check first (tests, lint): a failure goes back to the worker, a pass continues as below
+          runChecks(task, c, { summary: a.summary, report }).catch((e) => notify({ kind: 'error', sessionId: c.id, taskId: task.id, text: `${tasks.key(task)}: проверка не запустилась: ${e.message}` }));
+          return { ok: true, checks: 'started', taskStatus: task.status, readyTasks: ready.map((t) => t.id) };
         }
-        const parent = c.parentId && sessions.find(c.parentId);
-        if (parent) sessions.deliver(parent.id, { from: c.id, text: fromSession(c, report) });
-        notify({ kind: status, sessionId: c.id, taskId: task?.id ?? null, text: `${c.title}: ${a.summary}` });
-        return { ok: true, taskStatus: portRec ? null : task?.status ?? null, readyTasks: ready.map((t) => t.id) };
+        return afterDone(c, task, { status, summary: a.summary, report, port: !!portRec, ready });
       },
     },
   ];
@@ -1338,6 +1405,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
     markWorktree,
     preamble,
     resumeReviews,
+    resumeChecks,
     gitSuggest,
     promptTemplate,
     reworkTemplate,

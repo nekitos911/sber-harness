@@ -102,6 +102,7 @@ export function ChatView({ id, active }: { id: string; active: boolean }) {
   }, [id])
 
   const subagentsOn = useFeature('subagents')
+  const reviveOn = useFeature('revive')
   useEffect(() => { if (subagentsOn) void loadSubagents(id) }, [id, subagentsOn])
 
   useEffect(() => {
@@ -242,6 +243,7 @@ export function ChatView({ id, active }: { id: string; active: boolean }) {
             <div className="chat-alert" role="alert">
               {errorLine(session, list)}
               <span className="grow" />
+              {reviveOn && <button type="button" className="btn btn-sm btn-primary" onClick={() => void tryApi('POST', `/sessions/${session.id}/revive`)} data-tip="Продолжить с того места, где оборвался"><RotateCcw />Повторить</button>}
               <button type="button" className="btn btn-sm" onClick={() => void showLog()}>Лог</button>
               <button type="button" className="btn btn-sm" onClick={reset}>Сбросить статус</button>
             </div>

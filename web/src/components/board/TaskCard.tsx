@@ -132,6 +132,7 @@ const AGENT_STATE: Record<NonNullable<Task['agentState']>, { text: string; tone:
   waiting: { text: 'ждёт ответа', tone: 'wait' },
   done: { text: 'агент закончил', tone: 'done' },
   failed: { text: 'агент: ошибка', tone: 'fail' },
+  checking: { text: 'проверка…', tone: 'run', spin: true },
   reviewing: { text: 'ревью…', tone: 'run', spin: true },
   approved: { text: 'ревью ✓', tone: 'done' },
   changes_requested: { text: 'замечания ревью', tone: 'run' },

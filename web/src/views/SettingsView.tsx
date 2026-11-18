@@ -216,6 +216,7 @@ function BasicSettings({ form, update, fieldError, main }: SectionProps & { main
         <h3>Пулл-реквесты</h3>
         <IntegrationStatus kind="pr" check={check} />
       </div>
+      {form.checks && <ChecksCard form={form} update={update} />}
       {acpOn && (
         <div className="set-card">
           <h3>Как запускать агента</h3>
@@ -992,6 +993,18 @@ function GeneralSection({ form, update }: Omit<SectionProps, 'fieldError'>) {
             </Row>
           </>
         )}
+        {form.session?.revive && (
+          <>
+            <Row label="Если агент оборвался" hint="Ошибка или обрыв связи посреди работы: программа сама продолжает ту же сессию с того же места (паузы 30 с, 2 мин, 5 мин). Не помогло — уведомление с «Повторить».">
+              <Select label="Если агент оборвался" value={String(form.session.revive.attempts)} onChange={(v) => update({ ...form, session: { ...form.session, revive: { ...form.session!.revive!, attempts: Number(v) } } })}
+                options={[{ value: '0', label: 'не продолжать, сразу уведомить' }, { value: '1', label: 'продолжить 1 раз' }, { value: '3', label: 'продолжить до 3 раз' }, { value: '5', label: 'продолжить до 5 раз' }]} />
+            </Row>
+            <Row label="Будить молчащего агента через" hint="Агент ничего не пишет и при этом не выполняет команду (долгая сборка или тесты — нормальная тишина, их не трогаем): процесс останавливается, сессия продолжается с того же места.">
+              <Select label="Будить молчащего агента через" value={String(form.session.revive.stallWakeMin)} onChange={(v) => update({ ...form, session: { ...form.session, revive: { ...form.session!.revive!, stallWakeMin: Number(v) } } })}
+                options={[{ value: '0', label: 'не будить' }, ...[10, 15, 30, 60].map((m) => ({ value: String(m), label: `${m} мин` }))]} />
+            </Row>
+          </>
+        )}
         <Row label="Тема" hint="Хранится в этом браузере.">
           <Segmented label="Тема" value={scheme} onChange={(v) => setState({ theme: v })} options={[{ value: 'dark', label: 'Тёмная' }, { value: 'light', label: 'Светлая' }]} />
         </Row>
@@ -1074,6 +1087,55 @@ export function CliPathFix({ id, error, onChecked, initial }: { id: string; erro
       </div>
       {err && <p className="field-error">{err}</p>}
       {error && <Disclosure className="cli-raw" summary={<span className="muted">Подробности</span>}><pre className="mono">{error}</pre></Disclosure>}
+    </div>
+  )
+}
+
+/**
+ * «Проверка перед «готово»»: the project's own command (tests, lint) that the harness runs in the agent's worktree once it
+ * reports — a failure goes back to the agent with the output. One per project; «Проверить сейчас» runs it on the project.
+ */
+function ChecksCard({ form, update }: { form: Settings; update: (s: Settings) => void }) {
+  const workspaces = useStore((s) => s.workspaces).filter((w) => !w.kind)
+  const c = form.checks!
+  const setCmd = (id: string, v: string) => update({ ...form, checks: { ...c, byWorkspace: { ...c.byWorkspace, [id]: v } } })
+  const [runs, setRuns] = useState<Record<string, { busy?: boolean; ok?: boolean; code?: number | null; output?: string; ms?: number }>>({})
+  const tryNow = async (id: string) => {
+    setRuns((r) => ({ ...r, [id]: { busy: true } }))
+    const res = await tryApi<{ ok: boolean; code: number | null; output: string; ms: number }>('POST', '/checks/run', { workspaceId: id, command: c.byWorkspace[id] })
+    setRuns((r) => ({ ...r, [id]: res ?? {} }))
+  }
+  return (
+    <div className="set-card">
+      <h3>Проверка перед «готово»</h3>
+      <p className="set-note">Команда, которую программа сама запускает в рабочем дереве, когда агент сдал задачу: тесты, линтер, проверка типов. Не прошла — вывод уходит агенту на исправление; «готово» значит «проверено», а не «агент так сказал».</p>
+      {workspaces.length === 0 && <p className="muted">Откройте проект — здесь появится его проверка.</p>}
+      <div className="set-rows">
+        {workspaces.map((w) => {
+          const cmd = c.byWorkspace[w.id] ?? ''
+          const sug = c.suggested?.[w.id]
+          const run = runs[w.id]
+          return (
+            <Row key={w.id} label={w.name} hint={!cmd ? (sug ? <>Нет проверки. <button type="button" className="link-btn" onClick={() => setCmd(w.id, sug)}>Подставить: <span className="mono">{sug}</span></button></> : 'Нет проверки: «готово» без неё.') : undefined}>
+              <div className="check-row">
+                <Input mono aria-label={`Проверка ${w.name}`} value={cmd} placeholder={sug ?? 'например mvn -q test'} onChange={(e) => setCmd(w.id, e.target.value)} />
+                <Button size="sm" disabled={!cmd.trim() || run?.busy} onClick={() => void tryNow(w.id)}>{run?.busy ? 'Идёт…' : 'Проверить сейчас'}</Button>
+              </div>
+              {run && !run.busy && run.ok !== undefined && (
+                <Disclosure className="check-result" summary={<span className={run.ok ? 'ok-text' : 'field-error'}>{run.ok ? 'Прошла' : `Не прошла (код ${run.code ?? '—'})`} · {Math.round((run.ms ?? 0) / 1000)} с</span>}>
+                  <pre className="mono">{run.output?.trim() || '(нет вывода)'}</pre>
+                </Disclosure>
+              )}
+            </Row>
+          )
+        })}
+        {workspaces.length > 0 && (
+          <Row label="Попыток исправить" hint="Сколько раз агент получает упавшую проверку назад; потом — уведомление вам.">
+            <Select label="Попыток исправить" value={String(c.maxRounds)} onChange={(v) => update({ ...form, checks: { ...c, maxRounds: Number(v) } })}
+              options={[1, 2, 3, 4, 5].map((n) => ({ value: String(n), label: String(n) }))} />
+          </Row>
+        )}
+      </div>
     </div>
   )
 }

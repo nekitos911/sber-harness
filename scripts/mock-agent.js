@@ -102,7 +102,11 @@ if (has(/#nopartial\b/) && argv.includes('--include-partial-messages')) {
   process.stderr.write('Unknown argument: include-partial-messages\n');
   process.exit(1);
 }
-if (has(/#crash\b/)) {
+// #crashalways: this and every later turn of the session crash (the harness's automatic continuation gives up)
+const stickyDir = process.env.MOCK_AGENT_STATE_DIR || path.join(os.tmpdir(), 'harness-mock-agent');
+const sticky = resume && path.join(stickyDir, `${resume.replace(/[^\w-]/g, '_')}.crash`);
+if (sticky && has(/#crashalways\b/)) { fs.mkdirSync(stickyDir, { recursive: true }); fs.writeFileSync(sticky, '1'); }
+if (has(/#crash\b/) || (sticky && fs.existsSync(sticky))) {
   process.stderr.write('mock-agent: simulated crash (#crash)\n');
   process.exit(1);
 }

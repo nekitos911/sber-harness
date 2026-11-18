@@ -758,12 +758,12 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     updateMessage(s, prev);
   }
 
-  function runTurnEnded(s, r, stopped) {
+  function runTurnEnded(s, r, stopped, reviving = false) {
     if (s.origin === 'cli') s.cliSyncAfter = Date.now() + 15000; // the CLI records this turn too: not «CLI-side activity»
     try {
       // the user's own follow-up (not the first turn, every message from the user): no escalation to the user
       const userFollowUp = r.turn > 1 && !!r.lastItems?.length && r.lastItems.every((it) => it.from === 'user');
-      hooks.turnEnded(s, { ...r.flags, stopped, queueEmpty: !s.queue.length, userFollowUp });
+      hooks.turnEnded(s, { ...r.flags, stopped, reviving, queueEmpty: !s.queue.length, userFollowUp });
     } catch (e) {
       console.error('[sessions] turnEnded hook failed:', e);
     }
@@ -830,6 +830,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     r.resultAt = Date.now();
     const status = r.flags.reported && (s.status === 'done' || s.status === 'failed') ? s.status : 'idle';
     Object.assign(s, { status, phase: null, lastActivityAt: Date.now(), stalled: false, turnClosing: true });
+    if (s.revive) s.revive = null; // a turn that reached its result went well: the automatic attempts start over
     if (s.waitingFor === 'auth') s.waitingFor = null;
     settleVirtuals(s);
     emit(s);
@@ -1037,7 +1038,9 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     r.handle = null;
     const paused = r.pausedForAnswer; // ended by answering the CLI's question (ACP), not by Stop
     r.pausedForAnswer = false;
-    const stopped = (res.stopped || r.stopRequested) && !paused;
+    const woken = r.reviveKill; // stopped by the harness to wake a silent turn, not by the person
+    r.reviveKill = null;
+    const stopped = (res.stopped || r.stopRequested) && !paused && !woken;
     const unadopted = r.unadopted;
     r.stopRequested = false;
     r.unadopted = false;
@@ -1047,6 +1050,8 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     if (stopped) {
       status = 'stopped'; // already set by stop(); a late exit never overwrites it
       addMessage(s, { kind: 'system', text: 'Остановлено пользователем' });
+    } else if (woken) {
+      status = 'idle';
     } else if (unadopted && !res.sawResult) {
       // the saved pid is gone or now belongs to another process: what the file had is shown, the rest is lost
       markInterrupted(s);
@@ -1099,8 +1104,13 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     Object.assign(s, { status, errorKind, pid: null, pidStartedAt: null, phase: null, turnOffset: null, lastActivityAt: Date.now(), stalled: false, turnClosing: false });
     if (s.waitingFor === 'auth') s.waitingFor = null;
     settleVirtuals(s);
+    // broke (not the person's stop, not a login, not a missing executable or model) or woken: continue by itself
+    const broke = status === 'error' && errorKind === 'turn' && !res.authTimedOut && !/Не удалось запустить агента/.test(res.error || '') && store.messages(s.id).findLast((m) => m.kind === 'error')?.action !== 'pick-model';
+    const reason = woken || (broke ? (store.messages(s.id).findLast((m) => m.kind === 'error')?.text.split('\n')[0] || 'ошибка хода').slice(0, 200) : null);
+    const reviving = !!reason && !stopped && revivable(s) && !s.queue.length && scheduleRevive(s, reason);
+    if (!reason && status !== 'error' && s.revive) s.revive = null; // a turn that went well: the count starts over
     emit(s);
-    runTurnEnded(s, r, stopped);
+    runTurnEnded(s, r, stopped, reviving);
     store.flush(); // a finished turn is never lost to a crash right after it
     if (s.archiveOnSettle && !s.archived) return api.archive(s.id, true); // a settled helper (subagentRetention)
     if (r.requeued) r.requeued = false; // no retry loop: the next message (or a model change) sends them
@@ -1214,6 +1224,37 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     return { command: shellLine([exe.file, ...exe.args, ...(flag ? includeDirs.flatMap((d) => [flag, d]) : [])]), env: exe.env || {} };
   }
 
+  // ---- revive: a turn that broke (an error, a dropped connection) or went silent is continued, not dropped ----
+  // A few attempts with growing pauses (--resume keeps the context, the worktree keeps the files), then a notification
+  // with «Повторить». session.revive = { count, reason, due } | { …, gaveUp } until a turn goes well.
+  const reviveCfg = () => ({ attempts: 3, delaysSec: [30, 120, 300], stallWakeMin: 15, ...config.session?.revive });
+  const CONTINUE = (reason) => `[harness] Предыдущий ход оборвался (${reason}). Продолжи с того места, где остановился: проверь, что уже сделано в рабочем дереве, и доведи задачу до конца.`;
+  const delayText = (sec) => (sec < 60 ? `${sec} с` : `${Math.round(sec / 60)} мин`);
+  /** Worth continuing by itself: a chat of the person or a worker, not one that waits for someone or cannot start at all. */
+  const revivable = (s) => s.kind === 'chat' && !s.virtual && !s.archived && !s.waitingFor && s.phase !== 'auth' && !!s.everStarted && reviveCfg().attempts > 0;
+  function scheduleRevive(s, reason) {
+    const cfg = reviveCfg();
+    const n = s.revive?.gaveUp ? 0 : s.revive?.count || 0;
+    if (n >= cfg.attempts) {
+      s.revive = { count: n, reason, gaveUp: true };
+      addMessage(s, { kind: 'system', text: `⚠ Агент не продолжил работу и после ${n} повтор(ов): ${reason}. «Повторить» — здесь или во «Входящих».` });
+      hooks.notify?.({ kind: 'escalation', sessionId: s.id, taskId: s.taskId ?? null, text: `${s.title}: агент обрывается и после ${n} повторов — ${reason}`, actions: ['retry', 'open'] });
+      return false;
+    }
+    const sec = cfg.delaysSec[Math.min(n, cfg.delaysSec.length - 1)];
+    const due = Date.now() + sec * 1000;
+    s.revive = { count: n + 1, reason, due };
+    addMessage(s, { kind: 'system', text: `${reason} — продолжу сам через ${delayText(sec)} (попытка ${n + 1} из ${cfg.attempts})` });
+    const t = setTimeout(() => {
+      const x = find(s.id);
+      // the person (or the agent) moved on meanwhile: a new message, a stop, an archive — nothing to continue
+      if (!x || x.archived || x.revive?.due !== due || runtime(s.id).running || x.status === 'running' || x.status === 'stopped' || x.waitingFor) return;
+      api.deliver(s.id, { from: 'harness', text: CONTINUE(reason) });
+    }, sec * 1000);
+    t.unref?.();
+    return true;
+  }
+
   // ---- stalled: running, not logging in, no event for session.stallSec while the pid is alive ----
   const stallTimer = setInterval(() => {
     const limit = (Number(config.session?.stallSec) || 300) * 1000;
@@ -1223,6 +1264,14 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
       if (!!s.stalled !== stalled) {
         s.stalled = stalled;
         emit(s);
+      }
+      // silent and not inside a tool (a long build is a normal silence): stop it and continue the same session
+      const wake = reviveCfg().stallWakeMin;
+      const r = rt.get(s.id);
+      if (stalled && wake && r?.running && !r.reviveKill && revivable(s) && Date.now() - (s.lastEventAt || s.lastActivityAt) > wake * 60000
+        && ![...(r.cur?.tools?.values() ?? [])].some((m) => m.tool?.status === 'running')) {
+        r.reviveKill = `нет вывода ${wake} мин`;
+        r.handle?.stop();
       }
     }
   }, (Number(config.session?.stallCheckSec) || 15) * 1000);
@@ -1483,6 +1532,16 @@ ${note.trim()}` : text });
     },
 
     /** Queue a message for a chat session (starts a turn if idle) or type it into a terminal. */
+    /** «Повторить»: continue a broken chat now (the automatic attempts start over). */
+    revive(sid) {
+      const s = get(sid);
+      if (s.kind !== 'chat' || s.virtual) fail(400, 'продолжить можно только чат');
+      if (runtime(sid).running) fail(409, 'агент уже работает');
+      const reason = s.revive?.reason || 'повтор вручную';
+      s.revive = null;
+      return api.deliver(sid, { from: 'harness', text: CONTINUE(reason) });
+    },
+
     deliver(sid, { from = 'user', text, options }) {
       const s = get(sid);
       if (s.virtual) fail(409, 'внутренний субагент — писать можно только в родительский чат');

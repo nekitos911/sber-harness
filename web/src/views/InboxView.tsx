@@ -79,6 +79,7 @@ function EscalationItem({ n }: { n: Notification }) {
         {(n.count ?? 1) > 1 && <span className="count" data-tip="Сколько раз повторилось">×{n.count}</span>}
       </span>
       <span className="inbox-actions">
+        {actions.includes('retry') && session && <button type="button" className="btn btn-sm btn-primary" onClick={() => { settle(); void tryApi('POST', `/sessions/${session.id}/revive`) }}><RotateCcw />Повторить</button>}
         {actions.includes('open') && session && <button type="button" className="btn btn-sm" onClick={() => { settle(); openSession(session.id) }}>Открыть чат</button>}
         {actions.includes('rework') && task && (
           <>
