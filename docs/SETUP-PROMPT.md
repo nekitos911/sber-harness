@@ -59,6 +59,37 @@ what remains open.
 
 ---
 
+## Prompt: finish the local «CLI» screen (CLI chats) and bring it to GitHub
+
+```text
+In sber-harness on this machine I added a «CLI» screen (a list of GigaCode chats started in the terminal). Finish it and
+bring it in line with upstream so it does not diverge from GitHub.
+
+1. git status / git log: commit your local changes (the CLI screen) to a separate branch, local/cli-screen. Then
+   git checkout main && git pull, and rebase your branch onto main. Upstream has changed a lot: sidebar, «Главная» /
+   handoff, the «Изменения» panel, tooltips, history. On conflicts, keep upstream everywhere except the CLI screen itself.
+2. Build the screen on top of the existing history API (server/history.js, GET /api/history, feature cli-history),
+   which the worktree's «История» tab already uses. Do not keep a parallel reader. Extend the API: GET /api/history?all=1&q=&offset=&limit=
+   (all folders, server-side search, paging), with a test.
+3. Clean up the list (in the reader, with tests):
+   - only real chat records: session files with at least one user message; *.runtime.json and empty ones are not listed;
+   - chats the harness started itself (the record's sessionId = some harness session's externalSessionId) are not
+     shown as CLI chats: they already exist in the harness;
+   - service runs are not shown: records whose cwd is inside the harness's data/, the model catalog /models, message
+     generation (the HARNESS_GENERATE_MESSAGE marker), /context and /compress probes.
+4. Titles: remove the harness preamble from the first message (lines starting with "[harness]" and the block
+   "Ты работаешь внутри harness…"); title = the first meaningful line, at most 80 characters.
+5. Grouping: by project (cwd → registered repository; the projects folder → «Все проекты»), inside a group
+   «Сегодня / Вчера / Ранее»; a project filter next to the search.
+6. Actions: «Продолжить» opens the existing linked harness chat if there is one, otherwise creates one (as now). A record
+   without a folder offers «Продолжить в папке…» (FolderPicker) instead of a dead row.
+7. The «CLI» menu item has no counter (we keep badges only for things that need the user's action); allowed: a dot
+   when new CLI chats appeared since the last visit (remember the time in localStorage).
+8. Instead of the 200 cap: «Показать ещё» (offset/limit) and server-side search.
+9. npm test and npm run build green → commit → merge into main → git push.
+Report: what changed, which records are now filtered and how many remain, test results.
+```
+
 ## Prompt for updating an existing installation (the machine already has the harness)
 
 ```text
