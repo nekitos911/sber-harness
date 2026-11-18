@@ -4,13 +4,14 @@ import type { Message } from '../types'
 const plural = (n: number, [one, few, many]: [string, string, string]) =>
   n % 10 === 1 && n % 100 !== 11 ? one : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 12 || n % 100 > 14) ? few : many
 
-export type ToolKind = 'edit' | 'shell' | 'mcp' | 'read' | 'search' | 'other'
+export type ToolKind = 'edit' | 'shell' | 'agent' | 'mcp' | 'read' | 'search' | 'other'
 
 const KIND: [ToolKind, RegExp][] = [
   ['edit', /^(edit|replace|write_file|writefile|write|multiedit|notebookedit|apply_patch|create_file|str_replace\w*)$/i],
   ['shell', /^(run_shell_command|bash|shell|exec_command)$/i],
   ['read', /^(read_file|readfile|read|read_many_files|readmanyfiles|readfolder|view)$/i],
   ['search', /^(glob|grep_search|grep|search|searchtext|findfiles|search_file_content|list_directory|ls|web_search|googlesearch)$/i], // GigaCode display names too
+  ['agent', /^(mcp__harness__|harness\.)(agent|worker_run|worker_start)$/], // the harness's own helpers: sub-agents
   ['mcp', /^mcp__|^[\w-]+\.[\w-]+$/], // mcp__server__tool (Claude) or server.tool (GigaCode / harness)
 ]
 export const toolKind = (name: string): ToolKind => KIND.find(([, re]) => re.test(name))?.[0] ?? 'other'
@@ -18,6 +19,7 @@ export const toolKind = (name: string): ToolKind => KIND.find(([, re]) => re.tes
 const WORDS: Record<ToolKind, { now: string; past: string; noun: [string, string, string] }> = {
   edit: { now: 'редактирует', past: 'отредактировал', noun: ['файл', 'файла', 'файлов'] },
   shell: { now: 'выполняет', past: 'выполнил', noun: ['команду', 'команды', 'команд'] },
+  agent: { now: 'запускает', past: 'запустил', noun: ['субагента', 'субагента', 'субагентов'] },
   mcp: { now: 'использует', past: 'использовал', noun: ['интеграцию', 'интеграции', 'интеграций'] },
   read: { now: 'читает', past: 'прочитал', noun: ['файл', 'файла', 'файлов'] },
   search: { now: 'делает', past: 'сделал', noun: ['поиск', 'поиска', 'поисков'] },

@@ -59,7 +59,7 @@ export function WorkersPanel({ sessionId, workers }: { sessionId: string; worker
           )}
           {inner.length > 0 && (
             <>
-              <div className="workers-sub">Субагенты команды</div>
+              <div className="workers-sub" data-tip="Субагенты, которых GigaCode запустил сам, внутри этого чата: их видно, но писать им нельзя">Встроенные субагенты GigaCode</div>
               {inner.map((w) => <WorkerRow key={w.id} w={w} now={now} />)}
             </>
           )}

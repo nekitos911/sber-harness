@@ -13,7 +13,8 @@ test('kinds cover GigaCode and Claude names', () => {
   assert.equal(toolKind('read_many_files'), 'read')
   assert.equal(toolKind('grep_search'), 'search')
   assert.equal(toolKind('mcp__playwright__browser_click'), 'mcp')
-  assert.equal(toolKind('harness.worker_start'), 'mcp')
+  assert.equal(toolKind('harness.worker_start'), 'agent', 'the harness helpers are sub-agents')
+  assert.equal(toolKind('harness.ask'), 'mcp')
   assert.equal(toolKind('todo_write'), 'other')
   assert.equal(toolKind('ReadFile'), 'read') // recorded CLI history uses display names
   assert.equal(toolKind('SearchText'), 'search')
@@ -30,6 +31,8 @@ test('summary: plurals, distinct files, tense', () => {
     msg('read_file', { absolute_path: '/r/b.js' }), msg('read_file', { absolute_path: '/r/c.js' }),
   ]
   assert.equal(toolRunSummary(run, true), 'Редактирует 1 файл, выполняет 11 команд, использует 3 интеграции и читает 2 файла')
+  const helpers = [{ id: 'a', tool: { name: 'mcp__harness__agent', input: {} } }, { id: 'b', tool: { name: 'harness.worker_run', input: {} } }] as never[]
+  assert.equal(toolRunSummary(helpers, false), 'Запустил 2 субагента')
   assert.equal(toolRunSummary([msg('glob', {})], false), 'Сделал 1 поиск')
 })
 

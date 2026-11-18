@@ -1731,7 +1731,9 @@ ${note.trim()}` : text });
      */
     adoptVirtual(parentId, workerId, prompt) {
       const promptOf = (v) => store.messages(v.id).find((m) => m.kind === 'user')?.text ?? '';
-      const v = db.sessions.find((x) => x.virtual && x.parentId === parentId && x.status === 'running' && promptOf(x) === prompt);
+      const copies = db.sessions.filter((x) => x.virtual && x.parentId === parentId && x.status === 'running');
+      // the same task; else a copy whose arguments have not come (ACP may never send them): the same call, by order
+      const v = copies.find((x) => promptOf(x) === prompt) || copies.find((x) => ['{}', 'null', ''].includes(promptOf(x).trim()));
       if (v) return replaceCopy(v, workerId);
       // not in the stream yet (or its arguments are not): matched when they come (openVirtual / fillVirtual)
       adopted.set(parentId, [...(adopted.get(parentId) || []), { prompt, workerId, at: Date.now() }]);

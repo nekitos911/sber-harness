@@ -37,9 +37,10 @@ function stepLine(t: ToolCall): { icon: ReactNode; text: ReactNode } {
   const input = obj(t.input)
   // the model called GigaCode's tool bridge without saying which tool: nothing ran (not «tool без аргументов»)
   if (/tool_call bridge refused/i.test(t.output ?? '')) return { icon: <Wrench />, text: <>Вызов без имени инструмента <span className="muted">— GigaCode отклонил, ничего не выполнено (ошибка модели)</span></> }
-  if (isSubagentTool(t)) {
-    const type = typeof input.subagent_type === 'string' ? input.subagent_type : t.name
-    return { icon: <Bot />, text: <>Субагент {type}</> }
+  if (isSubagentTool(t) || toolKind(t.name) === 'agent') {
+    const type = [input.subagent_type, input.profile].find((x) => typeof x === 'string' && x) as string | undefined
+    const what = [input.description, input.title, input.prompt, input.spec].find((x) => typeof x === 'string' && x.trim()) as string | undefined
+    return { icon: <Bot />, text: <>Субагент{type ? ` ${type}` : ''}{what && <span className="muted">: {what.split('\n')[0].slice(0, 160)}</span>}</> }
   }
   if (/^(skill|activate_skill|use_skill)$/i.test(t.name)) return { icon: <Sparkles />, text: <>Навык {String(input.skill ?? input.name ?? '')}</> }
   const file = pathOf(t.input)

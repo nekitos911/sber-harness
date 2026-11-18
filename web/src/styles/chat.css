@@ -407,3 +407,6 @@ svg.step-icon.spinner { color: var(--lamp-run); }
 .ask-option[aria-pressed="true"] { border-color: var(--signal); box-shadow: inset 0 0 0 1px var(--signal); }
 .ask-submit { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .ask-done-many .ask-answers { white-space: pre-line; font-weight: 600; }
+/* the link under a step lines up with its text, and nothing long scrolls the list sideways */
+.step > .step-link { margin: 0 0 4px 25px; }
+.tool-steps { overflow-x: hidden; }

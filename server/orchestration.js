@@ -754,7 +754,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
   }
 
   function rolePreamble(s) {
-    const tools = `Harness tools are in the MCP server "harness" (fallback from a shell: node "${HARNESS_CLI}" call <tool> '<json>').`;
+    const tools = [`Harness tools are in the MCP server "harness" (fallback from a shell: node "${HARNESS_CLI}" call <tool> '<json>').`, launchers[s.launcherId]?.defaults.toolsHint].filter(Boolean).join(' ');
     const registry = `Registry dir: ${sessions.registryDir(s.id)} - if you start built-in helper sub-agents (agent tool), record them there per your orchestration skill (<id>/agent.json + log.jsonl).`;
     const helpers = '- The built-in agent tool is fine for internal helpers (review, exploration); parallel task work the user should see goes through worker_start (each worker gets its own chat).';
     if (s.role === 'coordinator') {
