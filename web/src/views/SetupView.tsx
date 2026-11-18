@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Check, CircleAlert, FolderOpen } from 'lucide-react'
+import { Check, Circle, CircleAlert, FolderOpen } from 'lucide-react'
 import { api, errorText, tryApi } from '../api'
 import { openDialog, openScreen, setState, toast, useStore } from '../store'
 import { loadAgentMeta, loadSettings, useAgentMeta, useSettings } from '../lib/agents'
@@ -102,7 +102,7 @@ export function SetupView() {
     <section className="setup firstrun" aria-label="Первый запуск">
       <header className="setup-head">
         <h2>Настроим рабочее место</h2>
-        <span className="muted">три шага — остальное потом, в «Настройках»</span>
+        <span className="muted">два обязательных шага, остальное по желанию — всё можно поменять потом в «Настройках»</span>
       </header>
       <ol className="setup-steps firstrun-steps">
         <li className="firstrun-step" data-done={agentOk || undefined}>
@@ -136,31 +136,34 @@ export function SetupView() {
           </div>
         </li>
 
-        <li className="firstrun-step" data-done={commandOk || undefined}>
-          {commandOk ? <Check className="setup-mark" aria-label="готово" /> : <CircleAlert className="setup-mark" aria-label="нужно сделать" />}
+        <li className="firstrun-step" data-done={commandOk || undefined} data-optional>
+          {commandOk ? <Check className="setup-mark" aria-label="готово" /> : <Circle className="setup-mark" aria-label="не заполнено" />}
           <div className="firstrun-body">
-            <strong>Как агент получает задачу</strong>
-            <Segmented size="sm" label="Как агент получает задачу" value={mode} onChange={(v) => setHow(v)}
-              options={[{ value: 'text', label: 'Текстом задачи' }, { value: 'command', label: 'Своей командой' }]} />
-            {mode === 'text'
-              ? <span className="muted">Агент получит ссылку, название и описание задачи — или ваш текст — и дальше работает сам. Подходит всем.</span>
-              : <>
-                <span className="muted">Команда или навык агента, который ведёт задачу от начала до PR (у кого-то это <span className="mono">/full-task</span>). Харнесс поставит её перед текстом задачи.</span>
-                <div className="firstrun-actions">
-                  <Input mono aria-label="Команда" value={cmd ? `/${cmd}` : ''} placeholder="/full-task" onChange={(e) => setCommand(e.target.value)} />
-                  {own.slice(0, 6).map((c) => <button key={c} type="button" className="chip chip-mono" aria-pressed={c === cmd} onClick={() => setCommand(c)}>/{c}</button>)}
-                </div>
-                {!own.length && <span className="muted">У агента не нашлось своих команд и навыков: если команды нет, выберите «Текстом задачи».</span>}
-              </>}
+            <strong>Есть ли у вас своя команда для задач? <span className="muted">· необязательно</span></strong>
+            <span className="muted">Некоторые заводят в агенте команду, которая ведёт задачу по шагам: разобраться, сделать, проверить, открыть PR (например, <span className="mono">/full-task</span>). Если такой нет — ничего страшного, агент получит задачу как есть.</span>
+            <Segmented size="sm" label="Своя команда для задач" value={mode} onChange={(v) => setHow(v)}
+              options={[{ value: 'text', label: 'Нет' }, { value: 'command', label: 'Есть' }]} />
+            {mode === 'command' && (
+              <div className="firstrun-actions">
+                <Input mono aria-label="Команда" value={cmd ? `/${cmd}` : ''} placeholder="/full-task" onChange={(e) => setCommand(e.target.value)} />
+                {own.length > 0 && <span className="muted">нашлись у агента:</span>}
+                {own.slice(0, 6).map((c) => <button key={c} type="button" className="chip chip-mono" aria-pressed={c === cmd} onClick={() => setCommand(c)}>/{c}</button>)}
+              </div>
+            )}
+            <span className="muted">Так агент получит задачу PROJ-123:</span>
+            <pre className="firstrun-example mono">{mode === 'command' && commandOk
+              ? `/${cmd} https://tracker/…/PROJ-123`
+              : 'PROJ-123: Добавить фильтр по дате\n\nОписание задачи из трекера…\n\nhttps://tracker/…/PROJ-123'}</pre>
           </div>
         </li>
 
         {skill && skill !== 'installed' && (
           <li className="firstrun-step" data-optional>
-            <Switch checked={installSkill} onChange={setInstallSkill} label="Установить навык для помощников" />
+            <Switch checked={installSkill} onChange={setInstallSkill} label="Показывать помощников агента" />
             <div className="firstrun-body">
-              <strong>Помощники агента в отдельных чатах <span className="muted">· необязательно</span></strong>
-              <span className="muted">Агент сможет запускать помощников (ревью, исследование кода) так, что каждого видно здесь отдельным чатом. Запишет навык в папку агента.</span>
+              <strong>Показывать помощников агента <span className="muted">· необязательно</span></strong>
+              <span className="muted">Иногда агент зовёт на помощь другого агента — например, проверить код свежим взглядом. Если включить, каждый такой помощник появится здесь отдельным чатом: видно, что он делает, ему можно ответить или остановить. Если нет — помощники работают внутри агента незаметно.</span>
+              <span className="muted">Для этого в папку агента запишется файл с инструкцией (навык).</span>
             </div>
           </li>
         )}
