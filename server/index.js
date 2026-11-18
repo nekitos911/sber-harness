@@ -21,6 +21,7 @@ import { launchers, gigacodeCommand } from './launchers.js';
 import { isAlive, resolveCommand, spawnOptions } from './runner.js';
 import { createModelCatalog, scanModelRefs } from './models.js';
 import { readSdd } from './sdd.js';
+import { generateMessage } from './generate.js';
 import { createHistory, historyMessages } from './history.js';
 import { runJob, jobStep, JOB_ID_RE } from './jobs.js';
 import { DEMO_PORT, demoOverrides, seedDemoRepos, seedDemoTasks } from './demo.js';
@@ -38,7 +39,7 @@ const NO_BUILD_HTML = '<!doctype html><meta charset="utf-8"><title>Harness</titl
 const GRADES = ['default', 'fast', 'review', 'explore'];
 // optional API groups this server implements (docs/ARCHITECTURE.md "Feature flags"); a flag ships with its route
 export const FEATURES = ['branches', 'fs-search', 'pr-status', 'agent-info', 'models-refresh', 'tracker-links', 'board-columns', 'review-loop',
-  'subagents', 'virtual-sessions', 'worker-run', 'skills-install', 'demo', 'worktree-meta', 'open', 'sdd', 'health', 'folders', 'include-dirs', 'questions', 'permissions', 'activity', 'rework', 'fs-raw', 'tracker-import', 'pr-decline', 'task-suggest', 'recovery', 'acp', 'worktree-lazy', 'cli-history', 'prs-mine'];
+  'subagents', 'virtual-sessions', 'worker-run', 'skills-install', 'demo', 'worktree-meta', 'open', 'sdd', 'health', 'folders', 'include-dirs', 'questions', 'permissions', 'activity', 'rework', 'fs-raw', 'tracker-import', 'pr-decline', 'task-suggest', 'recovery', 'acp', 'worktree-lazy', 'cli-history', 'prs-mine', 'git-generate'];
 // titles of operations the UI may follow by sending x-job-id (WS { t: 'job' } frames)
 const JOB_TITLES = {
   'POST /api/tasks/sync': 'Синхронизация с трекером',
@@ -48,6 +49,7 @@ const JOB_TITLES = {
   'POST /api/tasks/:id/import-children': 'Импорт подзадач',
   'POST /api/git/pr': 'Создание PR',
   'POST /api/git/push': 'git push',
+  'POST /api/git/generate': 'Сообщение коммита',
   'POST /api/git/checkout': 'Переключение ветки',
   'DELETE /api/workspaces/:id/worktrees': 'Удаление рабочего дерева',
   'POST /api/agents/:id/models/refresh': 'Обновление списка моделей',
@@ -370,7 +372,7 @@ export async function startServer(opts = {}) {
         resolved: resolveAgentView(a),
       }])),
       defaultAgent: config.defaultAgent,
-      git: pick(config.git, GIT_KEYS),
+      git: { ...pick(config.git, GIT_KEYS), generateMessages: config.git.generateMessages !== false, generateTimeoutSec: config.git.generateTimeoutSec },
       tasks: { refreshSec: t.refreshSec ?? 0 },
       board: config.board,
       workspaces: {
@@ -650,8 +652,11 @@ export async function startServer(opts = {}) {
       patch.defaultAgent = body.defaultAgent;
     }
     if (body.git !== undefined) {
-      if (!isObj(body.git) || Object.entries(body.git).some(([k, v]) => !GIT_KEYS.includes(k) || typeof v !== 'string' || !v.trim())) {
-        fail(400, `git: непустые строки для ${GIT_KEYS.join(', ')}`);
+      const okKey = ([k, v]) => (GIT_KEYS.includes(k) && typeof v === 'string' && v.trim())
+        || (k === 'generateMessages' && typeof v === 'boolean')
+        || (k === 'generateTimeoutSec' && Number.isInteger(v) && v >= 10 && v <= 600);
+      if (!isObj(body.git) || !Object.entries(body.git).every(okKey)) {
+        fail(400, `git: непустые строки для ${GIT_KEYS.join(', ')}; generateMessages: true/false; generateTimeoutSec: 10..600`);
       }
       patch.git = body.git;
     }
@@ -1281,6 +1286,11 @@ export async function startServer(opts = {}) {
     const r = await git.checkout(body.cwd, body);
     refreshBranch(body.cwd, r.branch);
     return r;
+  });
+  // the agent writes the commit / PR message (one-off helper run, no chat); x-job-id shows the steps
+  route('POST', '/api/git/generate', ({ body }) => {
+    check(body, { cwd: 'string', kind: 'string', base: 'string?' });
+    return generateMessage({ config, store, getUrl: () => url, tasks, suggest: orch.gitSuggest, cwd: path.resolve(body.cwd), kind: body.kind, base: body.base });
   });
   route('POST', '/api/git/commit', ({ body }) => {
     check(body, { cwd: 'string', message: 'string', paths: 'array?' });

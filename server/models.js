@@ -4,10 +4,9 @@
 // one at a time per agent, in the background; failures are stored, never fatal.
 import fs from 'node:fs';
 import path from 'node:path';
-import { CODE_ROOT, expandHome } from './config.js';
+import { expandHome } from './config.js';
 import { launchers } from './launchers.js';
-import { runTurn } from './runner.js';
-import { secretEnv } from './mcp-client.js';
+import { runHelper } from './helper.js';
 
 const fail = (status, message) => { throw Object.assign(new Error(message), { status }); };
 const TOKEN_RE = /[A-Za-z0-9][A-Za-z0-9.-]{3,79}/g;
@@ -98,35 +97,9 @@ export function createModelCatalog({ config, store, getUrl }) {
         const found = answer ? parseModelIds(answer, md.pattern) : [];
         if (found.length) return save(agent, { models: found, at: Date.now() });
       }
-      const exe = launcher.resolve(agentCfg);
-      const dir = path.join(store.dataDir, 'chats', 'discovery', agent);
-      fs.mkdirSync(dir, { recursive: true });
-      const env = { HARNESS_URL: getUrl(), HARNESS_TOKEN: store.token, HARNESS_SESSION_ID: '' };
-      const ctx = {
-        prompt: md.prompt,
-        session: { id: `discovery-${agent}`, externalSessionId: null, approvalMode: null, model: null },
-        agentCfg,
-        settingsPath: path.join(dir, 'settings.json'),
-        mcpConfigPath: path.join(dir, 'mcp.json'),
-        harnessMcp: { command: process.execPath, args: [path.join(CODE_ROOT, 'mcp', 'harness-mcp.js')], env },
-        agentMcpServers: {},
-      };
-      launcher.prepare(ctx);
-      let text = '';
-      let resultText = null;
-      const handle = runTurn({
-        launcher, ctx, command: exe, cwd: dir,
-        env: { ...process.env, ...agentCfg.env, ...secretEnv(config), ...exe.env, ...launcher.env(ctx), ...env },
-        firstEventTimeoutMs: agentCfg.firstEventTimeoutMs || launcher.defaults.firstEventTimeoutMs || 30000,
-        authTimeoutMs: agentCfg.authTimeoutMs || 600000,
-        logFile: path.join(dir, 'discovery.log'), outFile: path.join(dir, 'out.ndjson'), errFile: path.join(dir, 'err.txt'),
-        onEvent: (ev) => {
-          if (ev.type === 'text' || ev.type === 'raw') text += ev.delta ? ev.text : `\n${ev.text}`;
-          if (ev.type === 'result' && ev.text) resultText = ev.text;
-        },
+      const { text, resultText, res } = await runHelper({
+        config, store, getUrl, agent, kind: 'discovery', prompt: md.prompt, onHandle: (handle) => { entry.handle = handle; },
       });
-      entry.handle = handle;
-      const res = await handle.done;
       const models = parseModelIds(resultText || text, md.pattern);
       if (models.length) return save(agent, { models, at: Date.now() });
       const why = res.error || (res.timedOut ? 'нет ответа вовремя' : res.stderrTail.trim().split('\n').slice(-3).join(' ')) || 'в ответе нет id моделей';

@@ -74,6 +74,13 @@ if (has(/#sandboxfail\b/)) {
     process.exit(1);
   }
 }
+// commit/PR message requests (first line HARNESS_GENERATE_MESSAGE): #genfail in the changes = the CLI rejects
+// --safe-mode before any output (the harness retries without it); #gengarbage = an answer that is not JSON
+const generate = prompt.split(/\r?\n/)[0].trim() === 'HARNESS_GENERATE_MESSAGE';
+if (generate && prompt.includes('#genfail') && argv.includes('--safe-mode')) {
+  process.stderr.write('Error: unknown option --safe-mode\n');
+  process.exit(1);
+}
 if (has(/#crash\b/)) {
   process.stderr.write('mock-agent: simulated crash (#crash)\n');
   process.exit(1);
@@ -115,6 +122,13 @@ emit({
   slash_commands: ['clear', 'full-task'], agents: ['general-purpose'], qwen_code_version: 'mock-1.0',
 });
 emit({ type: 'message', role: 'user', content: prompt });
+if (generate) {
+  const long = prompt.includes('#genlong') && JSON.stringify({ title: `PROJ-1 ${'Очень длинный заголовок '.repeat(10)}`, body: 'Длинное описание. '.repeat(100) });
+  const answer = prompt.includes('#gengarbage') ? 'Не могу написать сообщение.' : long || 'Готово: {"title":"PROJ-1 Тестовое сообщение","body":"Что и зачем."}';
+  emit({ type: 'message', role: 'assistant', content: answer, delta: true });
+  emit({ type: 'result', status: 'success', result: answer, stats: { input_tokens: 1, output_tokens: 1 } });
+  process.exit(0);
+}
 if (prompt === '/models') {
   emit({ type: 'message', role: 'assistant', content: modelsText, delta: true });
   emit({ type: 'result', status: 'success', result: modelsText, stats: { input_tokens: 1, output_tokens: 1 } });

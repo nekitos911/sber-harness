@@ -401,8 +401,8 @@ function geminiFamily(id, defaults, resolve) {
     /** what the CLI actually runs with this turn (session.effectiveApprovalMode) */
     effectiveMode: ({ session, agentCfg }) => cliApprovalMode(defaults, agentCfg, session.approvalMode || agentCfg.approvalMode) || null,
     resolve: resolve || ((agentCfg) => ({ ...resolveCommand(agentCfg.command || defaults.command), env: {} })),
-    buildArgs({ prompt, session, agentCfg }) {
-      const args = [];
+    buildArgs({ prompt, session, agentCfg, extraArgs = [] }) {
+      const args = [...extraArgs]; // a one-off helper run's quickArgs (e.g. --safe-mode)
       if (session.externalSessionId) args.push('--resume', session.externalSessionId);
       args.push('-p', argPrompt(prompt));
       const mode = cliApprovalMode(defaults, agentCfg, session.approvalMode || agentCfg.approvalMode);
@@ -446,8 +446,8 @@ const claude = {
   dirFlag: '--add-dir',
   defaults: { command: 'claude', firstEventTimeoutMs: 60000 },
   resolve: (agentCfg) => ({ ...resolveCommand(agentCfg.command || 'claude'), env: {} }),
-  buildArgs({ prompt, session, agentCfg, mcpConfigPath }) {
-    const args = ['-p', argPrompt(prompt), '--output-format', 'stream-json', '--verbose'];
+  buildArgs({ prompt, session, agentCfg, mcpConfigPath, extraArgs = [] }) {
+    const args = [...extraArgs, '-p', argPrompt(prompt), '--output-format', 'stream-json', '--verbose'];
     const mode = session.approvalMode || agentCfg.approvalMode;
     if (mode) args.push('--permission-mode', mode);
     const model = session.model || agentCfg.model;
@@ -468,7 +468,8 @@ const claude = {
 
 export const launchers = {
   // cold start (hundreds of tools, ~9 MCP servers) can take 30-60 s before system/init
-  gigacode: geminiFamily('gigacode', { compressCommand: '/compress', contextCommand: '/context', command: 'gigacode', settingsEnv: 'GIGACODE_SYSTEM_SETTINGS_PATH', firstEventTimeoutMs: 120000, continueArgs: ['-c'], approvalModeMap: { auto: 'auto-edit' }, allowedToolsFlag: '--allowed-tools', allowedTools: DEFAULT_ALLOWED_TOOLS, autoSandbox: null, reworkPromptTemplate: '/full-task {taskUrl} Задача готова, но нужны правки: {notes}' }, (cfg) => resolveGigacode(cfg)),
+  // quickArgs: one-off helper runs (commit/PR messages) start without MCP/skills/hooks (VERIFY --safe-mode on the target)
+  gigacode: geminiFamily('gigacode', { quickArgs: ['--safe-mode'], compressCommand: '/compress', contextCommand: '/context', command: 'gigacode', settingsEnv: 'GIGACODE_SYSTEM_SETTINGS_PATH', firstEventTimeoutMs: 120000, continueArgs: ['-c'], approvalModeMap: { auto: 'auto-edit' }, allowedToolsFlag: '--allowed-tools', allowedTools: DEFAULT_ALLOWED_TOOLS, autoSandbox: null, reworkPromptTemplate: '/full-task {taskUrl} Задача готова, но нужны правки: {notes}' }, (cfg) => resolveGigacode(cfg)),
   qwen: geminiFamily('qwen', { command: 'qwen', settingsEnv: 'QWEN_CODE_SYSTEM_SETTINGS_PATH', firstEventTimeoutMs: 30000, approvalModeMap: { auto: 'auto-edit' }, allowedToolsFlag: '--allowed-tools', allowedTools: DEFAULT_ALLOWED_TOOLS }),
   gemini: geminiFamily('gemini', { command: 'gemini', settingsEnv: 'GEMINI_CLI_SYSTEM_SETTINGS_PATH', firstEventTimeoutMs: 30000 }),
   claude,

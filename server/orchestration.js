@@ -1160,7 +1160,8 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
       key,
       branch: st.branch,
       base,
-      commit: { title: title(g.commitTitleTemplate), body: [summary, files].filter(Boolean).join('\n\n') },
+      // no task key: empty (the agent writes the message, /api/git/generate) — never the branch name and a file list
+      commit: task ? { title: title(g.commitTitleTemplate), body: [summary, files].filter(Boolean).join('\n\n') } : { title: '', body: '' },
       pr: {
         title: truncateBytes(title(g.prTitleTemplate), limits.titleBytes),
         body: truncateBytes([

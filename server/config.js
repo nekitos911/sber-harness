@@ -50,7 +50,7 @@ export function loadConfig({ root = CODE_ROOT, overrides = {}, dataDir, configFi
   cfg.agentMcpServers ||= {};
   cfg.mcpServers ||= {};
   cfg.integrations ||= {};
-  cfg.git = { defaultBase: 'main', excludeFromCommit: ['.superpowers/'], networkTimeoutSec: 120, ...cfg.git };
+  cfg.git = { defaultBase: 'main', excludeFromCommit: ['.superpowers/'], networkTimeoutSec: 120, generateMessages: true, generateTimeoutSec: 120, ...cfg.git };
   cfg.session = { idleWindowSec: 90, stallSec: 300, ...cfg.session };
   cfg.sessions = { autoArchiveDays: 7, ...cfg.sessions };
   cfg.terminal = { autoRespawn: true, ...cfg.terminal };

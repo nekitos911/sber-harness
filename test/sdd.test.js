@@ -105,8 +105,7 @@ test('git.excludeFromCommit: status marks .superpowers files, suggest and commit
   assert.ok(service.every((p) => p.startsWith('.superpowers/')));
   assert.deepEqual(st.files.filter((f) => !f.service).map((f) => f.path), ['Limits.java']);
   const sug = (await h.api('GET', `/api/git/suggest?${q}`)).body;
-  assert.ok(!sug.commit.body.includes('.superpowers'), sug.commit.body);
-  assert.match(sug.commit.body, /- Limits\.java/);
+  assert.equal(sug.commit.body, '', 'no task key: no file list (and never .superpowers files)');
 
   assert.equal((await h.api('POST', '/api/git/commit', { cwd: repo, message: 'T-1 лимиты' })).status, 200);
   assert.equal(gitIn(repo, 'show', '--name-only', '--format=', 'HEAD'), 'Limits.java');

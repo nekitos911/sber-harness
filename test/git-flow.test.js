@@ -59,7 +59,7 @@ test('fs guard, git status/diff/commit/log', async () => {
   assert.match(diff, /src\/new\.txt[\s\S]*\+hi/);
   const sugg = (await h.api('GET', `/api/git/suggest?${q(plain)}`)).body;
   assert.equal(sugg.taskId, null);
-  assert.equal(sugg.commit.title, 'Update src/new.txt');
+  assert.deepEqual([sugg.commit.title, sugg.commit.body], ['', ''], 'no task key: empty (the agent writes the message)');
   const { hash } = (await h.api('POST', '/api/git/commit', { cwd: plain, message: 'add new\n\nbody' })).body;
   assert.match(hash, /^[0-9a-f]{40}$/);
   assert.equal((await h.api('GET', `/api/git/log?${q(plain, '&n=1')}`)).body[0].subject, 'add new');
