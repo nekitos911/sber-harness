@@ -194,6 +194,15 @@ function actionLine(tool: string, input: unknown): { icon: ReactNode; text: stri
 const HEADLESS_LABEL = (o: PermissionOption) =>
   isReject(o) ? 'Оставить отклонённым' : isOnce(o) ? 'Разрешить и повторить' : isProject(o) ? 'Разрешать всегда в этом проекте'
     : /session|always/i.test(`${o.id} ${o.kind ?? ''}`) ? 'Разрешать всегда в этой сессии' : optionLabel(o)
+/** ACP: GigaCode's own option names may list the whole command cut into patterns — say what the option does instead. */
+const ACP_LABEL = (o: PermissionOption) => {
+  const l = optionLabel(o)
+  if (isReject(o)) return 'Запретить'
+  if (isOnce(o)) return 'Разрешить'
+  if (/always/i.test(`${o.id} ${o.kind ?? ''} ${l}`)) return /\buser\b|global/i.test(l) ? 'Разрешать всегда (во всех проектах)' : /project/i.test(l) ? 'Разрешать всегда в этом проекте' : 'Разрешать всегда'
+  return l.length > 60 ? `${l.slice(0, 57)}…` : l
+}
+
 /** allow_project: every chat of this project (the agent's settings for this workspace), not only this one. */
 const isProject = (o: PermissionOption) => /project/i.test(`${o.id} ${o.kind ?? ''}`)
 
@@ -287,8 +296,9 @@ export function PermissionCard({ m }: { m: Message }) {
             busy={busy === o.id}
             disabled={busy !== null && busy !== o.id}
             onClick={() => void choose(o)}
+            data-tip={!headless && optionLabel(o).length > 60 ? optionLabel(o) : undefined}
           >
-            {headless ? HEADLESS_LABEL(o) : optionLabel(o)}
+            {headless ? HEADLESS_LABEL(o) : ACP_LABEL(o)}
           </Button>
         ))}
       </div>

@@ -1636,11 +1636,21 @@ ${note.trim()}` : text });
       return emit(s);
     },
 
-    /** The queue left after a failed turn goes now, without a new message (POST /api/sessions/:id/queue/send). */
-    sendQueue(sid) {
+    /**
+     * The queue goes now (POST /api/sessions/:id/queue/send): after a failed turn without a new message; with `interrupt`
+     * the running turn is stopped and the queue starts the next one at once (the context stays: --resume).
+     */
+    sendQueue(sid, { interrupt = false } = {}) {
       const s = get(sid);
       if (!s.queue?.length) fail(409, 'очередь пуста');
-      if (runtime(sid).running) return emit(s); // it goes by itself after the current step
+      if (runtime(sid).running) {
+        if (!interrupt) return emit(s); // it goes by itself after the current step
+        const keep = s.queue.slice();
+        api.stop(sid); // clears the queue: it is put back and goes when the stopped turn ends
+        s.queue = keep;
+        s.queued = keep.length;
+        return emit(s);
+      }
       startTurn(s);
       return emit(s);
     },

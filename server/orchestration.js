@@ -965,7 +965,11 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
       settleRun(s, { status: stopped ? 'stopped' : 'no_report', summary: last?.text ?? '' });
       return;
     }
-    if (stopped) return;
+    if (stopped) {
+      // its call that waited for helpers is cut: each still-working helper brings its result as a message instead
+      for (const k of db.sessions.filter((x) => x.awaitedBy === s.id && !x.report)) sessions.update(k.id, { awaitedBy: null, askedParent: true });
+      return;
+    }
     if (s.role === 'reviewer' && !reported && s.status !== 'error') {
       const last = sessions.messages(s.id).filter((m) => m.kind === 'assistant').at(-1);
       if (last?.text) reviewerDone(last.text, s);
@@ -1307,8 +1311,16 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
       run: (a, c) => {
         if (!c) fail(400, 'worker_done вызывается только из сессии harness (заголовок x-harness-session)');
         if (c.ephemeral) {
+          const earlier = c.report;
           sessions.flag(c.id, 'reported');
           sessions.setStatus(c.id, a.status);
+          if (earlier) {
+            // reported again (a short probe first, the full result now): the caller's wait is over — the update comes as a message
+            sessions.update(c.id, { report: { status: a.status, summary: a.summary, at: Date.now() } });
+            const parent = c.parentId && sessions.find(c.parentId);
+            if (parent) sessions.deliver(parent.id, { from: c.id, text: fromSession(c, `Updated result (${a.status}):\n${a.summary}`) });
+            return { ok: true, note: 'the updated result was sent to the caller as a message' };
+          }
           settleRun(sessions.get(c.id), { status: a.status, summary: a.summary });
           return { ok: true };
         }

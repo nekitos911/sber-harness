@@ -410,3 +410,8 @@ svg.step-icon.spinner { color: var(--lamp-run); }
 /* the link under a step lines up with its text, and nothing long scrolls the list sideways */
 .step > .step-link { margin: 0 0 4px 25px; }
 .tool-steps { overflow-x: hidden; }
+/* a long command is a few lines here (all of it under «Подробности»); the buttons wrap, never past the card */
+.perm-action .mono { display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical; overflow: hidden; white-space: pre-wrap; overflow-wrap: anywhere; }
+.perm-actions { flex-wrap: wrap; min-width: 0; }
+.perm-actions .btn { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.perm-card { min-width: 0; overflow-wrap: anywhere; }

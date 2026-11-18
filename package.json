@@ -16,7 +16,9 @@
     "start": "node server/index.js",
     "test": "node --test \"test/*.test.js\"",
     "typecheck": "tsc -p web --noEmit",
-    "demo": "node server/index.js --demo"
+    "demo": "node server/index.js --demo",
+    "start:bg": "node scripts/background.js start",
+    "stop": "node scripts/background.js stop"
   },
   "dependencies": {
     "@lydell/node-pty": "^1.2.0-beta.18",

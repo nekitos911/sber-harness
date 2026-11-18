@@ -1436,7 +1436,7 @@ export async function startServer(opts = {}) {
   route('POST', '/api/sessions/:id/stop', ({ params }) => sessions.stop(params.id));
   route('POST', '/api/sessions/:id/revive', ({ params }) => sessions.revive(params.id)); // «Повторить»: continue a broken chat
   route('DELETE', '/api/sessions/:id/queue/:qid', ({ params }) => sessions.unqueue(params.id, params.qid));
-  route('POST', '/api/sessions/:id/queue/send', ({ params }) => sessions.sendQueue(params.id));
+  route('POST', '/api/sessions/:id/queue/send', ({ params, body }) => sessions.sendQueue(params.id, { interrupt: check(body || {}, { interrupt: 'boolean?' }).interrupt === true }));
   route('POST', '/api/sessions/:id/restart', ({ params }) => sessions.restart(params.id));
   route('GET', '/api/sessions/:id/log', ({ params }) => sessions.logTail(params.id));
   route('GET', '/api/sessions/:id/subagents', ({ params }) => sessions.subagents(params.id));

@@ -191,7 +191,9 @@ ${q.text}` : q.text)
     <div className="composer-queue" role="list" aria-label="Очередь сообщений">
       <div className="cq-head">
         <span>{running ? `В очереди: ${queue.length} — уйдёт после текущего шага` : `В очереди: ${queue.length} — агент сейчас не работает`}</span>
-        {!running && <button type="button" className="link-btn" onClick={() => void tryApi('POST', `/sessions/${session.id}/queue/send`)}>Отправить сейчас</button>}
+        {running
+          ? <button type="button" className="link-btn" data-tip="Остановить текущий шаг и отправить очередь сразу; контекст сохраняется, помощники доработают и пришлют результат" onClick={() => void tryApi('POST', `/sessions/${session.id}/queue/send`, { interrupt: true })}>Прервать и отправить</button>
+          : <button type="button" className="link-btn" onClick={() => void tryApi('POST', `/sessions/${session.id}/queue/send`)}>Отправить сейчас</button>}
       </div>
       {queue.map((q) => (
         <div key={q.id} className="cq-item" role="listitem">
