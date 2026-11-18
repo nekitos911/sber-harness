@@ -260,7 +260,7 @@ kbd {
 @media (prefers-reduced-motion: reduce) {
   .btn:active:not(:disabled), .icon-btn:active:not(:disabled) { transform: none; }
   .spinner { animation-duration: 2.4s; }
-  .st[data-s="running"], .st[data-s="starting"] { animation: none; } /* the icon shape and words still say it */
+  .st[data-s="running"] { animation-duration: 2.4s; } /* a slow turn still says «working»; starting keeps its opacity pulse */
   .dialog[open], .auth-card, [data-enter] { animation-name: fade-in !important; }
   .toast, .toast[data-leaving] { transform: none; }
   .collapse { transition: none; }

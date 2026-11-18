@@ -238,7 +238,7 @@
 .agent-glyph[data-agent="claude"] { background: color-mix(in srgb, var(--lamp-run) 22%, var(--deck-3)); color: var(--ink); }
 .sess-title { font-weight: 500; }
 .tree-sess[data-nested] .sess-title { font-weight: 400; }
-@media (prefers-reduced-motion: reduce) { .wt-mark[data-mark="busy"] svg { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .wt-mark[data-mark="busy"] svg { animation-duration: 2.4s; } } /* slower, never frozen: it carries meaning */
 /* «Параметры рабочих пространств» */
 .sb-params { position: relative; }
 .sb-params[data-dot]::after { content: ""; position: absolute; top: 2px; right: 2px; width: 6px; height: 6px; border-radius: 50%; background: var(--signal); box-shadow: 0 0 0 2px var(--ground); }
