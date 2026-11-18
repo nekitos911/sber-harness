@@ -801,6 +801,10 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
       let out;
       try {
         out = stopped ? { ok: false, error: 'ход агента остановлен' } : await verifyGit(op, cwd, { before, result, branch, prLookup: o.prLookup });
+        if (out.ok && op === 'commit' && o.push) {
+          const pushed = await verifyGit('push', cwd, { result: result?.split(/\s+/).slice(1).join(' ') || null });
+          out = pushed.ok ? { ...out, branch: pushed.branch } : { ...out, ok: false, branch: pushed.branch, error: `коммит создан, но ${pushed.error}` };
+        }
       } catch (e) {
         out = { ok: false, error: e.message };
       }

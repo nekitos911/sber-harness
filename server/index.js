@@ -26,7 +26,7 @@ import { createHistory, historyMessages } from './history.js';
 import { runJob, jobStep, JOB_ID_RE, holdJob } from './jobs.js';
 import { DEMO_PORT, demoOverrides, seedDemoRepos, seedDemoTasks } from './demo.js';
 import { importTasks, importIssue, transitionTask, getExternal, getTransitions, importChildren, syncColumn, getPath } from './integrations/tasks.js';
-import { createPullRequest, prStatus, refreshTaskPr, declinePullRequest, prEnabled, prMe, repoPulls, prAuthor } from './integrations/pr.js';
+import { fillTemplate, createPullRequest, prStatus, refreshTaskPr, declinePullRequest, prEnabled, prMe, repoPulls, prAuthor } from './integrations/pr.js';
 
 const MAX_BODY = 1024 * 1024;
 const MIME = {
@@ -39,7 +39,7 @@ const NO_BUILD_HTML = '<!doctype html><meta charset="utf-8"><title>Harness</titl
 const GRADES = ['default', 'fast', 'review', 'explore'];
 // optional API groups this server implements (docs/ARCHITECTURE.md "Feature flags"); a flag ships with its route
 export const FEATURES = ['branches', 'fs-search', 'pr-status', 'agent-info', 'models-refresh', 'tracker-links', 'board-columns', 'review-loop',
-  'subagents', 'virtual-sessions', 'worker-run', 'skills-install', 'demo', 'worktree-meta', 'open', 'sdd', 'health', 'folders', 'include-dirs', 'questions', 'permissions', 'activity', 'rework', 'fs-raw', 'tracker-import', 'pr-decline', 'task-suggest', 'recovery', 'acp', 'worktree-lazy', 'cli-history', 'prs-mine', 'git-generate', 'git-via-agent'];
+  'subagents', 'virtual-sessions', 'worker-run', 'skills-install', 'demo', 'worktree-meta', 'open', 'sdd', 'health', 'folders', 'include-dirs', 'questions', 'permissions', 'activity', 'rework', 'fs-raw', 'tracker-import', 'pr-decline', 'task-suggest', 'recovery', 'acp', 'worktree-lazy', 'cli-history', 'prs-mine', 'git-generate', 'git-via-agent', 'git-stage'];
 // titles of operations the UI may follow by sending x-job-id (WS { t: 'job' } frames)
 const JOB_TITLES = {
   'POST /api/tasks/sync': 'Синхронизация с трекером',
@@ -1254,10 +1254,49 @@ export async function startServer(opts = {}) {
   route('GET', '/api/sessions/:id/subagents', ({ params }) => sessions.subagents(params.id));
 
   // git
+  // + per file added/removed, totals, webUrl (the repo page in the code host: integrations.pr.webUrlTemplate)
   route('GET', '/api/git/status', async ({ query }) => {
-    const st = await git.status(cwdOf(query), config.git.excludeFromCommit);
+    const cwd = cwdOf(query);
+    const st = await git.status(cwd, config.git.excludeFromCommit);
     refreshBranch(query.cwd, st.branch);
-    return st;
+    const { files, totals } = await git.lineStats(cwd, st);
+    const tpl = config.integrations?.pr?.webUrlTemplate;
+    const origin = tpl ? (await git.git(cwd, ['remote', 'get-url', 'origin'], { ok: [0, 2, 128] })).stdout.trim() : '';
+    // only a code host remote (scheme://host/… or user@host:…), never a local folder
+    const remote = /^(?!file:)[a-z][a-z0-9+.-]*:\/\/|^[^@/\\]+@[^:/\\]+:/i.test(origin) ? git.parseRemote(origin) : null;
+    const webUrl = tpl && remote?.repository ? fillTemplate(tpl, { project: remote.project ?? '', repository: remote.repository, branch: st.branch ?? '' }) : null;
+    return { ...st, files, totals, webUrl };
+  });
+  /** paths relative to cwd, each inside it (no option-like or escaping paths reach git) */
+  const gitPaths = (cwd, paths) => {
+    if (!Array.isArray(paths) || !paths.length || paths.some((p) => typeof p !== 'string' || !p.trim())) fail(400, 'paths: нужен непустой массив путей');
+    for (const p of paths) wfs.resolveInside(cwd, p);
+    return paths;
+  };
+  route('POST', '/api/git/stage', async ({ body }) => {
+    check(body, { cwd: 'string', paths: 'array?', all: 'boolean?' });
+    await git.stage(body.cwd, body.all ? { all: true } : { paths: gitPaths(body.cwd, body.paths) }, config.git.excludeFromCommit);
+    return { ok: true };
+  });
+  route('POST', '/api/git/unstage', async ({ body }) => {
+    check(body, { cwd: 'string', paths: 'array?', all: 'boolean?' });
+    await git.unstage(body.cwd, body.all ? { all: true } : { paths: gitPaths(body.cwd, body.paths) });
+    return { ok: true };
+  });
+  route('POST', '/api/git/discard', async ({ body }) => {
+    check(body, { cwd: 'string', paths: 'array', confirm: 'boolean?' });
+    if (body.confirm !== true) fail(400, 'отмена изменений необратима: передайте confirm: true');
+    const paths = gitPaths(body.cwd, body.paths);
+    const top = (await git.git(body.cwd, ['rev-parse', '--show-toplevel'], { ok: [0, 128] })).stdout.trim();
+    const busy = sessionsIn(top ? path.resolve(top) : body.cwd).find((s) => s.kind === 'chat' && s.status === 'running');
+    if (busy) fail(409, `В этой папке сейчас работает агент (${busy.title}); дождитесь окончания хода, прежде чем отменять изменения.`);
+    const st = await git.status(body.cwd);
+    // an untracked / just-added file is deleted: only a file, only inside cwd
+    await git.discard(body.cwd, paths, st.files, (p) => {
+      const { abs } = wfs.resolveInside(body.cwd, p);
+      if (fs.existsSync(abs) && fs.statSync(abs).isFile()) fs.rmSync(abs);
+    });
+    return { ok: true };
   });
   route('GET', '/api/git/diff', ({ query }) => git.diff(cwdOf(query), query.path || undefined));
   route('GET', '/api/git/log', ({ query }) => git.log(cwdOf(query), Math.min(Math.max(Number(query.n) || 50, 1), 1000)));
@@ -1301,11 +1340,16 @@ export async function startServer(opts = {}) {
     if (via === 'agent' && !(path.isAbsolute(body.cwd) && fs.existsSync(body.cwd))) fail(400, `cwd должен быть существующей абсолютной папкой: ${body.cwd}`);
     return via;
   };
-  route('POST', '/api/git/commit', ({ body }) => {
-    check(body, { cwd: 'string', message: 'string', paths: 'array?', via: 'string?' });
+  route('POST', '/api/git/commit', async ({ body }) => {
+    check(body, { cwd: 'string', message: 'string', paths: 'array?', via: 'string?', staged: 'boolean?', push: 'boolean?' });
     if (!body.message.trim()) fail(400, 'нужно сообщение коммита');
-    if (viaOf(body) === 'agent') return orch.gitViaAgent('commit', { cwd: body.cwd, message: body.message, paths: body.paths }, holdJob());
-    return git.commit(body.cwd, body.message, body.paths, config.git.excludeFromCommit);
+    if (body.paths?.length) gitPaths(body.cwd, body.paths);
+    if (viaOf(body) === 'agent') return orch.gitViaAgent('commit', { cwd: body.cwd, message: body.message, paths: body.paths, staged: body.staged === true, push: body.push === true }, holdJob());
+    // staged: only the index; push: then push (sequentially)
+    const r = await git.commit(body.cwd, body.message, body.paths, config.git.excludeFromCommit, { staged: body.staged === true });
+    if (!body.push) return r;
+    jobStep('git push');
+    return { ...r, push: await git.push(body.cwd, { timeoutSec: config.git.networkTimeoutSec }) };
   });
   route('POST', '/api/git/push', ({ body }) => {
     check(body, { cwd: 'string', via: 'string?' });

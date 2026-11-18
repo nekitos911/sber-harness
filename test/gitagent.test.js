@@ -95,3 +95,17 @@ test("the task's worker in that folder gets the request (not a new chat)", async
   assert.equal(body.sessionId, w.id);
   assert.equal((await end).result.hash, head());
 });
+
+test('staged-only commit + push through the agent: one instruction, the job ends with hash and branch', async () => {
+  fs.writeFileSync(path.join(repo, 'e.txt'), 'пять\n');
+  fs.writeFileSync(path.join(repo, 'f.txt'), 'шесть\n');
+  assert.equal((await h.api('POST', '/api/git/stage', { cwd: repo, paths: ['e.txt'] })).status, 200);
+  const { body, end } = await viaAgent('/api/git/commit', { cwd: repo, message: 'только e', staged: true, push: true });
+  const done = await end;
+  assert.equal(done.error, undefined, done.error);
+  assert.deepEqual([done.result.hash, done.result.branch], [head(), 'origin/feature/агент']);
+  assert.equal(gitIn(repo, 'show', '--name-only', '--format=', 'HEAD'), 'e.txt');
+  assert.equal(gitIn(repo, 'rev-parse', '@{u}'), head());
+  const asked = (await h.api('GET', `/api/sessions/${body.sessionId}/messages`)).body.filter((m) => m.kind === 'user').at(-1);
+  assert.match(asked.text, /закоммить только проиндексированные файлы \(git commit без git add\), затем git push -u origin HEAD/);
+});

@@ -387,7 +387,18 @@ POST   /api/sessions/:id/restart                          (terminal: respawn; ch
 GET    /api/sessions/:id/log                              -> { text }   (stderr/raw tail)
 GET    /api/sessions/:id/subagents                        -> { items, problems }   (registry, read-only)
 
-GET    /api/git/status?cwd=     -> { branch, upstream, ahead, behind, files: [{ path, x, y, status: 'M'|'A'|'D'|'R'|'?'|'U' }] }
+GET    /api/git/status?cwd=     -> { branch, upstream, ahead, behind, files: [{ path, x, y, status: 'M'|'A'|'D'|'R'|'?'|'U',
+                                     staged: boolean (index side changed), added, removed (lines; null = binary/too big),
+                                     service? }], totals: { added, removed } (non-service files), webUrl: string|null }
+                                 (one `git diff HEAD --numstat`; an untracked file's lines count as added — ≤ 200 files of
+                                  ≤ 1 MB; webUrl = integrations.pr.webUrlTemplate ({project} {repository} {branch}, default ""
+                                  → null) for a code-host origin only)
+POST   /api/git/stage           {cwd, paths | all: true} -> { ok }   (git add -A -- <paths>; all = everything minus
+                                                                       git.excludeFromCommit; paths must be inside cwd)
+POST   /api/git/unstage         {cwd, paths | all: true} -> { ok }   (git restore --staged; before the first commit git rm --cached)
+POST   /api/git/discard         {cwd, paths, confirm: true} -> { ok } (400 without confirm; 409 while a chat in that worktree
+                                 runs; tracked → git restore --source=HEAD --staged --worktree; untracked / just added →
+                                 the file is deleted (files only, inside cwd). Feature `git-stage`.)
 GET    /api/git/diff?cwd=&path= -> { diff }   (unified; path optional = whole tree; untracked files shown as added)
 GET    /api/git/log?cwd=&n=     -> [{ hash, subject, author, at }]
 GET    /api/git/branches?cwd=   -> { current, branches: [{ name, remote: boolean, current: boolean, upstream: string|null,
@@ -401,7 +412,11 @@ POST   /api/git/checkout        {cwd, branch, create?: boolean, from?: string} -
 GET    /api/git/suggest?cwd=    -> { taskId, key, branch, base,
                                      commit: { title, body },        (prefill for the commit box, user edits before commit)
                                      pr: { title, body, base } }     (prefill for the PR dialog, user edits before create)
-POST   /api/git/commit          {cwd, message, paths?}   -> { hash }   (paths absent => all changes; message = title + "\n\n" + body)
+POST   /api/git/commit          {cwd, message, paths?, staged?, push?, via?} -> { hash, push? }   (paths absent => all changes;
+                                 staged: true = only the index (no git add; 400 when nothing is staged); push: true = then
+                                 git push like /api/git/push (its { summary, output } in push); via "agent" → see «Commit /
+                                 push / PR through the agent»: one instruction for staged/paths and push, RESULT <hash> <branch>,
+                                 the job result { ok, hash, branch }; message = title + "\n\n" + body)
 POST   /api/git/push            {cwd}                    -> { summary, output }  (summary: «Отправлено в origin/<b>» |
                                                              «Новая ветка <b> в origin» | «Уже в origin/<b> — нечего отправлять»; output = raw git)
 POST   /api/git/pr              {cwd, title, body, base?} -> { url, existing }   (integrations.pr; 501 if disabled;

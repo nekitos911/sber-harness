@@ -162,6 +162,7 @@
       "enabled": "auto",
       "server": "sourcecontrol",
       "meTool": "git_get_user",
+      "webUrlTemplate": "",
       "me": null,
       "tool": "git_create_pull_request",
       "args": {

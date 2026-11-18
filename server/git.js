@@ -110,12 +110,87 @@ export async function status(cwd, exclude = []) {
     const [x, y] = p;
     if (x === 'R' || x === 'C') i++; // -z puts the original path of a rename in the next field
     const file = p.slice(3);
-    res.files.push({ path: file, x, y, status: fileStatus(x, y), ...(isService(file, exclude) ? { service: true } : {}) });
+    // staged: the index side changed (git add was done for it)
+    res.files.push({ path: file, x, y, status: fileStatus(x, y), staged: x !== ' ' && x !== '?', ...(isService(file, exclude) ? { service: true } : {}) });
   }
   return res;
 }
 
 const hasHead = async (cwd) => (await git(cwd, ['rev-parse', '--verify', '-q', 'HEAD'], { ok: [0, 1, 128] })).code === 0;
+const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
+const UNTRACKED_MAX = { files: 200, bytes: 1024 * 1024 };
+
+/**
+ * Lines added/removed per file of a status (worktree + index vs HEAD: one `git diff --numstat`; an untracked file
+ * counts its lines as added — at most 200 files of ≤ 1 MB, binary = null) → files with added/removed + totals.
+ */
+export async function lineStats(cwd, st) {
+  const base = (await hasHead(cwd)) ? 'HEAD' : EMPTY_TREE;
+  const { stdout } = await git(cwd, ['diff', base, '--numstat', '-z']);
+  const counts = new Map();
+  const parts = stdout.split('\0');
+  for (let i = 0; i < parts.length; i++) {
+    const m = parts[i].match(/^(-|\d+)\t(-|\d+)\t(.*)$/s);
+    if (!m) continue;
+    let file = m[3];
+    if (!file) { file = parts[i + 2]; i += 2; } // a rename: "\0old\0new"
+    counts.set(file, m[1] === '-' ? { added: null, removed: null } : { added: Number(m[1]), removed: Number(m[2]) });
+  }
+  let budget = UNTRACKED_MAX.files;
+  const files = st.files.map((f) => {
+    if (f.x !== '?') return { ...f, ...(counts.get(f.path) ?? { added: 0, removed: 0 }) };
+    if (budget-- <= 0) return { ...f, added: null, removed: 0 };
+    try {
+      const abs = path.join(cwd, f.path);
+      if (fs.statSync(abs).size > UNTRACKED_MAX.bytes) return { ...f, added: null, removed: 0 };
+      const buf = fs.readFileSync(abs);
+      if (buf.includes(0)) return { ...f, added: null, removed: 0 };
+      const text = buf.toString('utf8');
+      return { ...f, added: text ? text.split('\n').length - (text.endsWith('\n') ? 1 : 0) : 0, removed: 0 };
+    } catch {
+      return { ...f, added: null, removed: 0 };
+    }
+  });
+  const totals = { added: 0, removed: 0 };
+  for (const f of files.filter((x) => !x.service)) {
+    totals.added += f.added || 0;
+    totals.removed += f.removed || 0;
+  }
+  return { files, totals };
+}
+
+/** git add for paths (or all, minus git.excludeFromCommit). */
+export async function stage(cwd, { paths, all = false }, exclude = []) {
+  if (all) await git(cwd, ['add', '-A', '--', ':/', ...excludeSpecs(exclude)]);
+  else await git(cwd, ['add', '-A', '--', ...paths]);
+}
+
+/** Back out of the index (the worktree keeps the change); before the first commit: git rm --cached. */
+export async function unstage(cwd, { paths, all = false }) {
+  const spec = all ? [':/'] : paths;
+  if (await hasHead(cwd)) await git(cwd, ['restore', '--staged', '--', ...spec]);
+  else await git(cwd, ['rm', '--cached', '-r', '-q', '--', ...spec], { ok: [0, 128] });
+}
+
+/**
+ * Throws away the changes of paths: tracked → back to HEAD (index and worktree), added → out of the index and
+ * deleted, untracked → deleted. `files` = the current status files (decides which is which); `remove(path)` deletes one
+ * file (the caller guards it inside cwd).
+ */
+export async function discard(cwd, paths, files, remove) {
+  const byPath = new Map(files.map((f) => [f.path, f]));
+  const tracked = [];
+  for (const p of paths) {
+    const f = byPath.get(p);
+    if (!f) continue;
+    if (f.x === '?') remove(p);
+    else if (f.x === 'A') {
+      await git(cwd, ['rm', '--cached', '-q', '--', p]);
+      remove(p);
+    } else tracked.push(p);
+  }
+  if (tracked.length) await git(cwd, ['restore', '--source=HEAD', '--staged', '--worktree', '--', ...tracked]);
+}
 
 export async function diff(cwd, file) {
   const spec = file ? ['--', file] : [];
@@ -143,9 +218,13 @@ export async function onelines(cwd, range) {
   return r.code ? [] : r.stdout.split('\n').filter(Boolean);
 }
 
-export async function commit(cwd, message, paths, exclude = []) {
+export async function commit(cwd, message, paths, exclude = [], { staged = false } = {}) {
   if (typeof message !== 'string' || !message.trim()) fail(400, 'нужно сообщение коммита');
-  if (paths?.length) {
+  if (staged) {
+    // only what is in the index, nothing added here
+    if ((await git(cwd, ['diff', '--cached', '--quiet'], { ok: [0, 1] })).code === 0) fail(400, 'нет проиндексированных изменений');
+    await git(cwd, ['commit', '-m', message]);
+  } else if (paths?.length) {
     const keep = paths.filter((p) => !isService(p, exclude));
     if (!keep.length) fail(400, `выбраны только служебные файлы (git.excludeFromCommit: ${exclude.join(', ')}); harness их не коммитит`);
     await git(cwd, ['add', '-A', '--', ...keep]);
