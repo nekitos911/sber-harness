@@ -35,6 +35,8 @@ export function ThoughtBlock({ m, until }: { m: Message; until: number | null })
 
 function stepLine(t: ToolCall): { icon: ReactNode; text: ReactNode } {
   const input = obj(t.input)
+  // the model called GigaCode's tool bridge without saying which tool: nothing ran (not «tool без аргументов»)
+  if (/tool_call bridge refused/i.test(t.output ?? '')) return { icon: <Wrench />, text: <>Вызов без имени инструмента <span className="muted">— GigaCode отклонил, ничего не выполнено (ошибка модели)</span></> }
   if (isSubagentTool(t)) {
     const type = typeof input.subagent_type === 'string' ? input.subagent_type : t.name
     return { icon: <Bot />, text: <>Субагент {type}</> }
