@@ -52,8 +52,9 @@ function WaitingForYou() {
 }
 
 /**
- * An agent stopped without a report (or with an error): open the chat, send the task back, or accept the result as
- * is (the task goes to review). Any of them settles the entry (read).
+ * An agent stopped without a report (or with an error): open the chat, send the task back, or look at its changes
+ * (its worktree with «Изменения» open, the commit prefilled: review → commit → PR; the card is moved by the person).
+ * Any of them settles the entry (read).
  */
 function EscalationItem({ n }: { n: Notification }) {
   const session = useStore((s) => (n.sessionId ? s.sessions.find((x) => x.id === n.sessionId) : undefined))
@@ -61,13 +62,14 @@ function EscalationItem({ n }: { n: Notification }) {
   const [reworking, setReworking] = useState(false)
   const reworkRef = useRef<HTMLButtonElement>(null)
   const settle = () => { markRead([n.id]); void tryApi('POST', `/notifications/${encodeURIComponent(n.id)}/read`) }
-  const actions = n.actions ?? ['open']
-  const accept = async () => {
-    if (!task) return
-    const t = await tryApi<Task>('PATCH', `/tasks/${encodeURIComponent(task.id)}`, { status: 'review' })
-    if (!t) return
-    setState((s) => ({ tasks: s.tasks.map((x) => (x.id === t.id ? t : x)) }))
+  // older escalations carry no actions: the same ones, from what they point at
+  const actions = n.actions ?? (task ? ['open', 'rework', 'accept'] : ['open'])
+  const cwd = session ? session.worktreePath ?? session.cwd : task?.worktrees?.[0]?.path
+  const review = () => {
+    if (!cwd) return
     settle()
+    openWorktree(cwd)
+    showPanel('changes')
   }
   return (
     <div className="inbox-wait">
@@ -84,7 +86,7 @@ function EscalationItem({ n }: { n: Notification }) {
             {reworking && <ReworkPopover task={task} anchor={reworkRef} open onClose={() => setReworking(false)} onSent={settle} />}
           </>
         )}
-        {actions.includes('accept') && task && <button type="button" className="btn btn-sm" onClick={() => void accept()} data-tip="Задача уйдёт на проверку как есть"><CircleCheck />Принять результат</button>}
+        {actions.includes('accept') && cwd && <button type="button" className="btn btn-sm" onClick={review} data-tip="Рабочее дерево задачи с изменениями и готовым коммитом"><GitCompare />Проверить изменения</button>}
         <button type="button" className="btn btn-sm btn-ghost" onClick={settle}>Прочитано</button>
       </span>
     </div>
