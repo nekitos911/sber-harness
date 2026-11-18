@@ -85,3 +85,11 @@ test('continuing in the UI resumes the CLI session; an archived adopted chat is 
   assert.equal((await h.api('POST', '/api/history/adopt')).body.adopted, 0);
   assert.equal((await sessions()).filter((x) => x.externalSessionId === 'cli-chat-1').length, 1);
 });
+
+test('a deleted harness chat does not come back from its CLI record as a «CLI chat»', async () => {
+  const own = (await sessions()).find((x) => x.externalSessionId === 'owned-1');
+  assert.ok(own && own.origin !== 'cli', 'a harness chat, not an adopted one');
+  assert.equal((await h.api('DELETE', `/api/sessions/${own.id}?force=1`)).status, 200);
+  assert.equal((await h.api('POST', '/api/history/adopt')).body.adopted, 0);
+  assert.ok(!(await sessions()).some((x) => x.externalSessionId === 'owned-1'));
+});

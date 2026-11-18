@@ -748,9 +748,12 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     if (x.waitingFor) x.waitingFor = null;
   }
 
-  /** An adopted CLI chat archived or deleted is never adopted again (db.cliIgnored). */
+  /**
+   * A chat archived or deleted is never adopted (again) from the CLI history (db.cliIgnored): an adopted one, and a harness
+   * chat too — its CLI session is recorded like any, and once the chat is deleted nothing owns that record any more.
+   */
   function ignoreCli(s) {
-    if (s.origin !== 'cli' || !s.externalSessionId) return;
+    if (!s.externalSessionId) return;
     db.cliIgnored = [...new Set([...(db.cliIgnored || []), s.externalSessionId])];
     store.save();
   }
