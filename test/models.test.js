@@ -87,3 +87,24 @@ test('"model not present" failure: pick-model action and an automatic re-discove
     await h.close();
   }
 });
+
+test('discovery tries the light run (quickArgs) first, the full one only if it found nothing; stderr warnings are not the error', async () => {
+  const argvFile = path.join(root, 'discovery-argv.ndjson');
+  const empty = path.join(root, 'no-models.txt');
+  fs.writeFileSync(empty, 'нет моделей\n');
+  Object.assign(process.env, { MOCK_AGENT_ARGV_FILE: argvFile, MOCK_AGENT_SAFE_NO_SLASH: '1', MOCK_AGENT_MCP_WARNING: '1' });
+  const h = await startTestServer({ agents: { mock: { modelsDiscovery: { prompt: '/models', maxAgeHours: 24 }, quickArgs: ['--safe-mode'] } } });
+  try {
+    const found = (await h.api('POST', '/api/agents/mock/models/refresh')).body;
+    assert.ok(!found.error && found.models.some((m) => m.id === IDS[0]), JSON.stringify(found));
+    const runs = fs.readFileSync(argvFile, 'utf8').trim().split('\n').map((l) => JSON.parse(l).argv);
+    assert.deepEqual(runs.map((a) => a.includes('--safe-mode')), [true, false], 'light run first, then the full one');
+
+    process.env.MOCK_AGENT_MODELS_FILE = empty; // the CLI answers, but with no model ids
+    const failed = (await h.api('POST', '/api/agents/mock/models/refresh')).body;
+    assert.equal(failed.error, 'в ответе нет id моделей', 'the java-lsp warning is not shown as the reason');
+  } finally {
+    for (const k of ['MOCK_AGENT_ARGV_FILE', 'MOCK_AGENT_SAFE_NO_SLASH', 'MOCK_AGENT_MCP_WARNING', 'MOCK_AGENT_MODELS_FILE']) delete process.env[k];
+    await h.close();
+  }
+});

@@ -624,9 +624,6 @@ button.prs-group[aria-expanded="true"] .chev { transform: rotate(90deg); }
 .settings-advanced { margin-top: 28px; }
 .settings-advanced-body { display: grid; gap: 8px; padding-top: 8px; }
 .settings-search { width: min(360px, 100%); margin-bottom: 8px; }
-/* one line of hint; the whole of it while the row is hovered or focused */
-.set-hint { display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; }
-.set-row:hover .set-hint, .set-row:focus-within .set-hint { -webkit-line-clamp: unset; }
 /* «Куда: [develop] · ＋ релиз» */
 .targets-line { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; font-size: 12.5px; }
 .targets-label { color: var(--ink-3); }

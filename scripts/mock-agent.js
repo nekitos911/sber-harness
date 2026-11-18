@@ -168,6 +168,13 @@ if (prompt.includes('Пользователь явно просит')) {
   emit({ type: 'result', status: 'success', result: `Сделано.\n${line}`, stats: { input_tokens: 1, output_tokens: 1 } });
   process.exit(0);
 }
+// MOCK_AGENT_MCP_WARNING: GigaCode's stderr warning when one of its MCP servers did not start (exit 0, not an error)
+if (process.env.MOCK_AGENT_MCP_WARNING) process.stderr.write('Warning: MCP server(s) failed to start: java-lsp. Continuing with built-in tools and any servers that did connect.\n');
+// MOCK_AGENT_SAFE_NO_SLASH: a CLI whose --safe-mode has no slash commands (answers nothing useful)
+if (prompt === '/models' && process.env.MOCK_AGENT_SAFE_NO_SLASH && argv.includes('--safe-mode')) {
+  emit({ type: 'result', status: 'success', result: 'Unknown command', stats: { input_tokens: 1, output_tokens: 1 } });
+  process.exit(0);
+}
 if (prompt === '/models') {
   emit({ type: 'message', role: 'assistant', content: modelsText, delta: true });
   emit({ type: 'result', status: 'success', result: modelsText, stats: { input_tokens: 1, output_tokens: 1 } });

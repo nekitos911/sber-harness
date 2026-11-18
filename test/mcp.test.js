@@ -196,3 +196,12 @@ test('scripts/mcp-call.js lists tools, calls a tool, fails clearly', async () =>
   assert.equal(bad.code, 1);
   assert.match(bad.stderr, /not configured/);
 });
+
+test('status probes only the servers the harness calls (integrations, its own config), not the rest of the user\'s', async () => {
+  const from = path.join(dir, 'gigacode settings.json');
+  // java-lsp from the user's GigaCode settings: an agents' server the harness never calls — must not be started
+  fs.writeFileSync(from, JSON.stringify({ mcpServers: { 'java-lsp': { command: 'definitely-not-a-command-xyz' } } }));
+  const mcp = createMcpManager(baseConfig({ mcpServersFrom: from }));
+  assert.deepEqual((await mcp.status()).map((r) => r.name), ['tracker']);
+  assert.ok('java-lsp' in serverDefs(baseConfig({ mcpServersFrom: from })), 'still known for scripts/mcp-call.js');
+});

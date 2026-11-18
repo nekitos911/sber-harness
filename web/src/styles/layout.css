@@ -23,6 +23,15 @@
 }
 .statusbar > span { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .statusbar .end { margin-left: auto; }
+.sb-mcp { border: 0; background: none; padding: 0; font: inherit; color: inherit; cursor: pointer; white-space: nowrap; }
+.sb-mcp:hover { color: var(--ink); }
+.sb-mcp[data-bad] { color: var(--lamp-fail); }
+.sb-mcp-pop { display: grid; gap: 6px; width: min(460px, calc(100vw - 32px)); padding: 10px 12px; font-size: 12.5px; }
+.sb-mcp-head { color: var(--ink-3); font-size: 12px; }
+.sb-mcp-row { display: grid; grid-template-columns: 14px auto 1fr; align-items: start; gap: 6px; }
+.sb-mcp-row svg { width: 14px; height: 14px; margin-top: 2px; color: var(--lamp-done); }
+.sb-mcp-row[data-bad] svg { color: var(--lamp-fail); }
+.sb-mcp-err { grid-column: 2 / -1; color: var(--ink-3); overflow-wrap: anywhere; }
 .statusbar .conn::after { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--lamp-done); }
 .statusbar .conn[data-state="closed"] { color: var(--lamp-fail); }
 .statusbar .conn[data-state="closed"]::after { background: var(--lamp-fail); }

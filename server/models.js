@@ -97,12 +97,20 @@ export function createModelCatalog({ config, store, getUrl }) {
         const found = answer ? parseModelIds(answer, md.pattern) : [];
         if (found.length) return save(agent, { models: found, at: Date.now() });
       }
-      const { text, resultText, res } = await runHelper({
-        config, store, getUrl, agent, kind: 'discovery', prompt: md.prompt, onHandle: (handle) => { entry.handle = handle; },
-      });
-      const models = parseModelIds(resultText || text, md.pattern);
-      if (models.length) return save(agent, { models, at: Date.now() });
-      const why = res.error || (res.timedOut ? 'нет ответа вовремя' : res.stderrTail.trim().split('\n').slice(-3).join(' ')) || 'в ответе нет id моделей';
+      // /models needs no MCP servers: the light run first (quickArgs, e.g. --safe-mode), the full one only if it found nothing
+      const quick = db.agentMeta?.[agent]?.quickArgsBroken ? [] : agentCfg.quickArgs ?? launcher.defaults?.quickArgs ?? [];
+      let res = null;
+      for (const extraArgs of quick.length ? [quick, []] : [[]]) {
+        const out = await runHelper({
+          config, store, getUrl, agent, kind: 'discovery', prompt: md.prompt, extraArgs, onHandle: (handle) => { entry.handle = handle; },
+        });
+        const models = parseModelIds(out.resultText || out.text, md.pattern);
+        if (models.length) return save(agent, { models, at: Date.now() });
+        res = out.res;
+      }
+      // stderr warnings («MCP server(s) failed to start: java-lsp») are not why no model ids came back
+      const stderr = res.stderrTail.trim().split('\n').filter((l) => l.trim() && !/^\s*Warning:/i.test(l)).slice(-3).join(' ');
+      const why = res.error || (res.timedOut ? 'нет ответа вовремя' : stderr) || 'в ответе нет id моделей';
       save(agent, { models: prev?.models || [], at: prev?.at ?? null, error: why.slice(0, 500), errorAt: Date.now() });
     } catch (e) {
       save(agent, { models: prev?.models || [], at: prev?.at ?? null, error: e.message, errorAt: Date.now() });

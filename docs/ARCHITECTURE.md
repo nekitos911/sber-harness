@@ -457,6 +457,8 @@ PUT    /api/fs/file             {cwd, path, content} -> { ok: true }
        (all fs paths are resolved against cwd and must stay inside it, else 400)
 
 GET    /api/mcp/servers         -> [{ name, enabled, transport, ok, error?, problem?, tools: [{name, description}] }]
+                                    (only the servers the harness calls: integrations.tasks/pr.server and its own
+                                    config.mcpServers — servers that come only from mcpServersFrom are not started)
 
 GET    /api/settings            -> { agents: { <id>: { approvalMode, approvalModes, approvalModeLabels, model, models,
                                      modelGrades: { default?, fast?, review?, explore? }, allowedGrades, taskPromptTemplate,
@@ -789,7 +791,9 @@ Session role `reviewer`; reviewers are nested under their worker in the UI; thei
   `identity: { found, source }` (the shim the identity came from; never the value).
 
 - Sources, merged and deduped by id: (1) **discovered** — the harness runs the agent CLI headless with
-  `agents.<id>.modelsDiscovery.prompt` (gigacode default `"/models"`) in `<dataDir>/chats/helper/discovery` (no CLI chat record), takes the final
+  `agents.<id>.modelsDiscovery.prompt` (gigacode default `"/models"`) in `<dataDir>/chats/helper/discovery` (no CLI chat record) — first with
+  the light `quickArgs` (`--safe-mode`: no MCP servers), the full run only when that found no ids; stderr `Warning:` lines are
+  never the reported error — takes the final
   text (`result` / assistant text) and extracts model ids with a tolerant parser (markdown table / list / plain lines;
   token = letters/digits/`.`/`-`, contains a digit and a `-`, 4–80 chars; optional context like `262k`/`128k` nearby) or
   with `modelsDiscovery.pattern` (regex with a capture group) when set; result cached in `db.agentMeta[agent].catalog =

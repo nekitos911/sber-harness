@@ -292,7 +292,10 @@ export function createMcpManager(config) {
     callTool,
     toolsSeen: (name) => seen.get(name) ?? null,
     async status() {
-      return Promise.all(Object.entries(serverDefs(config)).map(async ([name, def]) => {
+      // the harness calls only its integrations' servers and the ones in its own config; the rest of the user's GigaCode
+      // servers (mcpServersFrom: java-lsp, …) are the agents' business — not started here on every page load
+      const used = new Set([config.integrations?.tasks?.server, config.integrations?.pr?.server, ...Object.keys(config.mcpServers || {})].filter(Boolean));
+      return Promise.all(Object.entries(serverDefs(config)).filter(([name]) => used.has(name)).map(async ([name, def]) => {
         const row = { name, enabled: def.enabled, transport: def.transport, ok: false, tools: [] };
         if (!row.enabled) return row;
         try {
