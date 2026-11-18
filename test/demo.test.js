@@ -53,7 +53,14 @@ test('--demo seeds repositories (projects folder, bare origin), workspaces and t
     fs.writeFileSync(path.join(svc, 'demo.txt'), 'x\n');
     gitIn(svc, 'add', '-A');
     gitIn(svc, 'commit', '-q', '-m', 'PROJ-2 демо');
-    assert.equal((await api('POST', '/api/git/push', { cwd: svc })).status, 200);
+    const pushed = await api('POST', '/api/git/push', { cwd: svc });
+    assert.deepEqual([pushed.status, pushed.body.summary], [200, 'Новая ветка feature/PROJ-2-demo в origin']);
+    assert.match(pushed.body.output, /feature\/PROJ-2-demo/, 'the raw git output is kept');
+    assert.equal((await api('POST', '/api/git/push', { cwd: svc })).body.summary, 'Уже в origin/feature/PROJ-2-demo — нечего отправлять');
+    fs.writeFileSync(path.join(svc, 'demo2.txt'), 'y\n');
+    gitIn(svc, 'add', '-A');
+    gitIn(svc, 'commit', '-q', '-m', 'PROJ-2 ещё');
+    assert.equal((await api('POST', '/api/git/push', { cwd: svc })).body.summary, 'Отправлено в origin/feature/PROJ-2-demo');
     assert.match(gitIn(bare, 'branch', '--list', 'feature/PROJ-2-demo'), /feature\/PROJ-2-demo/);
     const made = await api('POST', '/api/git/pr', { cwd: svc, title: 'PROJ-2 демо', base: 'develop' });
     assert.equal(made.status, 200, JSON.stringify(made.body));

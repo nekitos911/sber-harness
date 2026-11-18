@@ -136,3 +136,42 @@ test('rework preview: exactly the text the rework sends', async () => {
   await waitFor(async () => (await messages(w.id)).some((m) => m.kind === 'user' && m.text === preview.text), { what: 'the same text delivered' });
   await settled(w.id);
 });
+
+test('placement current: a worker started by an agent runs in that agent\'s worktree, never the main checkout', async () => {
+  const t = (await h.api('POST', '/api/tasks', { title: 'родитель', description: '#spawn дочерняя работа #done ок', workspaceId: ws.id })).body;
+  const w = (await h.api('POST', `/api/tasks/${t.id}/start`, { agent: 'mock' })).body;
+  assert.notEqual(path.resolve(w.cwd), path.resolve(repo), 'the task worker has its own worktree');
+  const child = await waitFor(async () => (await state()).sessions.find((s) => s.parentId === w.id && !s.virtual), { what: 'child worker' });
+  assert.equal(path.resolve(child.cwd), path.resolve(w.cwd));
+  await settled(child.id);
+  await settled(w.id);
+
+  const other = makeRepo(path.join(root, 'другой репо'));
+  const ws2 = (await h.api('POST', '/api/workspaces', { path: other })).body;
+  const t2 = (await h.api('POST', '/api/tasks', { title: 'чужая', workspaceId: ws2.id })).body;
+  const r = await h.api('POST', '/api/agent/worker_start', { task_id: t2.id }, { 'x-harness-session': w.id });
+  assert.equal(r.status, 400);
+  assert.match(r.body.error, /new-top-level/);
+});
+
+test('the assignee chat archived or deleted: the task keeps its column, no longer points at it', async () => {
+  for (const how of ['archive', 'delete']) {
+    const t = (await h.api('POST', '/api/tasks', { title: `карточка ${how}`, workspaceId: ws.id })).body;
+    const w = (await h.api('POST', `/api/tasks/${t.id}/assign`, { agent: 'mock', cwd: repo })).body;
+    await settled(w.id);
+    if (how === 'archive') await h.api('PATCH', `/api/sessions/${w.id}`, { archived: true });
+    else await h.api('DELETE', `/api/sessions/${w.id}`);
+    const task = (await state()).tasks.find((x) => x.id === t.id);
+    assert.deepEqual([task.status, task.assigneeSessionId, task.agentState], ['in_progress', null, null]);
+    assert.equal(task.log.at(-1).text, how === 'delete' ? 'Сессия агента удалена' : 'Сессия агента перенесена в архив');
+  }
+});
+
+test('a turn in a sleeping worktree wakes it', async () => {
+  const s = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', cwd: repo })).body;
+  assert.equal((await h.api('PATCH', '/api/worktrees/meta', { path: repo, sleeping: true })).body.sleeping, true);
+  await h.api('POST', `/api/sessions/${s.id}/messages`, { text: 'проснись' });
+  const main = (await h.api('GET', `/api/workspaces/${ws.id}/worktrees`)).body.find((w) => w.main);
+  assert.equal(main.meta.sleeping, false);
+  await settled(s.id);
+});

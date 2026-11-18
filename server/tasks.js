@@ -13,7 +13,7 @@ const isStrArr = (v) => Array.isArray(v) && v.every((x) => typeof x === 'string'
 const defined = (f) => Object.fromEntries(Object.entries(f).filter(([, v]) => v !== undefined));
 
 const STATUS_LABEL = { backlog: 'Бэклог', todo: 'К работе', in_progress: 'В работе', review: 'На проверке', done: 'Готово' };
-export const LOG_TYPES = ['created', 'imported', 'status', 'started', 'agent_done', 'agent_failed', 'review', 'rework', 'port', 'pr_created', 'tracker_transition', 'comment', 'worktree'];
+export const LOG_TYPES = ['created', 'imported', 'status', 'started', 'agent_done', 'agent_failed', 'review', 'rework', 'port', 'pr_created', 'tracker_transition', 'comment', 'worktree', 'agent_gone'];
 
 export function createTasks({ store, bus, defaultBase = 'main' }) {
   const db = store.db;

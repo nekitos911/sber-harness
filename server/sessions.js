@@ -71,6 +71,8 @@ export const PERMISSION_OPTIONS = [
 ];
 /** First line of the first message as a chat title: ≤ 60 chars, a leading slash dropped («/full-task PROJ-1» → «full-task PROJ-1»). */
 export const titleFrom = (text) => String(text).split('\n').map((l) => l.trim()).find(Boolean)?.replace(/^\//, '').replace(/\s+/g, ' ').slice(0, 60) || null;
+/** «<profile> · <first line of the assignment, ≤ 50>» for a sub-agent's chat. */
+export const subagentTitle = (profile, spec) => [profile, titleFrom(spec || '')?.slice(0, 50)].filter(Boolean).join(' · ');
 /** Exit codes as signed numbers: Windows reports a forced end as 4294967295 (= -1). */
 export const signedCode = (code) => (Number.isInteger(code) && code > 0x7fffffff ? code - 0x100000000 : code);
 
@@ -363,7 +365,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     const now = Date.now();
     const kind = input.subagent_type || (ev.name.toLowerCase() === 'fork' ? 'fork' : 'agent');
     const v = find(id) || {
-      id, kind: 'chat', virtual: true, title: [kind, input.model].filter(Boolean).join(' · '), agent: s.agent, launcherId: null,
+      id, kind: 'chat', virtual: true, title: subagentTitle(kind, input.description || input.prompt), agent: s.agent, launcherId: null,
       cwd: s.cwd, workspaceId: s.workspaceId, worktreePath: s.worktreePath ?? null, system: !!s.system, branch: s.branch, role: 'subagent', parentId: s.id, taskId: s.taskId, status: 'running',
       externalSessionId: null, settingsPath: null, model: typeof input.model === 'string' ? input.model : null, approvalMode: null,
       autoReport: false, queued: 0, preview: '', command: null, pid: null, tokensIn: 0, tokensOut: 0, phase: null, turnOffset: null,
@@ -714,6 +716,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     // re-queued items (their process never started) are in the transcript already
     const userMsgs = retry ? [] : items.filter((it) => !it.recorded).map((it) => addMessage(s, { kind: 'user', text: it.text, from: it.from, ...(it.options ? { options: it.options } : {}) }));
     Object.assign(s, { status: 'running', errorKind: null, queued: 0, lastActivityAt: Date.now(), lastEventAt: null, stalled: false, turnClosing: false });
+    hooks.turnStarted?.(s);
     const approvalOnce = s.approvalOnce; // an edit tool allowed once in plan/default mode: this turn only
     delete s.approvalOnce;
     const grantsOnce = s.grantsOnce || []; // «Разрешить один раз»: allow-list entries for this turn only
@@ -1392,6 +1395,7 @@ ${note.trim()}` : text });
         if (!!x.archived === archived) continue;
         Object.assign(x, { archived, archivedAt: archived ? Date.now() : null });
         if (archived) cancelPending(x);
+        if (archived) hooks.sessionGone?.(x, 'archived');
         emit(x);
       }
       return s;
@@ -1424,6 +1428,7 @@ ${note.trim()}` : text });
       const r0 = runtime(sid);
       if (!force && ((r0.running && !r0.closedEarly) || r0.pty)) fail(409, 'сессия работает — остановите её или удалите с ?force=1');
       for (const v of db.sessions.filter((x) => x.virtual && x.parentId === sid)) api.remove(v.id, { force: true });
+      hooks.sessionGone?.(s, 'removed');
       const r = runtime(sid);
       clearInterval(r.registryTimer);
       r.handle?.stop();

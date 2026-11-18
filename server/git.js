@@ -162,10 +162,14 @@ export async function commit(cwd, message, paths, exclude = []) {
   return { hash: await out(cwd, ['rev-parse', 'HEAD']) };
 }
 
+/** → { summary: «Отправлено в origin/x» | «Новая ветка x в origin» | «Уже в origin/x — нечего отправлять», output: raw git }. */
 export async function push(cwd, { timeoutSec = 120 } = {}) {
-  const hasUpstream = (await git(cwd, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'], { ok: [0, 128] })).code === 0;
-  const r = await git(cwd, hasUpstream ? ['push'] : ['push', '-u', 'origin', 'HEAD'], { timeoutSec });
-  return { output: `${r.stdout}${r.stderr}`.trim() };
+  const up = await git(cwd, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'], { ok: [0, 128] });
+  const r = await git(cwd, up.code === 0 ? ['push'] : ['push', '-u', 'origin', 'HEAD'], { timeoutSec });
+  const output = `${r.stdout}${r.stderr}`.trim();
+  if (up.code !== 0) return { summary: `Новая ветка ${await currentBranch(cwd)} в origin`, output };
+  const remote = up.stdout.trim();
+  return { summary: /Everything up-to-date/i.test(output) ? `Уже в ${remote} — нечего отправлять` : `Отправлено в ${remote}`, output };
 }
 
 export async function currentBranch(cwd) {

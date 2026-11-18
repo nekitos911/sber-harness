@@ -305,7 +305,7 @@ HTTP: `POST /api/agent/<tool>` with headers `x-harness-token`, `x-harness-sessio
 | `task_create` | `title`, `description?`, `deps?`, `status?`, `priority?`, `labels?`, `parent_id?`, `workspace?` (id or name), `targets?` | new task (subtask inherits parent's targets/workspace when omitted) |
 | `task_port` | `task_id`, `target`, `agent?` | cherry-pick the task branch into another target branch (see "Multiple target branches") |
 | `task_update` | `id`, `title?`, `description?`, `status?`, `priority?`, `comment?` | updated task (`comment` appends to log) |
-| `worker_start` | `task_id?` or `spec` (+`title?`, `task?: true`), `agent?`, `workspace?`, `worktree?: 'current' \| 'new'`, `branch?`, `model?` | creates worker chat session (child of caller), task → `in_progress`, starts first turn with worker preamble + spec. 409 if the task already has an active worker or deps not done. A `spec` without `task_id` makes NO board task (unless `task: true`, or there is no caller session): a persistent child (`taskId: null`) that reports to its caller; title = `title` or the spec's first line; worker_retry works for it too |
+| `worker_start` | `task_id?` or `spec` (+`title?`, `task?: true`), `agent?`, `workspace?`, `worktree?: 'current' \| 'new'`, `branch?`, `model?` | creates worker chat session (child of caller), task → `in_progress`, starts first turn with worker preamble + spec. 409 if the task already has an active worker or deps not done. A `spec` without `task_id` makes NO board task (unless `task: true`, or there is no caller session): a persistent child (`taskId: null`) that reports to its caller; title = `title` or the spec's first line; worker_retry works for it too. Placement `current` (default) runs the worker where the caller works (`caller.worktreePath || caller.cwd`), never the repository's main checkout; a task (or `workspace`) in another repository → 400 suggesting `worktree: "new-top-level", workspace` |
 | `worker_list` | – | caller's child sessions with status/task/preview |
 | `send_message` | `to: <sessionId> \| 'parent' \| 'user'`, `body` | delivers (wakes target) |
 | `ask` | `question`, `options?: string[]` | like send_message to parent (or user notification `question`); options go on the delivered message / notification; answer arrives as the next message |
@@ -401,7 +401,8 @@ GET    /api/git/suggest?cwd=    -> { taskId, key, branch, base,
                                      commit: { title, body },        (prefill for the commit box, user edits before commit)
                                      pr: { title, body, base } }     (prefill for the PR dialog, user edits before create)
 POST   /api/git/commit          {cwd, message, paths?}   -> { hash }   (paths absent => all changes; message = title + "\n\n" + body)
-POST   /api/git/push            {cwd}                    -> { output }
+POST   /api/git/push            {cwd}                    -> { summary, output }  (summary: «Отправлено в origin/<b>» |
+                                                             «Новая ветка <b> в origin» | «Уже в origin/<b> — нечего отправлять»; output = raw git)
 POST   /api/git/pr              {cwd, title, body, base?} -> { url, existing }   (integrations.pr; 501 if disabled;
                                  existing: an OPEN PR with the same head+base already existed and is returned instead;
                                  400 with byte counts when title/body exceed integrations.pr.limits — UTF-8 BYTES)
@@ -642,7 +643,8 @@ WS `msg` events are emitted for it. `POST …/messages` to a virtual session →
 ### Level 2 — real sub-agent sessions via `worker_run` / harness `agent` ("Orca mode")
 Agent tool `worker_run { profile?: string, spec: string, model?: string, approvalMode?: string, title?: string,
 worktree?: 'current' (default) | 'new', timeoutMin?: number (default 60) }` (and its built-in-compatible alias `agent`):
-synchronous drop-in for GigaCode's `agent` tool. Creates an EPHEMERAL worker session (child of the caller, its own chat, no board task); when `profile` is set, reads
+synchronous drop-in for GigaCode's `agent` tool. Creates an EPHEMERAL worker session (child of the caller, its own chat, no board task; title
+«<profile> · <description or the spec's first line, ≤ 50>», as for built-in sub-agent chats); when `profile` is set, reads
 `~/.gigacode/agents/<profile>.md` (YAML frontmatter `model`, `approvalMode`, `tools`, `description`; body = role prompt):
 model/approvalMode default from the frontmatter (explicit args win), first prompt = role body + «\n\n## Задание\n» + spec +
 the short worker preamble (report with worker_done). Returns when the worker calls `worker_done`
@@ -803,6 +805,7 @@ NOT confirmed (it may print a URL / device code and wait for the browser callbac
   pass recomputes all three.
   Feature flag `worktree-lazy`.
 - `PATCH /api/worktrees/meta { path, label?, note?, pinned?, sleeping? }` → meta, broadcast as `{ t: "worktree.meta" }`.
+  A turn starting in a sleeping worktree wakes it (`sleeping: false`, broadcast).
   `sleeping: true` stops terminal PTYs in that cwd (chat sessions are idle between turns anyway; a running turn is NOT
   killed — 409 unless `force`). "Sessions in a worktree" (here, DELETE, checkout, listing counts) = sessions whose
   `worktreePath` is that worktree, or (no worktreePath) whose cwd is inside it — an agent in a subfolder counts.
@@ -1246,7 +1249,9 @@ Durable state (all in `<dataDir>`, atomic writes):
   `task.worktrees: [{ workspaceId, path, branch }]` (+ `branch` / `workspaceId` when still empty), log type `worktree`
   «Агент создал рабочее дерево: <repo> · <branch>»; suggest/commit/PR then work per worktree as usual.
 - Task log entries: `{ at, by, type, text, data? }`, `type` ∈ created, imported, status, started, agent_done,
-  agent_failed, review, rework, port, pr_created, tracker_transition, comment; `text` is human Russian without session ids
+  agent_failed, review, rework, port, pr_created, tracker_transition, comment, worktree, agent_gone («Сессия агента
+  удалена» / «…перенесена в архив»: the assignee's chat was deleted or archived — `assigneeSessionId` and `agentState`
+  become null, the column stays); `text` is human Russian without session ids
   or paths («Взята в работу: GigaCode, ветка feature/T-10», «Агент закончил», «PR #562 в develop создан»); ids, summaries,
   verdicts are in `data`. Old entries have no `type` (show their `text`).
 - `POST /api/git/pr/decline { cwd, index }` (flag `pr-decline`) → `integrations.pr.declineTool` (default

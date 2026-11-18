@@ -5,7 +5,7 @@ import path from 'node:path';
 import { CODE_ROOT, expandHome } from './config.js';
 import * as git from './git.js';
 import { jobStep } from './jobs.js';
-import { newId } from './sessions.js';
+import { newId, subagentTitle } from './sessions.js';
 import { launchers } from './launchers.js';
 
 const GENERIC_REWORK = '{key} {title}: нужны правки: {notes}'; // agents without a task command (/full-task)
@@ -252,11 +252,16 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
     sessions.resolveAgent(agent);
     if (!o.spec) promptTemplate(agent);
     const ws = o.workspace ? workspaceRef(o.workspace) : o.workspaceId ? findWs(o.workspaceId) || fail(404, `рабочая папка ${o.workspaceId} не найдена`) : task ? findWs(task.workspaceId) : null;
+    // current = where the caller works (its worktree), never the repository's main checkout
+    const here = caller && !o.cwd && placement === 'current';
+    if (here && ws && ws.id !== caller.workspaceId) {
+      fail(400, `${task ? `задача ${tasks.key(task)} — в` : 'указан'} репозиторий «${ws.name}», а вы работаете в другом: запустите с worktree: "new-top-level", workspace: "${ws.name}"`);
+    }
 
     const run = (async () => {
       let cwd = o.cwd ? path.resolve(o.cwd) : ws ? ws.path : caller?.cwd || config.root;
       // a new child worktree comes from the caller's own repository (nested under its worktree in the UI)
-      if (placement === 'new-child' && caller && !o.workspace) cwd = caller.worktreePath || caller.cwd;
+      if (here || (placement === 'new-child' && caller && !o.workspace)) cwd = caller.worktreePath || caller.cwd;
       let branch;
       let made = null;
       if (placement !== 'current') {
@@ -503,7 +508,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
     try {
       s = await sessions.create({
         kind: 'chat', agent, cwd, role: 'worker', parentId: caller.id, model, approvalMode: mode, branch, ephemeral: true, autoReport: false, persistent,
-        title: a.title || [a.profile || 'agent', a.description].filter(Boolean).join(' · '),
+        title: a.title || subagentTitle(a.profile || 'agent', a.description || a.spec),
       });
       if (!persistent && (s.worktreePath ?? s.cwd) !== (caller.worktreePath ?? caller.cwd)) sessions.update(s.id, { persistent: true });
       sessions.deliver(s.id, { from: caller.id, text: [profile?.body, `## Задание\n${a.spec}`].filter(Boolean).join('\n\n') });
@@ -778,6 +783,16 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
   }
 
   sessions.hooks.preamble = preamble;
+  sessions.hooks.sessionGone = (s, how) => {
+    for (const t of db.tasks.filter((x) => x.assigneeSessionId === s.id)) {
+      tasks.update(t.id, { assigneeSessionId: null, agentState: null }, 'harness'); // the column stays
+      tasks.addLog(t.id, 'harness', how === 'removed' ? 'Сессия агента удалена' : 'Сессия агента перенесена в архив', 'agent_gone', { sessionId: s.id, how });
+    }
+  };
+  sessions.hooks.turnStarted = (s) => {
+    const p = s.worktreePath || s.cwd;
+    if (p && db.worktreeMeta?.[wtKey(p)]?.sleeping) markWorktree(p, { sleeping: false }); // an agent at work wakes it
+  };
   // a question answered in its chat: its Inbox entry is answered and read (no stale «ждёт ответа»)
   sessions.hooks.questionAnswered = (s) => {
     for (const n of db.notifications.filter((x) => x.kind === 'question' && x.sessionId === s.id && !x.answered)) {

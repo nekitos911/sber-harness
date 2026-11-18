@@ -47,7 +47,7 @@ test('worker_run: a nested ephemeral chat with the profile, the caller gets the 
   const said = await waitFor(async () => (await messages(caller.id)).find((m) => m.kind === 'assistant' && m.text.includes('worker_run result:')), { timeout: 20000, what: 'tool result' });
   assert.match(said.text, /worker_run result: всё чисто/);
   const child = (await state()).sessions.find((s) => s.parentId === caller.id && s.ephemeral);
-  assert.deepEqual([child.role, child.model, child.approvalMode, child.title, child.taskId], ['worker', 'GLM-5.3-Flash-262k', 'plan', 'java-reviewer', null]);
+  assert.deepEqual([child.role, child.model, child.approvalMode, child.title, child.taskId], ['worker', 'GLM-5.3-Flash-262k', 'plan', 'java-reviewer · Проверь diff #done всё чисто', null]);
   assert.deepEqual([child.report.status, child.report.summary, child.waiter], ['done', 'всё чисто', true]);
   const first = (await messages(child.id)).find((m) => m.kind === 'user');
   assert.match(first.text, /^Ты ревьюер Java-кода\.\n\n## Задание\nПроверь diff #done всё чисто$/);

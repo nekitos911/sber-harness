@@ -328,7 +328,7 @@ test('built-in sub-agent activity lands on the parent tool call, not in the main
   const vid = `${s.id}~call_agent_1`;
   assert.equal(agentCall.tool.subSessionId, vid);
   const v = (await state()).sessions.find((x) => x.id === vid);
-  assert.deepEqual([v.virtual, v.role, v.parentId, v.title, v.status, v.model], [true, 'subagent', s.id, 'java-reviewer · review', 'done', 'review']);
+  assert.deepEqual([v.virtual, v.role, v.parentId, v.title, v.status, v.model], [true, 'subagent', s.id, 'java-reviewer · Review the diff', 'done', 'review']);
   const vm = await messages(vid);
   assert.deepEqual(vm.map((m) => [m.kind, m.kind === 'tool' ? m.tool.name : m.text]), [['user', 'Review the diff'], ['assistant', 'Reviewing…'], ['tool', 'grep_search'], ['assistant', 'APPROVED, 0 findings']]);
   assert.equal(vm[2].tool.output, 'no matches');
