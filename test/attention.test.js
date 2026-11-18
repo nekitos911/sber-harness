@@ -25,7 +25,8 @@ after(async () => {
 
 const session = async (id) => (await h.api('GET', '/api/state')).body.sessions.find((s) => s.id === id);
 const messages = async (id) => (await h.api('GET', `/api/sessions/${id}/messages`)).body;
-const idle = (id) => waitFor(async () => (await session(id)).status === 'idle', { what: `${id} idle` });
+// idle = the turn and its process are over and nothing waits in the queue (a lingering process keeps a message queued)
+const idle = (id) => waitFor(async () => { const x = await session(id); return x.status === 'idle' && !x.queued && !x.pid && !x.turnClosing; }, { what: `${id} idle` });
 const runs = (sid) => fs.readFileSync(argvFile, 'utf8').trim().split('\n').map((l) => JSON.parse(l)).filter((r) => r.env.HARNESS_SESSION_ID === sid);
 const modes = (sid) => runs(sid).map((r) => r.argv[r.argv.indexOf('--approval-mode') + 1]);
 const allowedIn = (argv) => argv.flatMap((a, i) => (a === '--allowed-tools' ? [argv[i + 1]] : []));
