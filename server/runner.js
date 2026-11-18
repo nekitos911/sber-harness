@@ -300,6 +300,7 @@ function tailFile(file, offset, maxLine, onLine, onOffset) {
  */
 export function runTurn({ launcher, ctx, command, cwd, env, firstEventTimeoutMs, authTimeoutMs = 600000, logFile, outFile, errFile, onEvent, onOffset, maxLine = MAX_LINE, reattach = null }) {
   const log = fs.createWriteStream(logFile, { flags: 'a' });
+  log.on('error', () => {}); // best-effort: the run folder may be gone (session deleted right after the spawn)
   const res = { code: null, signal: null, sawResult: false, timedOut: false, stopped: false, killReason: null, detached: false, error: null, stderrTail: '', eventCount: 0, priorOutput: (reattach?.offset ?? 0) > 0 };
   let child = null;
   let pid = reattach?.pid ?? null;

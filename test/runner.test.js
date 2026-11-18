@@ -125,3 +125,15 @@ test('spawn options: Windows children are never detached (DETACHED_PROCESS would
   assert.deepEqual(spawnOptions({}, { group: true, platform: 'linux' }), { windowsHide: true, detached: true });
   assert.deepEqual(spawnOptions({ detached: true }, { platform: 'linux' }), { windowsHide: true, detached: false }, 'only `group` decides');
 });
+
+test('a run folder that is gone (session deleted right after the spawn) is an error result, never an uncaught exception', async () => {
+  const gone = path.join(dir, 'нет папки');
+  const ctx = { prompt: 'hi', session: { id: 's_gone', externalSessionId: null }, agentCfg: { approvalMode: 'yolo' }, settingsPath: path.join(dir, 'settings.json'), harnessMcp: {}, agentMcpServers: {} };
+  const handle = runTurn({
+    launcher, ctx, command: launcher.defaults.command, cwd: dir, env: { ...process.env }, firstEventTimeoutMs: 5000,
+    logFile: path.join(gone, 'stderr.log'), outFile: path.join(gone, 'turn-1.out.ndjson'), errFile: path.join(gone, 'turn-1.err.txt'), onEvent: () => {},
+  });
+  const res = await handle.done;
+  assert.match(res.error, /ENOENT/);
+  await new Promise((r) => setTimeout(r, 100)); // the log stream's async open fails meanwhile
+});
