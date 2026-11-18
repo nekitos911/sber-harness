@@ -125,7 +125,8 @@ export interface Session {
   lastEventKind?: 'text_delta' | 'assistant_final' | 'tool_running' | 'tool_done' | 'thought' | 'result' | null // the latest stream event (newer servers)
   turnClosing?: boolean // the answer is complete (result seen); the CLI is only shutting down
   warm?: boolean // ACP sessions only: the process is loaded (false = unloaded after idling)
-  context?: { tokens: number; input?: number; output?: number; cached?: number } | null // the context after the last turn
+  // the context after the last turn; lastTurn = that turn's own usage (older drafts sent input/output/cached flat)
+  context?: { tokens: number; at?: number; lastTurn?: { input?: number; output?: number; cacheRead?: number } | null; input?: number; output?: number; cached?: number } | null
   contextLimit?: number | null // the model's window
   mcpStatus?: { name: string; status: string }[] // MCP servers as the CLI reported them at the turn's start
   effectiveApprovalMode?: string | null // what the CLI really runs with (e.g. auto → auto-edit)
@@ -216,6 +217,7 @@ export interface AgentInfo {
   enabled: boolean
   models?: (ModelEntry | string)[]
   compressCommand?: string | null // e.g. «/compress»: what «Сжать контекст» sends
+  contextCommand?: string | null // e.g. «/context»: the per-category breakdown (later)
 }
 
 /** GET /api/agents/:id/info: how the CLI resolves and what the last session reported (system/init). */

@@ -24,6 +24,7 @@ export function ContextRing({ session, running }: { session: Session; running: b
   const pct = Math.round(share * 100)
   const level = share > 0.85 ? 'high' : share >= 0.6 ? 'mid' : 'low'
   const ctx = session.context!
+  const turn = { input: ctx.lastTurn?.input ?? ctx.input, output: ctx.lastTurn?.output ?? ctx.output, cached: ctx.lastTurn?.cacheRead ?? ctx.cached }
   const model = agent?.models?.map((m) => (typeof m === 'string' ? { id: m, label: m } : m)).find((m) => m.id === session.model)
   const compress = agent?.compressCommand
   const sendCompress = async () => {
@@ -48,9 +49,9 @@ export function ContextRing({ session, running }: { session: Session; running: b
           <span style={{ width: `${pct}%` }} />
         </div>
         <dl className="ctx-rows">
-          {(ctx.input !== undefined || ctx.output !== undefined) && (
+          {(turn.input !== undefined || turn.output !== undefined) && (
             <><dt>Последний ход</dt><dd className="num">
-              {[ctx.input !== undefined && `вход ${tokens(ctx.input)}`, ctx.output !== undefined && `выход ${tokens(ctx.output)}`, ctx.cached && `из кэша ${tokens(ctx.cached)}`].filter(Boolean).join(' · ')}
+              {[turn.input !== undefined && `вход ${tokens(turn.input)}`, turn.output !== undefined && `выход ${tokens(turn.output)}`, turn.cached && `из кэша ${tokens(turn.cached)}`].filter(Boolean).join(' · ')}
             </dd></>
           )}
           {session.tokensIn + session.tokensOut > 0 && <><dt>Всего в сессии</dt><dd className="num">вход {tokens(session.tokensIn)}, выход {tokens(session.tokensOut)}</dd></>}
@@ -59,7 +60,7 @@ export function ContextRing({ session, running }: { session: Session; running: b
         {share > 0.5 && compress && (
           <Button size="sm" busy={busy} disabled={running || busy} onClick={() => void sendCompress()} tip={running ? 'Дождитесь конца хода' : `Отправить агенту ${compress}`}>Сжать контекст</Button>
         )}
-        <p className="ctx-foot">Разбивка по категориям — команда /context (появится позже)</p>
+        <p className="ctx-foot">Разбивка по категориям — команда {agent?.contextCommand ?? '/context'} (появится позже)</p>
       </Popover>
     </>
   )
