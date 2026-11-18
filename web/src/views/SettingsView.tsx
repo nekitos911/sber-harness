@@ -21,7 +21,7 @@ const TIMEOUTS = [60, 120, 180, 300]
 const SYNC = [{ v: 0, l: 'выключено' }, { v: 60, l: 'каждую минуту' }, { v: 300, l: 'каждые 5 мин' }, { v: 900, l: 'каждые 15 мин' }, { v: 1800, l: 'каждые 30 мин' }]
 const CUSTOM = '__custom'
 
-const GIT_TEMPLATES: { key: Exclude<keyof Settings['git'], 'generateMessages'>; label: string; presets: string[]; hint: string }[] = [
+const GIT_TEMPLATES: { key: Exclude<keyof Settings['git'], 'generateMessages' | 'via'>; label: string; presets: string[]; hint: string }[] = [
   { key: 'branchTemplate', label: 'Ветка задачи', presets: ['feature/{key}', 'bugfix/{key}', 'hotfix/{key}'], hint: 'Создаётся при «Взять в работу».' },
   { key: 'portBranchTemplate', label: 'Ветка портирования', presets: ['{branch}-{targetSlug}', '{branch}-{target}'], hint: 'Для cherry-pick в дополнительные целевые ветки.' },
   { key: 'commitTitleTemplate', label: 'Заголовок коммита', presets: ['{key} {title}', '{key}: {title}'], hint: 'Подставляется в поле коммита, его можно поправить.' },
@@ -595,6 +595,7 @@ function GitSection({ form, update, fieldError }: SectionProps) {
   const ws = workspaces.find((w) => w.isGit)
   const branchesOn = useFeature('branches')
   const generateOn = useFeature('git-generate')
+  const viaOn = useFeature('git-via-agent')
   useEffect(() => {
     if (!ws || !branchesOn) return
     api<GitBranches>('GET', `/git/branches${qs({ cwd: ws.path })}`).then((r) => setBranches((Array.isArray(r?.branches) ? r.branches : []).filter((b) => !b.remote).map((b) => b.name)), () => setBranches([]))
@@ -613,6 +614,12 @@ function GitSection({ form, update, fieldError }: SectionProps) {
             : <AutoValue value={g.defaultBase} mono open={false} onToggle={() => setEditBase(true)} />}
         </Row>
         <TemplateRow f={GIT_TEMPLATES[0]} value={g[GIT_TEMPLATES[0].key] ?? ''} onChange={(v) => set({ [GIT_TEMPLATES[0].key]: v })} error={fieldError('git')} />
+        {viaOn && (
+          <Row label="Коммит, push и PR" hint="Через агента — работают хуки и навыки GigaCode (например проверки перед коммитом), медленнее; напрямую — git и sourcecontrol из harness.">
+            <Segmented label="Коммит, push и PR" value={g.via ?? 'agent'} onChange={(v) => set({ via: v })}
+              options={[{ value: 'agent', label: 'Через агента' }, { value: 'harness', label: 'Напрямую' }]} />
+          </Row>
+        )}
         {generateOn && g.generateMessages !== undefined && (
           <Row label="Генерировать сообщения коммитов и PR агентом" hint="GigaCode пишет заголовок и описание по изменениям и задаче — в облегчённом режиме (без MCP и навыков, быстрая модель). Выключено: только по кнопке ✨.">
             <Switch label="Генерировать сообщения коммитов и PR агентом" checked={g.generateMessages} onChange={(v) => set({ generateMessages: v })} />

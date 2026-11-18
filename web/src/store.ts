@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from 'react'
 import type { PrListState, PrScope } from './lib/prsMine'
+import type { AgentGitJob } from './lib/agentGit'
 import type { AgentInfo, AgentMeta, HistoryItem, RecoveryState, GitStatus, SddPlan, Settings, Integrations, Message, Notification, Session, SubAgent, Task, Workspace, Worktree } from './types'
 import type { DiffFile } from './lib/diff'
 import { normPath } from './lib/format'
@@ -84,6 +85,7 @@ export interface State extends Prefs {
   sdd: Record<string, SddPlan[] | null> // key = normPath(cwd): /full-task plans and verdicts (null: server lacks it)
   recentFolders: string[]
   slowStarts: Record<string, number[]> // sessionId -> how long the last turns sat in phase «starting» (ms)
+  agentGit: Record<string, AgentGitJob | undefined> // key = normPath(cwd): a commit / push / PR the agent is doing there
   sbOverlay: boolean // narrow window: the sidebar opened over the content from its icon rail
   panelOverlay: boolean // narrow window: the right panel opened over the content
   history: Record<string, HistoryItem[]> // key = normPath(cwd): CLI-recorded chats of that folder
@@ -143,7 +145,7 @@ let state: State = {
   conn: 'connecting', loaded: false, authExpired: false, scheme: resolveScheme(prefs.theme),
   tasks: [], sessions: [], workspaces: [], notifications: [], agents: [], defaultAgent: null, shell: '',
   integrations: { tasks: false, pr: false },
-  messages: {}, subagents: {}, worktrees: {}, git: {}, agentMeta: {}, settings: null, prs: {}, prsMine: {}, sdd: {}, recentFolders: [], slowStarts: {}, sbOverlay: false, panelOverlay: false, history: {}, recovery: null, features: [], dirty: {}, toasts: [], jobs: [], focusTaskId: null, dialog: null, back: [], forward: [],
+  messages: {}, subagents: {}, worktrees: {}, git: {}, agentMeta: {}, settings: null, prs: {}, prsMine: {}, sdd: {}, recentFolders: [], slowStarts: {}, agentGit: {}, sbOverlay: false, panelOverlay: false, history: {}, recovery: null, features: [], dirty: {}, toasts: [], jobs: [], focusTaskId: null, dialog: null, back: [], forward: [],
 }
 
 const listeners = new Set<() => void>()
@@ -183,7 +185,7 @@ document.documentElement.dataset.theme = state.scheme
 
 export type Feature = 'sdd' | 'subagents' | 'virtual-sessions' | 'worker-run' | 'pr-status' | 'branches' | 'fs-search'
   | 'agent-info' | 'models-refresh' | 'tracker-links' | 'worktree-meta' | 'open' | 'board-columns' | 'review-loop' | 'skills-install' | 'demo'
-  | 'fs-raw' | 'rework' | 'tracker-import' | 'folders' | 'include-dirs' | 'acp' | 'pr-decline' | 'questions' | 'permissions' | 'activity' | 'recovery' | 'cli-history' | 'prs-mine' | 'git-generate'
+  | 'fs-raw' | 'rework' | 'tracker-import' | 'folders' | 'include-dirs' | 'acp' | 'pr-decline' | 'questions' | 'permissions' | 'activity' | 'recovery' | 'cli-history' | 'prs-mine' | 'git-generate' | 'git-via-agent'
 
 /** Whether this server implements an optional API group (no flag list = an older server = none). */
 export const hasFeature = (f: Feature) => state.features.includes(f)

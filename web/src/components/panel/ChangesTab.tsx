@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { ArrowDown, ArrowUp, ChevronRight, GitPullRequest, RotateCcw, Upload } from 'lucide-react'
-import { api, qs, tryApi } from '../../api'
+import { api, qs } from '../../api'
 import { openDialog, openTab, openTask, openWorktree, showPanel, toast, useFeature, useStore } from '../../store'
 import { basename, normPath, plural, relTime, shortHash } from '../../lib/format'
 import { loadDraft, saveDraft } from '../../lib/draft'
@@ -10,11 +10,12 @@ import type { GitCommit, GitFile, GitSuggest } from '../../types'
 import type { DiffFile } from '../../lib/diff'
 import { DiffLines } from '../DiffLines'
 import { Button, Disclosure } from '../ui'
-import { runJob } from '../../lib/jobs'
 import { PrCard } from '../PrChip'
 import { openPrSettings, usePr } from '../../lib/pr'
 import { Skeleton } from '../bits'
 import { GenerateButton, GenerateStatus, useGenerate, type Generated } from '../GenerateMessage'
+import { AgentGitLine, ViaSwitch } from '../AgentGit'
+import { currentVia, gitAction } from '../../lib/agentGit'
 import { useSettings } from '../../lib/agents'
 
 // what the agent wrote per change set: a remount (tab switch, panel toggle) shows it again without a new run
@@ -104,23 +105,31 @@ export function ChangesTab({ cwd }: { cwd: string }) {
     setBody(suggest.commit.body)
   }
 
+  // the message is committed: the fields start over (a new change set may get a new generated message)
+  const committed = () => {
+    touched.current = false
+    generated.current = false
+    saveDraft(draftKey, null)
+    setTitle('')
+    setBody('')
+  }
   const commit = async () => {
     const message = body.trim() ? `${title.trim()}\n\n${body.trim()}` : title.trim()
     setBusy('commit')
-    const res = await tryApi<{ hash: string }>('POST', '/git/commit', { cwd, message })
+    // through the agent (git.via «agent»): its hooks and skills run; the line under the buttons follows it
+    const res = await gitAction<{ hash: string }>(cwd, 'commit', { message }, currentVia(), committed)
     setBusy(null)
-    if (!res) return
+    if (!res || res === 'agent') return
     toast(`Закоммичено ${shortHash(res.hash)}`, 'ok')
-    touched.current = false
-    saveDraft(draftKey, null)
+    committed()
     refreshGit(cwd)
   }
 
   const push = async () => {
     setBusy('push')
-    const res = await runJob('Push', (jobId) => api<{ summary?: string; output?: string }>('POST', '/git/push', { cwd }, { jobId }))
+    const res = await gitAction<{ summary?: string; output?: string }>(cwd, 'push', {}, currentVia())
     setBusy(null)
-    if (!res) return
+    if (!res || res === 'agent') return
     // «Новая ветка feature/T-2 в origin»; git's own words only on request
     toast(res.summary || res.output?.trim().split('\n').pop() || 'Отправлено', 'ok')
     setPushOutput(res.output?.trim() || null)
@@ -206,6 +215,8 @@ export function ChangesTab({ cwd }: { cwd: string }) {
               {busy === 'push' ? 'Push…' : 'Push'}
             </Button>
           </div>
+          <AgentGitLine cwd={cwd} />
+          <ViaSwitch />
           {pushOutput && <Disclosure className="cli-raw" summary={<span className="muted">Подробности push</span>}><pre className="mono">{pushOutput}</pre></Disclosure>}
         </div>
       </section>

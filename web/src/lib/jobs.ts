@@ -29,8 +29,15 @@ export async function runJob<T>(label: string, fn: (jobId: string) => Promise<T>
   }
 }
 
+// Jobs that outlive their request (a commit through the agent ends when its turn ends): told when the job is done.
+const watchers = new Map<string, (ev: { error?: string } & Record<string, unknown>) => void>()
+export function watchJob(id: string, cb: (ev: never) => void) {
+  watchers.set(id, cb as (ev: { error?: string } & Record<string, unknown>) => void)
+}
+
 /** WS `{ t: 'job', id, title, step, progress?: { done, total }, done?, error? }` (server/jobs.js). */
-export function applyJobEvent(ev: { id: string; title?: string; step?: string | null; progress?: { done: number; total: number }; done?: boolean; error?: string }) {
+export function applyJobEvent(ev: { id: string; title?: string; step?: string | null; progress?: { done: number; total: number }; done?: boolean; error?: string } & Record<string, unknown>) {
+  if (ev.done && watchers.has(ev.id)) { const w = watchers.get(ev.id)!; watchers.delete(ev.id); w(ev) }
   if (!getState().jobs.some((j) => j.id === ev.id)) return
   if (ev.done) return // the request's own answer ends the job (or reports its error)
   const step = ev.step ? (ev.progress ? `${ev.step} ${ev.progress.done}/${ev.progress.total}` : ev.step) : null

@@ -507,3 +507,9 @@ button.prs-group[aria-expanded="true"] .chev { transform: rotate(90deg); }
 .commit-box[data-generating] .input, .commit-box[data-generating] .textarea, .input[data-generating], .textarea[data-generating] { background: linear-gradient(90deg, var(--well) 0%, var(--deck-2) 50%, var(--well) 100%); background-size: 200% 100%; animation: gen-shimmer 1.4s linear infinite; }
 @keyframes gen-shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
 @media (prefers-reduced-motion: reduce) { .commit-box[data-generating] .input, .commit-box[data-generating] .textarea, .input[data-generating], .textarea[data-generating] { animation: none; } }
+/* commit / push / PR through the agent */
+.agent-git { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin: 2px 0 0; color: var(--ink-3); font-size: 12px; }
+.agent-git[data-ok] { color: var(--lamp-done); }
+.agent-git[data-error] { display: grid; color: var(--lamp-fail); }
+.agent-git .icon-btn { margin-left: auto; }
+.via-switch { display: inline-flex; margin-top: 2px; }

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { FolderPlus } from 'lucide-react'
 import { api, errorText, qs, tryApi } from '../api'
-import { closeDialog, openWorktree, setState, toast, upsert, useFeature, useStore, type DialogRequest } from '../store'
+import { closeDialog, showPanel, openWorktree, setState, toast, upsert, useFeature, useStore, type DialogRequest } from '../store'
 import { adoptSession, newChatInFolder } from '../lib/actions'
 import { loadWorktrees } from '../ws'
 import { basename, isAbsolutePath, normPath } from '../lib/format'
@@ -20,6 +20,7 @@ import { endJob, startJob, useJobStep } from '../lib/jobs'
 import { Markdown } from './Markdown'
 import { useWhere as useStartWhere } from './board/Rework'
 import { GenerateButton, GenerateStatus, useGenerate } from './GenerateMessage'
+import { currentVia, gitAction } from '../lib/agentGit'
 
 export function Dialogs() {
   const d = useStore((s) => s.dialog)
@@ -547,9 +548,11 @@ function PrDialog({ cwd, base: initBase }: { cwd: string; base?: string }) {
       disabled={!title.trim() || !base.trim() || over}
       wide
       onClose={closeDialog}
-      onSubmit={() => run(async (jobId) => {
-        const res = await tryApi<{ url: string; existing?: boolean }>('POST', '/git/pr', { cwd, title: title.trim(), body, base: base.trim() }, { jobId })
+      onSubmit={() => run(async () => {
+        // through the agent (git.via «agent»): the dialog closes, the Changes panel follows the agent's turn
+        const res = await gitAction<{ url: string; existing?: boolean }>(cwd, 'pr', { title: title.trim(), body, base: base.trim() }, currentVia(), () => saveDraft(draftKey, null))
         if (!res) return
+        if (res === 'agent') { showPanel('changes'); closeDialog(); return }
         toast(res.existing ? 'PR уже открыт' : 'Pull request создан', res.existing ? 'info' : 'ok', res.url)
         saveDraft(draftKey, null)
         loadPr(cwd, true)
