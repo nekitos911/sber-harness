@@ -5,23 +5,36 @@ import type { SddPlan } from '../types'
 
 const inflight = new Set<string>()
 
-/** /full-task ledger and verdicts of a worktree; null when this server has no /api/sdd. Live updates come over WS. */
-export function loadSdd(cwd: string, force = false) {
+/** Store key: a folder's plans, or only those relevant to one chat (its task key, files it changed). */
+export const sddKey = (cwd: string, sessionId?: string | null) => (sessionId ? `${wtKey(cwd)}|${sessionId}` : wtKey(cwd))
+
+/**
+ * /full-task ledger and verdicts of a worktree — with `sessionId` only the plans of that chat; null when this server
+ * has no /api/sdd. Live updates come over WS.
+ */
+export function loadSdd(cwd: string, force = false, sessionId?: string | null) {
   if (!hasFeature('sdd')) return
-  const k = wtKey(cwd)
+  const k = sddKey(cwd, sessionId)
   if (inflight.has(k) || (!force && k in getState().sdd)) return
   inflight.add(k)
-  api<{ plans: SddPlan[] }>('GET', `/sdd${qs({ cwd })}`)
+  api<{ plans: SddPlan[] }>('GET', `/sdd${qs({ cwd, sessionId })}`)
     .then((r) => (Array.isArray(r?.plans) ? r.plans.map((p) => ({ ...p, progress: { raw: p?.progress?.raw ?? '', items: Array.isArray(p?.progress?.items) ? p.progress.items : [] }, verdicts: Array.isArray(p?.verdicts) ? p.verdicts : [] })) : []), () => null)
     .then((plans) => setState((s) => ({ sdd: { ...s.sdd, [k]: plans } })))
     .finally(() => inflight.delete(k))
 }
 
-export function useSdd(cwd: string | null) {
+export function useSdd(cwd: string | null, sessionId?: string | null) {
   const git = useStore((s) => (cwd ? s.git[wtKey(cwd)] : undefined))
   const on = useFeature('sdd')
-  useEffect(() => { if (cwd && on) loadSdd(cwd, true) }, [cwd, git, on])
-  return useStore((s) => (cwd ? s.sdd[wtKey(cwd)] : undefined))
+  useEffect(() => { if (cwd && on) loadSdd(cwd, true, sessionId) }, [cwd, git, on, sessionId])
+  return useStore((s) => (cwd ? s.sdd[sddKey(cwd, sessionId)] : undefined))
+}
+
+/** Items done, or null when the ledger has no statuses at all (then it is a plain list, not progress). */
+export function planDone(p: SddPlan): number | null {
+  if (p.progress.done !== undefined) return p.progress.done
+  if (!p.progress.items.some((i) => i.status)) return null
+  return p.progress.items.filter((i) => /done|готов|pass|\[x\]/i.test(i.status ?? '')).length
 }
 
 export const failCount = (plans: SddPlan[] | null | undefined) =>

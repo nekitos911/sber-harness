@@ -1,24 +1,38 @@
 import { Check, X } from 'lucide-react'
 import { openTab } from '../../store'
-import { VERDICT_LABEL } from '../../lib/sdd'
+import { planDone, VERDICT_LABEL } from '../../lib/sdd'
+import { plural } from '../../lib/format'
 import type { SddPlan, SddVerdict } from '../../types'
 import { Markdown } from '../Markdown'
 import { Disclosure } from '../ui'
 
-/** «Вердикты»: /full-task plans with their progress and a card per verdicted step. */
-export function VerdictsTab({ cwd, plans }: { cwd: string; plans: SddPlan[] }) {
+/**
+ * «Вердикты»: /full-task plans with their progress and a card per verdicted step. `scope` (when the panel shows a
+ * chat): only this chat's plans, or every plan of the folder.
+ */
+export function VerdictsTab({ cwd, plans, scope }: { cwd: string; plans: SddPlan[]; scope?: { all: boolean; set: (all: boolean) => void } }) {
   return (
     <div className="verdicts">
+      {scope && (
+        <label className="verdicts-scope">
+          <input type="checkbox" checked={scope.all} onChange={(e) => scope.set(e.target.checked)} />
+          Показать все планы папки
+        </label>
+      )}
+      {plans.length === 0 && <p className="muted wpanel-section">У этого чата нет планов /full-task.</p>}
       {plans.map((p) => {
-        const done = p.progress.items.filter((i) => /done|готов|pass|\[x\]/i.test(i.status)).length
+        const done = planDone(p)
+        const n = p.progress.items.length
         return (
           <section key={p.dir} className="wpanel-section">
-            <h3>{p.name} <span className="muted num">{done}/{p.progress.items.length}</span></h3>
-            {p.progress.items.length > 0 && (
+            <h3>{p.name} <span className="muted num">{done === null ? `${n} ${plural(n, 'пункт', 'пункта', 'пунктов')}` : `${done}/${n}`}</span></h3>
+            {n > 0 && (done === null ? (
+              <ul className="sdd-items">{p.progress.items.map((it, i) => <li key={i}>{it.title}</li>)}</ul>
+            ) : (
               <ul className="sdd-progress">
-                {p.progress.items.map((it, i) => <li key={i} data-s={it.status}><span className="sdd-dot" aria-hidden />{it.title}<span className="muted">{it.status}</span></li>)}
+                {p.progress.items.map((it, i) => <li key={i} data-s={it.status ?? undefined}><span className="sdd-dot" aria-hidden />{it.title}<span className="muted">{it.status}</span></li>)}
               </ul>
-            )}
+            ))}
             {p.verdicts.map((v) => <VerdictCard key={v.file} v={v} cwd={cwd} />)}
             {!p.verdicts.length && !p.progress.items.length && <Markdown text={p.progress.raw} />}
           </section>

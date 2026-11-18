@@ -65,7 +65,11 @@ export interface SddVerdict {
   filesChanged?: string[]; commands?: { cmd: string; result: string }[]; openQuestions?: string | string[] | null
   implementerModel?: string | null; reviewerModel?: string | null; secondReviewModel?: string | null; notes?: string | null; raw: string
 }
-export interface SddPlan { name: string; dir: string; progress: { raw: string; items: { title: string; status: string }[] }; verdicts: SddVerdict[] }
+export interface SddPlan {
+  name: string; dir: string; verdicts: SddVerdict[]
+  // done: how many items are done; null = the ledger says nothing about progress (a plain list, no «0/N»)
+  progress: { raw: string; items: { title: string; status: string | null }[]; done?: number | null }
+}
 
 export interface TaskPr { index: number; state: 'open' | 'merged' | 'declined'; url: string; updatedAt: number }
 

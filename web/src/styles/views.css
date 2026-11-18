@@ -497,3 +497,5 @@ button.prs-group[aria-expanded="true"] .chev { transform: rotate(90deg); }
 .pr-agent svg { width: 12px; height: 12px; }
 .prs-errors { margin-top: 16px; }
 .prs-errors ul { display: grid; gap: 4px; margin: 6px 0 0; padding-left: 18px; font-size: 12px; }
+.verdicts-scope { display: flex; align-items: center; gap: 6px; padding: 8px 12px 0; color: var(--ink-3); font-size: 12px; cursor: pointer; }
+.sdd-items { display: grid; gap: 2px; margin: 6px 0 0; padding-left: 18px; font-size: 12.5px; color: var(--ink-2); }

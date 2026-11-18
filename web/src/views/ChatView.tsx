@@ -3,10 +3,10 @@ import { ArrowDown, Check, Copy, Ellipsis, ExternalLink, FolderPlus, KeyRound, S
 import { api, errorText, tryApi } from '../api'
 import { openDialog, openScreen, openSession, openTask, setState, showPanel, useFeature, useStore, upsertSession } from '../store'
 import { loadMessages, loadSubagents } from '../ws'
-import { basename, normPath, ROLE } from '../lib/format'
+import { basename, normPath, plural, ROLE } from '../lib/format'
 import { useGit } from '../lib/git'
 import { useElapsed, useStartingLabel } from '../lib/live'
-import { useSdd } from '../lib/sdd'
+import { planDone, useSdd } from '../lib/sdd'
 import { loadDraft, saveDraft } from '../lib/draft'
 import { VerdictChip } from '../components/panel/VerdictsTab'
 import type { Message, Session } from '../types'
@@ -158,7 +158,7 @@ export function ChatView({ id, active }: { id: string; active: boolean }) {
   return (
     <div className="chat">
       <ChatHeader session={session} onLog={showLog} onReset={reset} onDelete={() => openDialog({ kind: 'session-delete', id })} />
-      <SddStrip cwd={session.cwd} />
+      <SddStrip cwd={session.cwd} sessionId={session.id} />
       {log !== null && (
         <div className="chat-log">
           <div className="row"><strong>Лог агента (stderr)</strong><span className="grow" /><button type="button" className="btn btn-ghost btn-sm" onClick={() => setLog(null)}>Скрыть</button></div>
@@ -453,16 +453,16 @@ function AuthCard({ session, messages }: { session: Session; messages: Message[]
 }
 
 /** /full-task in this worktree: plan, progress and the latest step verdict; click opens «Вердикты». */
-function SddStrip({ cwd }: { cwd: string }) {
-  const plans = useSdd(cwd)
+function SddStrip({ cwd, sessionId }: { cwd: string; sessionId: string }) {
+  const plans = useSdd(cwd, sessionId) // only the plans of this chat (its task, the files it changed)
   const p = plans?.[plans.length - 1]
   if (!p) return null
-  const done = p.progress.items.filter((i) => /done|готов|pass|\[x\]/i.test(i.status)).length
+  const done = planDone(p)
   const last = p.verdicts[p.verdicts.length - 1]
   return (
     <button type="button" className="sdd-strip" onClick={() => showPanel('verdicts')} data-tip="Открыть вердикты">
       <span className="sdd-plan ellipsis">{p.name}</span>
-      {p.progress.items.length > 0 && <span className="muted num">{done}/{p.progress.items.length} шагов</span>}
+      {p.progress.items.length > 0 && <span className="muted num">{done === null ? `${p.progress.items.length} ${plural(p.progress.items.length, 'пункт', 'пункта', 'пунктов')}` : `${done}/${p.progress.items.length} шагов`}</span>}
       {last && <><span className="muted">шаг {last.n}</span><VerdictChip status={last.status} /></>}
     </button>
   )

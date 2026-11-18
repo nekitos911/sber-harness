@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { ownerWorkspace } from '../lib/actions'
 import { HistoryList } from './HistoryList'
 import { Files, FolderOpen, GitCompareArrows, History, RefreshCw, ShieldCheck, X } from 'lucide-react'
@@ -6,7 +6,7 @@ import { failCount, useSdd } from '../lib/sdd'
 import { VerdictsTab } from './panel/VerdictsTab'
 import { ErrorBoundary } from './ErrorBoundary'
 import { openFolder } from './WorktreeMenu'
-import { setState, useActiveCwd, useFeature, useStore } from '../store'
+import { setState, useActiveCwd, useFeature, useStore, wtKey } from '../store'
 import { basename, normPath } from '../lib/format'
 import { refreshGit, useGit } from '../lib/git'
 import { Branch } from './bits'
@@ -22,7 +22,10 @@ export function WorkspacePanel() {
   const project = cwd ? workspaces.find((w) => w.id === wtOwner) ?? ownerWorkspace(workspaces, cwd) : undefined
   const git = useGit(cwd)
   const changed = git?.status?.files.filter((f) => !f.service).length ?? 0
-  const plans = useSdd(cwd)
+  // «Вердикты» of the chat on screen (its task, the files it changed); «Показать все планы папки» drops the filter
+  const activeSession = useStore((s) => { const a = cwd ? s.wt[wtKey(cwd)]?.active : null; return a?.startsWith('s:') ? a.slice(2) : null })
+  const [allPlans, setAllPlans] = useState(false)
+  const plans = useSdd(cwd, allPlans ? null : activeSession)
   const openOn = useFeature('open')
   const historyOn = useFeature('cli-history')
   const fails = failCount(plans)
@@ -48,7 +51,7 @@ export function WorkspacePanel() {
           <span className="wtab-text ellipsis">Изменения</span>
           {changed > 0 && <span className="count count-run" aria-label={`изменённых файлов: ${changed}`}>{changed}</span>}
         </button>
-        {!!plans?.length && (
+        {(!!plans?.length || allPlans) && (
           <button type="button" role="tab" className="wpanel-tab" aria-selected={tab === 'verdicts'} onClick={() => setState({ panelTab: 'verdicts' })} data-tip="Вердикты" data-tip-trunc>
             <ShieldCheck aria-hidden />
             <span className="wtab-text ellipsis">Вердикты</span>
@@ -82,7 +85,7 @@ export function WorkspacePanel() {
         <ErrorBoundary key={tab} area={tab === 'files' ? 'файлы' : tab === 'verdicts' ? 'вердикты' : tab === 'history' ? 'историю' : 'изменения'}>
           {tab === 'history' && historyOn ? <div className="wpanel-section"><HistoryList cwd={cwd} /></div>
             : tab === 'files' ? <FilesTab key={cwd} cwd={cwd} status={git?.status ?? null} />
-            : tab === 'verdicts' && plans?.length ? <VerdictsTab cwd={cwd} plans={plans} />
+            : tab === 'verdicts' && (plans?.length || allPlans) ? <VerdictsTab cwd={cwd} plans={plans ?? []} scope={activeSession ? { all: allPlans, set: setAllPlans } : undefined} />
               : <ChangesTab key={cwd} cwd={cwd} />}
         </ErrorBoundary>
       </div>
