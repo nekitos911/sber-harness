@@ -22,7 +22,7 @@ import { isAlive, resolveCommand, spawnOptions } from './runner.js';
 import { createModelCatalog, scanModelRefs } from './models.js';
 import { readSdd } from './sdd.js';
 import { generateMessage } from './generate.js';
-import { resolveReleases, releasePlan } from './releases.js';
+import { resolveReleases, releasePlan, listReleases } from './releases.js';
 import { createAdopter } from './adopt.js';
 import { createHistory, historyMessages } from './history.js';
 import { runJob, jobStep, JOB_ID_RE, holdJob } from './jobs.js';
@@ -1216,6 +1216,12 @@ export async function startServer(opts = {}) {
    */
   // ---- release references in what the user writes («релиз 54», «1.54.1», «rel154», «только в релиз 54») ----
   const gitRepos = (ws) => (ws ? [ws] : db.workspaces.filter((w) => w.isGit && !w.kind)).map((w) => ({ name: w.name, path: w.path }));
+  // the «＋ релиз» picker: release branches of a workspace (or of every repo), newest first
+  route('GET', '/api/releases', ({ query }) => {
+    const limit = query.limit === undefined ? 10 : Number(query.limit);
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100) fail(400, 'limit: целое число 1..100');
+    return listReleases(gitRepos(query.workspaceId ? getWs(query.workspaceId) : null), limit);
+  });
   route('GET', '/api/releases/resolve', ({ query }) => {
     const ws = query.workspaceId ? getWs(query.workspaceId) : null;
     return resolveReleases(query.text || '', gitRepos(ws));

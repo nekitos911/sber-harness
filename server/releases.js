@@ -73,6 +73,18 @@ export async function resolveReleases(text, repos) {
   return { refs: out, onlyRelease };
 }
 
+/** Release branches of the repos, deduped by branch, newest first → [{ branch, version: '1.54.1', repos }] (≤ limit). */
+export async function listReleases(repos, limit = 10) {
+  const where = new Map();
+  for (const r of repos) {
+    for (const b of await releaseBranches(r.path)) {
+      if (!where.has(b.name)) where.set(b.name, { ...b, repos: [] });
+      where.get(b.name).repos.push(r.name);
+    }
+  }
+  return [...where.values()].sort(newer).slice(0, limit).map((b) => ({ branch: b.name, version: b.version.join('.'), repos: b.repos }));
+}
+
 /** «rel154» for release/1.54.x: the suffix of the separate porting branch (feature/<KEY>-rel154). */
 export const relSuffix = (branch) => {
   const v = branch.match(/(\d+)(?:\.(\d+))?/);

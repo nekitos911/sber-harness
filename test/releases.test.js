@@ -61,3 +61,14 @@ test('handoff: «только в релиз 54» → only the release line; expl
   assert.match((await firstUser(e.session.id)).text, /Целевые ветки: develop и release\/1\.53\.0\. /);
   await settle(e.session.id);
 });
+
+test('GET /api/releases: release branches newest first, deduped across repositories, limited', async () => {
+  const other = makeRepo(path.join(projects, 'второй'));
+  gitIn(other, 'branch', 'release/1.54.1');
+  await h.api('POST', '/api/workspaces', { path: other });
+  const all = (await h.api('GET', '/api/releases')).body;
+  assert.deepEqual(all.map((r) => [r.branch, r.version]), [['release/1.54.1', '1.54.1'], ['release/1.54.0', '1.54.0'], ['release/1.53.0', '1.53.0']]);
+  assert.deepEqual(all[0].repos.sort(), [ws.name, 'второй'].sort());
+  assert.deepEqual((await h.api('GET', `/api/releases?workspaceId=${ws.id}&limit=2`)).body.map((r) => r.branch), ['release/1.54.1', 'release/1.54.0']);
+  assert.equal((await h.api('GET', '/api/releases?limit=0')).status, 400);
+});
