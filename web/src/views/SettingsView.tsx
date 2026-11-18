@@ -250,13 +250,13 @@ function AgentSection({ id, form, update, fieldError, primary }: SectionProps & 
         <CommandRow id={id} a={a} set={set} error={fieldError('command')} />
         {primary && reworkOn && <ReworkRow a={a} set={set} />}
         {primary && acpOn && (
-          <Row label={<>Транспорт <span className="badge-verify">проверяется на целевой машине</span></>}
+          <Row label={<>Как запускать агента <span className="badge-verify">ACP — экспериментально</span></>}
             hint={<>
-              <span className="set-line">Headless: новый процесс и запуск всех MCP на каждое сообщение (медленно, 10–60 с).</span>
-              <span className="set-line">ACP: один процесс на чат, MCP запускаются один раз, разрешения с ожиданием.</span>
+              <span className="set-line">Каждое сообщение — новый запуск: как <code>gigacode -p</code> в консоли. Проверено, но каждый ответ начинается с запуска MCP (10–60 с), а запрещённые команды отклоняются сразу — их можно разрешить и повторить.</span>
+              <span className="set-line">Процесс на весь чат: как интерактивный <code>gigacode</code>. MCP запускаются один раз, ответы быстрее, агент ждёт ваше разрешение. Ещё не проверено с GigaCode — попробуйте на тестовом чате; если что-то не так, верните первый вариант.</span>
             </>} wide>
-            <Segmented label="Транспорт" value={a.transport ?? 'headless'} onChange={(v) => set({ transport: v })}
-              options={[{ value: 'headless', label: 'Headless (по умолчанию)' }, { value: 'acp', label: 'ACP (интерактивные разрешения)' }]} />
+            <Segmented label="Как запускать агента" value={a.transport ?? 'headless'} onChange={(v) => set({ transport: v })}
+              options={[{ value: 'headless', label: 'Новый запуск на сообщение' }, { value: 'acp', label: 'Процесс на весь чат (ACP)' }]} />
           </Row>
         )}
         {primary && acpOn && a.transport === 'acp' && (
