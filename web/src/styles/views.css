@@ -647,20 +647,24 @@ button.prs-group[aria-expanded="true"] .chev { transform: rotate(90deg); }
 .add-release-row:hover { background: var(--deck-2); }
 .add-release-row .muted { font-size: 11.5px; }
 .notes-pop .targets-line { margin-top: 6px; }
-/* «Начало работы»: the steps a new installation still needs, one fix each */
-.setup { display: grid; gap: 10px; padding: 14px 16px; border: 1px solid var(--rule); border-radius: var(--r-3); background: var(--deck); }
-.setup-head { display: flex; align-items: baseline; gap: 10px; }
-.setup-head h2 { font-size: 14px; font-weight: 600; }
-.setup-head .link-btn { margin-left: auto; }
-.setup-steps { display: grid; gap: 2px; margin: 0; padding: 0; list-style: none; }
-.setup-step { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 6px 0; }
-.setup-mark { width: 16px; height: 16px; color: var(--lamp-wait); }
-.setup-step[data-done] .setup-mark { color: var(--lamp-done); }
-.setup-step[data-optional] .setup-mark { color: var(--ink-4); }
-.setup-text { display: grid; gap: 1px; min-width: 0; }
-.setup-text strong { font-weight: 500; font-size: 13px; }
-.setup-text .muted { font-size: 12px; overflow-wrap: anywhere; }
-.setup-step[data-done] .setup-text strong { color: var(--ink-2); }
+/* the first-run setup: the agent, where the projects are, how the agent gets a task */
+.setup { display: grid; gap: 14px; padding: 18px 20px; border: 1px solid var(--rule); border-radius: var(--r-3); background: var(--deck); }
+.setup-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+.setup-head h2 { font-size: 16px; font-weight: 600; }
+.setup-steps { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.setup-mark { width: 16px; height: 16px; margin-top: 1px; color: var(--lamp-wait); }
+.firstrun-step { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: 12px; padding: 10px 0; border-top: 1px solid var(--rule); }
+.firstrun-step:first-child { border-top: 0; }
+.firstrun-step[data-done] > .setup-mark { color: var(--lamp-done); }
+.firstrun-body { display: grid; justify-items: start; gap: 6px; min-width: 0; font-size: 12.5px; }
+.firstrun-body > strong { font-size: 13.5px; font-weight: 600; }
+.firstrun-body > .muted { overflow-wrap: anywhere; }
+.firstrun-body .cli-fix { justify-self: stretch; }
+.firstrun-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.firstrun-actions .input { width: 200px; }
+.firstrun-body > .select-trigger { width: auto; min-width: 220px; }
+.firstrun-later { margin: 0; font-size: 12px; }
+.firstrun-foot { display: flex; align-items: center; gap: 10px; }
 /* the changes panel's «Коммит → Push → PR → Влит» strip */
 .flow { display: grid; gap: 6px; padding: 8px 10px; border: 1px solid var(--rule); border-radius: var(--r-2); background: var(--deck); }
 .flow-steps { display: flex; gap: 4px; margin: 0; padding: 0; list-style: none; font-size: 11.5px; }

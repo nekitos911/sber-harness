@@ -6,7 +6,7 @@ import type { DiffFile } from './lib/diff'
 import { normPath } from './lib/format'
 import type { PrState } from './lib/pr'
 
-export type Screen = 'home' | 'board' | 'agents' | 'prs' | 'inbox' | 'settings'
+export type Screen = 'home' | 'board' | 'agents' | 'prs' | 'inbox' | 'settings' | 'setup'
 
 /** A tab always lives in one worktree (cwd): chats and terminals by their session cwd, files and diffs by theirs. */
 export type Tab =
@@ -116,7 +116,7 @@ const defaultPrefs: Prefs = {
   view: { kind: 'screen', screen: 'home' }, wt: {}, sidebar: true, sidebarWidth: 288, panel: true, panelTab: 'changes', theme: null, drafts: {},
 }
 
-const SCREENS = new Set<Screen>(['home', 'board', 'agents', 'prs', 'inbox', 'settings'])
+const SCREENS = new Set<Screen>(['home', 'board', 'agents', 'prs', 'inbox', 'settings', 'setup'])
 const validView = (v: unknown): v is View => {
   const x = v as View | null
   return !!x && ((x.kind === 'screen' && SCREENS.has(x.screen)) || (x.kind === 'wt' && typeof x.cwd === 'string'))

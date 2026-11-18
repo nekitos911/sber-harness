@@ -19,7 +19,7 @@ import { ModelPicker } from '../components/pickers/ModelPicker'
 import { FolderPicker } from '../components/FolderPicker'
 import { ReworkPopover } from '../components/board/Rework'
 import { TargetsLine } from '../components/ReleaseTargets'
-import { GettingStarted } from '../components/GettingStarted'
+import { SetupView, useSetupNeeded } from './SetupView'
 
 const LINK = /https?:\/\/\S+|\b[A-Z][A-Z0-9_]+-\d+\b/
 const REF = /https?:\/\/\S+|[A-Z][A-Z0-9_]+-\d+/
@@ -60,10 +60,12 @@ function usePromptPreview(input: string, notes: string, agentId: string, targets
  * the repository itself), and see what the agents are doing now.
  */
 export function HomeView() {
+  // a fresh install: the first-run setup stands in for «Главная» until it is done or skipped
+  const setup = useSetupNeeded()
+  if (setup) return <div className="home-view"><div className="home-col"><SetupView /></div></div>
   return (
     <div className="home-view">
       <div className="home-col">
-        <GettingStarted />
         <Handoff />
         <Now />
       </div>

@@ -374,6 +374,7 @@ export async function startServer(opts = {}) {
         modelGrades: a.settings?.agents?.modelGrades || {},
         allowedGrades: a.settings?.agents?.allowedGrades || [],
         taskPromptTemplate: a.taskPromptTemplate ?? null,
+        freePromptTemplate: a.freePromptTemplate ?? launchers[a.launcher]?.defaults.freePromptTemplate ?? null,
         reworkPromptTemplate: a.reworkPromptTemplate ?? launchers[a.launcher]?.defaults.reworkPromptTemplate ?? null,
         reworkPromptPresets: orch.reworkPresets(id), // the effective default first
         taskPromptPresets: a.taskPromptPresets || [],
@@ -388,6 +389,8 @@ export async function startServer(opts = {}) {
         resolved: resolveAgentView(a),
       }])),
       defaultAgent: config.defaultAgent,
+      // the first-run setup was finished or skipped (it is not shown again)
+      user: { setupDone: !!config.user?.setupDone },
       git: { ...pick(config.git, GIT_KEYS), generateMessages: config.git.generateMessages !== false, generateTimeoutSec: config.git.generateTimeoutSec, via: config.git.via === 'harness' ? 'harness' : 'agent' },
       tasks: { refreshSec: t.refreshSec ?? 0 },
       board: config.board,
@@ -492,6 +495,11 @@ export async function startServer(opts = {}) {
     if ('reworkPromptPresets' in a) {
       if (!isStrList(a.reworkPromptPresets) || a.reworkPromptPresets.some((t) => !t.includes('{notes}'))) fail(400, `${where('reworkPromptPresets')}: массив строк с {notes}`);
       p.reworkPromptPresets = a.reworkPromptPresets;
+    }
+    if ('freePromptTemplate' in a) {
+      const t = a.freePromptTemplate;
+      if (t !== null && (typeof t !== 'string' || !t.includes('{text}'))) fail(400, `${where('freePromptTemplate')}: null или строка с {text}`);
+      p.freePromptTemplate = t || null;
     }
     if ('taskPromptTemplate' in a) {
       if (a.taskPromptTemplate !== null && typeof a.taskPromptTemplate !== 'string') fail(400, `${where('taskPromptTemplate')}: нужна строка или null`);
@@ -679,6 +687,11 @@ export async function startServer(opts = {}) {
       patch.git = body.git;
     }
     if (body.board !== undefined) patch.board = boardPatch(body.board);
+    if (body.user !== undefined) {
+      const u = body.user;
+      if (!isObj(u) || Object.entries(u).some(([k, v]) => k !== 'setupDone' || typeof v !== 'boolean')) fail(400, 'user: { setupDone: true/false }');
+      patch.user = u;
+    }
     if (body.recovery !== undefined) {
       const rc = body.recovery;
       if (!isObj(rc) || Object.keys(rc).some((k) => !['autoResume', 'message'].includes(k)) || ('autoResume' in rc && typeof rc.autoResume !== 'boolean') || ('message' in rc && (typeof rc.message !== 'string' || !rc.message.trim()))) {
@@ -759,6 +772,14 @@ export async function startServer(opts = {}) {
       return [name, fs.readFileSync(target, 'utf8') === fs.readFileSync(item.from, 'utf8') ? 'installed' : 'different'];
     }));
   }
+  /** Names of the person's own slash commands (<commandsDir>/<name>.md|.toml) and skills (<skillsDir>/<name>/SKILL.md); harness's own left out. */
+  function userCommands(agentCfg) {
+    const list = (dir) => { try { return fs.readdirSync(expandHome(dir), { withFileTypes: true }); } catch { return []; } };
+    const cmds = list(agentCfg.commandsDir || SHIPPED.commands['full-task-harness'].dir).filter((d) => d.isFile() && /\.(md|toml)$/.test(d.name)).map((d) => d.name.replace(/\.(md|toml)$/, ''));
+    const skillsDir = agentCfg.skillsDir || SHIPPED.skills['harness-orchestration'].dir;
+    const skills = list(skillsDir).filter((d) => d.isDirectory() && fs.existsSync(path.join(expandHome(skillsDir), d.name, 'SKILL.md'))).map((d) => d.name);
+    return [...new Set([...cmds, ...skills])].filter((n) => !SHIPPED.commands[n] && !SHIPPED.skills[n]).sort();
+  }
   function installShipped(id, kind, name, force) {
     const agentCfg = config.agents[id] || fail(404, `агент ${id} не найден`);
     const { item, target } = shippedTarget(agentCfg, kind, name);
@@ -777,7 +798,7 @@ export async function startServer(opts = {}) {
     const { catalog: cat, partialUnsupported, ...seen } = meta || {};
     return {
       id, resolved: resolveAgentView(a), auth: meta?.auth ?? 'unknown', seen: meta ? seen : null, catalog: catalog.info(id), models: catalog.merged(id),
-      commands: shippedStatus(a, 'commands'), skills: shippedStatus(a, 'skills'), identity: identityView(a), sandboxBroken: meta?.sandboxBroken ?? null,
+      commands: shippedStatus(a, 'commands'), skills: shippedStatus(a, 'skills'), userCommands: userCommands(a), identity: identityView(a), sandboxBroken: meta?.sandboxBroken ?? null,
       // what the CLI reported at its last init, for the per-agent MCP toggles
       mcpServers: (meta?.mcpServers || []).map((m) => ({ name: m.name, status: m.status, excluded: (a.mcpExclude || []).includes(m.name) })),
       modelRefs: scanModelRefs(a.modelRefsScan, catalog.merged(id)), // read-only: the harness never edits these files

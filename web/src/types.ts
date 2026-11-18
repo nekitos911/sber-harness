@@ -232,6 +232,7 @@ export interface AgentMeta {
   catalog?: { at: number | null; error?: string | null; running?: boolean } | null
   modelRefs?: { file: string; model: string; available: boolean | null }[]
   commands?: Record<string, 'installed' | 'missing' | 'different'>
+  userCommands?: string[] // the person's own commands and skills in the agent's folders (the first-run setup offers them)
   skills?: Record<string, 'installed' | 'missing' | 'different'>
   models?: ModelEntry[]
   seen: {
@@ -299,6 +300,7 @@ export interface AgentSettings {
   taskPromptTemplate: string | null
   taskPromptPresets?: string[]
   reworkPromptTemplate?: string | null // «Доработать»: {taskUrl} {key} {notes} (feature rework)
+  freePromptTemplate?: string | null // «Главная», a sentence instead of a task: {text} {notes}
   reworkPromptPresets?: string[]
   firstEventTimeoutMs?: number
   inheritUserMcp?: boolean
@@ -311,6 +313,7 @@ export interface AgentSettings {
 }
 
 export interface Settings {
+  user?: { setupDone?: boolean } // the first-run setup was finished or skipped
   permissions?: { allowedToolsByWorkspace?: Record<string, string[]> } // «Разрешать всегда в этом проекте»
   reworkPromptPresets?: string[] // «Доработать» templates offered for every agent
   workspaces?: { root?: string | null } // projects folder; null = auto (deepest common parent)

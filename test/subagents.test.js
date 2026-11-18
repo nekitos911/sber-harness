@@ -209,3 +209,18 @@ test('a sub-agent without a mode of its own inherits the caller\'s («Полны
   const reviewer = (await state()).sessions.find((s) => s.parentId === strict.id);
   assert.deepEqual([reviewer.approvalMode, reviewer.readOnly], ['default', true], 'the profile\'s plan wins over the caller\'s full access');
 });
+
+test('first-run setup: the person\'s own commands and skills are found; setupDone and the free-text template are saved', async () => {
+  fs.mkdirSync(path.join(skillsDir, 'full-task'), { recursive: true });
+  fs.writeFileSync(path.join(skillsDir, 'full-task', 'SKILL.md'), '# mine');
+  fs.writeFileSync(path.join(commandsDir, 'sdd.toml'), 'prompt = "x"');
+  fs.mkdirSync(path.join(skillsDir, 'empty'), { recursive: true }); // no SKILL.md: not a skill
+  const info = (await h.api('GET', '/api/agents/mock/info')).body;
+  assert.deepEqual(info.userCommands, ['full-task', 'sdd'], 'harness\'s own command and skill are not listed');
+  let s = (await h.api('PUT', '/api/settings', { user: { setupDone: true }, agents: { mock: { freePromptTemplate: '/sdd {text}{notes}' } } })).body;
+  assert.deepEqual([s.user, s.agents.mock.freePromptTemplate], [{ setupDone: true }, '/sdd {text}{notes}']);
+  assert.equal((await h.api('PUT', '/api/settings', { user: { roles: ['analyst'] } })).status, 400);
+  assert.equal((await h.api('PUT', '/api/settings', { agents: { mock: { freePromptTemplate: '/sdd' } } })).status, 400, 'needs {text}');
+  s = (await h.api('GET', '/api/settings')).body;
+  assert.equal(s.user.setupDone, true);
+});

@@ -4,7 +4,7 @@ import { DEFAULT_REWORK } from '../components/board/Rework'
 import { FolderPicker } from '../components/FolderPicker'
 import { ArrowDown, ArrowUp, Check, CircleCheck, Pencil, CircleX, LogIn, Plus, RefreshCw, Search, TriangleAlert, X } from 'lucide-react'
 import { api, ApiError, errorText, qs, tryApi } from '../api'
-import { setState, toast, useFeature, useStore } from '../store'
+import { openScreen, setState, toast, useFeature, useStore } from '../store'
 import { adoptSession } from '../lib/actions'
 import { desktopNotifyOn, setDesktopNotify } from '../lib/notify'
 import { ago, COLUMNS } from '../lib/format'
@@ -145,6 +145,8 @@ function Shell({ children }: { children: ReactNode }) {
       <header className="view-head">
         <h1>Настройки</h1>
         <span className="muted">сохраняются в harness.config.local.json; секреты здесь не показываются</span>
+        <span className="grow" />
+        <button type="button" className="link-btn" onClick={() => openScreen('setup')}>Мастер первого запуска</button>
       </header>
       {children}
     </div>
@@ -1063,7 +1065,7 @@ function InstallFile({ id, kind, name, target, title, action }: { id: string; ki
 }
 
 /** «CLI не найден»: the path in plain words, a field to fix it and a check; the raw message under «Подробности». */
-function CliPathFix({ id, error, onChecked, initial }: { id: string; error: string; onChecked: () => void; initial?: string }) {
+export function CliPathFix({ id, error, onChecked, initial }: { id: string; error: string; onChecked: () => void; initial?: string }) {
   const quoted = /"([^"]+)"/.exec(error)?.[1] ?? initial ?? ''
   const exe = quoted ? quoted.split(/[\\/]/).pop() : 'gigacode.cmd'
   const [path, setPath] = useState(quoted)

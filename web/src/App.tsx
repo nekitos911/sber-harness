@@ -19,6 +19,7 @@ import { AgentsView } from './views/AgentsView'
 import { InboxView } from './views/InboxView'
 import { PrsView } from './views/PrsView'
 import { SettingsView } from './views/SettingsView'
+import { SetupView } from './views/SetupView'
 import { ChatView } from './views/ChatView'
 import { DiffView } from './views/DiffView'
 import { HistoryView } from './views/HistoryView'
@@ -140,7 +141,7 @@ export function App() {
   )
 }
 
-const SCREEN_AREA: Record<Screen, string> = { home: 'главную', board: 'доску задач', agents: 'агентов', prs: 'пулл-реквесты', inbox: 'входящие', settings: 'настройки' }
+const SCREEN_AREA: Record<Screen, string> = { home: 'главную', board: 'доску задач', agents: 'агентов', prs: 'пулл-реквесты', inbox: 'входящие', settings: 'настройки', setup: 'первый запуск' }
 
 function ScreenContent({ screen }: { screen: Screen }) {
   switch (screen) {
@@ -150,6 +151,7 @@ function ScreenContent({ screen }: { screen: Screen }) {
     case 'prs': return <PrsView />
     case 'inbox': return <InboxView />
     case 'settings': return <SettingsView />
+    case 'setup': return <div className="home-view"><div className="home-col"><SetupView /></div></div>
   }
 }
 
