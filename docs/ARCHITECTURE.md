@@ -1327,6 +1327,28 @@ character boundary). Failure → 502 with the reason (the UI keeps the template 
 true` (UI auto-generates; false = only the manual button). `/api/git/suggest` without a task key: `commit.title` = ''
 (no branch-name fallback) and `commit.body` = '' (no file list).
 
+## Commit / push / PR through the agent (its hooks and skills run)
+
+Config `git.via: "agent" | "harness"` (default `"agent"`; /api/settings). `POST /api/git/commit|push|pr` accept
+`via` (overrides the config). With `via: "harness"` — as before (direct git / sourcecontrol MCP; git's own hooks run).
+With `via: "agent"`:
+- Target session: the task's worker session for that cwd if it exists and is not running (else it is queued after its
+  turn); otherwise a chat «Коммит · <KEY or branch>» in that cwd (role solo, default agent, normal chat in the sidebar,
+  reused for later commits of the same cwd).
+- The harness delivers an explicit instruction (Russian), e.g. commit: «Пользователь явно просит закоммитить изменения
+  этого рабочего дерева. Сообщение коммита (утверждено пользователем, не меняй):\n<title>\n\n<body>\nВыполни: git add -A
+  (кроме путей git.excludeFromCommit), git commit с этим сообщением. Больше ничего не меняй и не правь код. В конце
+  ответь строкой RESULT: <хэш коммита> или RESULT: ERROR <причина>.» Push: «… git push -u origin HEAD … RESULT: OK <ветка>
+  | ERROR …». PR: «… создай PR через MCP sourcecontrol (head <branch>, base <base>, заголовок/описание утверждены) …
+  RESULT: <html_url> | ERROR …».
+- The request returns at once `{ via: 'agent', sessionId, job }`; the job (x-job-id) stays open until that turn ends,
+  then the harness verifies the effect itself (commit: `git log -1` hash changed and matches RESULT; push: upstream/ahead
+  = 0; pr: the URL from RESULT or pr-status) and finishes the job with `{ ok, hash|url|branch, error? }`, plus a
+  notification on failure; the UI offers «Сделать напрямую» (`via: "harness"`).
+- `git` is in the default allow-list, so the agent is not stopped by permissions; `/full-task`'s §0 allows git writes on
+  an explicit request — the instruction says it is one.
+Feature flag `git-via-agent`.
+
 ## Feature flags (client/server version skew)
 
 `GET /api/state` returns `features: string[]` — the optional API groups this server implements, e.g. `sdd`, `subagents`,
