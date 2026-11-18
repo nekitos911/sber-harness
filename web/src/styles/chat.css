@@ -374,3 +374,11 @@ svg.step-icon.spinner { color: var(--lamp-run); }
 .ask-card[data-flash], .perm-card[data-flash] { animation: card-flash 1.2s var(--ease-out); }
 @keyframes card-flash { 0%, 40% { box-shadow: 0 0 0 3px var(--signal-soft), 0 0 0 1px var(--signal); } 100% { box-shadow: none; } }
 @media (prefers-reduced-motion: reduce) { .ask-card[data-flash], .perm-card[data-flash] { animation: none; outline: 2px solid var(--signal); } }
+/* the queue above the composer: what the agent gets next, each line can be taken back */
+.composer-queue { display: grid; gap: 2px; padding: 6px 10px 4px; border-bottom: 1px solid var(--rule); font-size: 12.5px; }
+.cq-head { display: flex; align-items: center; gap: 8px; color: var(--ink-3); font-size: 11.5px; }
+.cq-head .link-btn { margin-left: auto; }
+.cq-item { display: grid; grid-template-columns: 14px minmax(0, 1fr) auto; align-items: center; gap: 6px; color: var(--ink-2); }
+.cq-item > svg { width: 12px; height: 12px; color: var(--lamp-run); }
+.cq-text { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; white-space: pre-wrap; }
+.cq-actions { display: inline-flex; gap: 2px; }

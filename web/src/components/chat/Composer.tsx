@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef, useState } from 'react'
-import { ArrowUp, AtSign, FolderOpen, Plus, Slash, Square } from 'lucide-react'
+import { ArrowUp, AtSign, Clock, FolderOpen, Pencil, Plus, Slash, Square, X } from 'lucide-react'
 import { tryApi } from '../../api'
 import { getState, setDraft, setState, toast, useStore, upsertSession } from '../../store'
 import type { Session } from '../../types'
@@ -107,6 +107,7 @@ export function Composer({ session, active }: { session: Session; active: boolea
 
   return (
     <div className="composer">
+      <QueueList session={session} />
       <div className="composer-field">
       <MentionMirror text={text} scrollTop={scroll} />
       <textarea
@@ -156,7 +157,6 @@ export function Composer({ session, active }: { session: Session; active: boolea
             options={modes.map((m) => ({ value: m, label: modeShort(m), text: modeShort(m), hint: modeLabels[m] }))}
           />
         )}
-        {session.queued > 0 && <span className="chip chip-run">в очереди: {session.queued}</span>}
         <span className="grow" />
         <ModelPicker
           agentId={session.agent}
@@ -175,6 +175,48 @@ export function Composer({ session, active }: { session: Session; active: boolea
           <ArrowUp />
         </button>
       </div>
+    </div>
+  )
+}
+
+/**
+ * What waits for the agent, above the input: each queued message with «×» to take it back. When nothing runs (the
+ * last turn failed before its process started) the queue would wait for the next message — «Отправить сейчас» sends it.
+ */
+function QueueList({ session }: { session: Session }) {
+  const queue = session.queue ?? []
+  if (!queue.length) return null
+  const running = session.status === 'running'
+  const take = async (id: string) => {
+    const s = await tryApi<Session>('DELETE', `/sessions/${session.id}/queue/${id}`)
+    if (s) setState((st) => ({ sessions: upsertSession(st.sessions, s) }))
+    return !!s
+  }
+  // «Изменить»: out of the queue, back into the input (after what is typed there) to fix and send again
+  const edit = async (q: { id: string; text: string }, from: HTMLElement) => {
+    const input = from.closest('.composer')?.querySelector<HTMLTextAreaElement>('.composer-input') // this chat's, not another tab's
+    if (!(await take(q.id))) return
+    const cur = getState().drafts[session.id] ?? ''
+    setDraft(session.id, cur.trim() ? `${cur.trimEnd()}
+${q.text}` : q.text)
+    input?.focus()
+  }
+  return (
+    <div className="composer-queue" role="list" aria-label="Очередь сообщений">
+      <div className="cq-head">
+        <span>{running ? `В очереди: ${queue.length} — уйдёт после текущего шага` : `В очереди: ${queue.length} — агент сейчас не работает`}</span>
+        {!running && <button type="button" className="link-btn" onClick={() => void tryApi('POST', `/sessions/${session.id}/queue/send`)}>Отправить сейчас</button>}
+      </div>
+      {queue.map((q) => (
+        <div key={q.id} className="cq-item" role="listitem">
+          <Clock aria-hidden />
+          <span className="cq-text">{q.from !== 'user' && <span className="muted">от агента: </span>}{q.text}</span>
+          <span className="cq-actions">
+            {q.from === 'user' && <button type="button" className="icon-btn icon-btn-sm" aria-label="Изменить: вернуть в поле ввода" onClick={(e) => void edit(q, e.currentTarget)}><Pencil /></button>}
+            <button type="button" className="icon-btn icon-btn-sm" aria-label="Отменить: убрать из очереди" onClick={() => void take(q.id)}><X /></button>
+          </span>
+        </div>
+      ))}
     </div>
   )
 }

@@ -1372,6 +1372,8 @@ export async function startServer(opts = {}) {
   });
   route('POST', '/api/sessions/:id/permission', ({ params, body }) => sessions.permission(params.id, check(body, { permissionId: 'string', optionId: 'string', note: 'string?' })));
   route('POST', '/api/sessions/:id/stop', ({ params }) => sessions.stop(params.id));
+  route('DELETE', '/api/sessions/:id/queue/:qid', ({ params }) => sessions.unqueue(params.id, params.qid));
+  route('POST', '/api/sessions/:id/queue/send', ({ params }) => sessions.sendQueue(params.id));
   route('POST', '/api/sessions/:id/restart', ({ params }) => sessions.restart(params.id));
   route('GET', '/api/sessions/:id/log', ({ params }) => sessions.logTail(params.id));
   route('GET', '/api/sessions/:id/subagents', ({ params }) => sessions.subagents(params.id));

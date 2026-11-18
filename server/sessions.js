@@ -1507,6 +1507,25 @@ ${note.trim()}` : text });
       return { queued: true };
     },
 
+    /** A queued message taken back before the agent got it (DELETE /api/sessions/:id/queue/:qid). */
+    unqueue(sid, qid) {
+      const s = get(sid);
+      const i = (s.queue || []).findIndex((q) => q.id === qid);
+      if (i < 0) fail(404, 'этого сообщения уже нет в очереди — агент его получил');
+      s.queue.splice(i, 1);
+      s.queued = s.queue.length;
+      return emit(s);
+    },
+
+    /** The queue left after a failed turn goes now, without a new message (POST /api/sessions/:id/queue/send). */
+    sendQueue(sid) {
+      const s = get(sid);
+      if (!s.queue?.length) fail(409, 'очередь пуста');
+      if (runtime(sid).running) return emit(s); // it goes by itself after the current step
+      startTurn(s);
+      return emit(s);
+    },
+
     stop(sid) {
       const s = get(sid);
       if (s.virtual) fail(409, 'внутренний субагент останавливается вместе с родительским чатом');

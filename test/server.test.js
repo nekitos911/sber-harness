@@ -351,6 +351,22 @@ test('Cyrillic lost to a non-UTF-8 client («?????? ????? ??????: ??») is refus
   await waitFor(async () => (await state()).sessions.find((x) => x.id === ok.id).status === 'idle', { what: 'idle' });
 });
 
+test('the queue is visible and editable: a queued message can be taken back; the rest goes after the step', async () => {
+  const s = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', cwd: repo, prompt: '#slow' })).body;
+  await waitFor(async () => (await state()).sessions.find((x) => x.id === s.id).status === 'running', { what: 'running' });
+  assert.equal((await h.api('POST', `/api/sessions/${s.id}/messages`, { text: 'первое в очередь' })).body.queued, true);
+  await h.api('POST', `/api/sessions/${s.id}/messages`, { text: 'второе в очередь' });
+  const queued = (await state()).sessions.find((x) => x.id === s.id).queue;
+  assert.deepEqual(queued.map((q) => q.text), ['первое в очередь', 'второе в очередь'], 'the UI gets the queue itself');
+  const r = await h.api('DELETE', `/api/sessions/${s.id}/queue/${queued[0].id}`);
+  assert.deepEqual([r.status, r.body.queued, r.body.queue.map((q) => q.text)], [200, 1, ['второе в очередь']]);
+  assert.equal((await h.api('DELETE', `/api/sessions/${s.id}/queue/${queued[0].id}`)).status, 404, 'already gone');
+  await waitFor(async () => (await messages(s.id)).some((m) => m.kind === 'user' && m.text === 'второе в очередь'), { what: 'the rest delivered' });
+  await waitFor(async () => (await state()).sessions.find((x) => x.id === s.id).status === 'idle', { what: 'idle' });
+  assert.ok(!(await messages(s.id)).some((m) => m.text === 'первое в очередь'), 'the taken-back one never reached the agent');
+  assert.equal((await h.api('POST', `/api/sessions/${s.id}/queue/send`)).status, 409, 'nothing to send');
+});
+
 test('the CLI reports the harness MCP server failed: a plain warning in the chat, once', async () => {
   const s = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', cwd: repo, prompt: '#noharness привет' })).body;
   await waitFor(async () => (await state()).sessions.find((x) => x.id === s.id).status === 'idle', { what: 'idle' });

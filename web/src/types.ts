@@ -148,6 +148,7 @@ export interface Session {
   approvalMode: string | null
   autoReport: boolean
   queued: number
+  queue?: { id: string; from: string; text: string; at: number; recorded?: boolean }[] // what waits for the agent (DELETE …/queue/:qid takes one back)
   tokensIn: number
   tokensOut: number
   preview: string

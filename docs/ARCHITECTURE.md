@@ -456,6 +456,9 @@ GET    /api/fs/file?cwd=&path=  -> { path, content, size, binary: boolean }   (t
 PUT    /api/fs/file             {cwd, path, content} -> { ok: true }
        (all fs paths are resolved against cwd and must stay inside it, else 400)
 
+DELETE /api/sessions/:id/queue/:qid -> Session: a queued message taken back (404 once the agent got it); the session's
+                                    `queue` [{ id, from, text, at, recorded? }] is what the composer lists
+POST   /api/sessions/:id/queue/send  -> Session: a queue left after a failed start goes now (409 when empty)
 POST   /api/sessions/:id/attachments  (raw image bytes, Content-Type image/png|jpeg|gif|webp, ≤10 MB) -> { path }:
                                     a screenshot pasted into the composer, saved in <dataDir>/runs/<id>/attachments; the
                                     turn whose message mentions that folder gets it in includeDirs (ACP: fs roots)
