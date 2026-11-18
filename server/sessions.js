@@ -81,6 +81,10 @@ export const contextSize = (v) => {
   return m ? Math.round(Number(m[1]) * ({ k: 1e3, m: 1e6 }[m[2]?.toLowerCase()] ?? 1)) : null;
 };
 /** Exit codes as signed numbers: Windows reports a forced end as 4294967295 (= -1). */
+/** A tool call whose turn ended without its result (stopped, crashed, the harness restarted): never «running» again. */
+export const UNFINISHED_TOOL = 'Ход закончился без результата этого вызова.';
+export const settledTool = (tool) => ({ ...tool, status: 'error', output: tool.output ?? UNFINISHED_TOOL });
+
 export const signedCode = (code) => (Number.isInteger(code) && code > 0x7fffffff ? code - 0x100000000 : code);
 
 /** A structured question tool call -> { text, options: [{label, description?}], multiSelect } (tolerant of shapes). */
@@ -723,8 +727,18 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     }
   }
 
+  /** The turn is over: its calls still «running» (no result came) end too — their cards stop spinning. */
+  function settleTools(s) {
+    for (const m of runtime(s.id).cur?.tools?.values() ?? []) {
+      if (m.tool?.status !== 'running') continue;
+      m.tool = settledTool(m.tool);
+      updateMessage(s, m);
+    }
+  }
+
   /** The parent's turn is over: a sub-agent still running failed with it; all of them are archived now. */
   function settleVirtuals(s) {
+    settleTools(s);
     for (const v of db.sessions.filter((x) => x.virtual && x.parentId === s.id && !x.archived)) {
       if (v.status === 'running') {
         Object.assign(v, { status: 'failed', lastActivityAt: Date.now() });

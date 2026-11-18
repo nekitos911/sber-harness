@@ -67,6 +67,10 @@ if (opt('--model') && catalogue.length && !catalogue.includes(model)) {
   process.stderr.write(`An unexpected critical error occurred:\nError: The selected model '${model}' is not present in the current backend catalogue\n`);
   process.exit(1);
 }
+if (has(/#notoolresult\b/)) {
+  // a built-in sub-agent call whose result never comes before the turn ends (seen on the target: cards spinning forever)
+  emit({ type: 'tool_use', tool_name: 'agent', tool_id: 'lost_1', parameters: { subagent_type: 'general-purpose', prompt: 'проверка' } });
+}
 if (has(/#sandboxtool\b/)) {
   // the run starts, but a command inside the sandbox fails (seen on the target: Windows, hardlink ACLs unsupported)
   emit({ type: 'tool_use', tool_name: 'run_shell_command', tool_id: 'sbt_1', parameters: { command: 'git status' } });

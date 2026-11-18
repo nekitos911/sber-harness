@@ -13,11 +13,12 @@ import { css } from '@codemirror/lang-css'
 import { html } from '@codemirror/lang-html'
 import { sql } from '@codemirror/lang-sql'
 import { yaml } from '@codemirror/lang-yaml'
-import { FileWarning, Save } from 'lucide-react'
+import { FileWarning, MessageSquarePlus, Save } from 'lucide-react'
 import { api, errorText, qs, tryApi } from '../api'
 import { dirtyKey, setDirty, tabKey, toast } from '../store'
 import type { FsFile } from '../types'
 import { Loading } from '../components/bits'
+import { AgentComment } from '../components/AgentComment'
 import { shortcut } from '../lib/keys'
 
 function language(path: string): Extension {
@@ -79,6 +80,7 @@ export default function FileView({ cwd, path }: { cwd: string; path: string }) {
   const [load, setLoad] = useState<Load>({ state: 'loading' })
   const [dirty, setLocalDirty] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [ask, setAsk] = useState<{ from: number; to: number; snippet: string } | null>(null) // «Агенту»: the selected lines
   const host = useRef<HTMLDivElement>(null)
   const view = useRef<EditorView | null>(null)
   const saveRef = useRef<() => void>(() => undefined)
@@ -141,12 +143,24 @@ export default function FileView({ cwd, path }: { cwd: string; path: string }) {
         <span className="mono ellipsis" data-tip={`${cwd} / ${path}`}>{path}</span>
         {dirty && <span className="muted">· изменён</span>}
         <span className="grow" />
+        <button type="button" className="btn btn-sm" aria-pressed={!!ask} onClick={() => {
+          const v = view.current
+          if (!v || ask) { setAsk(null); return }
+          const { from, to } = v.state.selection.main // no selection: the line with the cursor
+          const a = v.state.doc.lineAt(from)
+          const b = v.state.doc.lineAt(to)
+          setAsk({ from: a.number, to: b.number, snippet: v.state.sliceDoc(a.from, b.to) })
+        }}>
+          <MessageSquarePlus />
+          Агенту
+        </button>
         <kbd>{shortcut('S')}</kbd>
         <button type="button" className="btn btn-sm" disabled={!dirty || saving} onClick={() => saveRef.current()}>
           <Save />
           {saving ? 'Сохраняем…' : 'Сохранить'}
         </button>
       </div>
+      {ask && <AgentComment cwd={cwd} path={path} from={ask.from} to={ask.to} snippet={ask.snippet} onDone={() => setAsk(null)} />}
       <div className="file-editor" ref={host} />
     </div>
   )

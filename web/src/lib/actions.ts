@@ -24,11 +24,11 @@ function once(label: string, fn: () => Promise<void>): Promise<void> {
 }
 
 /** «Новый чат» without a form: default agent, given folder (or a repo-less chat when none). */
-export function newChat(where: Where = {}) {
-  return once('Создаю чат', () => createChat(where))
+export function newChat(where: Where = {}, prompt?: string) {
+  return once('Создаю чат', () => createChat(where, prompt))
 }
 
-async function createChat(where: Where) {
+async function createChat(where: Where, prompt?: string) {
   const st = getState()
   const enabled = st.agents.filter((a) => a.enabled)
   const agent = enabled.find((a) => a.id === st.defaultAgent)?.id ?? enabled[0]?.id
@@ -37,7 +37,7 @@ async function createChat(where: Where) {
     return
   }
   const s = await tryApi<Session>('POST', '/sessions', {
-    kind: 'chat', agent, cwd: where.cwd ?? undefined, workspaceId: where.workspaceId ?? undefined,
+    kind: 'chat', agent, cwd: where.cwd ?? undefined, workspaceId: where.workspaceId ?? undefined, prompt,
   })
   if (s) adoptSession(s)
 }

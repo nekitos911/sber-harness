@@ -362,6 +362,15 @@ test('the CLI reports the harness MCP server failed: a plain warning in the chat
   assert.ok(!(await messages(ok.id)).some((m) => m.text.startsWith('⚠ MCP-сервер harness')), 'no warning when it is connected');
 });
 
+test('a call left without a result when the turn ends stops «running» (its card and its sub-agent chat)', async () => {
+  const s = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', cwd: repo, prompt: '#notoolresult' })).body;
+  await waitFor(async () => (await state()).sessions.find((x) => x.id === s.id).status === 'idle', { what: 'idle' });
+  const call = (await messages(s.id)).find((m) => m.tool?.id === 'lost_1');
+  assert.deepEqual([call.tool.status, call.tool.output], ['error', 'Ход закончился без результата этого вызова.']);
+  const sub = (await state()).sessions.find((x) => x.id === call.tool.subSessionId);
+  assert.ok(sub && sub.status === 'failed' && sub.archived, 'its sub-agent chat ended and left with the turn');
+});
+
 test('a finished built-in sub-agent stays beside its working parent and is archived when the parent turn ends', async () => {
   const s = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', cwd: repo, prompt: '#subagent #slow' })).body;
   const vid = `${s.id}~call_agent_1`;

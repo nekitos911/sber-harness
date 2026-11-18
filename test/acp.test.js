@@ -115,6 +115,8 @@ test('permission request: held until answered (allow writes the file, reject is 
   await send(chat.id, '#perm');
   const card = await waitFor(async () => (await messages(chat.id)).find((m) => m.kind === 'permission' && !m.permission.resolved), { what: 'permission card' });
   assert.deepEqual([card.permission.transport, card.permission.tool, card.permission.options.map((o) => o.id)], ['acp', 'Запись out.txt', ['allow', 'reject']]);
+  const call = (await messages(chat.id)).find((m) => m.tool?.id === 't1');
+  assert.match(String(call.tool.input?.path), /out\.txt$/, 'the call announced with {} gets its arguments from the permission request');
   const s = await session(chat.id);
   assert.deepEqual([s.status, s.waitingFor], ['running', 'permission']);
   assert.equal((await h.api('POST', `/api/sessions/${chat.id}/permission`, { permissionId: card.permission.id, optionId: 'allow' })).status, 200);

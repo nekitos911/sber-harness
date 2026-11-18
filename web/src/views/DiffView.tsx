@@ -62,14 +62,14 @@ export function DiffView({ cwd, path }: { cwd: string; path: string | null }) {
         ) : files.length === 0 ? (
           <div className="empty"><p>Изменений нет.</p></div>
         ) : (
-          files.map((f, i) => <FileDiff key={`${f.path}:${i}`} f={f} open={i < OPEN_FILES} />)
+          files.map((f, i) => <FileDiff key={`${f.path}:${i}`} cwd={cwd} f={f} open={i < OPEN_FILES} />)
         )}
       </div>
     </div>
   )
 }
 
-function FileDiff({ f, open }: { f: DiffFile; open: boolean }) {
+function FileDiff({ cwd, f, open }: { cwd: string; f: DiffFile; open: boolean }) {
   const { dir, name } = splitPath(f.path)
   return (
     <Disclosure
@@ -86,7 +86,7 @@ function FileDiff({ f, open }: { f: DiffFile; open: boolean }) {
     >
       {f.status === 'binary'
         ? <p className="muted diff-note">Двоичный файл, содержимое не показывается.</p>
-        : <DiffLines lines={f.lines} limit={FILE_LINES} label={`Изменения ${f.path}`} />}
+        : <DiffLines lines={f.lines} limit={FILE_LINES} label={`Изменения ${f.path}`} comment={f.status === 'deleted' ? undefined : { cwd, path: f.path }} />}
     </Disclosure>
   )
 }

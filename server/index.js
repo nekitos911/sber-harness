@@ -12,7 +12,7 @@ import { loadConfig, CODE_ROOT, deepMerge, readJsonFile, findLiteralSecrets, exp
 import { createStore, writeAtomic } from './store.js';
 import { createBus } from './bus.js';
 import { createTasks, STATUSES } from './tasks.js';
-import { createSessions, newId, titleFrom } from './sessions.js';
+import { createSessions, newId, settledTool, titleFrom } from './sessions.js';
 import { createOrchestration, commonDir, render } from './orchestration.js';
 import * as git from './git.js';
 import * as wfs from './fs.js';
@@ -1351,11 +1351,17 @@ export async function startServer(opts = {}) {
   route('DELETE', '/api/sessions/:id', ({ params, query }) => sessions.remove(params.id, { force: query.force === '1' }));
   // the transcript keeps every tool output whole; the list sends at most 64 KB of each (full text on demand)
   const OUTPUT_MAX = 64 * 1024;
-  route('GET', '/api/sessions/:id/messages', ({ params }) => sessions.messages(params.id).map((m) => (
-    m.kind === 'tool' && typeof m.tool?.output === 'string' && m.tool.output.length > OUTPUT_MAX
-      ? { ...m, tool: { ...m.tool, output: m.tool.output.slice(0, OUTPUT_MAX), outputTruncated: true } }
-      : m
-  )));
+  route('GET', '/api/sessions/:id/messages', ({ params }) => {
+    const s = sessions.find(params.id);
+    const live = !!s && sessions.isRunning(s.virtual ? s.parentId : s.id); // a sub-agent lives while its parent runs
+    return sessions.messages(params.id).map((m) => {
+      if (m.kind !== 'tool' || !m.tool) return m;
+      // a call left «running» by a turn that is over (a restart, a lost result) shows as ended, not spinning forever
+      let tool = m.tool.status === 'running' && !live ? settledTool(m.tool) : m.tool;
+      if (typeof tool.output === 'string' && tool.output.length > OUTPUT_MAX) tool = { ...tool, output: tool.output.slice(0, OUTPUT_MAX), outputTruncated: true };
+      return tool === m.tool ? m : { ...m, tool };
+    });
+  });
   route('GET', '/api/sessions/:id/messages/:mid/output', ({ params }) => {
     const m = sessions.messages(params.id).find((x) => x.id === params.mid) || fail(404, `сообщение ${params.mid} не найдено`);
     return { output: m.tool?.output ?? null };

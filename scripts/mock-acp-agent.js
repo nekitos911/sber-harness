@@ -64,7 +64,8 @@ async function prompt({ sessionId, prompt: parts }) {
   }
   if (/#perm\b/.test(text)) {
     const file = path.join(st.cwd, 'out.txt');
-    update(sessionId, { sessionUpdate: 'tool_call', toolCallId: 't1', title: 'Запись out.txt', kind: 'edit', status: 'pending', rawInput: { path: file } });
+    // like GigaCode's ToolCall wrapper: announced with {}, the arguments only in the permission request
+    update(sessionId, { sessionUpdate: 'tool_call', toolCallId: 't1', title: 'Запись out.txt', kind: 'edit', status: 'pending', rawInput: {} });
     const answer = await request('session/request_permission', {
       sessionId,
       toolCall: { toolCallId: 't1', title: 'Запись out.txt', kind: 'edit', rawInput: { path: file } },

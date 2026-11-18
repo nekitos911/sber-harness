@@ -199,6 +199,9 @@ export function createAcp({ onWarm = () => {} } = {}) {
           if (!c.turn) return { outcome: { outcome: 'cancelled' } };
           const id = `p_${randomBytes(4).toString('hex')}`;
           const answer = new Promise((resolve) => c.held.set(id, resolve));
+          // GigaCode's ToolCall wrapper announces {} and carries the real arguments only here: fill the call's card too
+          const raw = params.toolCall?.rawInput;
+          if (params.toolCall?.toolCallId && raw != null && JSON.stringify(raw) !== '{}') c.turn.emit({ type: 'tool_input', id: params.toolCall.toolCallId, input: raw });
           c.turn.emit({
             type: 'permission', id, toolId: params.toolCall?.toolCallId ?? null, tool: params.toolCall?.title || params.toolCall?.kind || 'tool',
             input: params.toolCall?.rawInput ?? null, options: (params.options || []).map((x) => ({ id: x.optionId, label: x.name, kind: x.kind })),

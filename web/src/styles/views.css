@@ -133,6 +133,17 @@
 .dr[data-k="add"] mark { background: var(--add-mark); color: inherit; border-radius: 2px; }
 .dr[data-k="del"] mark { background: var(--del-mark); color: inherit; border-radius: 2px; }
 .dr[data-k="hunk"] { display: block; padding: 2px 12px; margin: 4px 0; background: var(--hunk-bg); color: var(--ink-3); font-size: 11.5px; }
+/* «Комментарий агенту»: a «+» over the line number on hover, the selected lines outlined, the form under them */
+.diff-table[data-comment] .dr { position: relative; }
+.dr-comment { position: absolute; left: 2px; top: 2px; display: grid; place-items: center; width: 16px; height: 16px; padding: 0; border: 0; border-radius: 4px; background: var(--primary); color: var(--primary-ink); cursor: pointer; opacity: 0; transition: opacity var(--t-fast) var(--ease-out); }
+.dr-comment svg { width: 12px; height: 12px; }
+.dr:hover .dr-comment, .dr-comment:focus-visible, .dr[data-sel] .dr-comment { opacity: 1; }
+.dr[data-sel] { box-shadow: inset 3px 0 0 var(--signal); background-image: linear-gradient(var(--signal-soft), var(--signal-soft)); }
+.agent-comment { display: grid; gap: 6px; margin: 4px 12px 8px 44px; padding: 8px; border: 1px solid var(--rule); border-radius: var(--r-2); background: var(--deck-2); font-family: var(--font-ui); font-size: 13px; line-height: 1.4; }
+.agent-comment textarea { width: 100%; resize: vertical; min-height: 44px; font: inherit; }
+.agent-comment-bar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.agent-comment-bar .select-trigger { width: auto; max-width: min(360px, 60%); }
+.file-view .agent-comment { margin: 8px 12px; }
 .dr[data-k="hunk"]:first-child { margin-top: 0; }
 .dr[data-k="hunk"] .dc { color: var(--ink-3); padding: 0; }
 .dr[data-k="note"] .dc { color: var(--ink-4); font-style: italic; }
