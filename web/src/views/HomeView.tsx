@@ -18,7 +18,7 @@ import { Select } from '../components/ui'
 import { ModelPicker } from '../components/pickers/ModelPicker'
 import { FolderPicker } from '../components/FolderPicker'
 import { ReworkPopover } from '../components/board/Rework'
-import { ReleaseChips, useReleaseTargets } from '../components/ReleaseTargets'
+import { TargetsLine } from '../components/ReleaseTargets'
 
 const LINK = /https?:\/\/\S+|\b[A-Z][A-Z0-9_]+-\d+\b/
 const REF = /https?:\/\/\S+|[A-Z][A-Z0-9_]+-\d+/
@@ -28,9 +28,12 @@ const fill = (tpl: string, v: Record<string, string>) => tpl.replace(/\{(\w+)\}/
  * What the agent will get, as the server builds it: a task link/key → the agent's task template («/full-task {taskUrl}{notes}»),
  * anything else → its free-text template. With `handoff-dry-run` the server says it itself (POST /handoff dryRun).
  */
-function usePromptPreview(input: string, notes: string, agentId: string) {
+function usePromptPreview(input: string, notes: string, agentId: string, targets: string[]) {
   const settings = useSettings()
-  const dryRun = useFeature('handoff-dry-run')
+  // shortcut: no own flag for dryRun on the server; it came before cli-adopt, so cli-adopt implies it
+  const own = useFeature('handoff-dry-run')
+  const adopt = useFeature('cli-adopt')
+  const dryRun = own || adopt
   const [server, setServer] = useState<string | null>(null)
   const text = input.trim()
   useEffect(() => {
@@ -38,11 +41,11 @@ function usePromptPreview(input: string, notes: string, agentId: string) {
     if (!dryRun || !text) return
     let live = true
     const t = window.setTimeout(() => {
-      api<{ prompt?: string }>('POST', '/handoff', { dryRun: true, input: text, notes: notes.trim() || undefined, agent: agentId || undefined })
+      api<{ prompt?: string }>('POST', '/handoff', { dryRun: true, input: text, notes: notes.trim() || undefined, agent: agentId || undefined, ...(targets.length ? { targets } : {}) })
         .then((r) => { if (live && r?.prompt) setServer(r.prompt) }, () => undefined)
     }, 300)
     return () => { live = false; window.clearTimeout(t) }
-  }, [dryRun, text, notes, agentId])
+  }, [dryRun, text, notes, agentId, targets.join('|')]) // eslint-disable-line react-hooks/exhaustive-deps
   if (!text) return ''
   if (server) return server
   const conf = settings?.agents[agentId] as ({ taskPromptTemplate?: string | null; freePromptTemplate?: string | null } | undefined)
@@ -92,8 +95,8 @@ function Handoff() {
   const [notice, setNotice] = useState<string | null>(null) // the tracker did not answer: the agent got the text as is
   const [picking, setPicking] = useState(false)
   const box = useRef<HTMLTextAreaElement>(null)
-  const rel = useReleaseTargets(`${input} ${notes}`) // «релиз 54» → develop + release/1.54.0
-  const preview = usePromptPreview(input, notes, agentId)
+  const [targets, setTargets] = useState<string[]>([]) // «Куда»: empty until the text or the person sets it (then sent as is)
+  const preview = usePromptPreview(input, notes, agentId, targets)
   const [previewOpen, setPreviewOpen] = useState(false)
 
   const edit = (v: string) => { setInput(v); saveDraft('home:input', v || null); setError(null) }
@@ -114,13 +117,13 @@ function Handoff() {
       const opts = { agent: agentId || undefined, approvalMode: mode ?? undefined, model: model ?? undefined }
       const r = handoffOn
         ? await api<{ session: Session; task: Task | null; jumped?: boolean; trackerError?: string; releaseWarning?: string }>('POST', '/handoff',
-          { input: text, notes: notes.trim() || undefined, ...opts, ...(rel.targets ? { targets: rel.targets } : {}) }, { jobId: id })
+          { input: text, notes: notes.trim() || undefined, ...opts, ...(targets.length ? { targets } : {}) }, { jobId: id })
         // older servers: a chat at the projects folder with the text as its first message
         : { session: await api<Session>('POST', '/sessions', { kind: 'chat', cwd: root.path, workspaceId: root.id, prompt: [text, notes.trim()].filter(Boolean).join('\n\n'), ...opts }) }
       if ('trackerError' in r && r.trackerError) setNotice(r.trackerError)
       if ('jumped' in r && r.jumped) toast('Задача уже в работе: открыл текущую сессию')
       if ('releaseWarning' in r && r.releaseWarning) toast(r.releaseWarning, 'info')
-      rel.reset()
+      setTargets([])
       edit('')
       editNotes('')
       setNotesOpen(false)
@@ -157,7 +160,7 @@ function Handoff() {
             <span className="mono handoff-preview-text" data-open={previewOpen || undefined}>{preview}</span>
           </button>
         )}
-        <ReleaseChips rel={rel} />
+        <TargetsLine targets={targets} onChange={setTargets} detectText={`${input} ${notes}`} />
         <div className="handoff-bar">
           <Select size="sm" label="Агент" value={agentId} onChange={(v) => { setAgentId(v); setModel(null); setMode(null) }}
             options={enabled.map((a) => ({ value: a.id, label: a.label }))} />

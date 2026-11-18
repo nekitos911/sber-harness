@@ -1,6 +1,6 @@
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
-import { ArrowUpToLine, Ellipsis, GitBranch, ExternalLink, EyeOff, GitMerge, Lock, Pencil, Play, Plus, Send, SquareArrowOutUpRight, Trash2, UserPlus, Wrench, X } from 'lucide-react'
-import { api, ApiError, errorText, qs, tryApi } from '../../api'
+import { Ellipsis, GitBranch, ExternalLink, EyeOff, GitMerge, Lock, Pencil, Play, Plus, Send, SquareArrowOutUpRight, Trash2, UserPlus, Wrench, X } from 'lucide-react'
+import { api, ApiError, errorText, tryApi } from '../../api'
 import { getState, openDialog, openSession, openWorktree, setState, toast, upsert, useFeature, useStore, without, upsertSession } from '../../store'
 import { COLUMNS, fullTime, PRIORITY, relTime, statusLabel } from '../../lib/format'
 import { isImported, pendingDeps, taskKey } from '../../lib/tasks'
@@ -13,6 +13,7 @@ import { ChipsInput } from '../ChipsInput'
 import { Checkbox, Disclosure, IconButton, MenuButton, Segmented, Select, SuggestInput } from '../ui'
 import { useSettings } from '../../lib/agents'
 import { HandoffPopover, ReworkPopover, StartPopover } from './Rework'
+import { TargetsLine } from '../ReleaseTargets'
 import { PrChip } from '../PrChip'
 import { openPrSettings, usePr } from '../../lib/pr'
 import type { BoardCtx } from './TaskCard'
@@ -112,6 +113,7 @@ export function TaskDrawer({ task, ctx, onClose }: { task: Task; ctx: BoardCtx; 
         )}
         <TitleField id={titleId} task={task} />
         {(task.externalStatus || imported) && <span className="chip drawer-tracker-status">{task.externalStatus ?? statusLabel(task.status)}</span>}
+        <TargetsLine targets={task.targets} workspaceId={task.workspaceId} onChange={(targets) => void patch({ targets })} />
         {task.hidden && (
           <div className="drawer-note">
             Задача скрыта с доски.
@@ -170,11 +172,11 @@ export function TaskDrawer({ task, ctx, onClose }: { task: Task; ctx: BoardCtx; 
         {imported ? (task.description.trim() ? <div className="md-preview drawer-desc"><Markdown text={task.description} /></div> : <ExternalCard task={task} full />) : <DescriptionField task={task} />}
         <TaskWorktrees task={task} />
         <TaskPrs task={task} />
+        {task.targets.length > 1 && <Ports task={task} />}
         {(ctx.kids.get(task.id)?.length ?? 0) > 0 && <Subtasks task={task} ctx={ctx} />}
 
         <Disclosure className="drawer-more" summary={<h3>Настроить запуск</h3>}>
           <WorkSummary task={task} />
-          {task.targets.length > 1 && <Ports task={task} />}
           {!session && (
             <div className="row">
               <button ref={startRef} type="button" className="btn btn-sm" disabled={blocked.length > 0} onClick={() => setPop('start')}><Play />Взять в работу в репозитории…</button>
@@ -293,11 +295,9 @@ function WorkSummary({ task }: { task: Task }) {
       <div className="work-line">
         <span>{repo ? repo.name : <span className="muted">{task.worktrees?.length ? 'по рабочим деревьям ниже' : 'не выбран (агент решит)'}</span>}</span>
         <span className="muted">·</span>
-        <span className="mono">{task.targets[0] ?? 'develop'}{task.targets.length > 1 && <span className="muted"> +{task.targets.length - 1}</span>}</span>
-        <span className="muted">→</span>
         <span className="mono" data-tip={task.branch ? undefined : 'создастся при запуске'}>{branch}</span>
         {agent && <><span className="muted">·</span><span>{agent}</span></>}
-        <IconButton size="sm" label={open ? 'Скрыть поля' : 'Изменить репозиторий и ветки'} icon={<Pencil />} onClick={() => setOpen(!open)} aria-expanded={open} />
+        <IconButton size="sm" label={open ? 'Скрыть поля' : 'Изменить репозиторий и ветку'} icon={<Pencil />} onClick={() => setOpen(!open)} aria-expanded={open} />
       </div>
       <div className="collapse" data-open={open}>
         <div>
@@ -307,7 +307,6 @@ function WorkSummary({ task }: { task: Task }) {
                 <Select label="Репозиторий" value={task.workspaceId ?? ''} onChange={(v) => void patch({ workspaceId: v || null })}
                   options={[{ value: '', label: 'Не выбран (агент решит)' }, ...workspaces.filter((w) => w.kind !== 'root' && w.kind !== 'folder').map((w) => ({ value: w.id, label: w.name, hint: task.suggestedWorkspace?.id === w.id ? (task.suggestedWorkspace.reason ?? 'возможно') : undefined }))]} />
               </Prop>
-              <Prop label="Целевые ветки"><TargetsField task={task} onChange={(targets) => void patch({ targets })} /></Prop>
               <Prop label="Ветка"><BranchField task={task} /></Prop>
             </div>
           )}
@@ -339,73 +338,6 @@ function TaskWorktrees({ task }: { task: Task }) {
       </ul>
     </section>
   )
-}
-
-function TargetsField({ task, onChange }: { task: Task; onChange: (t: string[]) => void }) {
-  const allTasks = useStore((s) => s.tasks)
-  const [v, setV] = useState('')
-  // Team branches: develop, release/1.54.0; typing "rel" offers the release/ prefix.
-  const releases = useReleaseSuggestions(v, task.workspaceId)
-  const known = useMemo(() => [...new Set([...releases, 'develop', 'main', 'release/', ...allTasks.flatMap((t) => t.targets)])], [allTasks, releases])
-  const targets = task.targets
-  const add = () => {
-    const t = v.trim()
-    if (!t || targets.includes(t)) return
-    onChange([...targets, t])
-    setV('')
-  }
-  return (
-    <div className="targets">
-      <div className="chips">
-        {targets.map((t, i) => (
-          <span key={t} className={i === 0 ? 'chip chip-mono chip-primary' : 'chip chip-mono'} data-tip={i === 0 ? 'Основная: здесь делается работа' : 'Портируется cherry-pick'}>
-            {i > 0 && <GitMerge aria-hidden />}
-            {t}
-            {i > 0 && (
-              <button type="button" className="chip-x" aria-label={`Сделать ${t} основной`} data-tip="Сделать основной" onClick={() => onChange([t, ...targets.filter((x) => x !== t)])}>
-                <ArrowUpToLine />
-              </button>
-            )}
-            <button type="button" className="chip-x" aria-label={`Убрать ${t}`} onClick={() => onChange(targets.filter((x) => x !== t))}>
-              <X />
-            </button>
-          </span>
-        ))}
-      </div>
-      <div className="row">
-        <SuggestInput
-          mono
-          label="Добавить целевую ветку"
-          placeholder="develop или release/1.54.0, Enter — добавить"
-          value={v}
-          onChange={setV}
-          onEnter={() => add()}
-          suggestions={known.filter((k) => !targets.includes(k))}
-        />
-        <button type="button" className="btn btn-sm" onClick={() => setV('release/')} data-tip="Добавить релизную ветку">
-          release/…
-        </button>
-      </div>
-      <p className="field-hint">Первая — где делается работа, остальные — куда портируется cherry-pick'ом.</p>
-    </div>
-  )
-}
-
-/** «54», «1.54», «rel154» typed into the targets: the release branches it names (GET /releases/resolve). */
-function useReleaseSuggestions(v: string, workspaceId: string | null) {
-  const on = useFeature('release-resolve')
-  const [list, setList] = useState<string[]>([])
-  useEffect(() => {
-    const t = v.trim()
-    if (!on || !/\d/.test(t)) { setList([]); return }
-    let live = true
-    const timer = window.setTimeout(() => {
-      api<{ refs: { candidates: string[] }[] }>('GET', `/releases/resolve${qs({ text: /^\d+(\.\d+)*$/.test(t) ? `релиз ${t}` : t, workspaceId: workspaceId ?? undefined })}`)
-        .then((r) => { if (live) setList((r?.refs ?? []).flatMap((x) => x.candidates ?? [])) }, () => { if (live) setList([]) })
-    }, 300)
-    return () => { live = false; window.clearTimeout(timer) }
-  }, [on, v, workspaceId])
-  return list
 }
 
 function DepsField({ task, ctx, onChange }: { task: Task; ctx: BoardCtx; onChange: (d: string[]) => void }) {
@@ -626,7 +558,7 @@ function Ports({ task }: { task: Task }) {
   return (
     <section className="drawer-section">
       <h3>Портирование</h3>
-      {!task.branch && <p className="field-hint">Сначала нужна рабочая ветка: возьмите задачу в работу.</p>}
+      {!task.branch && <p className="field-hint">Перенос станет доступен, когда у задачи появится рабочая ветка.</p>}
       <div className="ports">
         {task.targets.slice(1).map((target) => {
           const p = task.ports.find((x) => x.target === target)
@@ -812,7 +744,10 @@ function TaskPrs({ task }: { task: Task }) {
       ) : (
         <div className="ports">
           <PrRow target={task.targets[0]} cwd={mainCwd} branch={task.branch} known={task.pr ?? null} />
-          {task.ports.map((p) => <PrRow key={p.target} target={p.target} cwd={p.cwd} branch={p.branch} known={null} />)}
+          {task.targets.slice(1).map((t) => {
+            const p = task.ports.find((x) => x.target === t)
+            return <PrRow key={t} target={t} cwd={p?.cwd ?? null} branch={p?.branch ?? null} known={null} />
+          })}
         </div>
       )}
     </section>
@@ -829,7 +764,7 @@ function PrRow({ target, cwd, branch, known }: { target: string; cwd: string | n
       <span className="mono ellipsis" data-tip={`${branch ?? '—'} → ${target}`}>{target}</span>
       <span className="grow" />
       {shown ? <PrChip pr={shown} /> : !cwd || !branch ? (
-        <span className="muted">ветки ещё нет: возьмите задачу в работу</span>
+        <span className="muted">ветки ещё нет</span>
       ) : pr === undefined ? (
         <span className="muted">проверяем…</span>
       ) : (

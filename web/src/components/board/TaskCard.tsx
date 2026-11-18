@@ -10,7 +10,7 @@ import { useNow } from '../../lib/useNow'
 import { ago, normPath, plural } from '../../lib/format'
 import { PrGlyph } from '../PrChip'
 import { openDialog, openSession, openTab, openWorktree, showPanel, useFeature, useStore, wtKey } from '../../store'
-import { ReworkPopover, StartPopover } from './Rework'
+import { HandoffPopover, ReworkPopover } from './Rework'
 
 export interface BoardCtx {
   byId: Map<string, Task>
@@ -35,7 +35,7 @@ export const TaskCard = memo(function TaskCard({ task, ctx }: { task: Task; ctx:
   const kidsDone = kids.filter((k) => k.status === 'done').length
   const canStart = (task.status === 'backlog' || task.status === 'todo') && session?.status !== 'running'
   const startRef = useRef<HTMLButtonElement>(null)
-  const [starting, setStarting] = useState(false) // the same «Взять в работу» popover as in the task drawer
+  const [starting, setStarting] = useState(false) // the same «Передать агенту» popover as in the task drawer
 
   return (
     <>
@@ -79,8 +79,8 @@ export const TaskCard = memo(function TaskCard({ task, ctx }: { task: Task; ctx:
         <button
           type="button"
           className="btn btn-sm card-start"
-          data-tip={waiting.length ? `Ждёт: ${waiting.join(', ')}` : 'Агент по умолчанию, новое рабочее дерево задачи'}
-          aria-label={`Взять в работу ${task.id}`}
+          data-tip={waiting.length ? `Ждёт: ${waiting.join(', ')}` : undefined}
+          aria-label={`Передать агенту ${task.id}`}
           disabled={waiting.length > 0}
           onPointerDown={stop}
           onKeyDown={stop}
@@ -89,13 +89,13 @@ export const TaskCard = memo(function TaskCard({ task, ctx }: { task: Task; ctx:
           onClick={(e) => { e.stopPropagation(); setStarting(true) }}
         >
           <Play />
-          Взять в работу
+          Передать агенту
         </button>
       )}
       {/* the popover lives in <body>, but its events still bubble here in React: keep them off the card (open, drag) */}
       {starting && (
         <span className="contents" onPointerDown={stop} onKeyDown={stop} onClick={stop}>
-          <StartPopover task={task} anchor={startRef} open onClose={() => setStarting(false)} />
+          <HandoffPopover task={task} anchor={startRef} open onClose={() => setStarting(false)} />
         </span>
       )}
       {ctx.trackerSync[task.id] && <span className="card-sync" role="status">{ctx.trackerSync[task.id].text}</span>}

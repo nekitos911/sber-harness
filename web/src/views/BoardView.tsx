@@ -59,7 +59,7 @@ export function BoardView() {
   const reworkOn = useFeature('rework')
   const importOn = useFeature('tracker-import')
   const [importOpen, setImportOpen] = useState(false)
-  const narrow = useMedia('(max-width: 1279px)')
+  const narrow = useMedia('(max-width: 1439px)')
   const [filtersOpen, setFiltersOpen] = useState(false)
   const filtersRef = useRef<HTMLButtonElement>(null)
   const importRef = useRef<HTMLButtonElement>(null)

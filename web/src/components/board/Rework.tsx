@@ -11,7 +11,7 @@ import { isMac } from '../../lib/keys'
 import { useSettings } from '../../lib/agents'
 import type { Session, Task } from '../../types'
 import { Button, Popover, Select } from '../ui'
-import { ReleaseChips, useReleaseTargets } from '../ReleaseTargets'
+import { ReleaseChips, TargetsLine, useReleaseTargets } from '../ReleaseTargets'
 
 export const DEFAULT_REWORK = '{key} {title}: нужны правки: {notes}' // the server's own default (agents.<id>.reworkPromptTemplate unset)
 
@@ -48,7 +48,7 @@ function ReworkPreview({ task, notes, template }: { task: Task; notes: string; t
 const sendKey = isMac ? '⌘↵' : 'Ctrl+Enter'
 
 /** A text field popover with a draft that survives a reload; Ctrl/⌘+Enter runs the primary action. */
-function NotesPopover({ anchor, open, onClose, label, draftKey, placeholder, required, preview, primary, extra, before }: {
+function NotesPopover({ anchor, open, onClose, label, draftKey, placeholder, required, preview, below, primary, extra, before }: {
   anchor: RefObject<HTMLElement | null>
   open: boolean
   onClose: () => void
@@ -57,6 +57,8 @@ function NotesPopover({ anchor, open, onClose, label, draftKey, placeholder, req
   placeholder: string
   required?: boolean
   preview?: (notes: string) => ReactNode
+  /** Under the preview, outside its line (e.g. «Куда»). */
+  below?: (notes: string) => ReactNode
   primary: { label: string; icon?: ReactNode; run: (notes: string) => Promise<boolean> }
   extra?: ReactNode
   /** Fields above the text (e.g. «Где»). */
@@ -81,6 +83,7 @@ function NotesPopover({ anchor, open, onClose, label, draftKey, placeholder, req
           onKeyDown={(e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); void go() } }} />
       </label>
       {preview && <p className="notes-preview mono" data-tip="Первая строка сообщения агенту">{preview(notes)}</p>}
+      {below?.(notes)}
       <div className="notes-actions">
         <Button variant="primary" size="sm" icon={primary.icon} busy={busy} disabled={required && !notes.trim()} onClick={() => void go()} tip={sendKey}>{primary.label}</Button>
         {extra}
@@ -102,7 +105,8 @@ export function ReworkPopover({ task, anchor, open, onClose, onSent, onMoveOnly 
       anchor={anchor} open={open} onClose={onClose}
       label="Что поправить?" draftKey={`rework:${task.id}`} required
       placeholder="Например: кнопка «Сохранить» не блокируется во время запроса; тест на пустой список падает"
-      preview={(n) => <><ReworkPreview task={task} notes={n} template={template} /><ReworkReleases notes={n} task={task} targets={targets} /></>}
+      preview={(n) => <ReworkPreview task={task} notes={n} template={template} />}
+      below={(n) => <ReworkReleases notes={n} task={task} targets={targets} />}
       primary={{
         label: 'Отправить агенту', icon: <Wrench />,
         run: async (notes) => {
@@ -127,18 +131,20 @@ export function ReworkPopover({ task, anchor, open, onClose, onSent, onMoveOnly 
  */
 export function HandoffPopover({ task, anchor, open, onClose }: { task: Task; anchor: RefObject<HTMLElement | null>; open: boolean; onClose: () => void }) {
   const handoffOn = useStore((s) => s.features.includes('handoff'))
+  const [targets, setTargets] = useState<string[]>(task.targets)
   return (
     <NotesPopover
       anchor={anchor} open={open} onClose={onClose}
       label="Заметки для агента" draftKey={`handoff:${task.id}`}
-      placeholder="необязательно: например «только бэкенд» или «релиз 54»"
+      placeholder="необязательно: например «только бэкенд» или «и в релиз 54»"
+      below={(n) => <TargetsLine targets={targets} onChange={setTargets} workspaceId={task.workspaceId} detectText={n} />}
       primary={{
         label: 'Передать агенту', icon: <Play />,
         run: async (notes) => {
           const st = getState()
           const r = handoffOn
             ? await runJob('Передать агенту', (jobId) => api<{ session: Session; jumped?: boolean; releaseWarning?: string }>('POST', '/handoff',
-              { input: task.externalUrl ?? task.externalId ?? task.id, notes: notes || undefined }, { jobId }))
+              { input: task.externalUrl ?? task.externalId ?? task.id, notes: notes || undefined, ...(targets.length ? { targets } : {}) }, { jobId }))
             : await runJob('Передать агенту', (jobId) => api<Session & { jumped?: boolean }>('POST', `/tasks/${encodeURIComponent(task.id)}/start`,
               { agent: st.defaultAgent ?? undefined, notes: notes || undefined, location: 'root' }, { jobId })).then((s) => (s ? { session: s, jumped: s.jumped } : undefined))
           if (!r) return false

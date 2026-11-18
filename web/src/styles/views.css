@@ -627,3 +627,15 @@ button.prs-group[aria-expanded="true"] .chev { transform: rotate(90deg); }
 /* one line of hint; the whole of it while the row is hovered or focused */
 .set-hint { display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; }
 .set-row:hover .set-hint, .set-row:focus-within .set-hint { -webkit-line-clamp: unset; }
+/* «Куда: [develop] · ＋ релиз» */
+.targets-line { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; font-size: 12.5px; }
+.targets-label { color: var(--ink-3); }
+.targets-line .chip { display: inline-flex; align-items: center; gap: 2px; }
+.targets-line .btn-xs { color: var(--ink-3); }
+.targets-hint { display: inline-flex; align-items: center; gap: 4px; flex-basis: 100%; color: var(--ink-3); font-size: 12px; }
+.add-release { width: 300px; padding: 8px; display: grid; gap: 8px; }
+.add-release-list { display: grid; gap: 1px; max-height: 240px; overflow: auto; }
+.add-release-row { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; padding: 6px 8px; border: 0; border-radius: var(--r-1); background: none; color: var(--ink); font: inherit; font-size: 12.5px; text-align: left; cursor: pointer; }
+.add-release-row:hover { background: var(--deck-2); }
+.add-release-row .muted { font-size: 11.5px; }
+.notes-pop .targets-line { margin-top: 6px; }
