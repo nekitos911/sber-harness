@@ -1,21 +1,21 @@
-# Integration on the target machine: GigaCode, onework, sourcecontrol
+# Интеграция на целевой машине: GigaCode, onework, sourcecontrol
 
-Everything else (UI, orchestration, board, git, terminals) already works and is covered by tests on mocks
-(`npm test`). The facts about GigaCode and the MCP servers have already been implemented from `docs/GIGACODE-FACTS.md`.
-What is left is to **verify them live** and fill in the local configuration. Each part has its own seam:
+Всё остальное (UI, оркестрация, доска, git, терминалы) уже работает и покрыто тестами на моках
+(`npm test`). Факты о GigaCode и MCP-серверах уже реализованы по `docs/GIGACODE-FACTS.md`.
+Осталось **проверить их вживую** и заполнить локальную конфигурацию. У каждой части свой шов:
 
-| What | Code (if anything needs fixing) | Config | How to verify |
+| Что | Код (если что-то нужно поправить) | Конфиг | Как проверить |
 |---|---|---|---|
-| GigaCode CLI | `server/launchers.js` (launcher `gigacode`) | `agents.gigacode.*` | `--print-config`, a chat in the UI |
-| Tasks from onework | `server/integrations/tasks.js` (`format: "onework-markdown"`) | `integrations.tasks.*` | "Sync" on the board |
-| PRs to sourcecontrol | `server/integrations/pr.js` | `integrations.pr.*` | "Create PR" in the Changes panel |
+| GigaCode CLI | `server/launchers.js` (лаунчер `gigacode`) | `agents.gigacode.*` | `--print-config`, чат в UI |
+| Задачи из onework | `server/integrations/tasks.js` (`format: "onework-markdown"`) | `integrations.tasks.*` | "Sync" на доске |
+| PR в sourcecontrol | `server/integrations/pr.js` | `integrations.pr.*` | "Create PR" на панели Changes |
 
-Rules: do not edit `harness.config.json`; put machine-specific settings in `harness.config.local.json` (gitignored)
-or edit them on the "Settings" screen. Secrets go only in the secrets file (`CONSOLE_MCP_SECRETS` / `HARNESS_MCP_SECRETS`;
-format: `server/Name=value` lines or one bare value = `onework/Authorization`). Internal hostnames and project codes
-go only in the local config, not in the repo.
+Правила: не редактируйте `harness.config.json`; настройки конкретной машины кладите в `harness.config.local.json` (в gitignore)
+или правьте их на экране "Settings". Секреты — только в файле секретов (`CONSOLE_MCP_SECRETS` / `HARNESS_MCP_SECRETS`;
+формат: строки `server/Name=value` или одно голое значение = `onework/Authorization`). Внутренние имена хостов и коды проектов
+— только в локальном конфиге, не в репозитории.
 
-## 0. Preparation
+## 0. Подготовка
 
 ```powershell
 node -v                      # >= 22
@@ -23,113 +23,113 @@ npm install                  # through the internal npm mirror
 npm test; npm run build      # everything green
 node server/index.js --print-config
 ```
-`--print-config` shows the resolved `node.exe` / `cli-entry.js` of GigaCode, the MCP servers (from `~/.gigacode/settings.json`)
-and which secrets exist (names only).
+`--print-config` показывает найденные `node.exe` / `cli-entry.js` GigaCode, MCP-серверы (из `~/.gigacode/settings.json`)
+и какие секреты есть (только имена).
 
-## 1. Fixtures: replace the reconstructions with real samples
+## 1. Фикстуры: замените реконструкции настоящими образцами
 
-`test/fixtures/gigacode.*`, `onework.*`, `sourcecontrol.*` are reconstructed from facts (see `test/fixtures/README.md`).
-If you have the folder with raw samples (`…\IdeaProjects\.gigacode-facts\`), copy the matching files into `test/fixtures/`
-(masking internal hosts, logins and project codes) and run `npm test`. If a test fails, the real format differs from the
-reconstruction: fix the normalizer in `server/launchers.js` (stream) or the parsers in `server/integrations/tasks.js`
-(markdown from onework) until green. Expected values in the tests may be updated only to match real data.
+`test/fixtures/gigacode.*`, `onework.*`, `sourcecontrol.*` реконструированы по фактам (см. `test/fixtures/README.md`).
+Если у вас есть папка с сырыми образцами (`…\IdeaProjects\.gigacode-facts\`), скопируйте подходящие файлы в `test/fixtures/`
+(замаскировав внутренние хосты, логины и коды проектов) и запустите `npm test`. Если тест падает, реальный формат отличается от
+реконструкции: исправляйте нормализатор в `server/launchers.js` (поток) или парсеры в `server/integrations/tasks.js`
+(markdown из onework), пока тесты не позеленеют. Ожидаемые значения в тестах можно менять только под реальные данные.
 
 ## 2. GigaCode
 
-0. **Authorization.** On first run GigaCode asks you to log in through the browser/a link. Settings → "Sign in to
-   GigaCode" opens interactive GigaCode in a terminal tab (links are clickable). Check and record in `docs/GIGACODE-FACTS.md`:
-   what a headless `-p` prints when not logged in (stdout or stderr, link/code format, whether it waits for login
-   or exits), and where the login is stored. The harness detects the link in the stream (`phase: 'auth'`, a card with
-   the link in the chat, the timeout is suspended up to `authTimeoutMs`); if the real format is not detected, fix the
-   regex in `server/runner.js` / `launchers.js` and the test with the `#auth` mock.
-1. `agents.gigacode.command` = `C:/Program Files/.gigacode/bin/gigacode.cmd` (the default). The harness reads `ROOT=%~dp0..`
-   and the identity from the shim and starts `ROOT\runtime\node\node.exe --max-old-space-size=6144 ROOT\lib\cli-entry.js …`
-   without a shell. If the layout is different, set the explicit pair `agents.gigacode.node` + `agents.gigacode.cliEntry`.
-2. Models: the catalog is pulled from GigaCode itself (`-p "/models"`, button "Refresh model list" in the picker
-   and in Settings). Check that the discovery found all models (compare with `/models` in interactive mode); if the
-   output format is not recognized, set the regex `agents.gigacode.modelsDiscovery.pattern` in the local config
-   (with no code changes) or fix the parser + its test. Select the grades (`default/fast/review/explore`) in Settings,
-   as in the old console. When models are renamed, nothing needs rewriting: the old ones become "unavailable", grades
-   without a model fall back to the CLI default, and Settings shows a warning.
-3. Check in the UI: New chat → GigaCode → "Hi, which MCP tools do you have?". Expected:
-   - while the CLI is starting (30–60 s), the chat shows "Starting… waiting for MCP";
-   - a "MCP: …" line with server statuses;
-   - the `harness` tools (`task_list`, `worker_start`, …) are among the agent's tools;
-   - the second message continues the same session (`--resume`): the agent remembers the context.
-4. **Merging `mcpServers`** (not confirmed): if the agent sees `harness` but NOT onework/sourcecontrol (or the reverse),
-   the CLI replaces `mcpServers` from the run file. Turn on `agents.gigacode.inheritUserMcp: true` (it copies the user's
-   servers into the run file next to `harness`) and check again.
-5. Task command: the default is `taskPromptTemplate: "/full-task {taskUrl}{notes}"` (a user-level command,
-   `~/.gigacode/commands/full-task.md`). If you need `/full-task-ui` from the old console, copy its
-   `commands/full-task-ui.md` to `~/.gigacode/commands/` and change the template. The slash command always goes as the
-   first word of the prompt, and the harness preamble follows it (it reaches the command as part of `$ARGUMENTS`).
-6. Error checks: a nonexistent model in the session settings must give a red error with the stderr text; a broken path
-   to the shim must give a clear startup error, not hang.
+0. **Авторизация.** При первом запуске GigaCode просит войти через браузер/по ссылке. Settings → "Sign in to
+   GigaCode" открывает интерактивный GigaCode во вкладке терминала (ссылки кликабельны). Проверьте и запишите в `docs/GIGACODE-FACTS.md`:
+   что печатает headless `-p` без входа (stdout или stderr, формат ссылки/кода, ждёт ли входа
+   или завершается) и где хранится вход. Харнес находит ссылку в потоке (`phase: 'auth'`, карточка со
+   ссылкой в чате, таймаут приостанавливается до `authTimeoutMs`); если реальный формат не распознаётся, исправьте
+   регулярное выражение в `server/runner.js` / `launchers.js` и тест с моком `#auth`.
+1. `agents.gigacode.command` = `C:/Program Files/.gigacode/bin/gigacode.cmd` (по умолчанию). Харнес читает `ROOT=%~dp0..`
+   и identity из shim и запускает `ROOT\runtime\node\node.exe --max-old-space-size=6144 ROOT\lib\cli-entry.js …`
+   без оболочки. Если структура другая, задайте явную пару `agents.gigacode.node` + `agents.gigacode.cliEntry`.
+2. Модели: каталог берётся из самого GigaCode (`-p "/models"`, кнопка "Refresh model list" в выборе
+   и в Settings). Проверьте, что поиск нашёл все модели (сравните с `/models` в интерактивном режиме); если
+   формат вывода не распознан, задайте регулярное выражение `agents.gigacode.modelsDiscovery.pattern` в локальном конфиге
+   (без изменений кода) или исправьте парсер и его тест. Выберите грейды (`default/fast/review/explore`) в Settings,
+   как в старой консоли. При переименовании моделей ничего переписывать не нужно: старые становятся "unavailable", грейды
+   без модели откатываются к значению CLI по умолчанию, а Settings показывает предупреждение.
+3. Проверьте в UI: New chat → GigaCode → "Hi, which MCP tools do you have?". Ожидается:
+   - пока CLI запускается (30–60 с), чат показывает "Starting… waiting for MCP";
+   - строка "MCP: …" со статусами серверов;
+   - инструменты `harness` (`task_list`, `worker_start`, …) входят в инструменты агента;
+   - второе сообщение продолжает ту же сессию (`--resume`): агент помнит контекст.
+4. **Слияние `mcpServers`** (не подтверждено): если агент видит `harness`, но НЕ видит onework/sourcecontrol (или наоборот),
+   CLI заменяет `mcpServers` из файла запуска. Включите `agents.gigacode.inheritUserMcp: true` (он копирует серверы пользователя
+   в файл запуска рядом с `harness`) и проверьте снова.
+5. Команда задачи: по умолчанию `taskPromptTemplate: "/full-task {taskUrl}{notes}"` (пользовательская команда,
+   `~/.gigacode/commands/full-task.md`). Если нужен `/full-task-ui` из старой консоли, скопируйте её
+   `commands/full-task-ui.md` в `~/.gigacode/commands/` и измените шаблон. Слеш-команда всегда идёт
+   первым словом промпта, а преамбула харнеса следует за ней (в команду она попадает как часть `$ARGUMENTS`).
+6. Проверки ошибок: несуществующая модель в настройках сессии должна давать красную ошибку с текстом из stderr; неверный путь
+   к shim должен давать понятную ошибку запуска, а не зависание.
 
-## 3. Tasks from onework
+## 3. Задачи из onework
 
-1. The `onework` server is picked up from `~/.gigacode/settings.json` (`mcpServersFrom`); the `Authorization` secret comes
-   from the secrets file. Check: `node scripts/mcp-call.js onework --list`.
-2. Locally: `integrations.tasks.enabled: true`, `space` = the space code (e.g. what goes before `-` in task keys),
-   `urlTemplate` = `https://<tracker-host>/swtr/units/all/unit/{key}`, if needed `refreshSec` (≥ 10) and `statusMap`.
-3. Raw response by hand: `node scripts/mcp-call.js onework sbertrack_findIssues '{"space_code":"<SPACE>","assignee":"me","page_size":5}'`.
-4. UI: "Sync" on the board → the tasks you are assigned show up, without closed ones. The task drawer loads the
-   description (`getIssue`) and the list of tracker transitions (`getIssueMeta`). Change a tracker status only on a test
-   task: it is an entry in the tracker.
-5. Subtasks from `decomposition` links (`sbertrack_listLinks`) are not imported automatically yet; if you need them, add
-   them in `importTasks()` (parentId) with a test.
+1. Сервер `onework` берётся из `~/.gigacode/settings.json` (`mcpServersFrom`); секрет `Authorization` берётся
+   из файла секретов. Проверка: `node scripts/mcp-call.js onework --list`.
+2. Локально: `integrations.tasks.enabled: true`, `space` = код пространства (например, то, что стоит до `-` в ключах задач),
+   `urlTemplate` = `https://<tracker-host>/swtr/units/all/unit/{key}`, при необходимости `refreshSec` (≥ 10) и `statusMap`.
+3. Сырой ответ вручную: `node scripts/mcp-call.js onework sbertrack_findIssues '{"space_code":"<SPACE>","assignee":"me","page_size":5}'`.
+4. UI: "Sync" на доске → появляются назначенные вам задачи, без закрытых. Панель задачи загружает
+   описание (`getIssue`) и список переходов трекера (`getIssueMeta`). Меняйте статус в трекере только на тестовой
+   задаче: это запись в трекере.
+5. Подзадачи по связям `decomposition` (`sbertrack_listLinks`) пока не импортируются автоматически; если они нужны, добавьте
+   их в `importTasks()` (parentId) с тестом.
 
-## 4. PRs to sourcecontrol
+## 4. PR в sourcecontrol
 
-1. `node scripts/mcp-call.js sourcecontrol --list`; the `SC_TOKEN` secret is in the secrets file or in the server's env.
-2. `integrations.pr.enabled: true`. `project/repository` are derived from `git remote get-url origin` (the last two segments).
-3. On a test branch: Changes → Push → "Create PR". Expected: the dialog with title/description pre-filled (with byte
-   counters 100/512), a link to `html_url`. A repeated "Create PR" for the same branch returns the existing PR and does
-   not create a second one (a second one would close the first).
+1. `node scripts/mcp-call.js sourcecontrol --list`; секрет `SC_TOKEN` лежит в файле секретов или в env сервера.
+2. `integrations.pr.enabled: true`. `project/repository` выводятся из `git remote get-url origin` (последние два сегмента).
+3. В тестовой ветке: Changes → Push → "Create PR". Ожидается: диалог с предзаполненными заголовком/описанием (со счётчиками
+   байт 100/512), ссылка на `html_url`. Повторное "Create PR" для той же ветки возвращает существующий PR и
+   не создаёт второй (второй закрыл бы первый).
 
-## 5. Branches and releases (check against the team conventions)
+## 5. Ветки и релизы (сверьте с соглашениями команды)
 
-- `git.defaultBase = develop`, branch `feature/{key}`, commit and PR title `{key} {title}` (no colon).
-- Fix in a release: the task's targets are `["develop", "release/1.54.0"]` → the work happens on `feature/<KEY>`, and
-  "Port to release/1.54.0" creates `feature/<KEY>-rel154` from the release branch and cherry-picks only the missing commits;
-  a conflict is resolved by a separate agent. One PR per target branch.
-- Microservices: one task = one repository; subtasks with `workspaceId` for each repository; the same key and branch in all.
-  `workspaces.root` = the folder with the repositories (e.g. `C:/Users/<you>/IdeaProjects`), `repos` = the list of names
-  (empty = all git repositories in the folder).
+- `git.defaultBase = develop`, ветка `feature/{key}`, заголовок коммита и PR `{key} {title}` (без двоеточия).
+- Исправление в релизе: целевые ветки задачи — `["develop", "release/1.54.0"]` → работа делается в `feature/<KEY>`, а
+  "Port to release/1.54.0" создаёт `feature/<KEY>-rel154` из ветки релиза и cherry-pick'ает только недостающие коммиты;
+  конфликт разбирает отдельный агент. Один PR на каждую целевую ветку.
+- Микросервисы: одна задача = один репозиторий; подзадачи с `workspaceId` для каждого репозитория; один ключ и одна ветка во всех.
+  `workspaces.root` = папка с репозиториями (например, `C:/Users/<you>/IdeaProjects`), `repos` = список имён
+  (пусто = все git-репозитории в папке).
 
-## 6. Sub-agents, questions, permissions, ACP (built on assumptions; check and fix)
+## 6. Субагенты, вопросы, разрешения, ACP (построено на предположениях; проверить и исправить)
 
-Answer the "Open questions" in `docs/GIGACODE-FACTS.md` live (raw samples into `docs/target-machine/` or the
-fixtures) and fix only the seams:
-- **Sub-agents as chats.** With the default `orchestration.subagents: "harness"`, ask GigaCode in a chat: "start the
-  repository-explorer sub-agent and find pom.xml". Expected: the agent calls `mcp__harness__agent` and a separate child chat
-  appears. If the model calls the built-in `agent` anyway, a read-only sub-agent chat is shown (this needs
-  `parent_tool_use_id` in the stream; if it is missing, fix the normalizer in `server/launchers.js`). Install the
-  `harness-orchestration` skill in Settings (with the user's consent). If GigaCode supports hooks, fill in
-  `agents.gigacode.agentToolHook` (format in `docs/ARCHITECTURE.md` → "Automatic: …") so the built-in `agent` is blocked reliably.
-- **MCP timeout.** A `worker_run` sub-agent can run a long time: check that the `harness` tool call does not fail on
-  GigaCode's timeout (the run file sets `mcpServers.harness.timeout`; check the units and whether `progress` is honoured).
-- **Questions.** Find the name of GigaCode's built-in question tool → `agents.gigacode.questionTools`. Check that the card with options appears.
-- **Permissions (headless).** In "With confirmation" mode, ask for a command that needs permission → the real denial text
-  → `agents.gigacode.denialPattern`; the "Allow once" card should let the agent continue.
-- **ACP.** Try `transport: "acp"` (Settings → GigaCode → Transport) on a test chat: streaming, a permission request with
-  the agent waiting, Stop, continuing after a harness restart. If `--acp` in GigaCode differs from the protocol, fix
-  `server/acp.js` (tests: `test/acp.test.js` + `scripts/mock-acp-agent.js`). If ACP works, decide with the user whether to
-  make it the default.
-- **Recovery.** Reboot the PC (or kill `node` while an agent is running): after startup the "Session recovery" window
-  appears; "Continue selected" continues the sessions with context.
-- **Linux** (if relevant): the actual GigaCode install layout on Linux (`docs/ARCHITECTURE.md` → "Cross-platform").
+Ответьте вживую на "Open questions" в `docs/GIGACODE-FACTS.md` (сырые образцы — в `docs/target-machine/` или в
+фикстуры) и исправляйте только швы:
+- **Субагенты как чаты.** При значении по умолчанию `orchestration.subagents: "harness"` попросите GigaCode в чате: "start the
+  repository-explorer sub-agent and find pom.xml". Ожидается: агент вызывает `mcp__harness__agent` и появляется отдельный дочерний чат.
+  Если модель всё же вызывает встроенный `agent`, показывается чат субагента только для чтения (для этого нужен
+  `parent_tool_use_id` в потоке; если его нет, исправьте нормализатор в `server/launchers.js`). Установите скилл
+  `harness-orchestration` в Settings (с согласия пользователя). Если GigaCode поддерживает хуки, заполните
+  `agents.gigacode.agentToolHook` (формат в `docs/ARCHITECTURE.md` → "Automatic: …"), чтобы встроенный `agent` надёжно блокировался.
+- **Таймаут MCP.** Субагент `worker_run` может работать долго: проверьте, что вызов инструмента `harness` не падает по
+  таймауту GigaCode (файл запуска задаёт `mcpServers.harness.timeout`; проверьте единицы измерения и учитывается ли `progress`).
+- **Вопросы.** Найдите имя встроенного инструмента вопросов GigaCode → `agents.gigacode.questionTools`. Проверьте, что карточка с вариантами появляется.
+- **Разрешения (headless).** В режиме "With confirmation" попросите команду, требующую разрешения → реальный текст отказа
+  → `agents.gigacode.denialPattern`; карточка "Allow once" должна позволить агенту продолжить.
+- **ACP.** Попробуйте `transport: "acp"` (Settings → GigaCode → Transport) в тестовом чате: потоковый вывод, запрос разрешения с
+  ожидающим агентом, Stop, продолжение после перезапуска харнеса. Если `--acp` в GigaCode отличается от протокола, исправьте
+  `server/acp.js` (тесты: `test/acp.test.js` + `scripts/mock-acp-agent.js`). Если ACP работает, решите вместе с пользователем, стоит ли
+  сделать его режимом по умолчанию.
+- **Восстановление.** Перезагрузите ПК (или убейте `node`, пока работает агент): после запуска появляется окно "Session recovery";
+  "Continue selected" продолжает сессии с контекстом.
+- **Linux** (если актуально): реальная структура установки GigaCode в Linux (`docs/ARCHITECTURE.md` → "Cross-platform").
 
-## Done when
+## Готово, когда
 
-- [ ] `npm test` and `npm run build` are green; the fixtures are replaced with real ones (or the differences are fixed in parsers).
-- [ ] A GigaCode chat answers, shows tools and "MCP: …", and the second message continues the context.
-- [ ] A "coordinator" role chat creates tasks and starts workers through `worker_start`; each worker has its own chat in
-      the sidebar; reports (`worker_done`) wake the coordinator.
-- [ ] "Take into work" on a task card starts `/full-task <url>` in a new worktree `<repo>-worktrees/<KEY>`.
-- [ ] "Sync" pulls your tasks from onework; the description and transitions load in the drawer.
-- [ ] "Create PR" creates a PR in sourcecontrol and shows the link; a repeat does not create a duplicate.
-- [ ] Sub-agents of `/full-task` are visible as separate chats (harness or read-only); a question and a permission are answered from the UI.
-- [ ] After a harness restart running agents keep going; after a PC reboot the "Session recovery" window continues them.
-- [ ] The open questions in `docs/GIGACODE-FACTS.md` are answered, and the facts/fixtures are updated.
-- [ ] Secrets live only in the secrets file; `git status` is clean of local configs and `data/`.
+- [ ] `npm test` и `npm run build` проходят; фикстуры заменены настоящими (или расхождения исправлены в парсерах).
+- [ ] Чат с GigaCode отвечает, показывает инструменты и "MCP: …", а второе сообщение продолжает контекст.
+- [ ] Чат с ролью "coordinator" создаёт задачи и запускает исполнителей (workers) через `worker_start`; у каждого исполнителя свой чат в
+      боковой панели; отчёты (`worker_done`) будят координатора.
+- [ ] "Take into work" на карточке задачи запускает `/full-task <url>` в новом рабочем дереве (worktree) `<repo>-worktrees/<KEY>`.
+- [ ] "Sync" подтягивает ваши задачи из onework; описание и переходы загружаются в панели задачи.
+- [ ] "Create PR" создаёт пулл-реквест (PR) в sourcecontrol и показывает ссылку; повтор не создаёт дубликат.
+- [ ] Субагенты `/full-task` видны как отдельные чаты (харнес или только для чтения); на вопрос и разрешение можно ответить из UI.
+- [ ] После перезапуска харнеса запущенные агенты продолжают работать; после перезагрузки ПК окно "Session recovery" их продолжает.
+- [ ] Открытые вопросы в `docs/GIGACODE-FACTS.md` закрыты, а факты/фикстуры обновлены.
+- [ ] Секреты лежат только в файле секретов; `git status` чист от локальных конфигов и `data/`.

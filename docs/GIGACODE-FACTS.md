@@ -1,14 +1,14 @@
-# GigaCode and MCP: facts from the target machine
+# GigaCode и MCP: факты с целевой машины
 
-Collected by live runs on the target machine (GigaCode 26.10.x). Raw samples are in `test/fixtures/` (reconstructed and
-neutralized: project codes, hostnames, logins and secrets replaced). If you have the raw `.gigacode-facts/` folder,
-replace the reconstructed fixtures with it and keep the tests green.
+Собраны живыми запусками на целевой машине (GigaCode 26.10.x). Сырые образцы лежат в `test/fixtures/` (реконструированы и
+обезличены: коды проектов, имена хостов, логины и секреты заменены). Если у вас есть сырая папка `.gigacode-facts/`,
+замените реконструированные фикстуры ею и держите тесты зелёными.
 
-## 1. Launch
+## 1. Запуск
 
-- Install root `ROOT = C:\Program Files\.gigacode`: `bin\gigacode.cmd` (shim), `runtime\node\node.exe` (bundled Node 26.x —
-  the system Node 22 must NOT run cli-entry), `lib\cli-entry.js`.
-- Shim text (identity masked):
+- Корень установки `ROOT = C:\Program Files\.gigacode`: `bin\gigacode.cmd` (shim), `runtime\node\node.exe` (встроенный Node 26.x —
+  системный Node 22 НЕЛЬЗЯ использовать для запуска cli-entry), `lib\cli-entry.js`.
+- Текст shim (identity замаскирована):
   ```bat
   @echo off
   setlocal
@@ -18,123 +18,123 @@ replace the reconstructed fixtures with it and keep the tests green.
   "%ROOT%\runtime\node\node.exe" --max-old-space-size=6144 "%ROOT%\lib\cli-entry.js" %*
   exit /b %ERRORLEVEL%
   ```
-  So node.exe/cli-entry.js are relative to `%~dp0..` (the shim's PARENT dir), not to the shim's dir.
-- `.cmd` cannot be used as the process: `shell:false` → EINVAL; `shell:true` → `'C:\Program' is not recognized`;
-  `cmd.exe` + `%ERRORLEVEL%` after a `.cmd` → always 0. Only `node.exe cli-entry.js` + identity env gives honest exit codes.
-- Without identity env: stderr `GigaCode launcher error: the public launcher and standalone payload identities do not match`,
-  **0 bytes stdout and exit 0** — a silent failure; must be detected from stderr / missing events.
+  Итак, node.exe/cli-entry.js отсчитываются от `%~dp0..` (РОДИТЕЛЬСКОЙ папки shim), а не от папки shim.
+- `.cmd` нельзя использовать как процесс: `shell:false` → EINVAL; `shell:true` → `'C:\Program' is not recognized`;
+  `cmd.exe` + `%ERRORLEVEL%` после `.cmd` → всегда 0. Только `node.exe cli-entry.js` + identity env дают честные коды выхода.
+- Без identity env: stderr `GigaCode launcher error: the public launcher and standalone payload identities do not match`,
+  **0 байт stdout и exit 0** — тихий сбой; его нужно определять по stderr / отсутствию событий.
 - argv: `[--max-old-space-size=6144, cli-entry.js, (--resume <id>)?, -p, <prompt>, --approval-mode, <mode>, --output-format, stream-json, (--model <m>)?]`.
-  Approval modes: `plan | default | auto-edit | auto`. Other useful flags from `--help`: `-c/--continue`, `--fallback-model`,
-  `--acp`, `--safe-mode` (disables context files, hooks, extensions, skills, MCP — not for task runs), `--worktree` (its own
-  worktree under `<repo>/.gigacode/worktrees` — we do NOT use it, the harness manages worktrees).
-- Cold start: the `system/init` event can take 30–60 s (hundreds of tools, ~9 MCP servers). First-event timeout must be ≥ 120 s
-  and the UI should say "starting / waiting for MCP".
-- stderr at exit 0 may carry warnings, e.g. `Warning: MCP server(s) failed to start: java-lsp. Continuing with built-in tools…`
-  → show as a warning in the feed, not an error.
+  Режимы одобрения: `plan | default | auto-edit | auto`. Другие полезные флаги из `--help`: `-c/--continue`, `--fallback-model`,
+  `--acp`, `--safe-mode` (отключает файлы контекста, хуки, расширения, скиллы, MCP — не для запусков задач), `--worktree` (собственное
+  рабочее дерево (worktree) в `<repo>/.gigacode/worktrees` — мы его НЕ используем, рабочими деревьями управляет харнес).
+- Холодный старт: событие `system/init` может занимать 30–60 с (сотни инструментов, ~9 MCP-серверов). Таймаут первого события должен быть ≥ 120 с,
+  а UI должен показывать "starting / waiting for MCP".
+- stderr при exit 0 может содержать предупреждения, например `Warning: MCP server(s) failed to start: java-lsp. Continuing with built-in tools…`
+  → показывать как предупреждение в ленте, а не как ошибку.
 
-## 2. stream-json (Qwen-Code / Claude-style)
+## 2. stream-json (в стиле Qwen-Code / Claude)
 
-One JSON object per line. Every event has `session_id` (equal to the init `uuid` on the first run; unchanged on `--resume`).
+Один JSON-объект на строку. У каждого события есть `session_id` (равен `uuid` из init при первом запуске; не меняется при `--resume`).
 
-| type | meaning |
+| type | значение |
 |---|---|
-| `system` + `subtype:"init"` | first event: `session_id`, `cwd`, `tools[]`, `mcp_servers[{name,status}]`, `model` (without the `-262k` suffix), `permission_mode`, `qwen_code_version`, `agents[]`, `slash_commands[]` |
-| `stream_event` | wrapper; observed only `event.type:"goal_state"` (`{v, goal, activity}`). SEEN 2026-11-18 with `--include-partial-messages`: 2 of 3 parallel tool calls stayed without arguments (read_file, run_shell_command) — the flag is opt-in until a raw capture shows the shape |
-| `assistant` | `message.content[]`: `{type:"text",text}` and/or `{type:"tool_use",id,name,input}`; `message.usage` per step |
-| `user` | tool results: `message.content[{type:"tool_result",tool_use_id,is_error,content}]` (not a human message) |
-| `result` | end of run: `subtype:"success"`, `is_error`, `duration_ms`, `num_turns`, `result` (final text), `usage{input_tokens,output_tokens,cache_read_input_tokens,total_tokens}` |
+| `system` + `subtype:"init"` | первое событие: `session_id`, `cwd`, `tools[]`, `mcp_servers[{name,status}]`, `model` (без суффикса `-262k`), `permission_mode`, `qwen_code_version`, `agents[]`, `slash_commands[]` |
+| `stream_event` | обёртка; наблюдался только `event.type:"goal_state"` (`{v, goal, activity}`). ВИДЕЛИ 2026-11-18 с `--include-partial-messages`: 2 из 3 параллельных вызовов инструментов остались без аргументов (read_file, run_shell_command) — флаг включается по желанию, пока сырой захват не покажет форму |
+| `assistant` | `message.content[]`: `{type:"text",text}` и/или `{type:"tool_use",id,name,input}`; `message.usage` на шаг |
+| `user` | результаты инструментов: `message.content[{type:"tool_result",tool_use_id,is_error,content}]` (это не сообщение человека) |
+| `result` | конец запуска: `subtype:"success"`, `is_error`, `duration_ms`, `num_turns`, `result` (итоговый текст), `usage{input_tokens,output_tokens,cache_read_input_tokens,total_tokens}` |
 
-- Every event carries `parent_tool_use_id` (null for the main agent). Non-null = an event of a built-in sub-agent started by that
-  tool call; must not be merged into the main assistant message.
-- Tokens: count from `result.usage` (cumulative for the run). `assistant.message.usage` is per step and does NOT add up to it.
-- Fatal error (e.g. unknown model): **stdout empty, exit 1**, full text in stderr
+- Каждое событие несёт `parent_tool_use_id` (null для основного агента). Не null = событие встроенного субагента, запущенного этим
+  вызовом инструмента; его нельзя сливать в основное сообщение assistant.
+- Токены: считать по `result.usage` (накопительно за запуск). `assistant.message.usage` — на шаг и НЕ складывается в него.
+- Фатальная ошибка (например, неизвестная модель): **stdout пуст, exit 1**, полный текст в stderr
   (`An unexpected critical error occurred:\nError: The selected model 'x' is not present in the current backend catalogue …`).
-  → empty stdout + exit ≠ 0 → error immediately from stderr; do not wait for `result`.
+  → пустой stdout + exit ≠ 0 → сразу ошибка из stderr; не ждать `result`.
 
-## 3. Per-run settings.json (`GIGACODE_SYSTEM_SETTINGS_PATH`)
+## 3. Настройки на запуск settings.json (`GIGACODE_SYSTEM_SETTINGS_PATH`)
 
 ```json
 { "agents": { "modelGrades": { "default": "<model>", "fast": "<model>", "review": "<model>", "explore": "<model>" },
               "allowedGrades": ["default", "fast", "review", "explore"] },
   "chatRecording": true }
 ```
-- `agents.modelGrades`: object, `mergeStrategy: shallow_merge`, any string keys (grade names are the team's convention, used by
-  the built-in `agent` tool as `{model: "<grade>"}`); `agents.allowedGrades`: whitelist for the `agent` tool (`[]` = sub-agents
-  cannot choose a model). `chatRecording` is required for `--resume`. Never write `permissions`.
-- Model ids come from `/models` on the machine (5 models, 128k–262k context); `modelGrades` may use ids with or without the
-  `-262k` suffix. Fallback models exist (`--fallback-model`).
-- Whether `mcpServers` in this file is MERGED with or REPLACES `~/.gigacode/settings.json` is **not confirmed**. Without the file
-  all user servers are loaded. Do not rely on merging: config flag `agents.gigacode.inheritUserMcp` copies the user's
-  `mcpServers` into the run file next to `harness` (turn it on if the merge test shows replacement).
-- CONFIRMED on the target: headless `--approval-mode auto` fails with "Error: Auto approval is allowed only under an
+- `agents.modelGrades`: объект, `mergeStrategy: shallow_merge`, любые строковые ключи (названия грейдов — соглашение команды, их использует
+  встроенный инструмент `agent` как `{model: "<grade>"}`); `agents.allowedGrades`: белый список для инструмента `agent` (`[]` = субагенты
+  не могут выбирать модель). `chatRecording` обязателен для `--resume`. Никогда не записывать `permissions`.
+- Идентификаторы моделей берутся из `/models` на машине (5 моделей, контекст 128k–262k); `modelGrades` может использовать идентификаторы с суффиксом
+  `-262k` и без него. Запасные модели существуют (`--fallback-model`).
+- СЛИВАЮТСЯ ли `mcpServers` из этого файла с `~/.gigacode/settings.json` или ЗАМЕНЯЮТ его — **не подтверждено**. Без файла
+  загружаются все серверы пользователя. Не полагаться на слияние: флаг конфига `agents.gigacode.inheritUserMcp` копирует
+  `mcpServers` пользователя в файл запуска рядом с `harness` (включите, если тест слияния покажет замену).
+- ПОДТВЕРЖДЕНО на целевой машине: headless `--approval-mode auto` падает с "Error: Auto approval is allowed only under an
   active action sandbox; enable it via settings.tools.sandbox = 'workspace' or 'workspace-offline'." (exit 1,
-  `Config.assertAutoApprovalAvailable`). The harness maps `auto` → `auto-edit` (`agents.<id>.approvalModeMap`) unless
-  `agents.<id>.autoSandbox` is set, which writes `{ "tools": { "sandbox": "<value>" } }` into the run settings and keeps
-  `auto`. VERIFY: the sandbox restricts file/shell tools to the workspace, so `--include-directories` and worktrees
-  outside the cwd may be blocked.
-- CONFIRMED: a grade pointing at an id the backend does not know crashes the CLI ("modelGrades.default is not present in
-  the current backend catalogue") — the committed config has no default grades; they are set in Settings from the
-  discovered catalogue.
-- CONFIRMED: `/models` lists ids WITH the context suffix (`DeepSeek-V4.1-Flash-1017-262k`) while the CLI and configs use
-  them without (`DeepSeek-V4.1-Flash-1017`): the harness compares models by base id (suffix `-<n>k|m` stripped).
-  CONFIRMED again (ACP chat, 2026-11-18): `--model DeepSeek-V4.1-Flash-1017-262k` kills the CLI at start («not present in
-  the current backend catalogue»). The gigacode launcher (`stripModelSuffix`) passes `--model` and the run settings'
-  `modelGrades` without the suffix, whatever id the picker or a grade holds.
+  `Config.assertAutoApprovalAvailable`). Харнес отображает `auto` → `auto-edit` (`agents.<id>.approvalModeMap`), если не задан
+  `agents.<id>.autoSandbox`, который записывает `{ "tools": { "sandbox": "<value>" } }` в настройки запуска и оставляет
+  `auto`. ПРОВЕРИТЬ: песочница ограничивает файловые/shell-инструменты рабочим пространством, так что `--include-directories` и рабочие деревья
+  вне cwd могут блокироваться.
+- ПОДТВЕРЖДЕНО: грейд, указывающий на идентификатор, неизвестный бэкенду, роняет CLI ("modelGrades.default is not present in
+  the current backend catalogue") — в закоммиченном конфиге нет грейдов по умолчанию; они задаются в Settings из
+  найденного каталога.
+- ПОДТВЕРЖДЕНО: `/models` перечисляет идентификаторы С суффиксом контекста (`DeepSeek-V4.1-Flash-1017-262k`), тогда как CLI и конфиги используют
+  их без него (`DeepSeek-V4.1-Flash-1017`): харнес сравнивает модели по базовому идентификатору (суффикс `-<n>k|m` отбрасывается).
+  ПОДТВЕРЖДЕНО ещё раз (чат ACP, 2026-11-18): `--model DeepSeek-V4.1-Flash-1017-262k` убивает CLI при старте («not present in
+  the current backend catalogue»). Лаунчер gigacode (`stripModelSuffix`) передаёт `--model` и `modelGrades` из настроек запуска
+  без суффикса, какой бы идентификатор ни держали выбор модели или грейд.
 
-## 4. Custom commands and built-in sub-agents
+## 4. Пользовательские команды и встроенные субагенты
 
-- User commands: `~/.gigacode/commands/<name>.md` (frontmatter + body). `/full-task` lives there (75 KB). `/full-task-ui` is a
-  thin wrapper that existed only as a project command of the old console repo (`commands/full-task-ui.md`).
-- Slash commands work in headless mode, **only as the first word of the prompt**: `-p "/full-task <url><notes>"`; the rest of
-  the prompt becomes `$ARGUMENTS`. The command expands into the `skill` tool (`{"skill":"full-task","args":"<url>"}`).
-- `{taskUrl}` = full tracker link (`https://<tracker>/swtr/units/all/unit/<KEY>` and variants) or just the key; `{notes}` =
-  appended after the link with a leading space/newline, usually empty.
-- `/full-task` body (user-level, ~370 lines): "Ты — оркестратор"; task text arrives as `{{args}}`. §0 hard rules (git
-  read-only, no tracker/CI writes, minimal diff, secrets); §1 domain by repo markers (pom.xml/build.gradle → Java
-  sub-agents; package.json → TS flow; pyproject → Python; YAML → config flow); §2 context mode NORMAL / SDD_EXISTING /
-  SDD_NEW / FOLLOW_UP; §4 own worktree `..\<repo>-worktrees\<task-id>` (reuse if `git worktree list` has it; branch by the
-  repo convention), work stays uncommitted; §5 risk FAST / STANDARD / STRICT; §6 Java sub-agents java-fast-engineer /
-  backend-engineer / sdd-engineer / repository-explorer / Explore; §8 cross-model review: first pass `java-reviewer`
-  (GLM), second pass `java-reviewer-qwen` (Qwen) with explicit models per implementer family; §9 OpenSpec skills
-  (`openspec-*`), changes in a separate store; §11 superpowers skills by trigger; §13 sub-agent check with a verdict file
+- Пользовательские команды: `~/.gigacode/commands/<name>.md` (frontmatter + тело). `/full-task` лежит там (75 КБ). `/full-task-ui` — это
+  тонкая обёртка, которая существовала только как проектная команда репозитория старой консоли (`commands/full-task-ui.md`).
+- Слеш-команды работают в headless-режиме, **только как первое слово промпта**: `-p "/full-task <url><notes>"`; остаток
+  промпта становится `$ARGUMENTS`. Команда разворачивается в инструмент `skill` (`{"skill":"full-task","args":"<url>"}`).
+- `{taskUrl}` = полная ссылка трекера (`https://<tracker>/swtr/units/all/unit/<KEY>` и варианты) или просто ключ; `{notes}` =
+  добавляется после ссылки с ведущим пробелом/переводом строки, обычно пусто.
+- Тело `/full-task` (пользовательский уровень, ~370 строк): "Ты — оркестратор"; текст задачи приходит как `{{args}}`. §0 жёсткие правила (git
+  только для чтения, без записей в трекер/CI, минимальный diff, секреты); §1 домен по маркерам репозитория (pom.xml/build.gradle → Java-
+  субагенты; package.json → TS-поток; pyproject → Python; YAML → поток конфигов); §2 режим контекста NORMAL / SDD_EXISTING /
+  SDD_NEW / FOLLOW_UP; §4 собственное рабочее дерево `..\<repo>-worktrees\<task-id>` (переиспользовать, если оно есть в `git worktree list`; ветка по
+  соглашению репозитория), работа остаётся незакоммиченной; §5 риск FAST / STANDARD / STRICT; §6 Java-субагенты java-fast-engineer /
+  backend-engineer / sdd-engineer / repository-explorer / Explore; §8 кросс-модельное ревью: первый проход `java-reviewer`
+  (GLM), второй проход `java-reviewer-qwen` (Qwen) с явными моделями для каждого семейства исполнителей; §9 скиллы OpenSpec
+  (`openspec-*`), изменения в отдельном хранилище; §11 скиллы superpowers по триггеру; §13 проверка субагента с файлом вердикта
   `<worktree>\.superpowers\sdd\<plan>\verdicts\task-<N>.md` (`status: PASS|FAIL|ESCALATION_REQUIRED|INDEPENDENT_VERIFICATION_REQUIRED`,
   `files_changed`, `commands`, `open_questions`, `implementer_model`, `reviewer_model`, `second_review_model`, `notes`)
-  + ledger `progress.md`; `.superpowers/` is never committed; §14 DONE gate with fresh evidence, final message lists
-  implementer/reviewer models; PR description ≤ 300 chars; §15 loops are separate from full-task.
-- `/full-task` rules: no commit/push/merge/PR/tracker writes without an explicit request; worktree per task; modes
-  NORMAL/SDD_EXISTING/SDD_NEW/FOLLOW_UP; scope FAST/STANDARD/STRICT; cross-model review by a sub-agent of another model family;
-  DONE requires fresh evidence; "observe and propose" loops only.
-- Built-in sub-agents: tool `agent` (also `fork` via `subagent_type:"fork"`), definitions in `~/.gigacode/agents/<name>.md`
-  (e.g. java-reviewer, repository-explorer, sdd-engineer…). **They cannot be disabled by a setting** — only limited:
-  `agents.allowedGrades: []`, `agents.maxParallelAgents`, `agents.maxParallelAgentsByModel`, or a `permissions` deny on `agent`
-  (we never write permissions). `/full-task` relies on them for review, so the harness allows them as internal helpers and shows
-  them read-only (registry / `parent_tool_use_id`); harness workers (own chats) are started only via `worker_start`.
-- Registry written by the orchestrating agent: `<registryDir>/<agentId>/agent.json` with ISO-8601 timestamps
-  (`startedAt`, `lastActivity`, `settledAt`, `activity.since`), e.g.
+  + журнал `progress.md`; `.superpowers/` никогда не коммитится; §14 барьер DONE со свежими доказательствами, финальное сообщение перечисляет
+  модели исполнителя/ревьюера; описание PR ≤ 300 символов; §15 циклы отделены от full-task.
+- Правила `/full-task`: никаких commit/push/merge/PR/записей в трекер без явной просьбы; рабочее дерево на задачу; режимы
+  NORMAL/SDD_EXISTING/SDD_NEW/FOLLOW_UP; объём FAST/STANDARD/STRICT; кросс-модельное ревью субагентом из другого семейства моделей;
+  DONE требует свежих доказательств; только циклы "наблюдать и предлагать".
+- Встроенные субагенты: инструмент `agent` (также `fork` через `subagent_type:"fork"`), определения в `~/.gigacode/agents/<name>.md`
+  (например, java-reviewer, repository-explorer, sdd-engineer…). **Их нельзя отключить настройкой** — только ограничить:
+  `agents.allowedGrades: []`, `agents.maxParallelAgents`, `agents.maxParallelAgentsByModel` или запретом `permissions` на `agent`
+  (permissions мы никогда не пишем). `/full-task` опирается на них для ревью, поэтому харнес допускает их как внутренних помощников и показывает
+  только для чтения (реестр / `parent_tool_use_id`); исполнители (workers) харнеса (свои чаты) запускаются только через `worker_start`.
+- Реестр, который пишет оркестрирующий агент: `<registryDir>/<agentId>/agent.json` с временными метками ISO-8601
+  (`startedAt`, `lastActivity`, `settledAt`, `activity.since`), например
   `{"id":"java-reviewer-1","name":"java-reviewer","role":"review","model":"…","parentId":null,"worktree":"…","state":"working","startedAt":"2026-11-17T16:02:11.000Z","lastActivity":"2026-11-17T16:07:43.000Z","settledAt":null,"activity":{"tool":"grep_search","since":"…"},"tokensIn":184320,"tokensOut":2411}`;
   `log.jsonl`: `{"ts":"…","event":"queued|spawned|activity|done","state":"…","note"?,"sessionId"?,"tool"?,"settledAt"?}`.
 
-## 5. MCP onework (task tracker) — tools return MARKDOWN, not JSON
+## 5. MCP onework (трекер задач) — инструменты возвращают MARKDOWN, а не JSON
 
-- Server: `onework` (HTTP, `Authorization` header). The standalone `sbertrack` server answers 403 on reading tasks — never use it.
-- Envelope: `content: [{ type: "text", text: "<markdown>" }]`. Tool errors also arrive as text:
+- Сервер: `onework` (HTTP, заголовок `Authorization`). Отдельный сервер `sbertrack` отвечает 403 на чтение задач — никогда не использовать.
+- Конверт: `content: [{ type: "text", text: "<markdown>" }]`. Ошибки инструментов тоже приходят текстом:
   `MCP tool 'sbertrack_getIssue' reported tool error for function call: {…} with response: [{"functionResponse":{…,"response":{"error":"…"}}}]`
-  → detect `reported tool error` / `"error":"` and treat as an error.
-- `sbertrack_findIssues` — flat args (no `filters` wrapper; unknown keys are dropped silently; at least one filter required):
+  → определять `reported tool error` / `"error":"` и считать ошибкой.
+- `sbertrack_findIssues` — плоские аргументы (без обёртки `filters`; неизвестные ключи молча отбрасываются; нужен хотя бы один фильтр):
   `space_code, text, statuses, exclude_statuses, assignee, reporter, priorities, suit, labels, created_after/before,
   updated_after/before, page_size (1–100, default 100), page_number (0-based)`.
-  "Mine, not closed": `{ space_code: "<SPACE>", assignee: "me", page_size: 100 }` — `assignee:"me"` combines only with
-  `space_code`; filter closed statuses on the harness side.
-  Response:
+  "Мои, не закрытые": `{ space_code: "<SPACE>", assignee: "me", page_size: 100 }` — `assignee:"me"` сочетается только с
+  `space_code`; закрытые статусы фильтровать на стороне харнеса.
+  Ответ:
   ```
   Found 5 issues on this page (page 0, 5 per page, has_next: True, more pages available)
 
   1. **<KEY>** — <summary> [<status> | <priority>] @<assignee>
   ```
-  No description and no links in search results.
-- `sbertrack_getIssue {key}` — markdown: a list of fields `- **Space**`, `- **Type**`, `- **Status**`, `- **Priority**`,
-  `- **Labels**`, `- **Assignee**`, `- **Reporter**`, `- **Created**`, `- **Updated**`, then the description (markdown), then
-  `### Attributes` (~90 custom fields).
+  В результатах поиска нет описания и нет связей.
+- `sbertrack_getIssue {key}` — markdown: список полей `- **Space**`, `- **Type**`, `- **Status**`, `- **Priority**`,
+  `- **Labels**`, `- **Assignee**`, `- **Reporter**`, `- **Created**`, `- **Updated**`, затем описание (markdown), затем
+  `### Attributes` (~90 пользовательских полей).
 - `sbertrack_getIssueMeta {key, include_fields, include_transitions}`:
   ```
   ## Current Status: development (`development`)
@@ -143,106 +143,106 @@ One JSON object per line. Every event has `session_id` (equal to the init `uuid`
 
   - `to_code_review` → to_code_review (`to_code_review`)
   ```
-- `sbertrack_updateIssueStatus {key, transition, assignee?, comment?}` — `transition` is an action id from getIssueMeta.
-- `sbertrack_getUser {login} | {self:true}` (exactly one). `sbertrack_listLinks {key, page_size, page_number}`:
-  `<SRC> **<link_type>** -> <DST>`; types seen: `wiki_page_mention`, `decomposition` (parent→child), `plain_connection`.
-- Key = `<space_code>-<number>`. Statuses seen: `todo, development, qa, done, cancelled`; transitions also
-  `to_code_review, ready_for_uat, ready_for_ift, ift, stop_progress, discover_issue`. Closed: `done, cancelled, declined`.
-  Priorities seen: `low, mid` (+ high). No global status dictionary is available from the tools.
+- `sbertrack_updateIssueStatus {key, transition, assignee?, comment?}` — `transition` — идентификатор действия из getIssueMeta.
+- `sbertrack_getUser {login} | {self:true}` (ровно один). `sbertrack_listLinks {key, page_size, page_number}`:
+  `<SRC> **<link_type>** -> <DST>`; встречавшиеся типы: `wiki_page_mention`, `decomposition` (родитель→потомок), `plain_connection`.
+- Ключ = `<space_code>-<number>`. Встречавшиеся статусы: `todo, development, qa, done, cancelled`; переходы также
+  `to_code_review, ready_for_uat, ready_for_ift, ift, stop_progress, discover_issue`. Закрытые: `done, cancelled, declined`.
+  Встречавшиеся приоритеты: `low, mid` (+ high). Глобального словаря статусов через инструменты получить нельзя.
 
-## 6. MCP sourcecontrol (code host) — real JSON
+## 6. MCP sourcecontrol (хостинг кода) — настоящий JSON
 
-- stdio server (`node …/mcp-sourcecontrol/dist/index.js`, env `SC_TOKEN`); 36 tools: `git_ping, git_list_repositories,
+- stdio-сервер (`node …/mcp-sourcecontrol/dist/index.js`, env `SC_TOKEN`); 36 инструментов: `git_ping, git_list_repositories,
   git_list_branches, git_create_branch, git_get_branch, git_delete_branch, git_list_commits, git_list_pull_requests,
   git_create_pull_request, git_get_pull_request, git_merge_pull_request, git_decline_pull_request, git_update_pull_request,
   git_get_pull_request_diff, git_list_pull_request_files, git_list_pull_request_commits, git_list_pull_request_comments,
   git_add_pull_request_comment, git_get_file_content, git_list_files, …review/webhook/sonar settings…, git_get_user`.
-- All schemas have `additionalProperties: false`; pagination is `page` (1-based) + `limit` (not page_size).
-- `git_create_pull_request {project, repository, head, base, title, body?}` (required: project, repository, head, base, title).
-  Limits (from live 400s): `title` ≤ 100 BYTES UTF-8 (~50 Cyrillic chars), `body` ≤ 512 bytes (`invalid_pr_title_length` /
-  `invalid_pr_body_length`); an empty PR (no diff) is rejected; **a second PR from the same head auto-closes the previous one**.
-- Human link = `html_url` (`url` is an internal API endpoint — never show it).
+- У всех схем `additionalProperties: false`; пагинация — `page` (с 1) + `limit` (не page_size).
+- `git_create_pull_request {project, repository, head, base, title, body?}` (обязательны: project, repository, head, base, title).
+  Лимиты (из живых 400): `title` ≤ 100 БАЙТ UTF-8 (~50 символов кириллицы), `body` ≤ 512 байт (`invalid_pr_title_length` /
+  `invalid_pr_body_length`); пустой PR (без diff) отклоняется; **второй PR из той же head автоматически закрывает предыдущий**.
+- Человеческая ссылка = `html_url` (`url` — внутренняя конечная точка API, никогда её не показывать).
 - `git_list_pull_requests {project, repository, state: OPEN|MERGED|DECLINED, targetBranch?, author?, page, limit}` →
   `{ pagination, pulls: [{ index, title, body, state, head:{name}, base:{name, protected}, mergeable, reviewers[{status}], html_url }] }`.
-- `project/repository` from `git remote get-url origin`: the last two path segments without `.git`
+- `project/repository` из `git remote get-url origin`: последние два сегмента пути без `.git`
   (`ssh://host:7998/PROJ/repo.git`, `https://host/PROJ/repo.git`, `git@host:PROJ/repo.git` → `PROJ`, `repo`).
-- No CI status tool (CI is a separate system).
+- Инструмента статуса CI нет (CI — отдельная система).
 
-## 7. Secrets file (`CONSOLE_MCP_SECRETS`)
+## 7. Файл секретов (`CONSOLE_MCP_SECRETS`)
 
-Text, one secret per line, `#` comments: either a single bare value (= `onework/Authorization`) or `server/Name=value`
-(split on the first `=`). HTTP servers get `headers[Name]`, stdio servers get `env[Name]`. Config refs `${env:NAME}` and
-`$secret:server/Name`; both are exported to children as `MCP_SECRET_<NAME>`. Missing secret → that server gets a `problem`,
-others work. Transport per call. GigaCode's own encrypted store (`~/.gigacode/mcp-secrets-v1.json`) is not readable.
+Текст, один секрет на строку, комментарии `#`: либо одно голое значение (= `onework/Authorization`), либо `server/Name=value`
+(разделение по первому `=`). HTTP-серверы получают `headers[Name]`, stdio-серверы получают `env[Name]`. Ссылки в конфиге `${env:NAME}` и
+`$secret:server/Name`; обе передаются дочерним процессам как `MCP_SECRET_<NAME>`. Отсутствующий секрет → этот сервер получает `problem`,
+остальные работают. Транспорт на каждый вызов. Собственное зашифрованное хранилище GigaCode (`~/.gigacode/mcp-secrets-v1.json`) прочитать нельзя.
 
-## 8. Team git conventions
+## 8. Соглашения команды по git
 
-- Base branch `develop` everywhere. Releases: `release/x.y.z` (e.g. `release/1.54.0`).
-- Branches: `feature/<KEY>` or `feature/<KEY>-<slug>`; `bugfix/…`, `hotfix/…` same form. A release copy of a fix:
-  `feature/<KEY>-rel<major><minor>` (e.g. `feature/PROJ-14822-rel154`) → PR into `release/1.54.0`.
-- Commit message: `<KEY> <summary from the tracker>` — key first, then a space (no colon), no `feat:`/`fix:` prefixes,
-  no `Co-authored-by`, no AI/GigaCode mentions; optional free-text body.
-- PR title: `<KEY> <summary>`.
-- Porting: by commits, only the missing ones (`git log --cherry-pick --right-only <target>...<branch>`), done by the author,
-  separate PR per release branch. No automatic develop→release merge. No local hooks; conventions are not enforced by CI.
+- Базовая ветка `develop` везде. Релизы: `release/x.y.z` (например, `release/1.54.0`).
+- Ветки: `feature/<KEY>` или `feature/<KEY>-<slug>`; `bugfix/…`, `hotfix/…` в той же форме. Релизная копия исправления:
+  `feature/<KEY>-rel<major><minor>` (например, `feature/PROJ-14822-rel154`) → PR в `release/1.54.0`.
+- Сообщение коммита: `<KEY> <summary from the tracker>` — сначала ключ, затем пробел (без двоеточия), без префиксов `feat:`/`fix:`,
+  без `Co-authored-by`, без упоминаний AI/GigaCode; необязательное тело в свободной форме.
+- Заголовок PR: `<KEY> <summary>`.
+- Перенос: по коммитам, только недостающие (`git log --cherry-pick --right-only <target>...<branch>`), делает автор,
+  отдельный PR на каждую релизную ветку. Автоматического слияния develop→release нет. Локальных хуков нет; соглашения CI не проверяет.
 
-## Confirmed on the target (live)
+## Подтверждено на целевой машине (вживую)
 
-- Headless denial text (tool_result error): `GigaCode requires permission to use "run_shell_command", but that permission was
-  declined (non-interactive mode cannot prompt for confirmation).` — the call is already denied when it is reported; the
-  agent continues the turn.
-- `--approval-mode auto` in headless fails unless `tools.sandbox` is enabled (`Auto approval is allowed only under an active
-  action sandbox; enable it via settings.tools.sandbox = 'workspace' or 'workspace-offline'.`) → harness maps auto → auto-edit.
-- `auto-edit` does NOT allow `run_shell_command` in headless → shell commands need an explicit allow-list
-  (`--allowed-tools`, VERIFY the exact flag and pattern syntax, e.g. `run_shell_command(git)`), the sandbox, or ACP.
-- `Warning: MCP server(s) failed to start: java-lsp. …` is printed to stderr on EVERY headless run (each run restarts MCP).
+- Текст отказа в headless (ошибка tool_result): `GigaCode requires permission to use "run_shell_command", but that permission was
+  declined (non-interactive mode cannot prompt for confirmation).` — к моменту сообщения вызов уже отклонён; агент
+  продолжает ход.
+- `--approval-mode auto` в headless падает, если не включён `tools.sandbox` (`Auto approval is allowed only under an active
+  action sandbox; enable it via settings.tools.sandbox = 'workspace' or 'workspace-offline'.`) → харнес отображает auto → auto-edit.
+- `auto-edit` НЕ разрешает `run_shell_command` в headless → для shell-команд нужен явный список разрешённых
+  (`--allowed-tools`, ПРОВЕРИТЬ точный флаг и синтаксис шаблона, например `run_shell_command(git)`), песочница или ACP.
+- `Warning: MCP server(s) failed to start: java-lsp. …` печатается в stderr при КАЖДОМ headless-запуске (каждый запуск перезапускает MCP).
 
-## Open questions (verify on the target; each changes the implementation)
+## Открытые вопросы (проверить на целевой машине; каждый меняет реализацию)
 
-1. `mcpServers` in the run settings file: merged with `~/.gigacode/settings.json` or replacing it? (→ `inheritUserMcp`)
-    SEEN on the target (ACP chat, 2026-11-18): the agent searched for `mcp__harness__agent` and found only built-ins
-    (`create_sub_session`, `send_message`, `task_stop`, `cron_create`, `loop_wakeup`) — the harness server was not in its
-    registry. Check the same in a headless chat; if it is missing there too, the run settings file is not read or replaces
-    nothing — find out which.
-2. Hooks in settings (PreToolUse-like): key, events, format, can deny a tool with a message? (→ `agentToolHook` to force
-   `mcp__harness__agent` instead of the built-in `agent`)
-3. Built-in `agent` / `fork` exact inputSchema; do sub-agent events appear in stream-json with non-null
-   `parent_tool_use_id`? (→ harness `agent` alias schema; Level 1 virtual chats)
-4. MCP tool-call timeout default; `mcpServers.<name>.timeout` units; does `notifications/progress` reset it? (→ long
-   `worker_run` waits)
-5. Parallel tool calls in one turn — concurrent? (→ parallel harness sub-agents)
-6. Headless `-p` without authorization: output, link format, waits or exits, exit code; where the login is stored.
-7. `-p "/models"` raw output (→ model discovery parser).
-8. stdin + `-p` order with slash commands; max argv length on Windows (40K chars?) (→ long prompts via stdin).
-9. `auto` approval mode in headless when the classifier wants a confirmation: event? deny/skip/stop? Exact denial text
+1. `mcpServers` в файле настроек запуска: сливаются с `~/.gigacode/settings.json` или заменяют его? (→ `inheritUserMcp`)
+    ВИДЕЛИ на целевой машине (чат ACP, 2026-11-18): агент искал `mcp__harness__agent` и нашёл только встроенные
+    (`create_sub_session`, `send_message`, `task_stop`, `cron_create`, `loop_wakeup`) — сервера harness не было в его
+    реестре. Проверьте то же в headless-чате; если там он тоже отсутствует, файл настроек запуска не читается или ничего
+    не заменяет — выяснить, что именно.
+2. Хуки в настройках (вроде PreToolUse): ключ, события, формат, может ли отклонить инструмент с сообщением? (→ `agentToolHook`, чтобы заставить
+   использовать `mcp__harness__agent` вместо встроенного `agent`)
+3. Точная inputSchema встроенных `agent` / `fork`; появляются ли события субагентов в stream-json с ненулевым
+   `parent_tool_use_id`? (→ схема алиаса `agent` харнеса; уровень 1, виртуальные чаты)
+4. Таймаут вызова MCP-инструмента по умолчанию; единицы `mcpServers.<name>.timeout`; сбрасывает ли его `notifications/progress`? (→ длинные
+   ожидания `worker_run`)
+5. Параллельные вызовы инструментов за один ход — выполняются конкурентно? (→ параллельные субагенты харнеса)
+6. Headless `-p` без авторизации: вывод, формат ссылки, ждёт или завершается, код выхода; где хранится вход.
+7. Сырой вывод `-p "/models"` (→ парсер поиска моделей).
+8. Порядок stdin + `-p` со слеш-командами; максимальная длина argv в Windows (40K символов?) (→ длинные промпты через stdin).
+9. Режим одобрения `auto` в headless, когда классификатор хочет подтверждения: событие? отказ/пропуск/остановка? Точный текст отказа
    (→ `denialPattern`).
-10. The built-in structured question tool (asking the human with options): exact name and inputSchema; what headless
-    returns for it (→ `questionTools`).
-12. Where `chatRecording` stores sessions (path pattern, e.g. `~/.gigacode/tmp/<hash>/chats/`), the file format (one
-    sample, secrets masked), how `<hash>` is derived from the project path, and `gigacode sessions --help` (list/show
-    subcommands, JSON output?) (→ `agents.gigacode.history`, the "GigaCode history" panel).
-    VERIFY — the harness currently assumes Gemini/Qwen records: `~/.gigacode/tmp/<sha256(project path)>/chats/*.json`
-    with `{ sessionId, projectHash, startTime, lastUpdated, messages: [{ type: user|gemini, content, thoughts, toolCalls }] }`;
-    anything else is listed as raw.
-13. The headless allow-list flag and pattern syntax: is it `--allowed-tools`, repeated or comma-separated, and does
-    `run_shell_command(git)` match `git status`? (→ `allowedToolsFlag`, `allowedToolsJoin`, the permission patterns)
-14. The key that excludes MCP servers for one run (in the per-run settings): `mcp.excluded` or Gemini-style
+10. Встроенный структурированный инструмент вопросов (вопрос человеку с вариантами): точное имя и inputSchema; что
+    возвращает headless для него (→ `questionTools`).
+12. Где `chatRecording` хранит сессии (шаблон пути, например `~/.gigacode/tmp/<hash>/chats/`), формат файла (один
+    образец, секреты замаскированы), как `<hash>` выводится из пути проекта, и `gigacode sessions --help` (подкоманды
+    list/show, вывод JSON?) (→ `agents.gigacode.history`, панель "GigaCode history").
+    ПРОВЕРИТЬ — сейчас харнес предполагает записи Gemini/Qwen: `~/.gigacode/tmp/<sha256(project path)>/chats/*.json`
+    с `{ sessionId, projectHash, startTime, lastUpdated, messages: [{ type: user|gemini, content, thoughts, toolCalls }] }`;
+    всё остальное показывается как сырое.
+13. Флаг и синтаксис шаблона списка разрешённых в headless: это `--allowed-tools`, повторяемый или через запятую, и совпадает ли
+    `run_shell_command(git)` с `git status`? (→ `allowedToolsFlag`, `allowedToolsJoin`, шаблоны разрешений)
+14. Ключ, исключающий MCP-серверы на один запуск (в настройках на запуск): `mcp.excluded` или в стиле Gemini
     `excludeMCPServers`? (→ `mcpExcludeKey`)
-11. `--acp` mode: does it work with the identity env + per-session settings; `initialize` capabilities (loadSession?),
-    `session/request_permission` for tool confirmations, MCP servers passed in `session/new`, auth behaviour
-    (→ `transport: "acp"` for real interactive permissions).
-15. Context commands in headless mode: does `--resume <id> -p "/compress"` compress that session (and what does the
-    stream-json show: a result text, new usage?), and does `-p "/context"` print a token breakdown WITHOUT adding a
-    turn to the chat history? (→ `agents.gigacode.compressCommand` / `contextCommand`, the context ring's actions.)
-    Also: is `assistant.message.usage.input_tokens` the whole prompt incl. the cached part (the ring uses
-    input + output per step), and does ACP's `session/prompt` result carry `usage`?
+11. Режим `--acp`: работает ли он с identity env + настройками на сессию; возможности `initialize` (loadSession?),
+    `session/request_permission` для подтверждений инструментов, MCP-серверы, передаваемые в `session/new`, поведение авторизации
+    (→ `transport: "acp"` для настоящих интерактивных разрешений).
+15. Команды контекста в headless-режиме: сжимает ли `--resume <id> -p "/compress"` эту сессию (и что
+    показывает stream-json: текст результата, новый usage?), и печатает ли `-p "/context"` разбивку токенов БЕЗ добавления
+    хода в историю чата? (→ `agents.gigacode.compressCommand` / `contextCommand`, действия кольца контекста.)
+    Также: является ли `assistant.message.usage.input_tokens` всем промптом, включая кешированную часть (кольцо использует
+    input + output на шаг), и несёт ли результат ACP `session/prompt` поле `usage`?
 
-## 9. Machine pitfalls
+## 9. Подводные камни машины
 
-- Console output in CP866 (Cyrillic garbled) — never rely on console text; read bytes, write files with explicit UTF-8.
-- Antivirus/indexer holds files: `rmSync` → ENOTEMPTY/EBUSY; `rmdir /s /q` fails even on ASCII paths. Delete by renaming to
-  `<dir>.stale-<ts>` first (works even while files are held), then remove element-wise; sweep `.stale-*` on startup.
-- MAX_PATH 260: keep worktrees short — `<parent>\<repo>-worktrees\<KEY>`, not under `~/.gigacode/worktrees/<hash>`.
-- Port already taken by an old process (`EADDRINUSE`): print the port and how to find the PID (`netstat -ano | findstr :<port>`).
-- Two harness processes on one `data/`: refuse to start (single-instance lock per data dir).
-- npm registry is an internal mirror (no Docker on the machine). System Node 22.16, bundled GigaCode Node 26.4.
+- Вывод консоли в CP866 (кириллица искажена) — никогда не полагаться на текст консоли; читать байты, писать файлы с явным UTF-8.
+- Антивирус/индексатор удерживает файлы: `rmSync` → ENOTEMPTY/EBUSY; `rmdir /s /q` падает даже на ASCII-путях. Удалять, сначала переименовав в
+  `<dir>.stale-<ts>` (работает, даже пока файлы удерживаются), затем удалять поэлементно; чистить `.stale-*` при запуске.
+- MAX_PATH 260: держите рабочие деревья короткими — `<parent>\<repo>-worktrees\<KEY>`, а не в `~/.gigacode/worktrees/<hash>`.
+- Порт уже занят старым процессом (`EADDRINUSE`): напечатать порт и как найти PID (`netstat -ano | findstr :<port>`).
+- Два процесса харнеса на одной `data/`: отказаться запускаться (блокировка единственного экземпляра на папку данных).
+- Реестр npm — внутреннее зеркало (на машине нет Docker). Системный Node 22.16, встроенный Node GigaCode 26.4.

@@ -1,33 +1,35 @@
 # sber-harness
 
-A local, lightweight IDE for working with coding agents and tasks. Inspired by
-[Orca](https://github.com/stablyai/orca), built around **GigaCode CLI** and your own services, reached over MCP.
+Локальная лёгкая IDE для работы с кодовыми агентами и задачами. Вдохновлена
+[Orca](https://github.com/stablyai/orca), построена вокруг **GigaCode CLI** и ваших собственных сервисов, подключаемых через MCP.
 
-- **Agent chats**: every agent turn runs a CLI in headless mode (`-p`, `stream-json`). The chat shows text,
-  reasoning and tool calls; the next message continues the same CLI session (`--resume`).
-- **Orchestration as in Orca**: a coordinator agent splits the work into tasks and starts workers through
-  `worker_start`. Each worker gets **its own chat**, nested under the coordinator. Workers report with
-  `worker_done` or ask with `ask`, and the harness itself wakes the coordinator. Sub-agents are created only through
-  orchestration, never through the CLI's built-in tools.
-- **Task board** (Jira-like): Backlog / To do / In progress / Review / Done columns, drag-and-drop,
-  dependencies between tasks, "Take into work" in one button (the prompt is configurable, e.g. `/full-task {taskUrl}{notes}`),
-  sync from the tracker over MCP.
-- **Branches and releases**: base `develop`, branches `feature/<KEY>` from the tracker task key; a task can have
-  several target branches (fix in `develop` and in `release/1.54.0`): the work happens once, and the rest are
-  ported by cherry-pick, with an agent to resolve conflicts. Commits and PRs are pre-filled from the task (key, title,
-  agent report, list of commits) and editable before sending.
-- **Microservices**: a task spanning several repositories is split into subtasks, one per repository, with one key
-  and one branch name in all of them.
-- **Agents board**: who is doing what, statuses, queues, the coordinator → worker hierarchy, assigning a task to an
-  existing agent, quick messages, stopping.
-- **Terminals**: PowerShell on Windows, `$SHELL` elsewhere, or an interactive agent CLI (`gigacode`) inside the UI, with persistent history.
-- **IDE pieces**: workspaces and git worktrees, a file tree and editor (CodeMirror), diffs, commit, push,
-  PR (through the MCP code-hosting service).
-- **Local only**: the server listens on `127.0.0.1`, no CDN or telemetry; it is protected by a token and a Host check.
+Руководство пользователя: [docs/GUIDE.md](docs/GUIDE.md)
 
-## Quick start
+- **Чаты с агентами**: каждый ход агента запускает CLI в headless-режиме (`-p`, `stream-json`). Чат показывает текст,
+  рассуждения и вызовы инструментов; следующее сообщение продолжает ту же сессию CLI (`--resume`).
+- **Оркестрация как в Orca**: агент-координатор разбивает работу на задачи и запускает исполнителей (workers) через
+  `worker_start`. У каждого исполнителя **свой чат**, вложенный под координатором. Исполнители отчитываются через
+  `worker_done` или спрашивают через `ask`, а сам харнес будит координатора. Субагенты создаются только через
+  оркестрацию, никогда через встроенные инструменты CLI.
+- **Доска задач** (как в Jira): колонки Backlog / To do / In progress / Review / Done, drag-and-drop,
+  зависимости между задачами, «Взять в работу» одной кнопкой (промпт настраивается, например `/full-task {taskUrl}{notes}`),
+  синхронизация с трекером через MCP.
+- **Ветки и релизы**: базовая ветка `develop`, ветки `feature/<KEY>` по ключу задачи из трекера; у задачи может быть
+  несколько целевых веток (исправление в `develop` и в `release/1.54.0`): работа делается один раз, остальное
+  переносится через cherry-pick, а конфликты разбирает агент. Коммиты и пулл-реквесты (PR) предзаполняются из задачи (ключ, заголовок,
+  отчёт агента, список коммитов) и редактируются перед отправкой.
+- **Микросервисы**: задача, затрагивающая несколько репозиториев, делится на подзадачи, по одной на репозиторий, с одним ключом
+  и одним именем ветки во всех.
+- **Доска агентов**: кто чем занят, статусы, очереди, иерархия координатор → исполнитель, назначение задачи уже
+  существующему агенту, быстрые сообщения, остановка.
+- **Терминалы**: PowerShell в Windows, `$SHELL` в остальных системах или интерактивный CLI агента (`gigacode`) внутри UI, с сохраняемой историей.
+- **Части IDE**: рабочие пространства и рабочие деревья git (worktree), дерево файлов и редактор (CodeMirror), диффы, коммит, push,
+  PR (через MCP-сервис хостинга кода).
+- **Только локально**: сервер слушает `127.0.0.1`, без CDN и телеметрии; защищён токеном и проверкой Host.
 
-Requirements: Node.js >= 22, git. GigaCode CLI on the target machine (the `mock` agent is enough for a demo).
+## Быстрый старт
+
+Требования: Node.js >= 22, git. GigaCode CLI на целевой машине (для демо достаточно агента `mock`).
 
 ```powershell
 npm install
@@ -35,51 +37,51 @@ npm run build
 npm start            # http://127.0.0.1:4777
 ```
 
-`npm run dev` starts the same thing with UI hot reload. `npm test` runs the tests (node:test, on mocks).
+`npm run dev` запускает то же самое с горячей перезагрузкой UI. `npm test` запускает тесты (node:test, на моках).
 
 ### Linux / macOS
 
-The same commands work in bash/zsh. Nothing platform-specific is configured by default: `shell: null` picks
-`$SHELL -l` (UTF-8 locale when none is set) and `agents.gigacode.command: null` picks `gigacode` on `PATH`, else
-`~/.gigacode/bin/gigacode`; an executable launcher is run directly with the same arguments (it sets its own identity),
-explicit `agents.gigacode.node` + `cliEntry` still win. `node server/index.js --print-config` shows what was chosen and
-why. Stop sends SIGTERM to the agent's process group and SIGKILL after 3 s; «open folder» uses `xdg-open` / `open`.
-The native terminal module (`@lydell/node-pty`) needs the usual build tools only if no prebuilt binary matches.
+Те же команды работают в bash/zsh. По умолчанию ничего платформо-зависимого не настроено: `shell: null` выбирает
+`$SHELL -l` (локаль UTF-8, если никакая не задана), а `agents.gigacode.command: null` выбирает `gigacode` из `PATH`, иначе
+`~/.gigacode/bin/gigacode`; исполняемый лаунчер запускается напрямую с теми же аргументами (он сам задаёт свою identity),
+явные `agents.gigacode.node` + `cliEntry` по-прежнему имеют приоритет. `node server/index.js --print-config` показывает, что выбрано и
+почему. Остановка отправляет SIGTERM группе процессов агента и SIGKILL через 3 с; «открыть папку» использует `xdg-open` / `open`.
+Нативному терминальному модулю (`@lydell/node-pty`) нужны обычные инструменты сборки, только если подходящего готового бинарника нет.
 
 ### Демо без GigaCode: `npm run demo`
 
-`npm run demo` (= `node server/index.js --demo`, http://127.0.0.1:4778; `--port <n>` / `--data-dir <path>`, or
-`port` / `dataDir` of the HARNESS_CONFIG file, change both) starts an offline demo: its own data folder
-`data-demo/` (gitignored) with two seeded git repositories in its projects folder `data-demo/projects/`
-(`demo-service` with `develop` + `release/1.54.0`, `ledger-service`; origin = a local bare repository in
-`data-demo/remotes/PROJ/`, so push works) and a few tasks (a hotfix for two target branches, a parent task with subtasks
-in both repos); the `mock` agent stands in for GigaCode (it answers `/models`, runs workers, reviews), and the tracker
-and PR service are served from `test/fixtures` by `scripts/mock-mcp.js` (issues answer for the asked key; a PR exists
-only once the demo created it, remembered in `data-demo/mock-sourcecontrol.json`). Seeding happens once; delete
-`data-demo/` to start over (a data folder from before keeps its old layout).
+`npm run demo` (= `node server/index.js --demo`, http://127.0.0.1:4778; `--port <n>` / `--data-dir <path>`, или
+`port` / `dataDir` из файла HARNESS_CONFIG, меняют оба значения) запускает офлайн-демо: собственная папка данных
+`data-demo/` (в gitignore) с двумя заранее созданными git-репозиториями в её папке проектов `data-demo/projects/`
+(`demo-service` с `develop` + `release/1.54.0`, `ledger-service`; origin = локальный bare-репозиторий в
+`data-demo/remotes/PROJ/`, так что push работает) и несколькими задачами (срочное исправление для двух целевых веток, родительская задача с подзадачами
+в обоих репозиториях); агент `mock` изображает GigaCode (отвечает на `/models`, запускает исполнителей, проводит ревью), а трекер
+и PR-сервис отдаются из `test/fixtures` скриптом `scripts/mock-mcp.js` (задачи отвечают на запрошенный ключ; PR существует
+только после того, как его создало демо, он запоминается в `data-demo/mock-sourcecontrol.json`). Наполнение выполняется один раз; удалите
+`data-demo/`, чтобы начать заново (папка данных от прежней версии сохраняет старую структуру).
 
-Manual demo in a normal run: **add a workspace** (path to any git repo) → **New chat** → agent `Mock agent`, role
-"coordinator" → the message `#spawn create file hello.txt #done`. A worker chat appears and the coordinator receives
-the report.
+Ручное демо в обычном запуске: **добавьте рабочее пространство** (путь к любому git-репозиторию) → **New chat** → агент `Mock agent`, роль
+«coordinator» → сообщение `#spawn create file hello.txt #done`. Появится чат исполнителя, а координатор получит
+отчёт.
 
-## Configuration
+## Конфигурация
 
-`harness.config.json` holds the defaults (committed). Machine-specific settings go in
-`harness.config.local.json` (gitignored, deep-merged on top).
+`harness.config.json` содержит значения по умолчанию (коммитится). Настройки конкретной машины хранятся в
+`harness.config.local.json` (в gitignore, глубоко сливается поверх).
 
-| Key | Purpose |
+| Ключ | Назначение |
 |---|---|
-| `agents.<id>` | agents: `launcher`, `command` (string, argv array or `null` = auto), `approvalMode`, `model`, `settingsEnv`, `settings` |
-| `shell` | terminal shell; `null` = auto (PowerShell with a UTF-8 console on Windows, `$SHELL -l` elsewhere) |
-| `agentMcpServers` | MCP servers passed to every agent (alongside `harness`) |
-| `mcpServers` | MCP servers the harness calls itself (tracker, PRs) |
-| `mcpSecretsFile` | file with MCP secrets (outside the repo), or env `HARNESS_MCP_SECRETS` |
-| `integrations.tasks` / `integrations.pr` | mapping of the tracker and PR service onto the board and the Changes panel |
+| `agents.<id>` | агенты: `launcher`, `command` (строка, массив argv или `null` = автоопределение), `approvalMode`, `model`, `settingsEnv`, `settings` |
+| `shell` | оболочка терминала; `null` = авто (PowerShell с консолью UTF-8 в Windows, `$SHELL -l` в остальных системах) |
+| `agentMcpServers` | MCP-серверы, передаваемые каждому агенту (наряду с `harness`) |
+| `mcpServers` | MCP-серверы, которые вызывает сам харнес (трекер, PR) |
+| `mcpSecretsFile` | файл с секретами MCP (вне репозитория) или переменная окружения `HARNESS_MCP_SECRETS` |
+| `integrations.tasks` / `integrations.pr` | отображение трекера и PR-сервиса на доску и панель Changes |
 
-Connecting real GigaCode and MCP services: **[docs/INTEGRATION.md](docs/INTEGRATION.md)**.
-Ready-made prompt for the agent that will do it: **[docs/SETUP-PROMPT.md](docs/SETUP-PROMPT.md)**.
+Подключение настоящего GigaCode и MCP-сервисов: **[docs/INTEGRATION.md](docs/INTEGRATION.md)**.
+Готовый промпт для агента, который будет это делать: **[docs/SETUP-PROMPT.md](docs/SETUP-PROMPT.md)**.
 
-## How it is built
+## Как это устроено
 
 ```
 web/ (React UI) ──REST/WS──> server/ (Node, 127.0.0.1)
@@ -90,6 +92,6 @@ web/ (React UI) ──REST/WS──> server/ (Node, 127.0.0.1)
                                └─ mcp-client.js ──> tracker / PR service (integrations/)
 ```
 
-Details (data, API, protocols): [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Orchestration protocol for agents:
-[skills/harness-orchestration/SKILL.md](skills/harness-orchestration/SKILL.md). Rules for coding agents:
+Подробности (данные, API, протоколы): [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Протокол оркестрации для агентов:
+[skills/harness-orchestration/SKILL.md](skills/harness-orchestration/SKILL.md). Правила для кодовых агентов:
 [AGENTS.md](AGENTS.md).

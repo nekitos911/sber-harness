@@ -1,22 +1,22 @@
-# Architecture contract
+# Архитектурный контракт
 
-This file is the single source of truth for module boundaries, data shapes, HTTP/WS API and the
-agent-facing orchestration API. Backend (`server/`, `mcp/`) and frontend (`web/`) are built against it.
-If you change a shape here, change both sides.
+Этот файл — единственный источник истины о границах модулей, формах данных, HTTP/WS API и
+API оркестрации для агентов. Бэкенд (`server/`, `mcp/`) и фронтенд (`web/`) строятся по нему.
+Если вы меняете форму данных здесь, меняйте обе стороны.
 
-## Goals and hard constraints
+## Цели и жёсткие ограничения
 
-- Local only. Server binds `127.0.0.1`. No CDN, no telemetry, no outbound requests from the harness
-  itself. The only network traffic is what agent CLIs and configured MCP servers do on their own.
-- Node.js >= 22, plain ESM JavaScript on the server (no build step for server). Frontend: React + Vite + TS,
-  built into `web/dist` and served by the server.
-- Windows first (PowerShell default shell), works on Linux/macOS too.
-- Agent CLIs are spawned **without a shell**, prompt is a separate argv element.
-- Everything that depends on a concrete agent CLI lives in `server/launchers.js`.
-  Everything that depends on concrete external services (task tracker, PR service) lives in
-  `server/integrations/`. The rest of the code knows nothing about GigaCode, onework, etc.
+- Только локально. Сервер слушает `127.0.0.1`. Никакого CDN, телеметрии и исходящих запросов от самого
+  harness. Единственный сетевой трафик — то, что агентские CLI и настроенные MCP-серверы делают сами.
+- Node.js >= 22, чистый ESM JavaScript на сервере (сборки для сервера нет). Фронтенд: React + Vite + TS,
+  собирается в `web/dist` и раздаётся сервером.
+- Сначала Windows (оболочка по умолчанию — PowerShell), но работает и на Linux/macOS.
+- Агентские CLI запускаются **без оболочки**, промпт — отдельный элемент argv.
+- Всё, что зависит от конкретного агентского CLI, живёт в `server/launchers.js`.
+  Всё, что зависит от конкретных внешних сервисов (трекер задач, сервис пулл-реквестов (PR)), живёт в
+  `server/integrations/`. Остальной код ничего не знает о GigaCode, onework и т. д.
 
-## Layout
+## Структура
 
 ```
 harness.config.json            committed defaults
@@ -46,7 +46,7 @@ web/                           React UI (Vite root)
 data/                          runtime state (gitignored)
 ```
 
-## Config (`harness.config.json`, overridable by `harness.config.local.json`)
+## Конфигурация (`harness.config.json`, переопределяется через `harness.config.local.json`)
 
 ```jsonc
 {
@@ -104,7 +104,7 @@ data/                          runtime state (gitignored)
 }
 ```
 
-## Data model (all JSON, ids are strings)
+## Модель данных (всё в JSON, id — строки)
 
 ```ts
 type TaskStatus = 'backlog' | 'todo' | 'in_progress' | 'review' | 'done'
@@ -212,15 +212,15 @@ interface Notification {
 }
 ```
 
-Persistence (`<dataDir>`): `db.json` = `{ seq: {task}, tasks, workspaces, sessions, notifications }`,
-`transcripts/<sessionId>.json` = `Message[]`, `terms/<sessionId>.log` = raw terminal output (ring, last 2 MB),
-`runs/<sessionId>/settings.json` (+ `mcp.json` for claude), `runs/<sessionId>/stderr.log`, `token`.
-Writes are debounced and atomic (write tmp + rename). On startup, sessions with status `running` become `idle`
-(chat) or `exited` (terminal) and get a system message "harness restarted". System messages starting with `⚠` are
-warnings (e.g. stderr of a successful run); a system message "Model: … · MCP: onework ✓, java-lsp ✗" is added once
-per session from the CLI's init event.
+Хранение (`<dataDir>`): `db.json` = `{ seq: {task}, tasks, workspaces, sessions, notifications }`,
+`transcripts/<sessionId>.json` = `Message[]`, `terms/<sessionId>.log` = сырой вывод терминала (кольцевой буфер, последние 2 МБ),
+`runs/<sessionId>/settings.json` (+ `mcp.json` для claude), `runs/<sessionId>/stderr.log`, `token`.
+Запись отложенная и атомарная (запись во временный файл + переименование). При старте сессии со статусом `running` становятся `idle`
+(чат) или `exited` (терминал) и получают системное сообщение «harness restarted». Системные сообщения, начинающиеся с `⚠`, —
+предупреждения (например, stderr успешного запуска); системное сообщение «Model: … · MCP: onework ✓, java-lsp ✗» добавляется один раз
+на сессию из init-события CLI.
 
-## Agent launchers (`server/launchers.js`)
+## Агентские лаунчеры (`server/launchers.js`)
 
 ```js
 /** @typedef {{ prompt: string, session: Session, agentCfg: object, settingsPath: string, mcpConfigPath: string, harnessMcp: {command: string, args: string[], env: Record<string,string>} }} TurnCtx */
@@ -249,101 +249,101 @@ type NormalizedEvent =
 // runner.js adds { type: 'raw', text } for each non-JSON stdout line.
 ```
 
-Launchers: `gigacode`, `qwen`, `gemini` (same argv family: `[--resume <id>] -p <prompt> --approval-mode <mode>
---output-format stream-json [--model <m>]`, per-session settings via env var), `claude` (`-p <prompt> --output-format
+Лаунчеры: `gigacode`, `qwen`, `gemini` (одно семейство argv: `[--resume <id>] -p <prompt> --approval-mode <mode>
+--output-format stream-json [--model <m>]`, настройки сессии передаются через переменную окружения), `claude` (`-p <prompt> --output-format
 stream-json --verbose --permission-mode <mode> [--model] [--resume <id>] --mcp-config <file> --allowedTools mcp__harness
---disallowedTools Task Agent`), `mock` (`node scripts/mock-agent.js` with the gigacode argv). One shared tolerant
-normalizer handles the Claude/Qwen style (`system/assistant/user/result`, `stream_event` — live text/thinking deltas; headless
-GigaCode runs with `partialMessagesFlag` (opt-in: `agents.gigacode.partialMessagesFlag: "--include-partial-messages"`; off by
-default — with it on the target, tool calls came without their arguments), and a CLI that rejects it before any output is
-remembered in `agentMeta.<id>.partialUnsupported` and the same turn runs again without it; GigaCode and claude) and the
-Gemini style (`init/message/tool_use/tool_result/error/result`; gemini). Any object with `session_id`/`sessionId`
-yields a `session` event. Tokens come from the `result` event only (per-step assistant usage does not add up to it).
+--disallowedTools Task Agent`), `mock` (`node scripts/mock-agent.js` с argv как у gigacode). Один общий терпимый
+нормализатор обрабатывает стиль Claude/Qwen (`system/assistant/user/result`, `stream_event` — живые дельты текста и рассуждений;
+безголовый GigaCode запускается с `partialMessagesFlag` (необязательный: `agents.gigacode.partialMessagesFlag: "--include-partial-messages"`;
+по умолчанию выключен — когда он был включён на целевой машине, вызовы инструментов приходили без аргументов), а CLI, который
+отвергает его до любого вывода, запоминается в `agentMeta.<id>.partialUnsupported`, и тот же ход запускается заново без него; GigaCode и claude)
+и стиль Gemini (`init/message/tool_use/tool_result/error/result`; gemini). Любой объект с `session_id`/`sessionId`
+порождает событие `session`. Токены берутся только из события `result` (usage по шагам ассистента в сумме с ним не сходится).
 
-Executable resolution (runner.js), never through a shell: argv array is used as-is; a string is looked up
-in PATH (+PATHEXT on Windows); `.exe` runs directly; npm `.cmd` shims are parsed to `node <entry.js>`;
-anything else fails with a clear message telling the user to set `command` as an argv array.
+Разрешение исполняемого файла (runner.js) — никогда через оболочку: массив argv используется как есть; строка ищется
+в PATH (+PATHEXT в Windows); `.exe` запускается напрямую; npm-шимы `.cmd` разбираются в `node <entry.js>`;
+всё остальное завершается понятным сообщением с просьбой задать `command` массивом argv.
 
-## Turn lifecycle (sessions.js + runner.js)
+## Жизненный цикл хода (sessions.js + runner.js)
 
-1. `deliver(sessionId, {from, text})` pushes to the session queue. If the session is not `running`, start a turn.
-2. Turn: append `user` message, status `running` + `phase: 'starting'`, `launcher.prepare()`, spawn, read stdout line by
-   line (partial lines buffered, 8 MB cap), `phase: 'streaming'` on the first output, apply events to the transcript.
-   First prompt of a CLI session = preamble + text; if the text starts with `/` (slash command, e.g. `/full-task <url>`)
-   it is text + "\n\n" + preamble instead, because a slash command only works as the first word.
-3. No stdout line within `firstEventTimeoutMs` → kill process tree, `error` message «Нет вывода за N с — ход остановлен.»
-   with stderr tail, status `error`. `session.errorKind` (with status `error`): `'not_started'` while no turn of the
-   session ever produced an event (`session.everStarted`; the UI says «Агент не запустился. Проверьте команду…» only
-   then), else `'turn'`; null otherwise. Exit codes are read signed: 4294967295 / -1 → «Процесс агента завершён
+1. `deliver(sessionId, {from, text})` кладёт сообщение в очередь сессии. Если сессия не `running`, начинается ход.
+2. Ход: добавляется сообщение `user`, статус `running` + `phase: 'starting'`, `launcher.prepare()`, запуск процесса, чтение stdout
+   построчно (неполные строки буферизуются, лимит 8 МБ), `phase: 'streaming'` при первом выводе, события применяются к транскрипту.
+   Первый промпт сессии CLI = преамбула + текст; если текст начинается с `/` (слэш-команда, например `/full-task <url>`),
+   то вместо этого текст + "\n\n" + преамбула, потому что слэш-команда работает только как первое слово.
+3. Нет ни одной строки stdout за `firstEventTimeoutMs` → убивается дерево процессов, сообщение `error` «Нет вывода за N с — ход остановлен.»
+   с хвостом stderr, статус `error`. `session.errorKind` (при статусе `error`): `'not_started'`, пока ни один ход
+   сессии не выдал событие (`session.everStarted`; только тогда UI пишет «Агент не запустился. Проверьте команду…»),
+   иначе `'turn'`; в остальных случаях null. Коды выхода читаются со знаком: 4294967295 / -1 → «Процесс агента завершён
    принудительно (код -1)».
-4. Exit (`phase` back to null): exit != 0 without a `result` → `error` message leading with stderr (a fatal CLI error leaves
-   stdout empty); exit 0 without a single event → `error` "exited without any output" + stderr, status `error` (e.g. the
-   GigaCode identity check); stderr text after a successful run → `system` message prefixed `⚠` (warning).
-   Status back to `idle` unless the worker already set `done`/`failed` (or the user stopped it: `stopped`).
-5. Post-turn: if worker with `autoReport` and no `worker_done` during this turn and queue empty →
-   escalation delivered to the parent agent (with the agent-oriented hint: send_message / worker_inspect / worker_retry),
-   or, without a parent, to the user — never for the user's own follow-up (a turn after the first whose messages all
-   came from the user). At most one open (unread) escalation notification per session: a repeat updates its `text`,
-   `at` and `count`; plain text «Агент <KEY> закончил ход без отчёта — откройте чат, чтобы продолжить или принять
-   результат» (or «…остановился с ошибкой…»), `actions: ['open', 'rework', 'accept']` (`['open']` without a task).
-   Then if queue non-empty → next turn.
-6. `stop` kills the process tree (`taskkill /T /F` on Windows) and clears the queue.
-7. Delivered text from another session is prefixed: `[harness] Message from <title> (<id>):\n<text>`.
+4. Выход (`phase` снова null): код != 0 без `result` → сообщение `error`, начинающееся со stderr (фатальная ошибка CLI оставляет
+   stdout пустым); код 0 без единого события → `error` "exited without any output" + stderr, статус `error` (например, проверка
+   идентичности GigaCode); текст stderr после успешного запуска → сообщение `system` с префиксом `⚠` (предупреждение).
+   Статус возвращается в `idle`, если исполнитель (worker) уже не выставил `done`/`failed` (или пользователь не остановил его: `stopped`).
+5. После хода: если это исполнитель с `autoReport`, за этот ход не было `worker_done` и очередь пуста →
+   эскалация доставляется родительскому агенту (с подсказкой для агента: send_message / worker_inspect / worker_retry),
+   а без родителя — пользователю; никогда — для собственного уточнения пользователя (ход после первого, все сообщения которого
+   пришли от пользователя). На сессию не больше одного открытого (непрочитанного) уведомления об эскалации: повтор обновляет его `text`,
+   `at` и `count`; обычный текст «Агент <KEY> закончил ход без отчёта — откройте чат, чтобы продолжить или принять
+   результат» (или «…остановился с ошибкой…»), `actions: ['open', 'rework', 'accept']` (`['open']` без задачи).
+   Затем, если очередь не пуста → следующий ход.
+6. `stop` убивает дерево процессов (`taskkill /T /F` в Windows) и очищает очередь.
+7. Текст, доставленный из другой сессии, получает префикс: `[harness] Message from <title> (<id>):\n<text>`.
 
-Terminal sessions: PTY (`@lydell/node-pty`) running `config.shell`; if `command` set, it is written into the
-shell after spawn. Env always includes `HARNESS_URL`, `HARNESS_TOKEN`, `HARNESS_SESSION_ID`.
-Output goes to the ring buffer + log file + WS. Deliveries to a terminal session are written as text + `\r`.
+Терминальные сессии: PTY (`@lydell/node-pty`) запускает `config.shell`; если задан `command`, он записывается в
+оболочку после запуска. В окружении всегда есть `HARNESS_URL`, `HARNESS_TOKEN`, `HARNESS_SESSION_ID`.
+Вывод идёт в кольцевой буфер + файл журнала + WS. Доставки в терминальную сессию записываются как текст + `\r`.
 
-## Orchestration (agent-facing API) — `server/orchestration.js`
+## Оркестрация (API для агентов) — `server/orchestration.js`
 
-HTTP: `POST /api/agent/<tool>` with headers `x-harness-token`, `x-harness-session: <caller session id>`
-(may be absent → caller is "external", treated like the user), JSON body = tool args → JSON result or
-`{ error }` with 4xx. `GET /api/agent/tools` returns `[{ name, description, inputSchema }]` (MCP shape).
+HTTP: `POST /api/agent/<tool>` с заголовками `x-harness-token`, `x-harness-session: <id сессии вызывающего>`
+(может отсутствовать → вызывающий «внешний» и обрабатывается как пользователь), тело JSON = аргументы инструмента → результат JSON или
+`{ error }` с 4xx. `GET /api/agent/tools` возвращает `[{ name, description, inputSchema }]` (формат MCP).
 
-| tool | args | effect |
+| инструмент | аргументы | действие |
 |---|---|---|
-| `whoami` | – | caller session: id, role, parentId, taskId, cwd, branch |
-| `task_list` | `status?`, `ready?: boolean` | tasks (ready = todo/backlog with all deps done) |
-| `task_get` | `id` | task |
-| `workspace_list` | – | registered repos `[{ id, name, path, isGit }]` (for multi-repo planning) |
-| `task_create` | `title`, `description?`, `deps?`, `status?`, `priority?`, `labels?`, `parent_id?`, `workspace?` (id or name), `targets?` | new task (subtask inherits parent's targets/workspace when omitted) |
-| `task_port` | `task_id`, `target`, `agent?` | cherry-pick the task branch into another target branch (see "Multiple target branches") |
-| `task_update` | `id`, `title?`, `description?`, `status?`, `priority?`, `comment?` | updated task (`comment` appends to log) |
-| `worker_start` | `task_id?` or `spec` (+`title?`, `task?: true`), `agent?`, `workspace?`, `worktree?: 'current' \| 'new'`, `branch?`, `model?` | creates worker chat session (child of caller), task → `in_progress`, starts first turn with worker preamble + spec. 409 if the task already has an active worker or deps not done. A `spec` without `task_id` makes NO board task (unless `task: true`, or there is no caller session): a persistent child (`taskId: null`) that reports to its caller; title = `title` or the spec's first line; worker_retry works for it too. Placement omitted by an agent → automatic: `current` when the caller works in the task's repository (`caller.workspaceId` = the task's workspace), else `new-top-level` in the task's workspace (a non-git workspace: its folder); no workspace → `current`. `current` runs the worker where the caller works (`caller.worktreePath || caller.cwd`), never the repository's main checkout; an EXPLICIT `current` with a task (or `workspace`) in another repository → 400 suggesting `new-top-level`. The result carries `placement` (`"new-top-level (auto)"` when chosen automatically) |
-| `worker_list` | – | caller's child sessions with status/task/preview |
-| `send_message` | `to: <sessionId> \| 'parent' \| 'user'`, `body` | delivers (wakes target) |
-| `ask` | `question`, `options?: string[]` | like send_message to parent (or user notification `question`); options go on the delivered message / notification; answer arrives as the next message |
-| `worker_done` | `summary`, `status: 'done' \| 'failed'` | task → `review` (done) / `todo` (failed) + log; session status done/failed; parent gets a delivery with summary + now-ready tasks; user gets a notification |
+| `whoami` | – | сессия вызывающего: id, role, parentId, taskId, cwd, branch |
+| `task_list` | `status?`, `ready?: boolean` | задачи (ready = todo/backlog, у которых все зависимости выполнены) |
+| `task_get` | `id` | задача |
+| `workspace_list` | – | зарегистрированные репозитории `[{ id, name, path, isGit }]` (для планирования по нескольким репозиториям) |
+| `task_create` | `title`, `description?`, `deps?`, `status?`, `priority?`, `labels?`, `parent_id?`, `workspace?` (id или имя), `targets?` | новая задача (подзадача наследует targets/workspace родителя, если они не указаны) |
+| `task_port` | `task_id`, `target`, `agent?` | cherry-pick ветки задачи в другую целевую ветку (см. «Несколько целевых веток») |
+| `task_update` | `id`, `title?`, `description?`, `status?`, `priority?`, `comment?` | обновлённая задача (`comment` дописывается в журнал) |
+| `worker_start` | `task_id?` или `spec` (+`title?`, `task?: true`), `agent?`, `workspace?`, `worktree?: 'current' \| 'new'`, `branch?`, `model?` | создаёт чат-сессию исполнителя (дочернюю к вызывающему), задача → `in_progress`, запускает первый ход с преамбулой исполнителя + spec. 409, если у задачи уже есть активный исполнитель или зависимости не выполнены. `spec` без `task_id` НЕ создаёт задачу на доске (если не указано `task: true` или нет вызывающей сессии): постоянный дочерний исполнитель (`taskId: null`), который отчитывается перед вызывающим; название = `title` или первая строка spec; worker_retry работает и для него. Если агент не указал размещение — выбирается автоматически: `current`, когда вызывающий работает в репозитории задачи (`caller.workspaceId` = workspace задачи), иначе `new-top-level` в workspace задачи (для не-git workspace — его папка); нет workspace → `current`. `current` запускает исполнителя там, где работает вызывающий (`caller.worktreePath || caller.cwd`), но никогда в основной рабочей копии репозитория; ЯВНЫЙ `current` с задачей (или `workspace`) в другом репозитории → 400 с советом использовать `new-top-level`. Результат содержит `placement` (`"new-top-level (auto)"`, если выбрано автоматически) |
+| `worker_list` | – | дочерние сессии вызывающего со статусом/задачей/preview |
+| `send_message` | `to: <sessionId> \| 'parent' \| 'user'`, `body` | доставляет (будит адресата) |
+| `ask` | `question`, `options?: string[]` | как send_message родителю (или уведомление `question` пользователю); options попадают в доставленное сообщение / уведомление; ответ приходит следующим сообщением |
+| `worker_done` | `summary`, `status: 'done' \| 'failed'` | задача → `review` (done) / `todo` (failed) + запись в журнал; статус сессии done/failed; родитель получает доставку с summary и теперь готовыми задачами; пользователь получает уведомление |
 
-`mcp/harness-mcp.js`: stdio MCP server (JSON-RPC 2.0, newline-delimited) implementing `initialize`,
-`tools/list` (proxied from `GET /api/agent/tools`), `tools/call` (proxied to `POST /api/agent/<name>`).
-Reads `HARNESS_URL`, `HARNESS_TOKEN`, `HARNESS_SESSION_ID` from env; falls back to `<repo>/data/server.json`
-(`{url}`) and `<repo>/data/token`. CLI mode: `node mcp/harness-mcp.js call <tool> '<json>'` prints the result.
+`mcp/harness-mcp.js`: stdio MCP-сервер (JSON-RPC 2.0, строки через перевод строки), реализует `initialize`,
+`tools/list` (проксируется из `GET /api/agent/tools`), `tools/call` (проксируется в `POST /api/agent/<name>`).
+Читает `HARNESS_URL`, `HARNESS_TOKEN`, `HARNESS_SESSION_ID` из окружения; запасной вариант — `<repo>/data/server.json`
+(`{url}`) и `<repo>/data/token`. Режим CLI: `node mcp/harness-mcp.js call <tool> '<json>'` печатает результат.
 
-Every chat session gets the harness MCP server injected (settings.json `mcpServers.harness` or `--mcp-config`).
+В каждую чат-сессию внедряется MCP-сервер harness (`mcpServers.harness` в settings.json или `--mcp-config`).
 
-**Workers vs built-in helpers.** Parallel task work the user should see goes through `worker_start` (from a
-coordinator) or `POST /api/tasks/:id/assign|start` (from the UI, same code path): every worker is a harness session
-with its own chat. GigaCode's built-in `agent` tool cannot be disabled and `/full-task` relies on it for review, so it is
-allowed for internal helpers (review, exploration); their activity is shown read-only (tool.progress of the parent
-call, and the registry below). claude runs with `--disallowedTools Task Agent`. There are no pre-created agents.
+**Исполнители и встроенные помощники.** Параллельная работа над задачами, которую должен видеть пользователь, идёт через `worker_start` (от
+координатора) или `POST /api/tasks/:id/assign|start` (из UI, тот же путь в коде): каждый исполнитель — это сессия harness
+со своим чатом. Встроенный инструмент `agent` GigaCode нельзя отключить, а `/full-task` опирается на него для ревью, поэтому он
+разрешён для внутренних помощников (ревью, разведка); их активность показывается только для чтения (tool.progress родительского
+вызова и реестр ниже). claude запускается с `--disallowedTools Task Agent`. Заранее созданных агентов нет.
 
-Preambles (built in `orchestration.js`, prepended to the first prompt of a session):
-- coordinator (`role: 'coordinator'`): you coordinate; split work into tasks (`task_create` with deps), start workers
-  with `worker_start`, after starting workers END YOUR TURN — the harness wakes you with each worker report; answer
-  worker questions with `send_message`; multi-repo and multi-target rules; built-in agent tool only for helpers.
-- worker: Task key/title, Session id, Parent, cwd/branch, base = targets[0]; do only this task inside cwd; stay on the
-  branch; `ask` then end turn for questions; finish with `worker_done(summary, status)`. Unless
-  `orchestration.workerMayCommit`: do NOT commit/push/merge/create PRs/write to the tracker unless the task says so
-  (the user commits from the UI). Commit message format `<KEY> <summary>` (no colon, no feat:/fix:, no Co-authored-by,
-  no AI mentions). Port-conflict workers may `git cherry-pick --continue`.
-- both: `Registry dir: <registryDir>` — record built-in helper sub-agents there (see the registry section).
+Преамбулы (строятся в `orchestration.js`, добавляются перед первым промптом сессии):
+- координатор (`role: 'coordinator'`): вы координируете; разбейте работу на задачи (`task_create` с deps), запускайте исполнителей
+  через `worker_start`, после их запуска ЗАВЕРШИТЕ СВОЙ ХОД — harness разбудит вас с каждым отчётом исполнителя; на вопросы
+  исполнителей отвечайте через `send_message`; правила для нескольких репозиториев и нескольких целевых веток; встроенный инструмент agent — только для помощников.
+- исполнитель (worker): ключ/название задачи, id сессии, родитель, cwd/ветка, base = targets[0]; делайте только эту задачу внутри cwd; оставайтесь на
+  ветке; для вопросов `ask`, затем завершите ход; завершайте через `worker_done(summary, status)`. Если не включено
+  `orchestration.workerMayCommit`: НЕ делайте commit/push/merge, не создавайте PR (пулл-реквесты) и не пишите в трекер, пока задача этого не требует
+  (пользователь коммитит из UI). Формат сообщения коммита `<KEY> <summary>` (без двоеточия, без feat:/fix:, без Co-authored-by,
+  без упоминаний ИИ). Исполнители конфликтов переноса могут выполнять `git cherry-pick --continue`.
+- обе: `Registry dir: <registryDir>` — туда записываются встроенные субагенты-помощники (см. раздел о реестре).
 
-## UI HTTP API (all under `/api`, header `x-harness-token` required)
+## HTTP API для UI (всё под `/api`, обязателен заголовок `x-harness-token`)
 
-Every text the server generates for people is Russian: system/error messages in transcripts, notifications, task log
-entries and the `error` strings of 4xx/5xx answers (code identifiers, flags, paths and git/CLI output stay as they are;
-console logs and the agent-facing preambles/tool descriptions stay English).
+Весь текст, который сервер генерирует для людей, — на русском: системные сообщения и сообщения об ошибках в транскриптах, уведомления, записи журнала
+задач и строки `error` в ответах 4xx/5xx (идентификаторы кода, флаги, пути и вывод git/CLI остаются как есть;
+консольные логи и преамбулы/описания инструментов для агентов остаются на английском).
 
 ```
 GET    /api/state                         -> { tasks, workspaces, sessions, notifications, agents: [{id,label,launcher,approvalModes,approvalMode,enabled,models,model}],
@@ -471,15 +471,21 @@ GET    /api/mcp/servers         -> [{ name, enabled, transport, ok, error?, prob
 
 GET    /api/settings            -> { agents: { <id>: { approvalMode, approvalModes, approvalModeLabels, model, models,
                                      modelGrades: { default?, fast?, review?, explore? }, allowedGrades, taskPromptTemplate,
-                                     taskPromptPresets, firstEventTimeoutMs, inheritUserMcp, enabled } },
-                                     defaultAgent, git: {...}, tasks: { refreshSec },
+                                     taskPromptPresets, freePromptTemplate, firstEventTimeoutMs, inheritUserMcp, enabled } },
+                                     defaultAgent, git: {...}, tasks: { refreshSec }, user: { setupDone: boolean },
                                      integrations: { tasks: { enabled, space, urlTemplate, statusMap, closedStatuses },
                                                      pr: { enabled, limits } } }
                                  Model entries everywhere (config, /api/state agents[].models, /api/settings) are objects
                                  `{ id, label?, context?, description? }` (a plain string in config is normalized to {id}).
+                                 `user.setupDone` — первичная настройка пройдена или пропущена (GET/PUT); `agents.<id>.freePromptTemplate`
+                                 редактируется (null или строка с `{text}`): промпт для предложения вместо задачи на «Главной».
 GET    /api/agents/:id/info     -> { id, resolved: { ok, command?, node?, entry?, identity: boolean, error? },
                                      seen: { models: string[], slashCommands: string[], mcpServers: [{name, status}],
-                                             agents: string[], version: string|null, at: number } | null }
+                                             agents: string[], version: string|null, at: number } | null,
+                                     userCommands: string[] }
+                                 (`userCommands` — имена собственных слэш-команд пользователя (`<commandsDir>/<name>.md|.toml`) и навыков
+                                  (`<skillsDir>/<name>/SKILL.md`); собственные команды/навыки harness (`full-task-harness`,
+                                  `harness-orchestration`) не входят; их предлагает первичная настройка)
                                  (`seen` is captured from the last `system/init` event of any session of that agent and
                                   persisted in db.agentMeta; `resolved` = launcher resolution like --print-config, no spawn)
 PUT    /api/settings            same shape (partial) -> saved into harness.config.local.json (never secrets; approvalMode validated)
@@ -488,11 +494,11 @@ POST   /api/notifications/:id/read
 POST   /api/notifications/read-all
 ```
 
-Errors: `{ error: string }` with 4xx/5xx. 404 for unknown ids, 409 for locks/conflicts, 501 for disabled integrations.
+Ошибки: `{ error: string }` с 4xx/5xx. 404 для неизвестных id, 409 для блокировок/конфликтов, 501 для отключённых интеграций.
 
 ## WebSocket `/ws?token=...`
 
-Server → client (JSON per frame):
+Сервер → клиент (JSON в каждом кадре):
 ```
 { t: 'task', task }            { t: 'task.del', id }
 { t: 'session', session }      { t: 'session.del', id }
@@ -503,12 +509,12 @@ Server → client (JSON per frame):
 { t: 'term.replay', id, data } (full buffer, sent on attach)
 { t: 'subagents', sessionId, items }   (registry rows, while the session runs, on change)
 ```
-Client → server: `{ t: 'term.attach', id }`, `{ t: 'term.detach', id }`, `{ t: 'term.in', id, data }`,
+Клиент → сервер: `{ t: 'term.attach', id }`, `{ t: 'term.detach', id }`, `{ t: 'term.in', id, data }`,
 `{ t: 'term.resize', id, cols, rows }`.
 
-## Branches, commits, PRs: naming and prefill
+## Ветки, коммиты, PR: именование и предзаполнение
 
-Config (`git` section):
+Конфигурация (раздел `git`):
 ```jsonc
 "git": {
   "defaultBase": "develop",
@@ -522,254 +528,254 @@ Config (`git` section):
   // per agent override: agents.<id>.taskPromptTemplate (gigacode: "/full-task {taskUrl}{notes}"); see "Prompt templates"
 }
 ```
-- Task key `{key}` = `externalId` of the ROOT task (follow parentId up) when it came from the tracker (e.g.
-  `JIRA-1234`, the space prefix comes from the tracker), else the root's local id (`T-12`). Subtasks share the
-  root's key, so the same branch name `feature/JIRA-1234` is used in every microservice repo.
-  Branch names are sanitized (`[^A-Za-z0-9._/-]` → `-`); if the branch already exists in that repo (and isn't
-  this task's own branch), suffix `-2`, `-3`…. Worktree directories stay short (MAX_PATH):
-  `<repoParent>/<repoName>-worktrees/<KEY>` for task worktrees, `…/<branch tail>` otherwise (suffix -2… if taken).
-  `{targetSlug}`: `release/x.y.z` → `rel<x><y>` (release/1.54.0 → rel154), anything else → the sanitized target.
-- New worktree for a task: `git worktree add -b <branch> <dir> <start>` where `<start>` = `targets[0]` if it
-  exists locally, else `origin/<targets[0]>`, else HEAD. `task.branch` is stored.
-- Worker's first prompt = worker preamble + task prompt rendered from `agents.<id>.taskPromptTemplate` ??
+- Ключ задачи `{key}` = `externalId` КОРНЕВОЙ задачи (поднимаясь по parentId), если она пришла из трекера (например,
+  `JIRA-1234`, префикс пространства берётся из трекера), иначе локальный id корня (`T-12`). Подзадачи используют
+  ключ корня, поэтому одно и то же имя ветки `feature/JIRA-1234` применяется в каждом репозитории микросервисов.
+  Имена веток очищаются (`[^A-Za-z0-9._/-]` → `-`); если ветка в этом репозитории уже существует (и это не
+  собственная ветка этой задачи), добавляется суффикс `-2`, `-3`…. Каталоги рабочего дерева (worktree) остаются короткими (MAX_PATH):
+  `<repoParent>/<repoName>-worktrees/<KEY>` для рабочих деревьев задач, `…/<хвост ветки>` в остальных случаях (суффикс -2…, если занято).
+  `{targetSlug}`: `release/x.y.z` → `rel<x><y>` (release/1.54.0 → rel154), всё остальное → очищенная целевая ветка.
+- Новое рабочее дерево для задачи: `git worktree add -b <branch> <dir> <start>`, где `<start>` = `targets[0]`, если
+  она есть локально, иначе `origin/<targets[0]>`, иначе HEAD. `task.branch` сохраняется.
+- Первый промпт исполнителя = преамбула исполнителя + промпт задачи, построенный из `agents.<id>.taskPromptTemplate` ??
   `tasks.promptTemplate`.
 
-### Multiple target branches (hotfix into release + develop)
+### Несколько целевых веток (хотфикс в release + develop)
 
-Work happens once, on `task.branch` started from `targets[0]`. Each other target gets a port:
-`POST /api/tasks/:id/port {target, agent?}` (UI button per target) or agent tool `task_port`:
-1. new worktree from `<target>` with branch `portBranchTemplate`;
-2. requires commits on `task.branch` ahead of `targets[0]` (else 409 "commit the work first"); picks only the commits the
-   target lacks: `git log --cherry-pick --right-only --no-merges --reverse --format=%H <target>...<task.branch>`
-   (none → 409 "already contains every change"), then `git cherry-pick -x` of those;
-3. clean → port `status: 'clean'`, log entry; conflict → leave the cherry-pick in progress, port `status: 'conflict'`,
-   start a worker session in that worktree (parent = caller/coordinator) with a preamble: resolve conflicts,
-   `git cherry-pick --continue`, run checks, `worker_done`. Its `worker_done` sets the port to done/failed.
-Result: `{ target, branch, cwd, status, sessionId }`. One PR per target (PR dialog base = that target; cwd = port worktree).
+Работа выполняется один раз, в `task.branch`, начатой от `targets[0]`. Для каждой остальной целевой ветки делается перенос:
+`POST /api/tasks/:id/port {target, agent?}` (кнопка в UI для каждой целевой ветки) или агентский инструмент `task_port`:
+1. новое рабочее дерево от `<target>` с веткой `portBranchTemplate`;
+2. нужны коммиты в `task.branch` впереди `targets[0]` (иначе 409 «сначала закоммитьте работу»); переносятся только коммиты, которых нет в
+   целевой ветке: `git log --cherry-pick --right-only --no-merges --reverse --format=%H <target>...<task.branch>`
+   (нет таких → 409 «уже содержит все изменения»), затем `git cherry-pick -x` этих коммитов;
+3. чисто → перенос получает `status: 'clean'`, запись в журнале; конфликт → cherry-pick остаётся незавершённым, перенос получает `status: 'conflict'`,
+   в этом рабочем дереве запускается сессия исполнителя (родитель = вызывающий/координатор) с преамбулой: разрешить конфликты,
+   `git cherry-pick --continue`, выполнить проверки, `worker_done`. Его `worker_done` переводит перенос в done/failed.
+Результат: `{ target, branch, cwd, status, sessionId }`. Один пулл-реквест (PR) на целевую ветку (base в диалоге PR = эта ветка; cwd = рабочее дерево переноса).
 
-### Multiple repositories (microservices)
+### Несколько репозиториев (микросервисы)
 
-One task = one repo (`workspaceId`). A spec touching several repos becomes a parent task with one subtask per repo
-(`parentId`, own `workspaceId`, inherits `targets` and key). Coordinators see repos via the `workspace_list` tool and
-create subtasks with `task_create({ parent_id, workspace, ... })`; `worker_start` runs the worker in that
-subtask's repo (`worktree: 'new'` → branch `feature/<key>` in that repo). A parent task's status is managed by the
-coordinator/user; the board shows subtask progress (done/total).
-- Which task a cwd belongs to: the task of the session(s) whose cwd equals it, else a task whose key appears in the
-  current branch name, else none (`taskId: null`, `key: null`; templates then fall back to the branch name / first
-  changed file).
-- `commit.title` = `commitTitleTemplate`; `commit.body` = last `worker_done` summary for that task (if any) +
-  bullet list of changed files. `pr.title` = `prTitleTemplate`; `pr.body` = task description excerpt + external URL +
-  `Target: <base>` + last worker summary + `git log <base>..HEAD --oneline` as bullets; `base` = the port target when cwd
-  is a port worktree, else `targets[0]`. PR title/body suggestions are cut to `integrations.pr.limits` (UTF-8 bytes, on a
-  code point boundary, with "…"); the create call itself never truncates (400 with byte counts instead).
-- Worker preamble tells agents the commit format `<KEY> <summary>` and that the worker stays on its branch.
+Одна задача = один репозиторий (`workspaceId`). Спецификация, затрагивающая несколько репозиториев, становится родительской задачей с одной подзадачей на репозиторий
+(`parentId`, собственный `workspaceId`, наследует `targets` и ключ). Координаторы видят репозитории через инструмент `workspace_list` и
+создают подзадачи через `task_create({ parent_id, workspace, ... })`; `worker_start` запускает исполнителя в репозитории
+подзадачи (`worktree: 'new'` → ветка `feature/<key>` в этом репозитории). Статусом родительской задачи управляют
+координатор/пользователь; доска показывает прогресс подзадач (выполнено/всего).
+- К какой задаче относится cwd: задача сессии (сессий), у которых cwd совпадает с ним, иначе задача, ключ которой встречается в
+  имени текущей ветки, иначе никакая (`taskId: null`, `key: null`; тогда шаблоны используют имя ветки / первый
+  изменённый файл).
+- `commit.title` = `commitTitleTemplate`; `commit.body` = последний summary `worker_done` для этой задачи (если есть) +
+  маркированный список изменённых файлов. `pr.title` = `prTitleTemplate`; `pr.body` = фрагмент описания задачи + внешний URL +
+  `Target: <base>` + последний summary исполнителя + `git log <base>..HEAD --oneline` маркированным списком; `base` = целевая ветка переноса, когда cwd —
+  рабочее дерево переноса, иначе `targets[0]`. Предложения заголовка/тела PR обрезаются до `integrations.pr.limits` (UTF-8 байты, по
+  границе кодовой точки, с «…»); сам вызов создания никогда не обрезает (вместо этого 400 с числом байтов).
+- Преамбула исполнителя сообщает агентам формат коммита `<KEY> <summary>` и что исполнитель остаётся на своей ветке.
 
-## GigaCode launcher: known facts from the target machine (do not "simplify")
+## Лаунчер GigaCode: известные факты с целевой машины (не «упрощать»)
 
-Authoritative details: `docs/GIGACODE-FACTS.md`; fixtures: `test/fixtures/gigacode.*`.
-- Install: `ROOT\bin\gigacode.cmd` (shim, default `agents.gigacode.command`), `ROOT\runtime\node\node.exe` (bundled Node —
-  the system Node must not run cli-entry), `ROOT\lib\cli-entry.js`. The shim sets `ROOT=%~dp0..`.
-- Resolution (before anything else is created, e.g. a worktree): explicit `agents.gigacode.node` + `cliEntry` (both or
-  neither, both must exist) → parsed from the shim (`set "ROOT=…"` + the quoted call line, `%~dp0`/`%ROOT%` expanded) →
-  `<shimDir>/../runtime/node/node.exe` + `<shimDir>/../lib/cli-entry.js` → the same under `<shimDir>` → clear error.
-  The `.cmd` itself is never spawned (no honest exit codes). Never fall back to another launcher or to the system node.
+Авторитетные подробности: `docs/GIGACODE-FACTS.md`; фикстуры: `test/fixtures/gigacode.*`.
+- Установка: `ROOT\bin\gigacode.cmd` (шим, `agents.gigacode.command` по умолчанию), `ROOT\runtime\node\node.exe` (встроенный Node —
+  системный Node не должен запускать cli-entry), `ROOT\lib\cli-entry.js`. Шим задаёт `ROOT=%~dp0..`.
+- Разрешение (до создания чего-либо ещё, например рабочего дерева): явные `agents.gigacode.node` + `cliEntry` (оба или
+  ни одного, оба должны существовать) → разбор из шима (`set "ROOT=…"` + строка вызова в кавычках, `%~dp0`/`%ROOT%` раскрываются) →
+  `<shimDir>/../runtime/node/node.exe` + `<shimDir>/../lib/cli-entry.js` → то же под `<shimDir>` → понятная ошибка.
+  Сам `.cmd` никогда не запускается (нет честных кодов выхода). Никогда не переключаться на другой лаунчер или на системный node.
 - argv: `[--max-old-space-size=6144, cli-entry.js, (--resume <id>)?, -p, <prompt>, --approval-mode, <mode>, --output-format, stream-json, (--model <m>)?]`.
-- Env (set only by the runner): `GIGACODE_SYSTEM_SETTINGS_PATH`, `GIGACODE_PACKAGE_IDENTITY` (64 hex from the shim's
-  `set "GIGACODE_PACKAGE_IDENTITY=…"`; missing → fail immediately), `GIGACODE_PACKAGE_LAUNCHER` (shim path),
-  `MCP_SECRET_<NAME>` for every secret, `HARNESS_URL`, `HARNESS_TOKEN`, `HARNESS_SESSION_ID`. Without the identity env the
-  CLI writes only to stderr and exits 0 → reported as "exited without any output".
-- Per-session settings `<dataDir>/runs/<sid>/settings.json` (UTF-8, same path every turn, removed with the session):
+- Окружение (задаётся только runner): `GIGACODE_SYSTEM_SETTINGS_PATH`, `GIGACODE_PACKAGE_IDENTITY` (64 hex из
+  `set "GIGACODE_PACKAGE_IDENTITY=…"` шима; нет → сразу ошибка), `GIGACODE_PACKAGE_LAUNCHER` (путь к шиму),
+  `MCP_SECRET_<NAME>` для каждого секрета, `HARNESS_URL`, `HARNESS_TOKEN`, `HARNESS_SESSION_ID`. Без окружения identity
+  CLI пишет только в stderr и завершается с кодом 0 → сообщается как «exited without any output».
+- Настройки сессии `<dataDir>/runs/<sid>/settings.json` (UTF-8, один и тот же путь на каждом ходе, удаляется вместе с сессией):
   `{ "agents": { "modelGrades": {...}, "allowedGrades": [...] }, "chatRecording": true, "mcpServers": { harness, ...agentMcpServers } }`.
-  Never `permissions`. `inheritUserMcp: true` also copies the user's `~/.gigacode/settings.json` mcpServers (merge vs
-  replace is unconfirmed). Write failure → error, and a worktree created for this start is removed.
-- Approval modes `plan | default | auto-edit | auto` (validated). Resume needs `chatRecording`, the same cwd, settings
-  path and launcher (a changed launcher is refused).
-- Stream: Qwen-Code / Claude style; cold start (`system/init`) can take 30–60 s → `firstEventTimeoutMs` 120000 and
-  `session.phase: 'starting'` for the UI. Fatal errors: empty stdout + exit 1 + stderr. Warnings: stderr at exit 0.
-- Task command: `taskPromptTemplate: "/full-task {taskUrl}{notes}"` — slash commands work only as the first word.
+  Никогда `permissions`. `inheritUserMcp: true` дополнительно копирует mcpServers из пользовательского `~/.gigacode/settings.json` (слияние или
+  замена — не подтверждено). Ошибка записи → error, и рабочее дерево, созданное для этого запуска, удаляется.
+- Режимы подтверждения `plan | default | auto-edit | auto` (проверяются). Для возобновления нужны `chatRecording`, тот же cwd, путь к
+  настройкам и лаунчер (смена лаунчера отвергается).
+- Поток: стиль Qwen-Code / Claude; холодный старт (`system/init`) может занимать 30–60 с → `firstEventTimeoutMs` 120000 и
+  `session.phase: 'starting'` для UI. Фатальные ошибки: пустой stdout + код 1 + stderr. Предупреждения: stderr при коде 0.
+- Команда задачи: `taskPromptTemplate: "/full-task {taskUrl}{notes}"` — слэш-команды работают только как первое слово.
 
-### Prompt templates
-Single pass with a replacer FUNCTION (task text may contain `$&`, `$'`, `$$`); substituted text is never expanded
-again; unknown `{placeholders}` are left as is; a task template without any of `{taskUrl} {key} {id} {description}`
-is a config error (agent would start without the task); empty notes are fine.
-Vars: `{key} {id} {title} {description} {url} {taskUrl} {targets} {branch} {repo} {notes} {runId} {registryDir}
-{settingsPath} {approvalMode}`. `{taskUrl}` = `externalUrl` (from `integrations.tasks.urlTemplate`) or the key when there is
-none. `{notes}` = `" " + notes` when the user typed notes at start, else `""`.
-`{runId}` = session id, `{registryDir}` = `<dataDir>/runs/<sid>/registry`.
+### Шаблоны промптов
+Один проход с заменяющей ФУНКЦИЕЙ (текст задачи может содержать `$&`, `$'`, `$$`); подставленный текст больше не раскрывается;
+неизвестные `{плейсхолдеры}` остаются как есть; шаблон задачи без единого из `{taskUrl} {key} {id} {description}`
+считается ошибкой конфигурации (агент запустился бы без задачи); пустые notes допустимы.
+Переменные: `{key} {id} {title} {description} {url} {taskUrl} {targets} {branch} {repo} {notes} {runId} {registryDir}
+{settingsPath} {approvalMode}`. `{taskUrl}` = `externalUrl` (из `integrations.tasks.urlTemplate`) или ключ, если
+его нет. `{notes}` = `" " + notes`, когда пользователь ввёл заметки при запуске, иначе `""`.
+`{runId}` = id сессии, `{registryDir}` = `<dataDir>/runs/<sid>/registry`.
 
-### Run robustness
-- Stop = `taskkill /PID <pid> /T /F` (argv array, only our own pid) and the session becomes `stopped` immediately;
-  a late `exit` never overwrites `stopped`. The next message resumes normally.
-- `POST /api/tasks/:id/start` on a task that already has a live worker returns that session with `jumped: true`
-  (no second process, no second worktree). Concurrent starts of the same task → one process.
-- stdout: line buffer with a cap (lines > 8 MB are truncated with a marker); non-JSON lines are NOT dropped:
-  consecutive ones are shown in the feed as one `system` message (mono). stderr → `runs/<sid>/stderr.log`; its tail
-  goes into the error message when the process dies before the first event.
-- Usage: from the `result` event only (`usage` / `stats`) → cumulative `session.tokensIn` / `session.tokensOut` (0 when unknown).
-- Ops: one harness per `dataDir` (a live pid in `<dataDir>/server.json` that is not ours → refuse to start); a busy port →
-  error naming the port and `netstat -ano | findstr :<port>`; `*.stale-*` folders under `data/` and the worktree roots are
-  swept on start (best effort); folders are deleted by renaming to `<dir>.stale-<ts>` first (files held by AV/indexer).
-- Chat without a repository: cwd = `<dataDir>/chats/<sid>` (created, survives restarts), no worktree.
-- Worktrees: reuse the task's worktree in that repo if it exists; removal = `git worktree remove --force` +
-  `git worktree prune --expire now`, then the directory: on Windows rename to `.stale-<ts>` first, then
+### Надёжность запусков
+- Остановка = `taskkill /PID <pid> /T /F` (массив argv, только наш собственный pid), и сессия сразу становится `stopped`;
+  запоздалый `exit` никогда не перезаписывает `stopped`. Следующее сообщение возобновляет работу как обычно.
+- `POST /api/tasks/:id/start` для задачи, у которой уже есть живой исполнитель, возвращает эту сессию с `jumped: true`
+  (ни второго процесса, ни второго рабочего дерева). Одновременные запуски одной задачи → один процесс.
+- stdout: построчный буфер с лимитом (строки > 8 МБ обрезаются с маркером); не-JSON строки НЕ отбрасываются:
+  идущие подряд показываются в ленте как одно сообщение `system` (моноширинное). stderr → `runs/<sid>/stderr.log`; его хвост
+  попадает в сообщение об ошибке, когда процесс умирает до первого события.
+- Usage: только из события `result` (`usage` / `stats`) → накопительные `session.tokensIn` / `session.tokensOut` (0, если неизвестно).
+- Эксплуатация: один harness на `dataDir` (живой pid в `<dataDir>/server.json`, не наш → отказ запускаться); занятый порт →
+  ошибка с названием порта и `netstat -ano | findstr :<port>`; папки `*.stale-*` в `data/` и корнях рабочих деревьев
+  удаляются при старте (по возможности); папки удаляются сначала переименованием в `<dir>.stale-<ts>` (файлы удерживаются антивирусом/индексатором).
+- Чат без репозитория: cwd = `<dataDir>/chats/<sid>` (создаётся, переживает перезапуски), без рабочего дерева.
+- Рабочие деревья: рабочее дерево задачи в этом репозитории переиспользуется, если существует; удаление = `git worktree remove --force` +
+  `git worktree prune --expire now`, затем каталог: в Windows сначала переименование в `.stale-<ts>`, затем
   `fs.rm(..., { recursive, force, maxRetries })`.
-- Startup: sessions left `running` become `idle` with a system message ("harness restarted, the turn was interrupted;
-  send a message to continue — context is kept by --resume"); orphan locks are cleared.
+- Запуск: сессии, оставшиеся `running`, становятся `idle` с системным сообщением («harness restarted, the turn was interrupted;
+  send a message to continue — context is kept by --resume»); потерянные блокировки снимаются.
 
-## Working with `/full-task` (the user's task command is an orchestrator itself)
+## Работа с `/full-task` (команда задачи пользователя сама является оркестратором)
 
-`/full-task` (see `docs/GIGACODE-FACTS.md` §4) classifies the task, works in `..\<repo>-worktrees\<task-id>`, never commits,
-runs implementer/reviewer sub-agents with cross-model review and writes a ledger + verdict files. The harness aligns:
-- Worker preamble for a task started in a harness worktree adds: «Ты уже в рабочем дереве задачи `<cwd>` (ветка
+`/full-task` (см. `docs/GIGACODE-FACTS.md` §4) классифицирует задачу, работает в `..\<repo>-worktrees\<task-id>`, никогда не коммитит,
+запускает субагентов-реализаторов и ревьюеров с перекрёстным ревью по разным моделям и пишет журнал + файлы вердиктов. harness подстраивается:
+- Преамбула исполнителя для задачи, запущенной в рабочем дереве harness, добавляет: «Ты уже в рабочем дереве задачи `<cwd>` (ветка
   `<branch>`) — это и есть worktree задачи; не создавай другой. Коммиты/пуш/PR/трекер — только пользователь из UI.
-  После финального сообщения твоей команды вызови worker_done с тем же текстом.» (session field `inWorktree: true`: the worker
-  started in a linked worktree; the commit sentence is dropped when `orchestration.workerMayCommit`.)
-- SDD artifacts viewer: `GET /api/sdd?cwd=&sessionId=` → `{ plans: [{ name, dir, modifiedAt, progress: { raw, items: [{ title, status }], total, done },
+  После финального сообщения твоей команды вызови worker_done с тем же текстом.» (поле сессии `inWorktree: true`: исполнитель
+  запущен в связанном рабочем дереве; фраза про коммиты опускается при `orchestration.workerMayCommit`.)
+- Просмотр SDD-артефактов: `GET /api/sdd?cwd=&sessionId=` → `{ plans: [{ name, dir, modifiedAt, progress: { raw, items: [{ title, status }], total, done },
   verdicts: [{ n, file, status: 'PASS'|'FAIL'|'ESCALATION_REQUIRED'|'INDEPENDENT_VERIFICATION_REQUIRED'|null,
   filesChanged: string[], commands: [{ cmd, result }], openQuestions, implementerModel, reviewerModel, secondReviewModel,
-  notes, raw }] }] }` from `<cwd>/.superpowers/sdd/*/progress.md` and `verdicts/task-*.md` (tolerant parser of the
-  `key: value` block + list items; unparsed → `raw` only). With `sessionId` only that session's plans: the plan name
-  contains its task key, or the plan's progress/verdict files changed after the session's `createdAt` (an old ledger
-  of another run at the projects root is not shown); without it every plan (the panel's «показать все»). An item's
-  status comes only from an explicit marker (`[x]`/`[ ]`/`[~]`, ✅/❌/⏳, `status: DONE|PASS|FAIL|…`); `done` is
-  the count of done items, or null when no item has a marker (`total` = item count; the UI then shows no fraction).
-  While a session runs, the server polls (3 s) and broadcasts `{ t: 'sdd', cwd, sessionId, plans }` (that session's
-  plans) on change.
-- `git.excludeFromCommit` (default `[".superpowers/", ".gigacode/tmp/"]`): `GET /api/git/status` marks matching files `service: true`;
-  commit-all and the suggested file list skip them (pathspec `:(top,exclude)<pattern>`, so files staged earlier are skipped
-  too); explicit `paths` drop them (400 when only service files are left); they are never pushed by the harness.
-- Model references check: `GET /api/agents/:id/info` adds `modelRefs: [{ file, model, available }]` from
-  `agents.<id>.modelRefsScan` (gigacode default `["~/.gigacode/agents/*.md", "~/.gigacode/commands/*.md"]`; frontmatter
-  `model:` and model-id-looking tokens that match the catalogue naming), `available` against the discovered catalogue
-  (prefix match tolerates the `-262k` suffix). Read-only; the harness never edits these files.
-- Chat titles: a chat created without `title` (`session.autoTitle`) takes the first line of its first user message
-  (≤ 60 chars, a leading `/` dropped: «/full-task PROJ-1» → «full-task PROJ-1»); a PATCH title ends that.
-- `GET /api/tasks/:id/rework-preview?notes=&agent=` → `{ text, agent, sessionId }`: exactly the message the rework would
-  send now (its worker, or the worker it would start), so the UI preview equals the sent text.
-- Rework (the user's FOLLOW_UP form `/full-task <url> Задача готова, но нужны правки: <text>`):
-  `POST /api/tasks/:id/rework { notes, agent? }` (flag `rework`). Prompt = `agents.<id>.reworkPromptTemplate` (gigacode
-  `"/full-task {taskUrl} Задача готова, но нужны правки: {notes}"`, generic default `"{key} {title}: нужны правки: {notes}"`;
-  `{notes}` is the text as typed, single-pass rendering; settable in /api/settings, must contain `{notes}`; the gigacode
-  launcher default is the /full-task form even without a config value). `/api/settings` → `agents.<id>.reworkPromptPresets`:
-  the effective default FIRST, then `agents.<id>.reworkPromptPresets` from the config, then the generic template
-  (deduplicated); PUT accepts `reworkPromptPresets` (strings with `{notes}`). Target: the
-  task's non-archived worker (`assigneeSessionId`) → delivered (queued if running; `--resume` continues the CLI
-  session); none → a new worker in the task's existing worktree (or the task branch re-checked out, never a new branch)
-  with the rework prompt instead of the task prompt; never started (no branch) → 409. Effects: status → in_progress
-  (with `board.moveSyncsTracker` the normal move-sync), log «Доработка: <notes>», no notification. Returns the session.
+  notes, raw }] }] }` из `<cwd>/.superpowers/sdd/*/progress.md` и `verdicts/task-*.md` (терпимый разбор блока
+  `key: value` и элементов списка; неразобранное → только `raw`). С `sessionId` — только планы этой сессии: название плана
+  содержит ключ её задачи, либо файлы прогресса/вердиктов плана изменились после `createdAt` сессии (старый журнал
+  другого запуска в корне проектов не показывается); без него — все планы (кнопка панели «показать все»). Статус элемента
+  берётся только из явного маркера (`[x]`/`[ ]`/`[~]`, ✅/❌/⏳, `status: DONE|PASS|FAIL|…`); `done` — это
+  число выполненных элементов, либо null, если ни у одного элемента нет маркера (`total` = число элементов; тогда UI не показывает дробь).
+  Пока сессия работает, сервер опрашивает (раз в 3 с) и при изменении рассылает `{ t: 'sdd', cwd, sessionId, plans }` (планы
+  этой сессии).
+- `git.excludeFromCommit` (по умолчанию `[".superpowers/", ".gigacode/tmp/"]`): `GET /api/git/status` помечает подходящие файлы `service: true`;
+  commit-all и предлагаемый список файлов их пропускают (pathspec `:(top,exclude)<pattern>`, поэтому ранее добавленные в индекс файлы тоже
+  пропускаются); явные `paths` их отбрасывают (400, если остались только служебные файлы); harness их никогда не отправляет.
+- Проверка ссылок на модели: `GET /api/agents/:id/info` добавляет `modelRefs: [{ file, model, available }]` из
+  `agents.<id>.modelRefsScan` (по умолчанию для gigacode `["~/.gigacode/agents/*.md", "~/.gigacode/commands/*.md"]`; frontmatter
+  `model:` и токены, похожие на id моделей по именованию каталога), `available` — по обнаруженному каталогу
+  (сравнение по префиксу допускает суффикс `-262k`). Только чтение; harness никогда не правит эти файлы.
+- Названия чатов: чат, созданный без `title` (`session.autoTitle`), берёт первую строку первого сообщения пользователя
+  (≤ 60 символов, ведущий `/` отбрасывается: «/full-task PROJ-1» → «full-task PROJ-1»); PATCH с title это прекращает.
+- `GET /api/tasks/:id/rework-preview?notes=&agent=` → `{ text, agent, sessionId }`: именно то сообщение, которое доработка
+  отправила бы сейчас (её исполнителю или исполнителю, которого она запустила бы), так что предпросмотр в UI равен отправленному тексту.
+- Доработка (форма FOLLOW_UP пользователя `/full-task <url> Задача готова, но нужны правки: <text>`):
+  `POST /api/tasks/:id/rework { notes, agent? }` (флаг `rework`). Промпт = `agents.<id>.reworkPromptTemplate` (gigacode
+  `"/full-task {taskUrl} Задача готова, но нужны правки: {notes}"`, общий по умолчанию `"{key} {title}: нужны правки: {notes}"`;
+  `{notes}` — текст как введён, отрисовка за один проход; задаётся в /api/settings, должен содержать `{notes}`; значение по умолчанию
+  лаунчера gigacode — форма /full-task даже без значения в конфиге). `/api/settings` → `agents.<id>.reworkPromptPresets`:
+  сначала действующее значение по умолчанию, затем `agents.<id>.reworkPromptPresets` из конфига, затем общий шаблон
+  (без дублей); PUT принимает `reworkPromptPresets` (строки с `{notes}`). Адресат: неархивный
+  исполнитель задачи (`assigneeSessionId`) → доставляется (в очередь, если он работает; `--resume` продолжает сессию
+  CLI); нет такого → новый исполнитель в существующем рабочем дереве задачи (или заново извлечённой ветке задачи, но никогда не новая ветка)
+  с промптом доработки вместо промпта задачи; никогда не запускалась (нет ветки) → 409. Эффекты: статус → in_progress
+  (при `board.moveSyncsTracker` обычная синхронизация перемещения), запись в журнале «Доработка: <notes>», без уведомления. Возвращает сессию.
 
-## Sub-agents as chats
+## Субагенты как чаты
 
-### Level 1 — virtual read-only chats from the stream (works with the unchanged `/full-task`)
-Every built-in sub-agent call (`agent` / `fork` tool_use in the main stream) becomes a **virtual session**:
+### Уровень 1 — виртуальные чаты только для чтения из потока (работает с неизменным `/full-task`)
+Каждый вызов встроенного субагента (`agent` / `fork` tool_use в основном потоке) становится **виртуальной сессией**:
 `{ id: '<parentSid>~<toolUseId>', kind: 'chat', virtual: true, parentId: <parentSid>, role: 'subagent', agent,
-title: '<subagent_type> · <model|grade>', status: running|done|failed, model, cwd: parent's }` — persisted like sessions,
-listed in `/api/state`, nested under the parent in the UI. Its transcript is built from events with
-`parent_tool_use_id === toolUseId` (text, tool calls/results — the same Message shapes) plus the call's prompt as the
-first `user` message and the tool_result as the final assistant message; `GET /api/sessions/<virtualId>/messages` works,
-WS `msg` events are emitted for it. `POST …/messages` to a virtual session → 409 «внутренний субагент — писать можно
-только в родительский чат». The parent's tool card keeps a link to it (`tool.subSessionId`).
+title: '<subagent_type> · <model|grade>', status: running|done|failed, model, cwd: parent's }` — сохраняется так же, как сессии,
+перечисляется в `/api/state`, во вложении под родителем в UI. Её транскрипт строится из событий с
+`parent_tool_use_id === toolUseId` (текст, вызовы/результаты инструментов — те же формы Message) плюс промпт вызова как
+первое сообщение `user` и tool_result как финальное сообщение ассистента; `GET /api/sessions/<virtualId>/messages` работает,
+для неё отправляются WS-события `msg`. `POST …/messages` в виртуальную сессию → 409 «внутренний субагент — писать можно
+только в родительский чат». Карточка инструмента родителя хранит ссылку на неё (`tool.subSessionId`).
 
-### Automatic: the orchestrator uses harness sub-agents by itself (no manual command)
-`orchestration.subagents: "harness" | "builtin"` (default `"harness"`, exposed in /api/settings). In `"harness"` mode:
-- The harness MCP server exposes a tool named **`agent`** with the SAME input schema as GigaCode's built-in `agent`
-  (`subagent_type`, `prompt`, `model?`, `description?`, plus optional `approvalMode`, `worktree`, `timeoutMin`), so the
-  model calls `mcp__harness__agent` exactly like the built-in one. It is `worker_run` with
-  `profile = subagent_type`, `spec = prompt` (both names stay as aliases).
-- EVERY gigacode/qwen/gemini session in the harness (solo, coordinator, worker, reviewer) gets a short context block in its
-  first prompt (after a leading slash command, before otherwise): «Ты работаешь внутри harness. Субагентов запускай
+### Автоматически: оркестратор сам использует субагентов harness (без ручной команды)
+`orchestration.subagents: "harness" | "builtin"` (по умолчанию `"harness"`, отдаётся в /api/settings). В режиме `"harness"`:
+- MCP-сервер harness предоставляет инструмент **`agent`** с ТОЙ ЖЕ входной схемой, что у встроенного `agent` GigaCode
+  (`subagent_type`, `prompt`, `model?`, `description?`, плюс необязательные `approvalMode`, `worktree`, `timeoutMin`), так что
+  модель вызывает `mcp__harness__agent` так же, как встроенный. Это `worker_run` с
+  `profile = subagent_type`, `spec = prompt` (оба имени остаются псевдонимами).
+- КАЖДАЯ сессия gigacode/qwen/gemini в harness (одиночная, координатор, исполнитель, ревьюер) получает короткий контекстный блок в
+  первом промпте (после ведущей слэш-команды, иначе в начале): «Ты работаешь внутри harness. Субагентов запускай
   инструментом mcp__harness__agent с теми же аргументами, что у встроенного agent (subagent_type, prompt, model) —
   встроенный agent не используй: harness откроет каждого субагента отдельным чатом и вернёт тебе его результат так же.»
-- The skill `skills/harness-orchestration/SKILL.md` is written so it also works as a GigaCode skill (frontmatter
-  `name`/`description` with the trigger "starting a sub-agent inside the harness"); `POST /api/agents/:id/skills/install`
-  copies it to `~/.gigacode/skills/harness-orchestration/SKILL.md` only on explicit request; `/api/agents/:id/info` reports
-  `skills: { 'harness-orchestration': 'installed' | 'missing' | 'different' }`. The setup prompt asks the target-machine
-  agent to install it (with the user's consent).
-- If the model still calls the built-in `agent`, Level 1 shows it as a read-only chat — nothing is lost.
-- VERIFY on the target: if GigaCode supports PreToolUse-style hooks in settings, `agents.gigacode.agentToolHook` (null by
-  default) holds the hook config the harness writes into the run settings.json to deny the built-in `agent` with the hint
-  «use mcp__harness__agent» (hard enforcement). Format unknown → not implemented until verified.
-`"builtin"` mode: no context block, no harness `agent` tool advertised (worker_run still available).
+- Навык `skills/harness-orchestration/SKILL.md` написан так, что работает и как навык GigaCode (frontmatter
+  `name`/`description` с триггером "starting a sub-agent inside the harness"); `POST /api/agents/:id/skills/install`
+  копирует его в `~/.gigacode/skills/harness-orchestration/SKILL.md` только по явному запросу; `/api/agents/:id/info` сообщает
+  `skills: { 'harness-orchestration': 'installed' | 'missing' | 'different' }`. Промпт настройки просит агента на целевой машине
+  установить его (с согласия пользователя).
+- Если модель всё же вызывает встроенный `agent`, Уровень 1 показывает его как чат только для чтения — ничего не теряется.
+- ПРОВЕРИТЬ на целевой машине: если GigaCode поддерживает хуки типа PreToolUse в настройках, `agents.gigacode.agentToolHook` (по
+  умолчанию null) хранит конфигурацию хука, которую harness записывает в settings.json запуска, чтобы запретить встроенный `agent` с подсказкой
+  «use mcp__harness__agent» (жёсткое принуждение). Формат неизвестен → не реализовано до проверки.
+Режим `"builtin"`: без контекстного блока, без объявления инструмента `agent` harness (worker_run по-прежнему доступен).
 
-### Level 2 — real sub-agent sessions via `worker_run` / harness `agent` ("Orca mode")
-Agent tool `worker_run { profile?: string, spec: string, model?: string, approvalMode?: string, title?: string,
-worktree?: 'current' | 'new' (omitted = auto: 'new' when `workspace` is another repository, else 'current'; an explicit
-'current' in another repository → 400; the result carries `placement`, e.g. "new (auto)"), timeoutMin?: number (default 60) }` (and its built-in-compatible alias `agent`):
-synchronous drop-in for GigaCode's `agent` tool. Creates an EPHEMERAL worker session (child of the caller, its own chat, no board task; title
-«<profile> · <description or the spec's first line, ≤ 50>», as for built-in sub-agent chats); when `profile` is set, reads
-`~/.gigacode/agents/<profile>.md` (YAML frontmatter `model`, `approvalMode`, `tools`, `description`; body = role prompt):
-model/approvalMode default from the frontmatter (explicit args win), first prompt = role body + «\n\n## Задание\n» + spec +
-the short worker preamble (report with worker_done). Returns when the worker calls `worker_done`
-(`{ status, summary, sessionId }`), or when its turn ends without it (`{ status: 'no_report', summary: <last assistant
-text>, sessionId }`), or on timeout (`{ status: 'timeout', sessionId }`, the worker keeps running). The user may watch,
-message and stop that worker; messages from the user are queued into it as usual.
-Transport: `POST /api/agent/worker_run` returns `{ sessionId }` immediately; `mcp/harness-mcp.js` then long-polls
-`GET /api/agent/worker_wait?sessionId=&timeoutMs=25000` until settled and sends MCP `notifications/progress` (when the
-client gave a progressToken) every poll so the tool call is not timed out; the per-session settings.json sets
-`mcpServers.harness.timeout = 3600000` (ms).
-`commands/full-task-harness.md` (shipped in the repo): a thin wrapper — load `full-task` via the skill tool and follow it
-fully, except: every sub-agent dispatch of §6/§8 (and explorers) goes through harness `worker_run` with `profile` = the
-agent name and `model` = the model from §8's table instead of the `agent` tool; parallel sub-agents = several
-`worker_run` calls in one turn; everything else unchanged; task = `{{args}}`.
-`POST /api/agents/:id/commands/install { name: 'full-task-harness' }` copies it to `~/.gigacode/commands/` only on this
-explicit request (refuses to overwrite a different existing file without `force`); `/api/agents/:id/info` reports
-`commands: { 'full-task-harness': 'installed' | 'missing' | 'different' }`. Preset `/full-task-harness {taskUrl}{notes}`
-is added to `taskPromptPresets`.
+### Уровень 2 — настоящие сессии субагентов через `worker_run` / `agent` harness («режим Orca»)
+Агентский инструмент `worker_run { profile?: string, spec: string, model?: string, approvalMode?: string, title?: string,
+worktree?: 'current' | 'new' (опущено = авто: 'new', когда `workspace` — другой репозиторий, иначе 'current'; явный
+'current' в другом репозитории → 400; результат содержит `placement`, например "new (auto)"), timeoutMin?: number (по умолчанию 60) }` (и его совместимый со встроенным псевдоним `agent`):
+синхронная замена встроенного инструмента `agent` GigaCode. Создаёт ВРЕМЕННУЮ сессию исполнителя (дочернюю к вызывающему, со своим чатом, без задачи на доске; название
+«<profile> · <description или первая строка spec, ≤ 50>», как для чатов встроенных субагентов); если задан `profile`, читает
+`~/.gigacode/agents/<profile>.md` (YAML-frontmatter `model`, `approvalMode`, `tools`, `description`; тело = промпт роли):
+model/approvalMode по умолчанию берутся из frontmatter (явные аргументы приоритетнее), первый промпт = тело роли + «\n\n## Задание\n» + spec +
+короткая преамбула исполнителя (отчитаться через worker_done). Возвращает управление, когда исполнитель вызывает `worker_done`
+(`{ status, summary, sessionId }`), или когда его ход заканчивается без этого (`{ status: 'no_report', summary: <последний текст
+ассистента>, sessionId }`), или по таймауту (`{ status: 'timeout', sessionId }`, исполнитель продолжает работать). Пользователь может наблюдать за этим исполнителем,
+писать ему и останавливать его; сообщения от пользователя ставятся ему в очередь как обычно.
+Транспорт: `POST /api/agent/worker_run` сразу возвращает `{ sessionId }`; затем `mcp/harness-mcp.js` длинным опросом вызывает
+`GET /api/agent/worker_wait?sessionId=&timeoutMs=25000`, пока исполнитель не завершится, и на каждом опросе отправляет MCP `notifications/progress` (когда
+клиент передал progressToken), чтобы вызов инструмента не истёк по таймауту; settings.json сессии задаёт
+`mcpServers.harness.timeout = 3600000` (мс).
+`commands/full-task-harness.md` (поставляется в репозитории): тонкая обёртка — загрузить `full-task` через инструмент навыков и выполнять его
+полностью, кроме: каждый запуск субагента из §6/§8 (и разведчиков) идёт через `worker_run` harness с `profile` = именем
+агента и `model` = моделью из таблицы §8 вместо инструмента `agent`; параллельные субагенты = несколько
+вызовов `worker_run` за один ход; всё остальное без изменений; задача = `{{args}}`.
+`POST /api/agents/:id/commands/install { name: 'full-task-harness' }` копирует её в `~/.gigacode/commands/` только по этому
+явному запросу (отказывается перезаписывать другой существующий файл без `force`); `/api/agents/:id/info` сообщает
+`commands: { 'full-task-harness': 'installed' | 'missing' | 'different' }`. Пресет `/full-task-harness {taskUrl}{notes}`
+добавляется в `taskPromptPresets`.
 
-### Sub-agent cleanup and depth
+### Очистка субагентов и глубина
 
-- `orchestration.subagentRetention`: `"archive"` (default) | `"keep"`; `orchestration.maxSubagentDepth` (default 1); both in
-  /api/settings. A same-worktree helper (worker_run / harness `agent` in the caller's worktree) is ephemeral: once
-  settled (done/failed/stopped/no_report) and its result delivered, it is archived (`archived`, `archivedAt`; still
-  openable by id) — a running turn when its process ends. A built-in (virtual) sub-agent chat stays beside its parent
-  (sidebar, workers panel, the Agents board in the parent's lane) until the parent's turn ends, then it is archived
-  (Orca-like); the panel lists only non-archived. At `init`, a CLI whose `mcp_servers` lack a connected `harness` gets a
-  one-time «⚠ MCP-сервер harness …» note in the chat (no harness sub-agents or questions there). Its open
-  questions/permission cards (and its cards re-emitted in the parent) are resolved «отменено». A helper at the depth limit
-  cannot start helpers: worker_run/agent → 409 «Субагенты не запускают своих субагентов: выполни это сам или верни запрос
-  оркестратору», its context block says the same and its tools/list has no `agent` (tools/list is per caller session).
-- A child in ANOTHER worktree or repository (`worktree: "new"`, a `workspace` argument, or a different worktree root) is
-  `persistent: true`: never auto-archived, its depth resets to 0 (it may start its own same-worktree helpers), it reports
-  via worker_done as usual. Task workers, coordinators and reviewers are not affected.
+- `orchestration.subagentRetention`: `"archive"` (по умолчанию) | `"keep"`; `orchestration.maxSubagentDepth` (по умолчанию 1); оба в
+  /api/settings. Помощник в том же рабочем дереве (worker_run / `agent` harness в рабочем дереве вызывающего) временный: как только
+  он завершился (done/failed/stopped/no_report) и его результат доставлен, он архивируется (`archived`, `archivedAt`; по id
+  всё ещё открывается) — работающий ход, когда его процесс завершается. Чат встроенного (виртуального) субагента остаётся рядом с родителем
+  (боковая панель, панель исполнителей, доска агентов в дорожке родителя), пока не закончится ход родителя, затем он архивируется
+  (как в Orca); панель перечисляет только неархивные. При `init` CLI, у которого в `mcp_servers` нет подключённого `harness`, получает
+  одноразовую заметку «⚠ MCP-сервер harness …» в чате (там нет субагентов harness и вопросов). Его открытые
+  вопросы/карточки разрешений (и его карточки, повторно выданные в родителе) закрываются как «отменено». Помощник на пределе глубины
+  не может запускать помощников: worker_run/agent → 409 «Субагенты не запускают своих субагентов: выполни это сам или верни запрос
+  оркестратору», его контекстный блок говорит то же, а в его tools/list нет `agent` (tools/list строится для каждой вызывающей сессии).
+- Дочерний исполнитель в ДРУГОМ рабочем дереве или репозитории (`worktree: "new"`, аргумент `workspace` или другой корень рабочих деревьев)
+  получает `persistent: true`: никогда не архивируется автоматически, его глубина сбрасывается в 0 (он может запускать собственных помощников в том же рабочем дереве), он отчитывается
+  через worker_done как обычно. Исполнителей задач, координаторов и ревьюеров это не касается.
 
-### Orca-style workers: placements, inspection, retries, groups
+### Исполнители в стиле Orca: размещение, осмотр, повторы, группы
 
-- A child started by worker_run/agent is `awaitedBy` its caller. Its `ask` then does not queue a message behind the
-  caller's blocked call: it sets `pendingQuestion` and the wait returns `{ status: "asked", summary: "Субагент спрашивает: …
-Ответь ему: send_message to <id>…" }`; the child stays alive (`waitingFor: answer`, not settled as no_report), and its
-  result later reaches the caller as a message («Result (done): …», `askedParent`). Unpicked for 60 s (the call timed
-  out) — it goes as an ordinary queued question.
-- A child's approval mode: the argument, else its profile's, else the CALLER's (a «Полный доступ» coordinator's helpers
-  run in full access too — over ACP the harness answers their requests itself).
-- A `plan` profile runs as `default` + `readOnly` (allow-list `READ_ONLY_ALLOWED_TOOLS`: git status/diff/log/show…,
-  dir/type/rg): GigaCode's plan mode refuses the harness tools («Plan mode is active. The tool "mcp__harness__worker_done"
-  cannot be executed because it modifies the system»). tools/list marks non-mutating tools `annotations.readOnlyHint`.
-- The chat's workers panel lists every non-archived child while the chat's turn runs; after it, only children still
-  running or waiting (a finished one in its own worktree stays in the sidebar, unarchived).
+- Дочерний исполнитель, запущенный через worker_run/agent, получает `awaitedBy` = вызывающий. Его `ask` тогда не ставит сообщение в очередь за
+  заблокированным вызовом вызывающего: он выставляет `pendingQuestion`, и ожидание возвращает `{ status: "asked", summary: "Субагент спрашивает: …
+Ответь ему: send_message to <id>…" }`; дочерний остаётся живым (`waitingFor: answer`, не считается завершённым как no_report), а его
+  результат позже доходит до вызывающего сообщением («Result (done): …», `askedParent`). Если за 60 с вопрос не подобран (вызов
+  истёк по таймауту), он уходит как обычный вопрос в очереди.
+- Режим подтверждения дочернего исполнителя: аргумент, иначе из его профиля, иначе режим ВЫЗЫВАЮЩЕГО (помощники координатора с «Полный доступ»
+  тоже работают с полным доступом — по ACP harness сам отвечает на их запросы).
+- Профиль `plan` запускается как `default` + `readOnly` (белый список `READ_ONLY_ALLOWED_TOOLS`: git status/diff/log/show…,
+  dir/type/rg): режим plan в GigaCode отказывается от инструментов harness («Plan mode is active. The tool "mcp__harness__worker_done"
+  cannot be executed because it modifies the system»). tools/list помечает не изменяющие инструменты `annotations.readOnlyHint`.
+- Панель исполнителей чата перечисляет каждого неархивного дочернего, пока идёт ход чата; после него — только тех, кто ещё
+  работает или ждёт (завершённый в своём рабочем дереве остаётся в боковой панели неархивированным).
 
-- `worker_start(..., worktree: current | new-child | new-top-level, name?, workspace?)` (`new` = `new-child`): new-child = a new
-  worktree of the caller's repository (`<repo>-worktrees/<name>`, branch from the task key), `meta.parentWorktree` = the
-  caller's worktree (the UI nests it); new-top-level = a new worktree in the repository `workspace` (400 without it). Both
-  give a `persistent` worker and add its worktree to the caller's `includeDirs` (removed when that worktree is deleted);
-  `meta.label` = name. `worker_run` / `agent` accept `name` for `worktree: "new"` (folder and branch = name).
-- `worker_inspect { session_id }` (own descendants only, else 403): `{ status, state, title, cwd, branch, dirty, ahead,
-  diffStat (git diff --stat vs base + untracked count), lastAssistant (2000 chars), report, waitingFor, updatedAt }`.
-  `worker_list` items add `worktreePath`, `persistent`. `worker_stop { session_id }` → `{ stopped: true }` or
-  `{ stopped: false, status: "stop_unknown" }`. `worker_retry { session_id, worktree? }` re-starts the same task (spec) in
-  the same placement (`retryOf` chain); 3 failed starts in a chain → 409 «Задача <key>: 3 неудачных запуска — сообщи
-  пользователю» + a notification. `send_message` groups: `@all` (non-archived descendants), `@idle` (those not running),
-  `@worktree:<path>` (every chat in that worktree, coordinators too) → `{ delivered: [ids] }`.
-- Escalations to the coordinator carry the stop reason (last error) and the tools to use (send_message / worker_inspect /
-  worker_stop + worker_retry / tell the user).
-- Worktree list items: `createdBy: user | agent | external` (db.worktreeMeta[path].createdBy: UI create / take into work →
-  user; worker_start/worker_run/agent/port by an agent session → agent + `createdBySession`; linked root-start worktrees →
-  agent; anything else → external) and `detached`. Failed worktree operations store `meta.lastError { text, at }`
-  (create → on the repository's main worktree; cleared on the next success); meta changes are broadcast as
+- `worker_start(..., worktree: current | new-child | new-top-level, name?, workspace?)` (`new` = `new-child`): new-child = новое
+  рабочее дерево репозитория вызывающего (`<repo>-worktrees/<name>`, ветка по ключу задачи), `meta.parentWorktree` = рабочее дерево
+  вызывающего (UI вкладывает его под него); new-top-level = новое рабочее дерево в репозитории `workspace` (без него 400). Оба варианта
+  дают `persistent` исполнителя и добавляют его рабочее дерево в `includeDirs` вызывающего (убирается при удалении этого рабочего дерева);
+  `meta.label` = name. `worker_run` / `agent` принимают `name` для `worktree: "new"` (папка и ветка = name).
+- `worker_inspect { session_id }` (только собственные потомки, иначе 403): `{ status, state, title, cwd, branch, dirty, ahead,
+  diffStat (git diff --stat относительно base + число неотслеживаемых), lastAssistant (2000 символов), report, waitingFor, updatedAt }`.
+  Элементы `worker_list` добавляют `worktreePath`, `persistent`. `worker_stop { session_id }` → `{ stopped: true }` или
+  `{ stopped: false, status: "stop_unknown" }`. `worker_retry { session_id, worktree? }` заново запускает ту же задачу (spec) в
+  том же размещении (цепочка `retryOf`); 3 неудачных запуска в цепочке → 409 «Задача <key>: 3 неудачных запуска — сообщи
+  пользователю» + уведомление. Группы `send_message`: `@all` (неархивные потомки), `@idle` (те, что не работают),
+  `@worktree:<path>` (каждый чат в этом рабочем дереве, включая координаторов) → `{ delivered: [ids] }`.
+- Эскалации координатору содержат причину остановки (последняя ошибка) и инструменты, которые можно использовать (send_message / worker_inspect /
+  worker_stop + worker_retry / сообщить пользователю).
+- Элементы списка рабочих деревьев: `createdBy: user | agent | external` (db.worktreeMeta[path].createdBy: создание из UI / «Взять в работу» →
+  user; worker_start/worker_run/agent/port из сессии агента → agent + `createdBySession`; связанные рабочие деревья, запущенные от корня →
+  agent; всё остальное → external) и `detached`. Неудавшиеся операции с рабочими деревьями сохраняют `meta.lastError { text, at }`
+  (создание → в основном рабочем дереве репозитория; очищается при следующем успехе); изменения meta рассылаются как
   `{ t: "worktree.meta", path, meta }`.
 
-## Review loop run by the harness (`orchestration.reviewMode: "harness"`)
+## Цикл ревью, который ведёт harness (`orchestration.reviewMode: "harness"`)
 
-Does not depend on what the task command (`/full-task`) says. Config:
+Не зависит от того, что говорит команда задачи (`/full-task`). Конфигурация:
 ```jsonc
 "orchestration": {
   "reviewMode": "builtin",               // "builtin": the agent's own command reviews (as in the CLI); "harness": below
@@ -777,191 +783,191 @@ Does not depend on what the task command (`/full-task`) says. Config:
               "promptTemplate": "<default reviewer prompt with {key} {title} {description} {branch} {base} {cwd} {round} {previous}>" }
 }
 ```
-1. A task worker (not a reviewer, not ephemeral) calls `worker_done(status: 'done')` → instead of finishing, the task's
-   `agentState = 'reviewing'` and the harness starts (round 1) or re-uses (round > 1) a REVIEWER session: role `reviewer`,
-   parent = the worker, same cwd, `model` = `settings.agents.modelGrades[review.grade]` of the reviewer agent (skipped when
-   unknown/unavailable → CLI default), `approvalMode = review.approvalMode` (read-only `plan`), title `Ревью <KEY>`,
-   ephemeral (no board task). Its prompt = the rendered `review.promptTemplate` (default: review `git diff <base>...HEAD`
-   plus uncommitted changes for the task; list findings with CRITICAL/HIGH/MEDIUM/LOW; end with `worker_done` whose
-   summary ends with `VERDICT: APPROVED` or `VERDICT: CHANGES_REQUESTED`). Round > 1 sends «Повторное ревью после
-   исправлений» + the previous findings to the same reviewer chat.
-2. Reviewer `worker_done` → verdict = explicit `VERDICT:` line, else CHANGES_REQUESTED if the summary contains CRITICAL
-   or HIGH, else APPROVED. APPROVED → `agentState = 'approved'`, the worker gets an informational message, the parent
-   coordinator (if any) gets the worker's original report + «ревью: APPROVED», the user a notification.
-   CHANGES_REQUESTED and round < maxRounds → `agentState = 'changes_requested'`, the findings are delivered to the worker
-   («Ревью, раунд n: … Исправь CRITICAL/HIGH и снова вызови worker_done»); round == maxRounds → notification «ревью не
-   сошлось за N раундов» with the findings, `agentState = 'changes_requested'`.
-3. In this mode the worker preamble says: «Ревью выполняет harness другой моделью после твоего worker_done; пропусти шаги
-   внутреннего ревью твоей команды (не запускай встроенных субагентов-ревьюеров)». If the agent reviews internally anyway,
-   nothing breaks — the harness review still runs.
-4. `reviewMode: "builtin"` = previous behaviour (no harness review; internal sub-agents are only visualised).
-Session role `reviewer`; reviewers are nested under their worker in the UI; their transcripts stay.
+1. Исполнитель задачи (не ревьюер, не временный) вызывает `worker_done(status: 'done')` → вместо завершения у задачи
+   `agentState = 'reviewing'`, и harness запускает (раунд 1) или переиспользует (раунд > 1) сессию РЕВЬЮЕРА: роль `reviewer`,
+   родитель = исполнитель, тот же cwd, `model` = `settings.agents.modelGrades[review.grade]` агента ревьюера (пропускается, когда
+   неизвестна/недоступна → значение CLI по умолчанию), `approvalMode = review.approvalMode` (`plan`, только чтение), название `Ревью <KEY>`,
+   временная (без задачи на доске). Её промпт = отрисованный `review.promptTemplate` (по умолчанию: проверить `git diff <base>...HEAD`
+   плюс незакоммиченные изменения задачи; перечислить замечания с CRITICAL/HIGH/MEDIUM/LOW; закончить `worker_done`, summary которого
+   заканчивается на `VERDICT: APPROVED` или `VERDICT: CHANGES_REQUESTED`). Раунд > 1 отправляет в тот же чат ревьюера «Повторное ревью после
+   исправлений» + прежние замечания.
+2. `worker_done` ревьюера → вердикт = явная строка `VERDICT:`, иначе CHANGES_REQUESTED, если summary содержит CRITICAL
+   или HIGH, иначе APPROVED. APPROVED → `agentState = 'approved'`, исполнитель получает информационное сообщение, родительский
+   координатор (если есть) получает исходный отчёт исполнителя + «ревью: APPROVED», пользователь — уведомление.
+   CHANGES_REQUESTED и раунд < maxRounds → `agentState = 'changes_requested'`, замечания доставляются исполнителю
+   («Ревью, раунд n: … Исправь CRITICAL/HIGH и снова вызови worker_done»); раунд == maxRounds → уведомление «ревью не
+   сошлось за N раундов» с замечаниями, `agentState = 'changes_requested'`.
+3. В этом режиме преамбула исполнителя говорит: «Ревью выполняет harness другой моделью после твоего worker_done; пропусти шаги
+   внутреннего ревью твоей команды (не запускай встроенных субагентов-ревьюеров)». Если агент всё равно ревьюит внутри себя,
+   ничего не ломается — ревью harness всё равно выполняется.
+4. `reviewMode: "builtin"` = прежнее поведение (без ревью harness; внутренние субагенты только визуализируются).
+Роль сессии `reviewer`; ревьюеры вложены под своего исполнителя в UI; их транскрипты сохраняются.
 
-## Model catalogue that survives renames (no code changes when model ids change)
+## Каталог моделей, переживающий переименования (без правок кода при смене id моделей)
 
-- Base id: models are compared without the context suffix (`-<n>k|m`): `/models` says `DeepSeek-V4.1-Flash-1017-262k`,
-  the CLI and configs `DeepSeek-V4.1-Flash-1017`. `merged()` keeps ONE entry per base id (id = the config id if any,
-  else the discovered one; label from the config; `context` from the discovered id); availability, the pinned-model
-  check and the grade omission all match by base id. The committed config has no default grades (an unknown grade id
-  crashes GigaCode); grades are chosen in Settings from the discovered catalogue.
-- Approval modes: `agents.<id>.approvalModeMap` (gigacode/qwen default `{ "auto": "auto-edit" }`, headless GigaCode
-  refuses plain `auto` without an action sandbox) is applied to the headless and ACP argv; the session keeps its
-  chosen mode and gets `effectiveApprovalMode` (what the CLI ran with). `agents.<id>.autoSandbox`:
-  `null | "workspace" | "workspace-offline"` — when set, `auto` is not mapped and the run settings get
-  `{ tools: { sandbox } }` (VERIFY: the sandbox restricts tools to the workspace, so includeDirs/worktrees outside the
-  cwd may be blocked). Both are in `/api/settings`. `GET /api/agents/:id/info` and `--print-config` add
-  `identity: { found, source }` (the shim the identity came from; never the value).
+- Базовый id: модели сравниваются без суффикса контекста (`-<n>k|m`): `/models` сообщает `DeepSeek-V4.1-Flash-1017-262k`,
+  CLI и конфиги — `DeepSeek-V4.1-Flash-1017`. `merged()` оставляет ОДНУ запись на базовый id (id = id из конфига, если есть,
+  иначе обнаруженный; label из конфига; `context` из обнаруженного id); доступность, проверка закреплённой модели
+  и пропуск градаций сравнивают по базовому id. В закоммиченном конфиге градаций по умолчанию нет (неизвестный id градации
+  роняет GigaCode); градации выбираются в Настройках из обнаруженного каталога.
+- Режимы подтверждения: `agents.<id>.approvalModeMap` (по умолчанию для gigacode/qwen `{ "auto": "auto-edit" }`, безголовый GigaCode
+  отказывается от простого `auto` без песочницы действий) применяется к argv безголового запуска и ACP; сессия хранит
+  выбранный режим и получает `effectiveApprovalMode` (с каким режимом запускался CLI). `agents.<id>.autoSandbox`:
+  `null | "workspace" | "workspace-offline"` — если задан, `auto` не отображается, а настройки запуска получают
+  `{ tools: { sandbox } }` (ПРОВЕРИТЬ: песочница ограничивает инструменты рабочим пространством, поэтому includeDirs/рабочие деревья вне
+  cwd могут блокироваться). Оба параметра есть в `/api/settings`. `GET /api/agents/:id/info` и `--print-config` добавляют
+  `identity: { found, source }` (шим, из которого взят identity; само значение — никогда).
 
-- Sources, merged and deduped by id: (1) **discovered** — the harness runs the agent CLI headless with
-  `agents.<id>.modelsDiscovery.prompt` (gigacode default `"/models"`) in `<dataDir>/chats/helper/discovery` (no CLI chat record) — first with
-  the light `quickArgs` (`--safe-mode`: no MCP servers), the full run only when that found no ids; stderr `Warning:` lines are
-  never the reported error — takes the final
-  text (`result` / assistant text) and extracts model ids with a tolerant parser (markdown table / list / plain lines;
-  token = letters/digits/`.`/`-`, contains a digit and a `-`, 4–80 chars; optional context like `262k`/`128k` nearby) or
-  with `modelsDiscovery.pattern` (regex with a capture group) when set; result cached in `db.agentMeta[agent].catalog =
-  { models: [{id, context?}], at, error? }`; (2) **seen** — models from `system/init` events; (3) **config**
-  `agents.<id>.models` — only labels/descriptions/order (overrides), not the source of truth.
-- Each merged entry: `{ id, label?, context?, description?, available: boolean | null }` — `available = false` when a
-  fresh discovery exists and the id is not in it (shown greyed «недоступна», never silently dropped); `null` when no
-  discovery yet.
-- Discovery triggers: lazily when `/api/agents/:id/info` or `/api/state` is requested and the catalogue is older than
-  `modelsDiscovery.maxAgeHours` (default 24) — in the background, never blocking the request; `POST /api/agents/:id/models/refresh`
-  (UI buttons) → `{ models, at, error? }`; automatically after a turn fails with "is not present in the current backend
-  catalogue" (or `modelsDiscovery.missingPattern`). Discovery runs at most one at a time per agent; failures are kept in
-  `catalog.error` and shown, never fatal.
-- Robust runs: when writing the per-session settings.json, grades whose model is known-unavailable (`available === false`)
-  are omitted (the CLI falls back to its default) and a ⚠ system note is added once per session; a session whose `model`
-  is known-unavailable gets the error card instead of a doomed spawn only if discovery is fresh — otherwise the turn is
-  attempted (the catalogue may be stale). A "model not present" failure produces a Message with
-  `action: 'pick-model'` so the UI can offer the picker + «Повторить».
-- `/api/agents/:id/info` returns `catalog` (`{ at, error }`) and the merged `models`; `/api/state` agents[].models is the
-  merged list. Free-text model ids are always accepted (PATCH session.model, settings).
+- Источники, объединяемые и дедуплицируемые по id: (1) **обнаруженные** — harness запускает CLI агента без головы с
+  `agents.<id>.modelsDiscovery.prompt` (по умолчанию для gigacode `"/models"`) в `<dataDir>/chats/helper/discovery` (без записи чата CLI) — сначала с
+  лёгкими `quickArgs` (`--safe-mode`: без MCP-серверов), полный запуск только если там id не найдено; строки stderr `Warning:`
+  никогда не считаются сообщаемой ошибкой — берётся итоговый
+  текст (`result` / текст ассистента) и из него извлекаются id моделей терпимым разбором (markdown-таблица / список / обычные строки;
+  токен = буквы/цифры/`.`/`-`, содержит цифру и `-`, 4–80 символов; рядом может быть контекст вроде `262k`/`128k`)
+  либо через `modelsDiscovery.pattern` (регулярное выражение с группой захвата), если задан; результат кэшируется в `db.agentMeta[agent].catalog =
+  { models: [{id, context?}], at, error? }`; (2) **замеченные** — модели из событий `system/init`; (3) **конфиг**
+  `agents.<id>.models` — только метки/описания/порядок (переопределения), не источник истины.
+- Каждая объединённая запись: `{ id, label?, context?, description?, available: boolean | null }` — `available = false`, когда
+  есть свежее обнаружение и id в нём отсутствует (показывается серым «недоступна», никогда не отбрасывается молча); `null`, когда
+  обнаружения ещё не было.
+- Триггеры обнаружения: лениво, когда запрашивается `/api/agents/:id/info` или `/api/state` и каталог старше
+  `modelsDiscovery.maxAgeHours` (по умолчанию 24) — в фоне, никогда не блокируя запрос; `POST /api/agents/:id/models/refresh`
+  (кнопки UI) → `{ models, at, error? }`; автоматически после хода, который завершился ошибкой "is not present in the current backend
+  catalogue" (или `modelsDiscovery.missingPattern`). Обнаружение выполняется не более одного за раз на агента; сбои сохраняются в
+  `catalog.error` и показываются, никогда не фатальны.
+- Устойчивые запуски: при записи settings.json сессии градации, чья модель заведомо недоступна (`available === false`),
+  пропускаются (CLI возвращается к значению по умолчанию), и один раз на сессию добавляется системная заметка ⚠; сессия, чья `model`
+  заведомо недоступна, получает карточку ошибки вместо заранее обречённого запуска только если обнаружение свежее — иначе ход
+  всё же пробуется (каталог может быть устаревшим). Сбой «модель отсутствует» порождает Message с
+  `action: 'pick-model'`, чтобы UI мог предложить выбор модели + «Повторить».
+- `/api/agents/:id/info` возвращает `catalog` (`{ at, error }`) и объединённые `models`; `/api/state` agents[].models — это
+  объединённый список. Произвольные id моделей всегда принимаются (PATCH session.model, настройки).
 
-## GigaCode authorization (first run on a machine)
+## Авторизация GigaCode (первый запуск на машине)
 
-GigaCode asks to log in through the browser / a link on first use. Behaviour of headless `-p` when not logged in is
-NOT confirmed (it may print a URL / device code and wait for the browser callback, or fail). The runner therefore:
-- scans stdout non-JSON lines and stderr (before the first JSON event) for an URL on a line that also matches
-  `/auth|login|oauth|device|verif|sign.?in|авториз|войд|вход/i` (or the next line has a short code like `ABCD-EFGH`);
-- on detection: `session.phase = 'auth'`, a system message `{ kind: 'system', text: '🔑 GigaCode ждёт авторизацию…', link: <url> }`
-  (field `link` on Message), a notification `{ kind: 'info', text, sessionId, link }`, `db.agentMeta[agent].auth = 'required'`;
-  the first-event timeout is suspended and replaced by `agents.<id>.authTimeoutMs` (default 600000) — after login the run
-  continues by itself; a later `system/init` sets `auth = 'ok'`.
-- `GET /api/agents/:id/info` adds `auth: 'ok' | 'required' | 'unknown'`.
-- Login from the UI: Settings → «Войти в GigaCode» = `POST /api/sessions { kind: 'terminal', agent: 'gigacode', title:
-  'Вход в GigaCode', cwd: <dataDir>/chats/login }` — the interactive CLI in a PTY (links clickable via xterm web-links).
+GigaCode просит войти через браузер / по ссылке при первом использовании. Поведение безголового `-p` без входа
+НЕ подтверждено (он может напечатать URL / код устройства и ждать обратного вызова браузера или завершиться ошибкой). Поэтому runner:
+- сканирует не-JSON строки stdout и stderr (до первого JSON-события) на URL в строке, которая также совпадает с
+  `/auth|login|oauth|device|verif|sign.?in|авториз|войд|вход/i` (или следующая строка содержит короткий код вроде `ABCD-EFGH`);
+- при обнаружении: `session.phase = 'auth'`, системное сообщение `{ kind: 'system', text: '🔑 GigaCode ждёт авторизацию…', link: <url> }`
+  (поле `link` у Message), уведомление `{ kind: 'info', text, sessionId, link }`, `db.agentMeta[agent].auth = 'required'`;
+  таймаут первого события приостанавливается и заменяется на `agents.<id>.authTimeoutMs` (по умолчанию 600000) — после входа запуск
+  продолжается сам; последующий `system/init` выставляет `auth = 'ok'`.
+- `GET /api/agents/:id/info` добавляет `auth: 'ok' | 'required' | 'unknown'`.
+- Вход из UI: Настройки → «Войти в GigaCode» = `POST /api/sessions { kind: 'terminal', agent: 'gigacode', title:
+  'Вход в GigaCode', cwd: <dataDir>/chats/login }` — интерактивный CLI в PTY (ссылки кликабельны через xterm web-links).
 
-## Worktree management and cleanup (Orca-like context menu)
+## Управление рабочими деревьями и очистка (контекстное меню как в Orca)
 
-- `GET /api/workspaces/:id/worktrees` items are enriched: `{ path, branch, head, main, dirty: number (changed files),
-  ahead: number (commits not in git.defaultBase / the task's targets[0]), taskId: string|null, taskStatus, pr: {state,url}|null,
+- Элементы `GET /api/workspaces/:id/worktrees` дополняются: `{ path, branch, head, main, dirty: number (изменённых файлов),
+  ahead: number (коммитов, которых нет в git.defaultBase / targets[0] задачи), taskId: string|null, taskStatus, pr: {state,url}|null,
   sessions: number, running: number, lastActivityAt: number|null, meta: { label?, note?, pinned?: boolean,
-  sleeping?: boolean } }` (git data computed in parallel with a short cache; meta from `db.worktreeMeta[path]`).
-- Scale (≈10 repos × 10–20 worktrees): the list is cheap by default — one `git worktree list` + meta + session counts +
-  task/PR from the db; `dirty`/`ahead` are `null` and `enriched: false` unless `?enrich=1` (or a fresh cache entry
-  exists). `GET /api/worktrees/info?path=` enriches one registered worktree. Enrichment: per-path cache 30 s, at most 4
-  computations (git processes) at a time; nothing is enriched at startup; the PR refresh walks tasks one at a time.
-  `lastActivityAt` = newest of the worktree's sessions' activity, the mtime of its `logs/HEAD` reflog (else `HEAD`) and
-  — when enriched or cached — its newest commit time (`git log -1 --format=%ct`); never the index mtime. Every git child
-  runs with `GIT_OPTIONAL_LOCKS=0`, so reads (status, diff, log, …) never refresh/rewrite the index. A session's
-  `workspaceId` = the git repository whose worktree list contains its cwd (worktrees usually live outside the repo
-  folder), else the deepest registered folder; on startup one pass (cached worktree lists) moves existing
-  non-archived sessions attached to a folder workspace to the repository that owns their worktree (count logged).
-  Every session also has `worktreePath` (the worktree root containing its cwd — a sub-folder included — by longest prefix
-  over the registered repositories' worktree lists, case-insensitive on Windows; null at a projects folder or a plain
-  folder) and `system: true` for anything under the harness's own folders `<dataDir>/chats` (default chat folders,
-  login terminal, model discovery), `<dataDir>/terms`, `<dataDir>/runs`: no workspace, no worktree, never grouped under
-  a project (a projects folder inside the data dir, like the demo's `<dataDir>/projects`, is not system). The startup
-  pass recomputes all three.
-  Feature flag `worktree-lazy`.
-- `PATCH /api/worktrees/meta { path, label?, note?, pinned?, sleeping? }` → meta, broadcast as `{ t: "worktree.meta" }`.
-  A turn starting in a sleeping worktree wakes it (`sleeping: false`, broadcast).
-  `sleeping: true` stops terminal PTYs in that cwd (chat sessions are idle between turns anyway; a running turn is NOT
-  killed — 409 unless `force`). "Sessions in a worktree" (here, DELETE, checkout, listing counts) = sessions whose
-  `worktreePath` is that worktree, or (no worktreePath) whose cwd is inside it — an agent in a subfolder counts.
-- `DELETE /api/workspaces/:id/worktrees { path, force?, deleteBranch?: 'no'|'safe'|'force' }`: refuses the main worktree
-  (400); refuses with 409 `{ dirty, ahead, running }` when there are uncommitted changes, unpushed/unmerged commits or a
-  running turn and `force` is not set; otherwise stops all sessions in that cwd (terminals closed, running turns killed),
-  marks them `archived: true` (hidden from the sidebar, transcripts kept; `GET /api/state` still returns them),
-  removes the worktree safely (`git worktree remove --force`; if git fails and still lists it — locked, … — 400 and the
-  folder is NOT touched; otherwise what is left → rename to `.stale-<ts>` → rm, then `prune --expire now`),
-  then optionally `git branch -d` (`safe`) / `-D` (`force`); the task keeps its log, `task.branch` is kept for history.
-  → `{ removed: true, branchDeleted: boolean, archivedSessions: n }`. A failure sets `meta.lastError` (+ `meta.repo`).
-- Orphans: a folder under the repo's worktree root that git no longer lists but that has a harness meta entry (a removal
-  that failed part-way: git unregistered it, a held file kept the folder) is listed in `GET …/worktrees` as
-  `{ path, branch: null, head: null, orphan: true, meta, … }` (meta.repo attributes it under a shared worktreeRoot).
-  «Удалить папку» = `DELETE /api/workspaces/:id/worktrees { path, orphan: true }`: archives its sessions, rename + rm of
-  the folder only (no git command on it), drops the meta, prunes → `{ removed: true, orphan: true }`; 404 for a path
-  that is not such an orphan, 409 if the folder still cannot be removed (lastError set).
-- `POST /api/open { cwd, target: 'explorer' | 'ide' }`: launches the OS file manager (`explorer.exe` / `open` / `xdg-open`)
-  or `config.ide = { command, args: ["{path}"] }` (default null → the IDE item is hidden), no shell, path validated
-  to be a registered workspace or one of its worktrees. The command is resolved like an agent CLI (PATH lookup; a
-  `.cmd` launcher such as `code.cmd` → its target); a command that cannot be found or started → 400
-  «Не удалось запустить «…»: …» (never `ok: true` for a launch that failed).
-- Session field `archived: boolean`.
+  sleeping?: boolean } }` (данные git считаются параллельно с коротким кэшем; meta из `db.worktreeMeta[path]`).
+- Масштаб (≈10 репозиториев × 10–20 рабочих деревьев): по умолчанию список дешёвый — один `git worktree list` + meta + число сессий +
+  задача/PR из db; `dirty`/`ahead` равны `null`, а `enriched: false`, если нет `?enrich=1` (или свежей записи в кэше).
+  `GET /api/worktrees/info?path=` дополняет одно зарегистрированное рабочее дерево. Дополнение: кэш по пути 30 с, не более 4
+  вычислений (процессов git) одновременно; при старте ничего не дополняется; обновление PR обходит задачи по одной.
+  `lastActivityAt` = самое позднее из: активность сессий рабочего дерева, mtime его рефлога `logs/HEAD` (иначе `HEAD`) и
+  — при дополнении или наличии в кэше — время его последнего коммита (`git log -1 --format=%ct`); никогда не mtime индекса. Каждый дочерний процесс git
+  запускается с `GIT_OPTIONAL_LOCKS=0`, поэтому чтения (status, diff, log, …) никогда не обновляют/не переписывают индекс. `workspaceId`
+  сессии = git-репозиторий, чей список рабочих деревьев содержит её cwd (рабочие деревья обычно лежат вне папки
+  репозитория), иначе самая глубокая зарегистрированная папка; при старте один проход (с кэшированными списками рабочих деревьев) переносит существующие
+  неархивные сессии, привязанные к папке-workspace, в репозиторий, которому принадлежит их рабочее дерево (число записывается в лог).
+  У каждой сессии также есть `worktreePath` (корень рабочего дерева, содержащий её cwd — включая подпапку — по самому длинному префиксу
+  среди списков рабочих деревьев зарегистрированных репозиториев, без учёта регистра в Windows; null для папки проектов или обычной
+  папки) и `system: true` для всего, что находится в собственных папках harness `<dataDir>/chats` (папки чатов по умолчанию,
+  терминал входа, обнаружение моделей), `<dataDir>/terms`, `<dataDir>/runs`: без workspace, без рабочего дерева, никогда не группируется под
+  проектом (папка проектов внутри каталога данных, как `<dataDir>/projects` в демо, не является системной). Проход при старте
+  пересчитывает все три поля.
+  Флаг возможности `worktree-lazy`.
+- `PATCH /api/worktrees/meta { path, label?, note?, pinned?, sleeping? }` → meta, рассылается как `{ t: "worktree.meta" }`.
+  Ход, начинающийся в «спящем» рабочем дереве, будит его (`sleeping: false`, рассылка).
+  `sleeping: true` останавливает терминальные PTY в этом cwd (чат-сессии и так простаивают между ходами; работающий ход НЕ
+  убивается — 409, если нет `force`). «Сессии в рабочем дереве» (здесь, DELETE, checkout, счётчики в списке) = сессии, у которых
+  `worktreePath` — это рабочее дерево, или (без worktreePath) чей cwd внутри него — агент в подпапке тоже считается.
+- `DELETE /api/workspaces/:id/worktrees { path, force?, deleteBranch?: 'no'|'safe'|'force' }`: отказывает для основного рабочего дерева
+  (400); отказывает с 409 `{ dirty, ahead, running }`, когда есть незакоммиченные изменения, неотправленные/неслитые коммиты или
+  работающий ход и `force` не задан; иначе останавливает все сессии в этом cwd (терминалы закрываются, работающие ходы убиваются),
+  помечает их `archived: true` (скрыты из боковой панели, транскрипты сохраняются; `GET /api/state` их по-прежнему возвращает),
+  безопасно удаляет рабочее дерево (`git worktree remove --force`; если git завершился ошибкой и всё ещё перечисляет его — заблокировано, … — 400,
+  и папка НЕ трогается; иначе то, что осталось → переименование в `.stale-<ts>` → rm, затем `prune --expire now`),
+  затем при необходимости `git branch -d` (`safe`) / `-D` (`force`); задача сохраняет свой журнал, `task.branch` остаётся для истории.
+  → `{ removed: true, branchDeleted: boolean, archivedSessions: n }`. Сбой выставляет `meta.lastError` (+ `meta.repo`).
+- Сироты: папка в корне рабочих деревьев репозитория, которую git больше не перечисляет, но для которой есть запись meta harness (удаление,
+  прерванное на полпути: git снял регистрацию, удерживаемый файл сохранил папку), перечисляется в `GET …/worktrees` как
+  `{ path, branch: null, head: null, orphan: true, meta, … }` (meta.repo относит её к репозиторию при общем worktreeRoot).
+  «Удалить папку» = `DELETE /api/workspaces/:id/worktrees { path, orphan: true }`: архивирует её сессии, переименование + rm
+  только самой папки (без команд git над ней), удаляет meta, выполняет prune → `{ removed: true, orphan: true }`; 404 для пути,
+  который не является такой сиротой, 409, если папку всё ещё нельзя удалить (выставляется lastError).
+- `POST /api/open { cwd, target: 'explorer' | 'ide' }`: запускает файловый менеджер ОС (`explorer.exe` / `open` / `xdg-open`)
+  или `config.ide = { command, args: ["{path}"] }` (по умолчанию null → пункт IDE скрыт), без оболочки, путь проверяется:
+  это должен быть зарегистрированный workspace или одно из его рабочих деревьев. Команда разрешается так же, как CLI агента (поиск в PATH;
+  лаунчер `.cmd` вроде `code.cmd` → его цель); команда, которую не удалось найти или запустить → 400
+  «Не удалось запустить «…»: …» (никогда не `ok: true` для неудавшегося запуска).
+- Поле сессии `archived: boolean`.
 
-## Runs survive a harness restart
+## Запуски переживают перезапуск harness
 
-An agent turn is spawned detached (`detached: true`, `windowsHide: true`) with stdout/stderr redirected to files
-`runs/<sid>/turn-<n>.out.ndjson` / `.err.txt` (not pipes), and the harness tails the stdout file (fs.watch + poll,
-partial-line buffer, byte offset persisted on the session as `turnOffset`). The pid is persisted. On startup, a session
-left `running` whose pid is still alive and whose turn file exists is re-attached (tail resumes from the saved offset; a
-system note "переподключено после перезапуска" is added); liveness is polled (process.kill(pid, 0)) since a re-attached
-process is not our child — the turn ends at the `result` event or when the pid disappears (no result → error from the
-.err file tail). If the pid is gone, the remaining file is drained once and the turn finalized. Harness shutdown never
-kills agent turns (terminal PTYs are still closed). Stop still kills the tree by pid. Turn files are deleted with the session.
+Ход агента запускается отсоединённым (`detached: true`, `windowsHide: true`), stdout/stderr перенаправляются в файлы
+`runs/<sid>/turn-<n>.out.ndjson` / `.err.txt` (не в каналы), а harness читает хвост файла stdout (fs.watch + опрос,
+буфер неполной строки, смещение в байтах сохраняется в сессии как `turnOffset`). pid сохраняется. При старте сессия,
+оставшаяся `running`, у которой pid ещё жив и файл хода существует, переподключается (чтение хвоста продолжается с сохранённого смещения;
+добавляется системная заметка «переподключено после перезапуска»); живость опрашивается (process.kill(pid, 0)), поскольку переподключённый
+процесс не наш дочерний — ход завершается по событию `result` или когда pid исчезает (нет result → ошибка из
+хвоста файла .err). Если pid исчез, оставшийся файл вычитывается один раз и ход завершается. Остановка harness никогда не
+убивает ходы агентов (терминальные PTY всё же закрываются). Stop по-прежнему убивает дерево по pid. Файлы хода удаляются вместе с сессией.
 
-Task field `pr: { index, state, url, updatedAt } | null` is refreshed for tasks that have a `branch` and a workspace when
-`integrations.pr.refreshSec` > 0 (min 30) and a UI client is connected; only changes are broadcast.
+Поле задачи `pr: { index, state, url, updatedAt } | null` обновляется для задач, у которых есть `branch` и workspace, когда
+`integrations.pr.refreshSec` > 0 (минимум 30) и подключён клиент UI; рассылаются только изменения.
 
-`GET /api/tasks/:id/external` also returns `links: [{ type, from, to }]` (onework `listLinks`; one entry per linked task —
-`decomposition` wins over other types —, links that do not involve this key or point at itself dropped); `decomposition` links whose
-`from` is this task are its children. `POST /api/tasks/:id/import-children` imports those child keys (getIssue each) as tasks
-with `parentId` = this task and the parent's workspace/targets, deduped by externalId → `{ imported, updated }`.
+`GET /api/tasks/:id/external` также возвращает `links: [{ type, from, to }]` (onework `listLinks`; одна запись на связанную задачу —
+`decomposition` приоритетнее других типов —, связи, не затрагивающие этот ключ или указывающие на себя, отбрасываются); связи `decomposition`, у которых
+`from` — эта задача, — её дочерние. `POST /api/tasks/:id/import-children` импортирует эти дочерние ключи (getIssue для каждого) как задачи
+с `parentId` = эта задача и workspace/targets родителя, с дедупликацией по externalId → `{ imported, updated }`.
 
-## Agent-internal sub-agent registry (read-only compatibility)
+## Внутренний реестр субагентов агента (совместимость, только чтение)
 
-Some task commands (e.g. `/full-task-ui`) run their own internal sub-agents and write a registry into
-`{registryDir}`: `<registryDir>/<agentId>/agent.json` (one object) + `log.jsonl` (append-only events).
-The harness only READS it (poll every 2 s while the session is running, on demand otherwise) and shows these as
-read-only rows nested under the session (`GET /api/sessions/:id/subagents`, WS `{ t: 'subagents', sessionId, items }`).
-`agent.json`: required `id, name, startedAt, state`; `state` ∈ `queued working restarting compacting waiting blocked
-idle done failed interrupted unverifiable`; optional `model role parentId worktree lastText lastActivity
-activity{tool,since} tokensIn tokensOut settledAt`. Reader rules: broken record → skipped (counted in a
-`problems` list, never crash); `working` whose `lastActivity` (or `startedAt` if null) is older than
-`session.idleWindowSec` (default 90) → shown as `unverifiable` (file never rewritten); terminal states without
-`settledAt` are flagged; tokens default to 0. Timestamps are ISO-8601 strings (epoch numbers accepted). The tail of
-`log.jsonl` gives `lastEvent: { ts, event, state, note, tool }` and `lastText` falls back to its `note`. Item fields:
-agent.json fields + `flags: string[]` + `lastEvent`. These rows are separate from harness workers (which are real
-sessions with their own chats).
+Некоторые команды задач (например, `/full-task-ui`) запускают собственных внутренних субагентов и пишут реестр в
+`{registryDir}`: `<registryDir>/<agentId>/agent.json` (один объект) + `log.jsonl` (события только на добавление).
+harness только ЧИТАЕТ его (опрос каждые 2 с, пока сессия работает, иначе по запросу) и показывает их как
+строки только для чтения, вложенные под сессию (`GET /api/sessions/:id/subagents`, WS `{ t: 'subagents', sessionId, items }`).
+`agent.json`: обязательные `id, name, startedAt, state`; `state` ∈ `queued working restarting compacting waiting blocked
+idle done failed interrupted unverifiable`; необязательные `model role parentId worktree lastText lastActivity
+activity{tool,since} tokensIn tokensOut settledAt`. Правила чтения: битая запись → пропускается (считается в списке
+`problems`, никогда не падает); `working`, у которого `lastActivity` (или `startedAt`, если null) старше
+`session.idleWindowSec` (по умолчанию 90), → показывается как `unverifiable` (файл никогда не переписывается); конечные состояния без
+`settledAt` помечаются; токены по умолчанию 0. Метки времени — строки ISO-8601 (принимаются и числа epoch). Хвост
+`log.jsonl` даёт `lastEvent: { ts, event, state, note, tool }`, а `lastText` берёт запасное значение из его `note`. Поля элемента:
+поля agent.json + `flags: string[]` + `lastEvent`. Эти строки отделены от исполнителей harness (которые — настоящие
+сессии со своими чатами).
 
-## Board ↔ tracker semantics
+## Доска ↔ трекер: семантика
 
-- Task fields added: `externalStatus: string | null` (raw tracker status), `statusManual: boolean` (set when a
-  human moves the card; import then never overwrites `status`), `hidden: boolean`, `takenAt: number | null`,
-  `snapshot: { title, description, externalStatus, at } | null` (frozen when taken into work).
-- Board = (imported, open, assigned to me) ∪ (taken into work through the harness, kept even if the tracker stops
-  returning them) ∪ local tasks, minus `hidden`. Imported tasks whose status is in `integrations.tasks.closedStatuses`
-  are not added; a known task whose tracker status becomes closed: never taken into work (no takenAt, no assignee, no
-  worktrees) → `hidden: true` + log «Закрыта в трекере — скрыта с доски» (once); taken into work → status `done` + log
-  «Закрыта в трекере — перенесена в «Готово»» even when `statusManual` (closing wins; other tracker statuses still respect
-  a hand-placed column), never auto-hidden. The same rule runs once on every start for tasks imported earlier. Default
-  closedStatuses (when unset): done, closed, cancelled, canceled, declined, resolved, rejected; the «К работе» column maps
-  todo, created, new, open. `DELETE` of an imported task = `hidden: true` (re-import keeps it hidden);
-  local tasks are really deleted. Search by key also finds hidden/closed ones; UI has a "show hidden" toggle.
-- Column comes from `statusMap(externalStatus)` on import unless `statusManual`. Moving a card NEVER changes the
-  tracker; changing tracker status is an explicit action: `GET /api/tasks/:id/transitions` then
-  `POST /api/tasks/:id/tracker-status { transition, comment? }` → `transitionTask()` in `server/integrations/tasks.js`.
-- onework (`format: "onework-markdown"`): the tools answer MARKDOWN. Import = `tools.find` with
-  `{space_code: <space>, assignee: "me", page_size: 100, page_number: n}` while `has_next` (≤ 20 pages, stops at `limit`),
-  lines `N. **<KEY>** — <summary> [<status> | <priority>] @<assignee>`; closed statuses filtered on our side; no
-  description in the list → `GET /api/tasks/:id/external` fetches it lazily. Tool errors arrive as text
-  (`reported tool error`, `{"error":"…"}`) and become errors with the inner message.
-### Board columns follow the team workflow (configurable)
+- Добавленные поля задачи: `externalStatus: string | null` (сырой статус трекера), `statusManual: boolean` (выставляется, когда
+  человек двигает карточку; тогда импорт никогда не перезаписывает `status`), `hidden: boolean`, `takenAt: number | null`,
+  `snapshot: { title, description, externalStatus, at } | null` (замораживается при взятии в работу).
+- Доска = (импортированные, открытые, назначенные на меня) ∪ (взятые в работу через harness, остаются, даже если трекер перестаёт
+  их возвращать) ∪ локальные задачи, за вычетом `hidden`. Импортированные задачи, чей статус входит в `integrations.tasks.closedStatuses`,
+  не добавляются; известная задача, чей статус в трекере стал закрытым: никогда не бравшаяся в работу (нет takenAt, нет исполнителя, нет
+  рабочих деревьев (worktree)) → `hidden: true` + запись в журнале «Закрыта в трекере — скрыта с доски» (один раз); бравшаяся в работу → статус `done` + запись в журнале
+  «Закрыта в трекере — перенесена в «Готово»» даже при `statusManual` (закрытие приоритетнее; остальные статусы трекера по-прежнему уважают
+  вручную выбранную колонку), никогда не скрывается автоматически. То же правило один раз выполняется при каждом старте для ранее импортированных задач. Значение
+  closedStatuses по умолчанию (когда не задано): done, closed, cancelled, canceled, declined, resolved, rejected; колонка «К работе» сопоставляется со статусами
+  todo, created, new, open. `DELETE` импортированной задачи = `hidden: true` (повторный импорт оставляет её скрытой);
+  локальные задачи удаляются по-настоящему. Поиск по ключу находит и скрытые/закрытые; в UI есть переключатель «показать скрытые».
+- Колонка берётся из `statusMap(externalStatus)` при импорте, если нет `statusManual`. Перемещение карточки НИКОГДА не меняет
+  трекер; смена статуса в трекере — явное действие: `GET /api/tasks/:id/transitions`, затем
+  `POST /api/tasks/:id/tracker-status { transition, comment? }` → `transitionTask()` в `server/integrations/tasks.js`.
+- onework (`format: "onework-markdown"`): инструменты отвечают MARKDOWN. Импорт = `tools.find` с
+  `{space_code: <space>, assignee: "me", page_size: 100, page_number: n}`, пока `has_next` (≤ 20 страниц, останавливается на `limit`),
+  строки `N. **<KEY>** — <summary> [<status> | <priority>] @<assignee>`; закрытые статусы фильтруются на нашей стороне; описания
+  в списке нет → `GET /api/tasks/:id/external` получает его лениво. Ошибки инструментов приходят текстом
+  (`reported tool error`, `{"error":"…"}`) и становятся ошибками с внутренним сообщением.
+### Колонки доски следуют рабочему процессу команды (настраивается)
 
-The internal statuses stay the 5 semantic values (`backlog todo in_progress review done`); the board shows a configured
-subset with team labels and owns the tracker mapping. Default (the user's workflow: take → in progress → testing, and back
-for rework):
+Внутренние статусы остаются 5 смысловыми значениями (`backlog todo in_progress review done`); доска показывает настроенное
+подмножество с метками команды и владеет сопоставлением с трекером. По умолчанию (процесс пользователя: взять → в работе → тестирование и обратно
+на доработку):
 ```jsonc
 "board": {
   "columns": [
@@ -974,564 +980,581 @@ for rework):
   "columnTransitions": {}          // optional explicit transition id per status, e.g. { "review": "qa" }
 }
 ```
-- Statuses not listed in `columns` (backlog, done by default) are hidden behind «Показать все статусы»; the import maps
-  tracker statuses through `columns[].trackerStatuses` (this replaces `integrations.tasks.statusMap`, which stays as a
-  fallback for unknown statuses → `todo`); closed statuses are not imported as before.
-- Agent badge on a task: `task.agentState: 'running' | 'waiting' | 'done' | 'failed' | 'reviewing' | 'approved' |
-  'changes_requested' | null` (derived from the assignee session and the harness review loop, broadcast with the task).
-  `worker_done` with `onWorkerDone: "stay"` keeps the column (failed no longer moves the task back to todo either).
-- Tracker sync on move (opt-in, `moveSyncsTracker`): after a move of an imported task into column C (by the user, or
-  in_progress by "take into work" — this supersedes `integrations.tasks.onStartTransition`, kept as an alias), the
-  harness loads the task's available transitions (`getIssueMeta`) and picks `columnTransitions[C.status]` if available,
-  else the first transition whose TARGET status (the parenthesised status in `- \`id\` → name (\`status\`)`) is in
-  `C.trackerStatuses`; calls `updateIssueStatus`; on "no suitable transition" or an error the board move stays, a ⚠ line
-  goes to the task log and a notification with the reason is sent (no silent tracker writes, no rollback of the card).
-- `/api/settings` exposes and accepts `board` (validated: statuses ∈ the 5 values, unique, ≥ 1 column, labels non-empty).
+- Статусы, не перечисленные в `columns` (по умолчанию backlog, done), скрыты за «Показать все статусы»; импорт сопоставляет
+  статусы трекера через `columns[].trackerStatuses` (это заменяет `integrations.tasks.statusMap`, который остаётся
+  запасным вариантом для неизвестных статусов → `todo`); закрытые статусы по-прежнему не импортируются.
+- Значок агента у задачи: `task.agentState: 'running' | 'waiting' | 'done' | 'failed' | 'reviewing' | 'approved' |
+  'changes_requested' | null` (выводится из сессии исполнителя и цикла ревью harness, рассылается вместе с задачей).
+  `worker_done` при `onWorkerDone: "stay"` оставляет колонку (failed тоже больше не возвращает задачу в todo).
+- Синхронизация трекера при перемещении (по желанию, `moveSyncsTracker`): после перемещения импортированной задачи в колонку C (пользователем или
+  в in_progress через «Взять в работу» — это заменяет `integrations.tasks.onStartTransition`, который остаётся как псевдоним)
+  harness загружает доступные для задачи переходы (`getIssueMeta`) и выбирает `columnTransitions[C.status]`, если он доступен,
+  иначе первый переход, чей ЦЕЛЕВОЙ статус (статус в скобках в `- \`id\` → name (\`status\`)`) входит в
+  `C.trackerStatuses`; вызывает `updateIssueStatus`; при «нет подходящего перехода» или ошибке перемещение на доске остаётся, строка ⚠
+  попадает в журнал задачи и отправляется уведомление с причиной (никаких тихих записей в трекер, без отката карточки).
+- `/api/settings` отдаёт и принимает `board` (проверяется: статусы ∈ 5 значений, уникальны, ≥ 1 колонка, метки непустые).
 
-- Periodic sync: `integrations.tasks.refreshSec` (0 = off, min 10) while at least one UI client is connected;
-  only changed tasks are broadcast (signature = key + status + title). On failure the board keeps the local snapshot
-  and `GET /api/state` → `integrations.tasksProblem: { error, at } | null` is shown as a banner ("tracker unavailable,
-  showing snapshot from HH:MM"). JSON format: `limit` goes into the tool args (server-side limit).
-- `integrations.tasks.space` is a space code or an array of them: the sync walks every space (`assignee: "me"`, paged)
-  and merges by key; /api/settings accepts both forms (the key stays `space`).
-- `POST /api/tasks/import { ref }` (flag `tracker-import`): `ref` = a key (`PROJ-1234`) or any tracker link containing
-  one (`/([A-Z][A-Z0-9_]+-\d+)/`) → `tools.get` → upserted as an imported task (deduped by externalId, status via
-  columns/statusMap, description from the issue markdown, externalUrl from `urlTemplate`, else the given link), also
-  when it is not assigned to me; returns the task. onework-markdown only (else 501).
+- Периодическая синхронизация: `integrations.tasks.refreshSec` (0 = выкл., минимум 10), пока подключён хотя бы один клиент UI;
+  рассылаются только изменившиеся задачи (подпись = ключ + статус + название). При сбое доска сохраняет локальный снимок,
+  а `GET /api/state` → `integrations.tasksProblem: { error, at } | null` показывается баннером («трекер недоступен,
+  показан снимок на HH:MM»). Формат JSON: `limit` передаётся в аргументы инструмента (ограничение на стороне сервера).
+- `integrations.tasks.space` — код пространства или массив кодов: синхронизация обходит каждое пространство (`assignee: "me"`, постранично)
+  и объединяет по ключу; /api/settings принимает обе формы (ключ остаётся `space`).
+- `POST /api/tasks/import { ref }` (флаг `tracker-import`): `ref` = ключ (`PROJ-1234`) или любая ссылка трекера, содержащая
+  его (`/([A-Z][A-Z0-9_]+-\d+)/`) → `tools.get` → добавляется как импортированная задача (дедупликация по externalId, статус через
+  columns/statusMap, описание из markdown задачи, externalUrl из `urlTemplate`, иначе переданная ссылка), в том числе
+  когда она не назначена на меня; возвращает задачу. Только onework-markdown (иначе 501).
 
-## Console MCP: servers, secrets and failures
-Three separate MCP layers — never mix them:
-1. **Console MCP** (the harness itself reads the tracker / creates PRs): server definitions come from
-   `config.mcpServers` merged over the `mcpServers` of `config.mcpServersFrom` (default `~/.gigacode/settings.json`,
-   env override `CONSOLE_MCP_SETTINGS`; a missing file is fine). Tracker access goes through the `onework` server
-   (tools `sbertrack_findIssues`, `sbertrack_listLinks`, `sbertrack_getIssue`, `sbertrack_getIssueMeta`,
-   `sbertrack_updateIssueStatus`, `sbertrack_getUser`). Never call the standalone `sbertrack` server for reading
-   tasks (it answers 403). PRs go through `sourcecontrol`.
-2. **Agent MCP** (what GigaCode sees in its run): only via the per-session settings.json `mcpServers`
-   (`harness` + `agentMcpServers`), plus whatever the user has in `~/.gigacode/settings.json`.
-3. **Extension mapping**: tool names differ per provider (prefixes), so which tool does find / get / meta /
-   transition / links / me is config data (`integrations.tasks.tools`), never hardcoded.
+## Консольный MCP: серверы, секреты и сбои
+Три отдельных слоя MCP — никогда не смешивать:
+1. **Консольный MCP** (сам harness читает трекер / создаёт PR): определения серверов берутся из
+   `config.mcpServers`, наложенного на `mcpServers` из `config.mcpServersFrom` (по умолчанию `~/.gigacode/settings.json`,
+   переопределение через env `CONSOLE_MCP_SETTINGS`; отсутствие файла допустимо). Доступ к трекеру идёт через сервер `onework`
+   (инструменты `sbertrack_findIssues`, `sbertrack_listLinks`, `sbertrack_getIssue`, `sbertrack_getIssueMeta`,
+   `sbertrack_updateIssueStatus`, `sbertrack_getUser`). Никогда не вызывайте отдельный сервер `sbertrack` для чтения
+   задач (он отвечает 403). PR идут через `sourcecontrol`.
+2. **Агентский MCP** (что видит GigaCode при запуске): только через `mcpServers` в settings.json сессии
+   (`harness` + `agentMcpServers`), плюс всё, что у пользователя в `~/.gigacode/settings.json`.
+3. **Сопоставление расширений**: имена инструментов различаются у провайдеров (префиксы), поэтому то, какой инструмент делает find / get / meta /
+   transition / links / me, — это данные конфигурации (`integrations.tasks.tools`), а не жёстко заданные значения.
 
-Secrets:
-- Server entries in `mcpServersFrom` use the gemini/qwen format: `{ type: "http", url, headers }` or `{ httpUrl }` → http,
+Секреты:
+- Записи серверов в `mcpServersFrom` используют формат gemini/qwen: `{ type: "http", url, headers }` или `{ httpUrl }` → http,
   `{ command, args, env }` → stdio.
-- Secrets file: `HARNESS_MCP_SECRETS` || `CONSOLE_MCP_SECRETS` || `config.mcpSecretsFile` || `<dataDir>/mcp-secrets.json`.
-  Formats: JSON `{ "<name>": "<value>" }`, or text lines `server/Name=value` (`#` comments, split on the first `=`), or a
-  single bare value (no `=`) which means `onework/Authorization`. Names `scope/header` and `scope_header` are equivalent.
-  A `server/Name` secret goes to THAT server: `headers[Name]` for http, `env[Name]` for stdio.
-- Config string values (env, headers, args, url) may reference secrets: `${env:NAME}` (process env, else secret NAME)
-  and `$secret:scope/header` / `${secret:scope/header}`. Resolved at call time; never logged, never returned by an API.
-- Every secret is also exported to stdio MCP children and agent processes as `MCP_SECRET_<NAME>`
-  (`/` → `_`, e.g. `MCP_SECRET_onework_Authorization`).
-- A server with a missing secret stays in the list with `problem: "missing secret <name>"`; other servers keep working
-  (never a 401 that wipes the whole map).
-- stdio servers: connect per call (spawn → initialize → call → close); timeout per call.
-- `node server/index.js --print-config` prints the resolved config: paths (and whether they exist), approval modes,
-  refresh period, which secrets are present (names only, never values). On startup, any config string that looks
-  like a token/password (long high-entropy value under a key like token/secret/password/authorization) is a loud warning.
-- `HARNESS_CONFIG` env selects the config file (default `harness.config.json` + `.local`), so work and test
-  configs never mix.
+- Файл секретов: `HARNESS_MCP_SECRETS` || `CONSOLE_MCP_SECRETS` || `config.mcpSecretsFile` || `<dataDir>/mcp-secrets.json`.
+  Форматы: JSON `{ "<name>": "<value>" }`, либо текстовые строки `server/Name=value` (комментарии `#`, разделение по первому `=`), либо
+  одно «голое» значение (без `=`), которое означает `onework/Authorization`. Имена `scope/header` и `scope_header` равнозначны.
+  Секрет `server/Name` идёт НА ЭТОТ сервер: `headers[Name]` для http, `env[Name]` для stdio.
+- Строковые значения конфигурации (env, headers, args, url) могут ссылаться на секреты: `${env:NAME}` (окружение процесса, иначе секрет NAME)
+  и `$secret:scope/header` / `${secret:scope/header}`. Разрешаются в момент вызова; никогда не логируются и не возвращаются никаким API.
+- Каждый секрет также экспортируется в дочерние stdio MCP-процессы и процессы агентов как `MCP_SECRET_<NAME>`
+  (`/` → `_`, например `MCP_SECRET_onework_Authorization`).
+- Сервер с отсутствующим секретом остаётся в списке с `problem: "missing secret <name>"`; остальные серверы продолжают работать
+  (никакого 401, который обнуляет всю карту).
+- stdio-серверы: подключение на каждый вызов (запуск → initialize → вызов → закрытие); таймаут на каждый вызов.
+- `node server/index.js --print-config` печатает разрешённую конфигурацию: пути (и существуют ли они), режимы подтверждения,
+  период обновления, какие секреты присутствуют (только имена, никогда значения). При старте любая строка конфигурации, похожая
+  на токен/пароль (длинное значение с высокой энтропией под ключом вроде token/secret/password/authorization), вызывает громкое предупреждение.
+- Переменная окружения `HARNESS_CONFIG` выбирает файл конфигурации (по умолчанию `harness.config.json` + `.local`), чтобы рабочие и тестовые
+  конфигурации никогда не смешивались.
 
-## Where a chat runs: projects folder, any folder, extra directories
+## Где работает чат: папка проектов, любая папка, дополнительные каталоги
 
-- **Projects folder** (`workspaces.root`): when null, auto-detected as the deepest common parent of ≥ 2 registered
-  workspaces (shown as «Авто» in Settings). It is a first-class *folder workspace* (`{ id, name, path, isGit: false,
-  kind: 'root' }`, created/updated on startup) listed first in the sidebar as «Все проекты (<dirname>)». A chat there
-  sees every project under it (the CLI's typical "run in the projects folder" usage). Default location for «Новый чат»
-  when nothing is selected.
-- **Any folder**: `GET /api/fs/dirs?path=` → `{ path, parent, entries: [{ name, path }], roots: string[] }` (Windows:
-  drive letters as roots; POSIX: `/` and `~`; directories only; hidden dirs skipped unless `?hidden=1`; token-protected
-  like everything else). `POST /api/workspaces { path, kind: 'folder' }` registers it (non-git allowed) and the chat
-  starts there. `db.prefs.recentFolders` (last 10) returned by `/api/state` as `recentFolders`.
-- **Extra directories** (GigaCode `--include-directories` / `--add-dir`, the headless form of the interactive `/dir add`):
-  session field `includeDirs: string[]` (absolute, existing dirs, de-duplicated, excluding cwd and its ancestors).
-  The gigacode/qwen/gemini launchers add `--include-directories <dir>` once per dir on EVERY turn (each turn is a new
-  process, so changes apply from the next message; claude launcher: `--add-dir <dir>`). Editable via
-  `PATCH /api/sessions/:id { includeDirs }`. Auto-fill: a task worker's `includeDirs` = the repos (or existing task
-  worktrees) of the other subtasks of the same parent task + the parent task's explicit `includeDirs`; a coordinator at
-  the projects folder needs none. Terminal sessions with an agent CLI get the same flags at start.
-  `POST /api/sessions` accepts `includeDirs`. Feature flags: `folders`, `include-dirs`.
-- Text with no letter and several «??» groups (Cyrillic lost to a non-UTF-8 client, e.g. Windows PowerShell 5.1
-  `Invoke-RestMethod`) is refused with 400 by `POST /api/sessions` (title, prompt), `/api/sessions/:id/messages` and
-  `/api/handoff` (input, notes); a lone «???» passes.
-- Implementation notes: the root workspace's `name` is the folder name (the UI adds «Все проекты»); auto-detection uses
-  repository workspaces only (not `kind: 'folder'` ones) and is redone when workspaces are added/removed; a session's
-  `workspaceId` is the DEEPEST registered folder containing its cwd. Hidden = names starting with `.` or `$`.
-  `recentFolders` is updated by `POST /api/workspaces { kind: 'folder' }` and by `POST /api/sessions` with an explicit
-  cwd. The parent task's own extra folders: `PATCH /api/tasks/:id { includeDirs }`. Invalid `includeDirs` from the API →
-  400; auto-filled ones that no longer exist are dropped silently, and so are stale entries when the harness itself
-  edits a session's list (a child worktree added by worker_start/worker_run, a deleted worktree removed): those never
-  fail. worker_start / worker_run never leave an orphan: a failure after the session (or worktree) was made removes it.
-  A route param with a malformed %-escape → 400.
-- `/api/settings` returns and accepts `workspaces: { root, repos }` (root: an existing absolute folder or null = auto;
-  repos: string[]) and returns `rootResolved` (the projects folder in use) + `rootAuto`; saving re-registers the
-  configured repos, re-runs the projects-folder detection and broadcasts `workspaces`.
+- **Папка проектов** (`workspaces.root`): если null, определяется автоматически как самый глубокий общий родитель ≥ 2 зарегистрированных
+  workspace (в Настройках показывается как «Авто»). Это полноценный *workspace-папка* (`{ id, name, path, isGit: false,
+  kind: 'root' }`, создаётся/обновляется при старте), стоящий первым в боковой панели как «Все проекты (<dirname>)». Чат там
+  видит каждый проект под ней (типичное использование CLI «запуск в папке проектов»). Место по умолчанию для «Новый чат»,
+  когда ничего не выбрано.
+- **Любая папка**: `GET /api/fs/dirs?path=` → `{ path, parent, entries: [{ name, path }], roots: string[] }` (Windows:
+  буквы дисков как корни; POSIX: `/` и `~`; только каталоги; скрытые каталоги пропускаются, если нет `?hidden=1`; защищено токеном,
+  как и всё остальное). `POST /api/workspaces { path, kind: 'folder' }` регистрирует её (не-git допустимо), и чат
+  запускается там. `db.prefs.recentFolders` (последние 10) возвращается `/api/state` как `recentFolders`.
+- **Дополнительные каталоги** (GigaCode `--include-directories` / `--add-dir`, безголовая форма интерактивной `/dir add`):
+  поле сессии `includeDirs: string[]` (абсолютные существующие каталоги, без дублей, исключая cwd и его предков).
+  Лаунчеры gigacode/qwen/gemini добавляют `--include-directories <dir>` по разу на каталог на КАЖДОМ ходе (каждый ход — новый
+  процесс, поэтому изменения применяются со следующего сообщения; лаунчер claude: `--add-dir <dir>`). Редактируется через
+  `PATCH /api/sessions/:id { includeDirs }`. Автозаполнение: `includeDirs` исполнителя задачи = репозитории (или существующие рабочие деревья задач)
+  остальных подзадач той же родительской задачи + явные `includeDirs` родительской задачи; координатору в
+  папке проектов они не нужны. Терминальные сессии с CLI агента получают те же флаги при запуске.
+  `POST /api/sessions` принимает `includeDirs`. Флаги возможностей: `folders`, `include-dirs`.
+- Текст без единой буквы и с несколькими группами «??» (кириллица потеряна клиентом не в UTF-8, например Windows PowerShell 5.1
+  `Invoke-RestMethod`) отвергается с 400 в `POST /api/sessions` (title, prompt), `/api/sessions/:id/messages` и
+  `/api/handoff` (input, notes); одиночное «???» проходит.
+- Заметки по реализации: `name` корневого workspace — имя папки (UI добавляет «Все проекты»); автоопределение использует
+  только workspace-репозитории (не `kind: 'folder'`) и повторяется при добавлении/удалении workspace; `workspaceId`
+  сессии — САМАЯ ГЛУБОКАЯ зарегистрированная папка, содержащая её cwd. Скрытые = имена, начинающиеся с `.` или `$`.
+  `recentFolders` обновляется через `POST /api/workspaces { kind: 'folder' }` и через `POST /api/sessions` с явным
+  cwd. Собственные дополнительные папки родительской задачи: `PATCH /api/tasks/:id { includeDirs }`. Некорректные `includeDirs` из API →
+  400; автозаполненные, которых больше нет, отбрасываются молча, так же как устаревшие записи, когда сам harness
+  правит список сессии (добавленное worker_start/worker_run дочернее рабочее дерево, удалённое рабочее дерево): это никогда
+  не приводит к ошибке. worker_start / worker_run никогда не оставляют сирот: сбой после создания сессии (или рабочего дерева) удаляет её.
+  Параметр маршрута с некорректной %-последовательностью → 400.
+- `/api/settings` возвращает и принимает `workspaces: { root, repos }` (root: существующая абсолютная папка или null = авто;
+  repos: string[]) и возвращает `rootResolved` (используемая папка проектов) + `rootAuto`; сохранение заново регистрирует
+  настроенные репозитории, заново запускает определение папки проектов и рассылает `workspaces`.
 
-## Agent questions and permission requests
+## Вопросы агента и запросы разрешений
 
-**Questions.** (a) harness `ask` (MCP) — already: question + `options`, `waitingFor: 'answer'`, answer delivered as the next
-message. (b) The CLI's own structured question tool: tool_use names listed in `agents.<id>.questionTools` (gigacode default
-`["ask_user_question", "ask_user", "AskUserQuestion"]`, VERIFY the real name) are normalized to a Message
+**Вопросы.** (а) `ask` harness (MCP) — уже есть: вопрос + `options`, `waitingFor: 'answer'`, ответ доставляется следующим
+сообщением. (б) Собственный структурированный инструмент вопросов CLI: имена tool_use, перечисленные в `agents.<id>.questionTools` (по умолчанию для gigacode
+`["ask_user_question", "ask_user", "AskUserQuestion"]`, ПРОВЕРИТЬ настоящее имя), нормализуются в Message
 `{ kind: 'question', question: { id, text, options: [{label, description?}], multiSelect } }` + `waitingFor: 'answer'`;
-whatever the CLI returns for that call in headless is hidden; the user's choice is delivered as «Ответ на вопрос «…»: …».
-(c) The harness context block tells the agent: «вопросы человеку — через mcp__harness__ask (варианты в options), затем заверши ход».
+всё, что CLI возвращает на этот вызов в безголовом режиме, скрывается; выбор пользователя доставляется как «Ответ на вопрос «…»: …».
+(в) Контекстный блок harness говорит агенту: «вопросы человеку — через mcp__harness__ask (варианты в options), затем заверши ход».
 
-**Permissions, headless transport (default).** The CLI cannot wait for a confirmation in `-p` mode, so it denies. The
-normalizer detects a denied tool call (tool_result `is_error` whose text matches `agents.<id>.denialPattern`, default
-`/(requires? (user )?(approval|confirmation)|not allowed|denied|permission|подтвержд|запрещ)/i`, VERIFY real wording) and
-emits a Message `{ kind: 'permission', permission: { id, tool, input, reason, transport: 'headless',
+**Разрешения, безголовый транспорт (по умолчанию).** CLI не может ждать подтверждения в режиме `-p`, поэтому отказывает. Нормализатор
+обнаруживает отклонённый вызов инструмента (tool_result `is_error`, текст которого соответствует `agents.<id>.denialPattern`, по умолчанию
+`/(requires? (user )?(approval|confirmation)|not allowed|denied|permission|подтвержд|запрещ)/i`, ПРОВЕРИТЬ настоящую формулировку) и
+выдаёт Message `{ kind: 'permission', permission: { id, tool, input, reason, transport: 'headless',
 options: [{id:'allow_once',label:'Разрешить один раз'}, {id:'allow_session',label:'Разрешать в этой сессии'},
-{id:'reject',label:'Запретить'}] } }`, session `waitingFor: 'permission'`. `POST /api/sessions/:id/permission
-{ permissionId, optionId, note? }`: allow_once → next turn with approvalMode one step more permissive
-(`plan→default→auto-edit→auto`, from `approvalModes` order) for that turn only + message «Разрешаю: выполни <tool> <input
-summary>»; allow_session → PATCH session.approvalMode to that mode + same message; reject → message «Не выполняй это
-(<tool>); найди другой путь или спроси». The card shows the resolved choice afterwards.
-**Superseded on the target (confirmed: `auto` runs as `auto-edit`, which never allows `run_shell_command`, so escalation
-has nowhere to go) — headless permissions are an allow-list now:** the denial text `requires permission to use "<tool>"`
-gives the tool; the card carries `permission.pattern` (shell → `run_shell_command(<first non-cd command word>)`, e.g.
-`cd /d X && git status` → `run_shell_command(git)`; other tools → the tool name), `answered`/`resolved`/`resolvedAt`.
-allow_once → a one-turn grant (`session.grantsOnce`, consumed by the next turn); allow_project («Разрешать всегда в этом
-проекте», offered only for a session with a `workspaceId`) → `db.prefs.allowedToolsByWorkspace[workspaceId]`, merged into
-every turn of every session of that project; `/api/settings` returns and PUT replaces `permissions: {
-allowedToolsByWorkspace: { <workspaceId>: string[] } }` (unknown workspace ids → 400); allow_session → `session.allowedTools`
-(PATCH `/api/sessions/:id { allowedTools }` edits it); both deliver «Разрешено: повтори <tool> <input summary>» (queued if
-the turn still runs). Every headless turn passes `agents.<id>.allowedTools` (Settings «Разрешённые команды») ∪
-`session.allowedTools` ∪ the one-turn grants as `agents.<id>.allowedToolsFlag` (gigacode/qwen default `--allowed-tools`,
-VERIFY) repeated per entry (`allowedToolsJoin: "comma"` joins them). The approval mode is escalated only for an edit tool
-in plan/default mode. A sub-agent's denial is re-emitted in the PARENT chat (`from` = the sub-agent session,
-`permission.fromSubSessionId`, text «субагент <type>: <tool>»); the grant applies to the parent's next turn. A repeated
-stderr warning is one ⚠ message per session with a `count`; the init MCP statuses are kept as `session.mcpStatus`.
+{id:'reject',label:'Запретить'}] } }`, у сессии `waitingFor: 'permission'`. `POST /api/sessions/:id/permission
+{ permissionId, optionId, note? }`: allow_once → следующий ход с режимом подтверждения на один шаг мягче
+(`plan→default→auto-edit→auto`, по порядку `approvalModes`) только на этот ход + сообщение «Разрешаю: выполни <tool> <input
+summary>»; allow_session → PATCH session.approvalMode на этот режим + то же сообщение; reject → сообщение «Не выполняй это
+(<tool>); найди другой путь или спроси». После этого карточка показывает принятое решение.
+**Заменено на целевой машине (подтверждено: `auto` работает как `auto-edit`, который никогда не разрешает `run_shell_command`, поэтому эскалации
+некуда идти) — безголовые разрешения теперь строятся на белом списке:** текст отказа `requires permission to use "<tool>"`
+называет инструмент; карточка несёт `permission.pattern` (shell → `run_shell_command(<первое слово команды, не cd>)`, например
+`cd /d X && git status` → `run_shell_command(git)`; другие инструменты → имя инструмента), `answered`/`resolved`/`resolvedAt`.
+allow_once → разрешение на один ход (`session.grantsOnce`, расходуется следующим ходом); allow_project («Разрешать всегда в этом
+проекте», предлагается только для сессии с `workspaceId`) → `db.prefs.allowedToolsByWorkspace[workspaceId]`, подмешивается в
+каждый ход каждой сессии этого проекта; `/api/settings` возвращает, а PUT заменяет `permissions: {
+allowedToolsByWorkspace: { <workspaceId>: string[] } }` (неизвестные id workspace → 400); allow_session → `session.allowedTools`
+(PATCH `/api/sessions/:id { allowedTools }` правит его); обе доставляют «Разрешено: повтори <tool> <input summary>» (в очередь, если
+ход ещё идёт). Каждый безголовый ход передаёт `agents.<id>.allowedTools` (Настройки «Разрешённые команды») ∪
+`session.allowedTools` ∪ разовые разрешения как `agents.<id>.allowedToolsFlag` (по умолчанию для gigacode/qwen `--allowed-tools`,
+ПРОВЕРИТЬ), повторяемый для каждой записи (`allowedToolsJoin: "comma"` соединяет их через запятую). Режим подтверждения повышается только для инструмента
+редактирования в режиме plan/default. Отказ субагента повторно выдаётся в РОДИТЕЛЬСКОМ чате (`from` = сессия субагента,
+`permission.fromSubSessionId`, текст «субагент <type>: <tool>»); разрешение применяется к следующему ходу родителя. Повторяющееся
+предупреждение stderr — одно сообщение ⚠ на сессию со `count`; статусы MCP из init сохраняются как `session.mcpStatus`.
 
-**Permissions, ACP transport (`agents.<id>.transport: "acp"`, VERIFY for GigaCode `--acp`).** One long-lived process per
-session (`<cli> --acp [--approval-mode m] [--model m] [--include-directories …]`), JSON-RPC 2.0 over stdio (ndjson):
+**Разрешения, транспорт ACP (`agents.<id>.transport: "acp"`, ПРОВЕРИТЬ для GigaCode `--acp`).** Один долгоживущий процесс на
+сессию (`<cli> --acp [--approval-mode m] [--model m] [--include-directories …]`), JSON-RPC 2.0 поверх stdio (ndjson):
 `initialize` (clientCapabilities fs.read/write true, terminal false) → `session/new {cwd, mcpServers:[harness + agentMcpServers]}`
-(or `session/load {sessionId}` when the agent supports loadSession and we have externalSessionId) → per message
-`session/prompt {sessionId, prompt:[{type:'text',text}]}`; `session/update` notifications map to the same Messages
-(agent_message_chunk → assistant text delta, agent_thought_chunk → thought, tool_call/tool_call_update → tool (a call may come with rawInput {} and its real input in a later
-tool_call_update: the card, and for agent calls the sub-agent chat title and task message, are filled then), plan →
-system plan note); in «Полный доступ» (approvalMode auto/yolo/bypassPermissions) the harness answers every
-`session/request_permission` itself with the allow-once option (never «always»: that writes CLI settings), no card; a
-request that carries the CLI's own question (its toolCallId is a question tool call, or rawInput.questions) is ONE
-question card: the request stays held (the agent waits), the person's answer declines it, ends the turn quietly (no
-«Остановлено») and goes as the next message; otherwise `session/request_permission {toolCall, options[{optionId,name,kind}]}` → a `permission` Message with
-the agent's options (`transport: 'acp'`), the JSON-RPC request is held until `POST /api/sessions/:id/permission`
-answers `{outcome:{outcome:'selected', optionId}}` (or `cancelled` on Stop); `fs/read_text_file` / `fs/write_text_file`
-served inside cwd/includeDirs; Stop → `session/cancel`; the process is restarted lazily if it dies (load or new session +
-a system note). Same identity/launcher resolution as headless. A mock ACP agent (`scripts/mock-acp-agent.js`) covers tests.
-Feature flags: `questions`, `permissions`, `acp`.
+(или `session/load {sessionId}`, когда агент поддерживает loadSession и у нас есть externalSessionId) → на каждое сообщение
+`session/prompt {sessionId, prompt:[{type:'text',text}]}`; уведомления `session/update` отображаются в те же Message
+(agent_message_chunk → дельта текста ассистента, agent_thought_chunk → рассуждение, tool_call/tool_call_update → инструмент (вызов может прийти с rawInput {}, а его настоящий ввод — в более позднем
+tool_call_update: карточка, а для вызовов agent — название чата субагента и сообщение задачи, заполняются тогда), plan →
+системная заметка о плане); в режиме «Полный доступ» (approvalMode auto/yolo/bypassPermissions) harness сам отвечает на каждый
+`session/request_permission` вариантом «разрешить один раз» (никогда «всегда»: это пишет настройки CLI), без карточки; запрос,
+несущий собственный вопрос CLI (его toolCallId — вызов инструмента вопроса, или rawInput.questions), — ОДНА
+карточка вопроса: запрос остаётся удержанным (агент ждёт), ответ человека отклоняет его, тихо завершает ход (без
+«Остановлено») и уходит следующим сообщением; иначе `session/request_permission {toolCall, options[{optionId,name,kind}]}` → Message `permission` с
+вариантами агента (`transport: 'acp'`), JSON-RPC запрос удерживается, пока `POST /api/sessions/:id/permission`
+не ответит `{outcome:{outcome:'selected', optionId}}` (или `cancelled` по Stop); `fs/read_text_file` / `fs/write_text_file`
+обслуживаются внутри cwd/includeDirs; Stop → `session/cancel`; процесс лениво перезапускается, если умирает (load или новая сессия +
+системная заметка). То же разрешение identity/лаунчера, что и в безголовом режиме. Тесты покрывает мок ACP-агента (`scripts/mock-acp-agent.js`).
+Флаги возможностей: `questions`, `permissions`, `acp`.
 
-Implementation status: questions (a–c), headless permissions and the ACP transport are implemented (flags `questions`,
-`permissions`, `acp`; `server/acp.js`, `scripts/mock-acp-agent.js`). ACP notes: the process is spawned with stdio pipes
-(it cannot outlive the harness), stderr goes to `runs/<sid>/acp.err.txt`, `initialize` must answer within
-`firstEventTimeoutMs`; `session/update` replays during `session/load` are dropped (the transcript already has them); a
-failed load or an agent without `loadSession` → `session/new` + a system note; diff content becomes `--- path / +++ path`
-with the whole old/new text (no minimal hunks); a Stop marks open ACP cards `resolved: 'cancelled'`; an ACP answer is not a
-new message (the agent continues the same prompt) and a late answer → 409. `session.pid` stays null for ACP turns, so
-`stalled` does not apply to them. A running ACP turn at a harness restart is `interrupted` (recovery); the next message
-starts the process again with `session/load`. Warm process: `session.warm` (loaded); an idle one (no prompt, no held
-permission) is unloaded after `agents.<id>.acpIdleMin` minutes (default 30, 0 = never; PUT also accepts `null` = never,
-stored and returned as 0, and `acpIdleTimeoutMin`) and reloaded with `session/load` on the next message (a note only if the load fails); `transport`
-and `acpIdleMin` are in /api/settings. Model discovery of an ACP agent asks a warm process in a hidden extra session
-(no cold start); without one it runs headless as before. MCP exclusions for harness runs: `agents.<id>.mcpExclude`
-(never `harness`) written into the run settings under `agents.<id>.mcpExcludeKey` (default `mcp.excluded`, alt
-`excludeMCPServers`; VERIFY which one GigaCode honours); `GET /api/agents/:id/info` → `mcpServers: [{ name, status,
-excluded }]` from the last init for the toggles. Notes: the question card's answer is an ordinary message
-(`POST /api/sessions/:id/messages` with «Ответ на вопрос «…»: …»); any delivery to the session clears `waitingFor`
-'answer'/'permission'; the open question card of the session gets `question.answered: true, answer, answeredAt` (the
-text after the «Ответ на вопрос «…»: » prefix) and its `question` notifications get `answered: true, read: true`
-(re-sent as `notify` frames). A permission answer also sets `permission.resolved` + `permission.choice` (the option
-id the user picked; cancelled cards have `resolved: 'cancelled'` and no choice) (+ `resolvedAt`) on the card. Archiving
-a session cancels only the cards inside it; a sub-agent's card re-emitted in the parent stays open (granted there, it
-applies to the parent's next turn). A second answer →
-409; `note` is appended to the delivered message. allow_once sets `session.approvalOnce` (consumed by the next turn).
-The mock agent has `#deny <tool>` and `#question <q> | <option> | …`.
+Состояние реализации: вопросы (а–в), безголовые разрешения и транспорт ACP реализованы (флаги `questions`,
+`permissions`, `acp`; `server/acp.js`, `scripts/mock-acp-agent.js`). Замечания по ACP: процесс запускается со stdio-каналами
+(не может пережить harness), stderr идёт в `runs/<sid>/acp.err.txt`, `initialize` должен ответить за
+`firstEventTimeoutMs`; повторы `session/update` во время `session/load` отбрасываются (в транскрипте они уже есть); неудавшийся
+load или агент без `loadSession` → `session/new` + системная заметка; содержимое diff становится `--- path / +++ path`
+с полным старым/новым текстом (без минимальных блоков); Stop помечает открытые карточки ACP как `resolved: 'cancelled'`; ответ ACP — не
+новое сообщение (агент продолжает тот же промпт), а запоздалый ответ → 409. `session.pid` остаётся null для ходов ACP, поэтому
+`stalled` к ним не применяется. Работающий ход ACP при перезапуске harness получает `interrupted` (восстановление); следующее сообщение
+снова запускает процесс через `session/load`. Тёплый процесс: `session.warm` (загружен); простаивающий (нет промпта, нет удерживаемого
+разрешения) выгружается через `agents.<id>.acpIdleMin` минут (по умолчанию 30, 0 = никогда; PUT также принимает `null` = никогда,
+хранится и возвращается как 0, и `acpIdleTimeoutMin`) и заново загружается через `session/load` на следующем сообщении (заметка — только если load не удался); `transport`
+и `acpIdleMin` есть в /api/settings. Обнаружение моделей агента ACP спрашивает тёплый процесс в скрытой дополнительной сессии
+(без холодного старта); если его нет, работает в безголовом режиме, как раньше. Исключения MCP для запусков harness: `agents.<id>.mcpExclude`
+(никогда не `harness`) записываются в настройки запуска под ключом `agents.<id>.mcpExcludeKey` (по умолчанию `mcp.excluded`, альтернатива
+`excludeMCPServers`; ПРОВЕРИТЬ, какой из них учитывает GigaCode); `GET /api/agents/:id/info` → `mcpServers: [{ name, status,
+excluded }]` из последнего init для переключателей. Замечания: ответ карточки вопроса — обычное сообщение
+(`POST /api/sessions/:id/messages` с «Ответ на вопрос «…»: …»); любая доставка в сессию снимает `waitingFor`
+'answer'/'permission'; открытая карточка вопроса сессии получает `question.answered: true, answer, answeredAt` (текст
+после префикса «Ответ на вопрос «…»: »), а её уведомления `question` получают `answered: true, read: true`
+(повторно отправляются кадрами `notify`). Ответ на разрешение также выставляет на карточке `permission.resolved` + `permission.choice` (id
+выбранного пользователем варианта; у отменённых карточек `resolved: 'cancelled'` и нет choice) (+ `resolvedAt`). Архивирование
+сессии отменяет только карточки внутри неё; карточка субагента, повторно выданная в родителе, остаётся открытой (разрешённая там,
+она применяется к следующему ходу родителя). Второй ответ →
+409; `note` добавляется к доставленному сообщению. allow_once выставляет `session.approvalOnce` (расходуется следующим ходом).
+У мок-агента есть `#deny <tool>` и `#question <q> | <option> | …`.
 
-## CLI session history (sessions started outside the harness)
+## История сессий CLI (сессии, начатые вне harness)
 
-GigaCode records chats (`chatRecording: true`) — VERIFY location/format; expected Gemini/Qwen-style
+GigaCode записывает чаты (`chatRecording: true`) — ПРОВЕРИТЬ расположение/формат; ожидается стиль Gemini/Qwen
 `~/.gigacode/tmp/<projectHash>/chats/*.json` (`{ sessionId, projectHash, startTime, lastUpdated, messages: [{ id,
 timestamp, type: 'user'|'gemini'|'assistant'|…, content, toolCalls?, thoughts?, model?, tokens? }] }`, projectHash = sha256
-of the project root path), or via `gigacode sessions …` (VERIFY subcommands, e.g. a JSON list).
-- Config `agents.<id>.history: { dirs: ["~/.gigacode/tmp/*/chats"], command: null }` (glob of chat dirs; or a CLI command
-  returning JSON); tolerant reader: any JSON/JSONL file with a session id + messages array; unknown shapes are listed with
-  `raw: true` (title from the file name) instead of failing.
-- `GET /api/history?cwd=` → `[{ id, agent, cwd, title (first user message, 80 chars), startedAt, updatedAt, messages,
-  model, file, linkedSessionId }]` for sessions whose project path (from the record, or projectHash = sha256(path) of the
-  cwd and its worktree root) matches; cached by file mtime; read asynchronously and only from this project's
-  `<hash>/chats` folders plus folders whose records name this cwd explicitly (a per-folder index of explicit cwds,
-  rebuilt when the folder mtime changes); `GET /api/history/:agent/:id/messages` → Messages (same
-  shapes as transcripts; user/assistant/thought/tool, read-only).
-- `POST /api/history/:agent/:id/continue { cwd }` → creates (or returns the existing linked) harness chat session with
-  `externalSessionId = id`, that cwd and agent, transcript pre-filled from the history (marked imported), so the next
-  message runs `--resume <id>`; `linkedSessionId` is set. Feature flag `cli-history`.
-- Implementation (`server/history.js`): `dirs` globs allow `*` in any folder segment; `*.json`/`*.jsonl` files are read;
-  a record's own `cwd`/`projectRoot` wins over the hash; the hash is checked for the cwd and its main worktree (on
-  Windows with both drive-letter cases); a JSON record without `projectHash` uses its `<hash>/chats` folder name. CLI
-  `info`/`error` entries are skipped; thoughts `{ subject, description }` become one thought message each; tool calls use
-  `displayName`/`args`/`resultDisplay`. Imported messages carry `imported: true` and turn 0; the chat gets `historyId`.
-  `history.command` (a CLI listing) is accepted in the config but not run yet — waiting for the real `gigacode sessions`
-  output (VERIFY, GIGACODE-FACTS open question 12).
+пути корня проекта), либо через `gigacode sessions …` (ПРОВЕРИТЬ подкоманды, например список в JSON).
+- Конфигурация `agents.<id>.history: { dirs: ["~/.gigacode/tmp/*/chats"], command: null }` (glob каталогов чатов; или команда CLI,
+  возвращающая JSON); терпимый читатель: любой файл JSON/JSONL с id сессии + массивом сообщений; неизвестные формы перечисляются с
+  `raw: true` (название из имени файла) вместо ошибки.
+- `GET /api/history?cwd=` → `[{ id, agent, cwd, title (первое сообщение пользователя, 80 символов), startedAt, updatedAt, messages,
+  model, file, linkedSessionId }]` для сессий, чей путь проекта (из записи или projectHash = sha256(path) от
+  cwd и корня его рабочего дерева) совпадает; кэшируется по mtime файла; читается асинхронно и только из папок
+  `<hash>/chats` этого проекта плюс папок, чьи записи явно называют этот cwd (индекс явных cwd для каждой папки,
+  перестраивается при изменении mtime папки); `GET /api/history/:agent/:id/messages` → Messages (те же
+  формы, что у транскриптов; user/assistant/thought/tool, только чтение).
+- `POST /api/history/:agent/:id/continue { cwd }` → создаёт (или возвращает уже связанную) чат-сессию harness с
+  `externalSessionId = id`, этим cwd и агентом, транскрипт предзаполнен из истории (помечен как импортированный), поэтому следующее
+  сообщение запускает `--resume <id>`; выставляется `linkedSessionId`. Флаг возможности `cli-history`.
+- Реализация (`server/history.js`): globs в `dirs` допускают `*` в любом сегменте папки; читаются файлы `*.json`/`*.jsonl`;
+  собственные `cwd`/`projectRoot` записи приоритетнее хэша; хэш проверяется для cwd и его основного рабочего дерева (в
+  Windows с обоими регистрами буквы диска); у JSON-записи без `projectHash` берётся имя её папки `<hash>/chats`. Записи CLI
+  `info`/`error` пропускаются; рассуждения `{ subject, description }` становятся по одному сообщению-рассуждению; вызовы инструментов используют
+  `displayName`/`args`/`resultDisplay`. Импортированные сообщения несут `imported: true` и ход 0; у чата выставляется `historyId`.
+  `history.command` (список через CLI) принимается в конфигурации, но пока не запускается — ожидается настоящий вывод
+  `gigacode sessions` (ПРОВЕРИТЬ, открытый вопрос 12 в GIGACODE-FACTS).
 
-## Permissions strategy for GigaCode (no yolo): work without constant prompts
+## Стратегия разрешений для GigaCode (без yolo): работать без постоянных запросов
 
-GigaCode has no yolo; headless denies everything not pre-allowed. Three layers, so a task runs end-to-end unattended:
-1. **«Полный доступ» = auto-edit + the allow-list by default; `auto` + workspace sandbox is OPT-IN**
-   (`agents.gigacode.autoSandbox: null` by default — the sandbox made runs noticeably slower on the real machine;
-   Settings → «Песочница для «Полного доступа»» sets `"workspace"`, the CLI's documented `settings.tools.sandbox`).
-   When enabled, the sandbox scope is the session cwd (+ includeDirs); a task started at the
-   projects root therefore covers every repo and `<repo>-worktrees`. Self-healing: if a turn fails fatally with a
-   sandbox-related error (stderr matches `/sandbox/i` before any event) — or a tool result (also a sub-agent's) fails
-   with «GigaCode sandbox: …» (seen: `acl-object-hardlink (Win32 50)`; no retry then, the next turns) — the harness sets
-   `agentMeta.<id>.sandboxBroken = { at, error }`, maps auto → auto-edit for that agent from then on (approvalModeMap),
-   retries the same turn once, and notifies «Песочница GigaCode недоступна: <reason>. «Полный доступ» работает как
-   «Авто-правки» + разрешённые команды». Settings show the state and a «Проверить снова» action (clears the flag).
-2. **Default allow-list** (`agents.gigacode.allowedTools` default): `run_shell_command(git)`, `(mvn)`, `(mvnw)`, `(gradle)`,
+В GigaCode нет yolo; безголовый режим отказывает во всём, что не разрешено заранее. Три слоя, чтобы задача выполнялась от начала до конца без присмотра:
+1. **«Полный доступ» = auto-edit + белый список по умолчанию; `auto` + песочница рабочего пространства — ПО ЖЕЛАНИЮ**
+   (`agents.gigacode.autoSandbox: null` по умолчанию — песочница заметно замедляла запуски на реальной машине;
+   Настройки → «Песочница для «Полного доступа»» задаёт `"workspace"`, задокументированный в CLI `settings.tools.sandbox`).
+   Когда песочница включена, её область — cwd сессии (+ includeDirs); поэтому задача, запущенная в
+   корне проектов, охватывает каждый репозиторий и `<repo>-worktrees`. Самовосстановление: если ход завершается фатальной ошибкой, связанной с
+   песочницей (stderr совпадает с `/sandbox/i` до любого события), — или результат инструмента (в том числе субагента) завершается
+   с «GigaCode sandbox: …» (замечено: `acl-object-hardlink (Win32 50)`; повтора тогда нет, действует со следующих ходов), — harness выставляет
+   `agentMeta.<id>.sandboxBroken = { at, error }`, с этого момента отображает auto → auto-edit для этого агента (approvalModeMap),
+   один раз повторяет тот же ход и уведомляет «Песочница GigaCode недоступна: <reason>. «Полный доступ» работает как
+   «Авто-правки» + разрешённые команды». Настройки показывают это состояние и действие «Проверить снова» (сбрасывает флаг).
+2. **Белый список по умолчанию** (`agents.gigacode.allowedTools` по умолчанию): `run_shell_command(git)`, `(mvn)`, `(mvnw)`, `(gradle)`,
    `(gradlew)`, `(npm)`, `(npx)`, `(node)`, `(java)`, `(python)`, `(py)`, `(pytest)`, `(dir)`, `(ls)`, `(type)`, `(cat)`,
-   `(findstr)`, `(rg)`, `(where)`, `(echo)` — passed on every turn in auto-edit/default (not in plan) so routine commands
-   never prompt. Users edit it in Settings.
-3. Remaining denials → «Разрешить и повторить» (one-turn / session allow-list grants), or ACP (real waiting) when enabled.
-The effective mode + sandbox + allow-list used by a turn are recorded on the turn's user message (`runInfo`) and shown
-in the chat header tooltip-free popover «Как запущен агент».
-Implementation: the gigacode launcher defaults are `autoSandbox: null`, `approvalModeMap: { auto: "auto-edit" }`
-(applied only without a sandbox) and `allowedTools` = the list above (qwen: the same list, no sandbox); an agent config
-value overrides them (`autoSandbox: null` = no sandbox). The default list goes into auto-edit/default turns only (auto
-under the sandbox needs none, plan only reads); the chat's `allowedTools` and one-turn grants are added in every mode.
-Self-healing applies to a turn that fails with no event and a stderr line matching `/sandbox/i` while a sandbox is in
-effect: the same turn (same user messages, no new message) is retried once; `sandboxBroken` is shown in
-`GET /api/agents/:id/info` and `/api/settings` (`agents.<id>.sandboxBroken`); `POST /api/agents/:id/sandbox/recheck`
-clears it (the next turn tries the sandbox again). `runInfo` = `{ cliMode, sandbox, allowedTools, model, transport,
-includeDirs }` on the last user message of the turn.
+   `(findstr)`, `(rg)`, `(where)`, `(echo)` — передаётся на каждом ходе в auto-edit/default (не в plan), чтобы привычные команды
+   никогда не запрашивали подтверждение. Пользователи правят его в Настройках.
+3. Оставшиеся отказы → «Разрешить и повторить» (разовые / на сессию разрешения в белом списке) или ACP (настоящее ожидание), если он включён.
+Действующий режим + песочница + белый список, использованные ходом, записываются в пользовательское сообщение хода (`runInfo`) и показываются
+во всплывающем окне заголовка чата без подсказок «Как запущен агент».
+Реализация: значения по умолчанию лаунчера gigacode — `autoSandbox: null`, `approvalModeMap: { auto: "auto-edit" }`
+(применяется только без песочницы) и `allowedTools` = список выше (qwen: тот же список, без песочницы); значение в конфигурации агента
+переопределяет их (`autoSandbox: null` = без песочницы). Список по умолчанию попадает только в ходы auto-edit/default (auto
+под песочницей в нём не нуждается, plan только читает); `allowedTools` чата и разовые разрешения добавляются в любом режиме.
+Самовосстановление применяется к ходу, который завершается без событий со строкой stderr, совпадающей с `/sandbox/i`, пока действует песочница:
+тот же ход (те же пользовательские сообщения, без нового сообщения) повторяется один раз; `sandboxBroken` показывается в
+`GET /api/agents/:id/info` и `/api/settings` (`agents.<id>.sandboxBroken`); `POST /api/agents/:id/sandbox/recheck`
+сбрасывает его (следующий ход снова пробует песочницу). `runInfo` = `{ cliMode, sandbox, allowedTools, model, transport,
+includeDirs }` в последнем пользовательском сообщении хода.
 
-## Session activity states (what the UI shows)
+## Состояния активности сессии (что показывает UI)
 
-Session gains `lastEventAt: number | null` (last stdout event of the current turn), `waitingFor: 'answer' | 'auth' | null`
-(set when the session called `ask` and no reply was delivered yet, or phase auth), and `stalled: boolean` (server-side:
-running AND phase !== 'auth' AND no event for `session.stallSec` (default 300, in /api/settings) while the pid is alive;
-re-evaluated every 15 s; flips are broadcast). Derived UI state, in priority order:
+Сессия получает `lastEventAt: number | null` (последнее событие stdout текущего хода), `waitingFor: 'answer' | 'auth' | null`
+(выставляется, когда сессия вызвала `ask` и ответ ещё не доставлен, либо при фазе auth) и `stalled: boolean` (на стороне сервера:
+running И phase !== 'auth' И нет событий в течение `session.stallSec` (по умолчанию 300, в /api/settings), пока pid жив;
+пересчитывается каждые 15 с; переключения рассылаются). Производное состояние UI в порядке приоритета:
 `waiting_answer` (waitingFor) → `stalled` → `starting` (phase starting/auth) → `running` → `error`/`failed` → `stopped` →
-`done` (worker_done done) → `exited` (terminal) → `idle` (turn finished, ready for the next message).
-Implementation: `waitingFor` may also be `'permission'` (headless denial card); `/api/settings` exposes and accepts
-`session: { stallSec }` (integer ≥ 30); the re-check period is `session.stallCheckSec` (config only, default 15); any event
-clears `stalled`; `lastEventAt` is not broadcast on its own (it rides on the next session frame). Feature flag `activity`.
-- The turn ends for the user at `result`, not at process exit (GigaCode lingers for many seconds after `result`: MCP
-  servers shutting down, chat recording, telemetry): status → idle (or done/failed as before), phase null,
-  `turnClosing: true` while the process is still alive; the post-turn logic (auto-report escalation, review loop) runs
-  then. The process stays tracked at most `agents.<id>.exitGraceMs` (default 8000) after `result` — whether or not a
-  message is queued — then the tree is killed (guarded, killReason `post_result_linger`); a queued message starts the
-  next turn once it exited; the linger duration is logged to `runs/<sid>/stderr.log`. Stop on a lingering process only
-  ends it (no «Остановлено»); archive / DELETE of a session whose process only lingers are not refused (it is ended).
-  `turnClosing` is reset when a turn starts and on every harness start (a lingering process is not followed across a
-  restart). An error that arrives with the result (ACP stop reason `max_tokens`, …) is still shown (error message,
-  status `error`) when the process exits.
-- `lastEventKind`: `text_delta` | `assistant_final` | `thought` | `tool_running` | `tool_done` | `result` (session frames
-  are sent when it changes) — the UI says «Завершает ход…» instead of «Пишет ответ».
-- Context ring: `session.context = { tokens, at, lastTurn: { input, output, cacheRead } }` from the latest main-agent
-  step's usage (overwritten per step, persisted, session frame at most once a second; a built-in sub-agent's steps are
-  not counted). tokens: GigaCode/Qwen/Gemini (OpenAI style, cache_read inside input) = input + output; claude
-  (Anthropic style) = input + cache_read + cache_creation + output; ACP: the prompt result's `usage` when present
-  (VERIFY). `session.contextLimit`: the model's `context` from the merged catalogue ("262k" → 262000, "1M"), model =
-  session.model || the model the CLI reported at init (`session.cliModel`) || the agent default (a `-262k` id suffix
-  also counts); null when unknown. `/api/state` agents carry `compressCommand` (gigacode default "/compress") and
-  `contextCommand` ("/context", not used yet) — both VERIFY (GIGACODE-FACTS q.15).
+`done` (worker_done done) → `exited` (терминал) → `idle` (ход закончен, готов к следующему сообщению).
+Реализация: `waitingFor` может также быть `'permission'` (карточка безголового отказа); `/api/settings` отдаёт и принимает
+`session: { stallSec }` (целое ≥ 30); период перепроверки — `session.stallCheckSec` (только в конфигурации, по умолчанию 15); любое событие
+сбрасывает `stalled`; `lastEventAt` сам по себе не рассылается (он едет со следующим кадром сессии). Флаг возможности `activity`.
+- Для пользователя ход заканчивается на `result`, а не на выходе процесса (GigaCode задерживается на много секунд после `result`: MCP-серверы
+  завершаются, запись чата, телеметрия): статус → idle (или done/failed, как раньше), phase null,
+  `turnClosing: true`, пока процесс ещё жив; логика после хода (эскалация автоотчёта, цикл ревью) выполняется
+  тогда. Процесс остаётся под наблюдением не дольше `agents.<id>.exitGraceMs` (по умолчанию 8000) после `result` — независимо от того, есть ли
+  сообщение в очереди, — затем дерево убивается (с защитой, killReason `post_result_linger`); сообщение в очереди запускает
+  следующий ход, когда процесс завершился; длительность задержки пишется в `runs/<sid>/stderr.log`. Stop для задержавшегося процесса только
+  завершает его (без «Остановлено»); архивирование / DELETE сессии, процесс которой только задерживается, не отклоняются (он завершается).
+  `turnClosing` сбрасывается при запуске хода и при каждом старте harness (задержавшийся процесс не отслеживается через
+  перезапуск). Ошибка, пришедшая вместе с result (причина остановки ACP `max_tokens`, …), всё равно показывается (сообщение error,
+  статус `error`), когда процесс завершается.
+- `lastEventKind`: `text_delta` | `assistant_final` | `thought` | `tool_running` | `tool_done` | `result` (кадры сессии
+  отправляются при его изменении) — UI пишет «Завершает ход…» вместо «Пишет ответ».
+- Кольцо контекста: `session.context = { tokens, at, lastTurn: { input, output, cacheRead } }` из usage последнего шага
+  главного агента (перезаписывается на каждом шаге, сохраняется, кадр сессии не чаще раза в секунду; шаги встроенного субагента
+  не учитываются). tokens: GigaCode/Qwen/Gemini (стиль OpenAI, cache_read внутри input) = input + output; claude
+  (стиль Anthropic) = input + cache_read + cache_creation + output; ACP: `usage` результата промпта, когда есть
+  (ПРОВЕРИТЬ). `session.contextLimit`: `context` модели из объединённого каталога («262k» → 262000, «1M»), модель =
+  session.model || модель, о которой CLI сообщил при init (`session.cliModel`) || значение агента по умолчанию (суффикс id `-262k`
+  тоже учитывается); null, когда неизвестно. Агенты в `/api/state` несут `compressCommand` (по умолчанию для gigacode "/compress") и
+  `contextCommand` ("/context", пока не используется) — оба ПРОВЕРИТЬ (GIGACODE-FACTS q.15).
 
-## Nothing is lost on restart (harness, browser, PC)
+## Ничего не теряется при перезапуске (harness, браузер, ПК)
 
-Durable state (all in `<dataDir>`, atomic writes):
-- `db.json` + rotating `db.json.bak` (last good copy, written before each replace); on startup a corrupt/unparsable
-  `db.json` is replaced by the `.bak` with a notification «восстановлено из резервной копии»; transcripts likewise
-  (`<sid>.json` + `.bak`). Debounce ≤ 250 ms; flush on every turn end, on shutdown, and synchronously on SIGINT/SIGTERM.
-- Session delivery queue is persisted (`session.queue: [{ id, from, text, at, recorded? }]`, not only a count); after a
-  restart, queued deliveries of idle sessions are sent, those of re-attached running sessions wait for the turn end.
-- A turn whose process never started (spawn error, missing cwd, unknown model, …) puts its messages back at the head of
-  the queue (`recorded: true`: already in the transcript, not repeated) and says «Сообщений в очереди: N — уйдут со
-  следующим сообщением или после смены модели.»; no automatic retry loop: the next delivery, a `PATCH { model }` or a
-  restart sends them; Stop clears them.
-- Long prompts: a prompt over ~24 000 characters (Windows caps a command line at 32 767) is written to
-  `runs/<sid>/prompts/prompt-<turn>.md`; argv gets the slash-command line (if the prompt starts with `/`, it stays
-  first) + «Полный текст сообщения: <path>» + a read-it instruction, and that folder is added to the CLI's
-  `--include-directories` for that turn (the CLI reads only inside its workspace dirs). ACP prompts are not affected.
-- Store: a failed write (file held by an antivirus) keeps its key dirty and is retried after 1 s; `db.json` is compact
-  JSON; the read position (`turnOffset`) alone saves db.json at most every 2 s (a crash may re-read ≤ 2 s of events);
-  at most 50 transcripts stay in memory (LRU; never one with a running turn); the turn counter is `session.turnCount`.
-- Re-attach identity: at spawn the harness records `pidStartedAt` (Windows: process creation time via
-  `Get-CimInstance Win32_Process` / `wmic` fallback; Linux: `/proc/<pid>/stat` starttime + boot time; macOS: `ps -o lstart=`);
-  implementation: the stamp at spawn is `Date.now()` on Windows/macOS (equal to the creation time within the tolerance, no
-  PowerShell per turn) and the `/proc` value on Linux (same clock on both sides); the OS query runs only on startup and
-  before a Stop of a re-attached turn (cached 10 s);
-  on startup a `running` session is re-attached only if the pid exists AND its start time matches (±2 s); otherwise the turn
-  is finalized from the remaining output file (or marked interrupted with a system note) — a reused pid is never adopted
-  and never killed. Stop on a re-attached session re-checks identity before killing. What orchestration already handled in
-  the turn (`worker_done` → `session.turnFlags`) is persisted, so a re-attached turn is never reported twice.
-- Single-instance lock: a live pid in `server.json` is a conflict only if `GET <url>/api/health` (new, unauthenticated,
-  returns `{ ok, pid, dataDir }`) answers from that pid within 1 s; otherwise the lock is stale and taken over.
-- Orchestration waits: `worker_run`/`agent` waits are stateless on the server (the worker session persists `parentId`,
-  `waiter: true`, and its `report: { status, summary, at }`); `mcp/harness-mcp.js` keeps long-polling `worker_wait` with
-  backoff across server restarts until the overall timeout, so the orchestrator's tool call survives a harness restart.
-  Every `worker_done` stores `session.report` (it replaced `runResult`). Agent runs get `HARNESS_SERVER_JSON`: harness-mcp
-  reads the current URL from it on every call (a restarted harness may listen elsewhere); no file = harness down → retry
-  (`HARNESS_RETRY_MS`, default 2 min; only requests that never reached the server are repeated, worker_wait always).
-- Review loop / ports state (`task.review: { round, reviewerSessionId, verdicts[] }`, `task.ports[]`) persisted; a reviewer
-  that finished while the harness was down is picked up on startup (its report is in the transcript/report field).
-- Terminals: history persists (`terms/<sid>.log`); PTY processes cannot outlive the server, so on startup every terminal
-  that was alive is respawned automatically in the same cwd (system line «— перезапуск harness: новая сессия терминала —»
-  appended to its log); a terminal whose initial command was an agent CLI with a continue flag is respawned with it
-  (`agents.<id>.continueArgs`, gigacode default `["-c"]`). `terminal.autoRespawn` (default true). A plain shell's own
-  initial `command` is not re-run (it may have side effects). Feature flag `health`.
-- UI: drafts (composer per session, commit title/body per cwd, PR dialog per cwd+base, task drawer edits) persist in
-  localStorage (try/catch, cleared on send/commit); open screens/tabs/panels/scroll per worktree persist as now.
+Долговременное состояние (всё в `<dataDir>`, атомарная запись):
+- `db.json` + ротируемый `db.json.bak` (последняя исправная копия, записывается перед каждой заменой); при старте повреждённый/неразбираемый
+  `db.json` заменяется на `.bak` с уведомлением «восстановлено из резервной копии»; транскрипты так же
+  (`<sid>.json` + `.bak`). Отложенная запись ≤ 250 мс; сброс на диск в конце каждого хода, при остановке и синхронно по SIGINT/SIGTERM.
+- Очередь доставки сессии сохраняется (`session.queue: [{ id, from, text, at, recorded? }]`, а не только счётчик); после
+  перезапуска отправляются доставки в очереди простаивающих сессий, а у переподключённых работающих сессий они ждут конца хода.
+- Ход, процесс которого так и не запустился (ошибка запуска, отсутствующий cwd, неизвестная модель, …), возвращает свои сообщения в начало
+  очереди (`recorded: true`: уже в транскрипте, не повторяются) и сообщает «Сообщений в очереди: N — уйдут со
+  следующим сообщением или после смены модели.»; автоматического цикла повторов нет: следующая доставка, `PATCH { model }` или
+  перезапуск отправляет их; Stop очищает их.
+- Длинные промпты: промпт длиннее ~24 000 символов (Windows ограничивает командную строку 32 767) записывается в
+  `runs/<sid>/prompts/prompt-<turn>.md`; argv получает строку слэш-команды (если промпт начинается с `/`, она остаётся
+  первой) + «Полный текст сообщения: <path>» + инструкцию прочитать его, а эта папка добавляется в
+  `--include-directories` CLI на этот ход (CLI читает только внутри каталогов своего рабочего пространства). Промпты ACP это не затрагивает.
+- Хранилище: неудавшаяся запись (файл удерживается антивирусом) оставляет свой ключ «грязным» и повторяется через 1 с; `db.json` — компактный
+  JSON; одно лишь положение чтения (`turnOffset`) сохраняет db.json не чаще раза в 2 с (при сбое могут перечитаться ≤ 2 с событий);
+  в памяти остаются не более 50 транскриптов (LRU; никогда не тот, у которого идёт ход); счётчик ходов — `session.turnCount`.
+- Идентичность при переподключении: при запуске harness записывает `pidStartedAt` (Windows: время создания процесса через
+  `Get-CimInstance Win32_Process` / запасной `wmic`; Linux: `/proc/<pid>/stat` starttime + время загрузки; macOS: `ps -o lstart=`);
+  реализация: отметка при запуске — `Date.now()` в Windows/macOS (равна времени создания в пределах допуска, без
+  PowerShell на каждый ход) и значение `/proc` в Linux (те же часы с обеих сторон); запрос к ОС выполняется только при старте и
+  перед Stop переподключённого хода (кэш 10 с);
+  при старте `running` сессия переподключается, только если pid существует И время его запуска совпадает (±2 с); иначе ход
+  завершается по оставшемуся файлу вывода (или помечается прерванным с системной заметкой) — повторно использованный pid никогда не принимается
+  и никогда не убивается. Stop для переподключённой сессии перед убийством повторно проверяет идентичность. То, что оркестрация уже обработала в
+  ходе (`worker_done` → `session.turnFlags`), сохраняется, поэтому переподключённый ход никогда не отчитывается дважды.
+- Блокировка единственного экземпляра: живой pid в `server.json` считается конфликтом, только если `GET <url>/api/health` (новый, без аутентификации,
+  возвращает `{ ok, pid, dataDir }`) отвечает от этого pid в течение 1 с; иначе блокировка устарела и перехватывается.
+- Ожидания оркестрации: ожидания `worker_run`/`agent` не хранят состояния на сервере (сессия исполнителя сохраняет `parentId`,
+  `waiter: true` и свой `report: { status, summary, at }`); `mcp/harness-mcp.js` продолжает длинный опрос `worker_wait` с
+  отступом через перезапуски сервера до общего таймаута, поэтому вызов инструмента оркестратора переживает перезапуск harness.
+  Каждый `worker_done` сохраняет `session.report` (он заменил `runResult`). Запуски агентов получают `HARNESS_SERVER_JSON`: harness-mcp
+  читает из него текущий URL при каждом вызове (перезапущенный harness может слушать в другом месте); нет файла = harness не работает → повтор
+  (`HARNESS_RETRY_MS`, по умолчанию 2 мин; повторяются только запросы, которые так и не дошли до сервера, worker_wait — всегда).
+- Состояние цикла ревью / переносов (`task.review: { round, reviewerSessionId, verdicts[] }`, `task.ports[]`) сохраняется; ревьюер,
+  завершившийся, пока harness был выключен, подхватывается при старте (его отчёт — в транскрипте/поле report).
+- Терминалы: история сохраняется (`terms/<sid>.log`); процессы PTY не могут пережить сервер, поэтому при старте каждый терминал,
+  который был жив, автоматически запускается заново в том же cwd (системная строка «— перезапуск harness: новая сессия терминала —»
+  дописывается в его журнал); терминал, чьей начальной командой был CLI агента с флагом продолжения, запускается с ним
+  (`agents.<id>.continueArgs`, по умолчанию для gigacode `["-c"]`). `terminal.autoRespawn` (по умолчанию true). Собственная
+  начальная `command` обычной оболочки не запускается повторно (у неё могут быть побочные эффекты). Флаг возможности `health`.
+- UI: черновики (поле ввода на сессию, заголовок/тело коммита на cwd, диалог PR на cwd+base, правки в панели задачи) сохраняются в
+  localStorage (try/catch, очищаются при отправке/коммите); открытые экраны/вкладки/панели/прокрутка для каждого рабочего дерева сохраняются как и раньше.
 
-## Nothing looks frozen (git prompts, network timeouts, progress)
+## Ничего не выглядит зависшим (запросы git, сетевые таймауты, прогресс)
 
-- Every git child gets `GIT_TERMINAL_PROMPT=0`, `GCM_INTERACTIVE=never`, `GIT_ASKPASS=` and `GIT_SSH_COMMAND` = the
-  existing one or `ssh -o BatchMode=yes -o ConnectTimeout=15`. Network operations (push) run with
-  `-c http.lowSpeedLimit=1000 -c http.lowSpeedTime=<networkTimeoutSec>` (git aborts stalled HTTP itself), in their own
-  process group on POSIX, settle on 'exit' (a surviving `git-remote-http` may keep the pipes open) with a hard deadline
-  5 s after the kill; POSIX kill = SIGTERM to the group, SIGKILL to the group 3 s later. They are killed (whole tree) after
-  `git.networkTimeoutSec` (default 120) → 504 «Нет ответа от удалённого репозитория за N с»; a credentials/ssh-key
-  failure → 401 «Git требует авторизацию — выполните push в терминале этого рабочего дерева» (+ git's text).
-- Progress without API changes: a request with header `x-job-id: <8–64 chars [\w-]>` runs as a job; the server sends
-  WS `{ t: 'job', id, title, step: null, at }` at once, `{ t: 'job', id, title, step, progress?: { done, total }, at }` at
-  meaningful steps and a final `{ t: 'job', id, title, done: true, error?, at }`. Titled operations: tracker sync (per
-  page), take into work (agent check → worktree → session), rework, port (worktree → cherry-pick 0/n…n/n → conflict
-  worker), PR create (existing PR lookup → create), push, checkout, worktree removal (sessions i/n → git), models refresh,
-  import children (per child). Steps of background work after the response are dropped.
-  A held job (git via the agent) stays open after the response: its final frame is `{ t: 'job', id, title, done: true,
-  result: { ok, hash | branch | url }, at }` or `{ …, done: true, error, result? }` once the agent's turn ended and the
-  harness checked the effect.
-- Event loop: SDD polling is async; transcripts are serialized per message (a streaming update re-serializes one message,
-  not the whole transcript) and `.bak` copies are refreshed at most every 10 s; registry polling reads only small files.
+- Каждый дочерний процесс git получает `GIT_TERMINAL_PROMPT=0`, `GCM_INTERACTIVE=never`, `GIT_ASKPASS=` и `GIT_SSH_COMMAND` = уже
+  существующее значение или `ssh -o BatchMode=yes -o ConnectTimeout=15`. Сетевые операции (push) выполняются с
+  `-c http.lowSpeedLimit=1000 -c http.lowSpeedTime=<networkTimeoutSec>` (git сам прерывает зависший HTTP), в собственной
+  группе процессов в POSIX, завершаются по 'exit' (переживший `git-remote-http` может держать каналы открытыми) с жёстким сроком
+  5 с после убийства; убийство в POSIX = SIGTERM группе, SIGKILL группе через 3 с. Они убиваются (всё дерево) через
+  `git.networkTimeoutSec` (по умолчанию 120) → 504 «Нет ответа от удалённого репозитория за N с»; сбой учётных данных/ssh-ключа
+  → 401 «Git требует авторизацию — выполните push в терминале этого рабочего дерева» (+ текст git).
+- Прогресс без изменений API: запрос с заголовком `x-job-id: <8–64 символа [\w-]>` выполняется как задание; сервер сразу отправляет
+  WS `{ t: 'job', id, title, step: null, at }`, на значимых шагах — `{ t: 'job', id, title, step, progress?: { done, total }, at }` и в конце
+  `{ t: 'job', id, title, done: true, error?, at }`. Операции с названиями: синхронизация трекера (по
+  страницам), взятие в работу (проверка агента → рабочее дерево → сессия), доработка, перенос (рабочее дерево → cherry-pick 0/n…n/n → исполнитель
+  конфликта), создание PR (поиск существующего PR → создание), push, checkout, удаление рабочего дерева (сессии i/n → git), обновление моделей,
+  импорт дочерних (по каждому дочернему). Шаги фоновой работы после ответа отбрасываются.
+  Удерживаемое задание (git через агента) остаётся открытым после ответа: его итоговый кадр — `{ t: 'job', id, title, done: true,
+  result: { ok, hash | branch | url }, at }` или `{ …, done: true, error, result? }`, когда ход агента закончился и
+  harness проверил результат.
+- Цикл событий: опрос SDD асинхронный; транскрипты сериализуются по сообщениям (потоковое обновление повторно сериализует одно сообщение,
+  а не весь транскрипт), а копии `.bak` обновляются не чаще раза в 10 с; опрос реестра читает только небольшие файлы.
 
-## Images and large tool outputs in chats
+## Изображения и большие выводы инструментов в чатах
 
-- `GET /api/fs/raw?cwd=&path=` (flag `fs-raw`) streams an image for a thumbnail: png/jpg/jpeg/gif/webp/svg only (else
-  400), ≤ 10 MB (413), the path (relative or absolute) must resolve inside `cwd` or an `includeDirs` entry of a session
-  in that cwd (same symlink-aware guard as the file routes; outside → 400). Token via `x-harness-token` or `?token=`
-  (an `<img src>` sends no headers). Headers: `etag` + `last-modified` (`If-None-Match` → 304), `cache-control: private,
-  no-cache`, `x-content-type-options: nosniff`; svg also `content-security-policy: sandbox`.
-- The transcript keeps every tool output whole; `GET /api/sessions/:id/messages` returns `tool.output` cut to 64 K
-  characters with `tool.outputTruncated: true`; `GET /api/sessions/:id/messages/:mid/output` → `{ output }` (full).
+- `GET /api/fs/raw?cwd=&path=` (флаг `fs-raw`) отдаёт потоком изображение для миниатюры: только png/jpg/jpeg/gif/webp/svg (иначе
+  400), ≤ 10 МБ (413), путь (относительный или абсолютный) должен разрешаться внутри `cwd` или записи `includeDirs` сессии
+  в этом cwd (та же защита с учётом симлинков, что и у файловых маршрутов; снаружи → 400). Токен через `x-harness-token` или `?token=`
+  (`<img src>` не отправляет заголовки). Заголовки: `etag` + `last-modified` (`If-None-Match` → 304), `cache-control: private,
+  no-cache`, `x-content-type-options: nosniff`; для svg ещё `content-security-policy: sandbox`.
+- Транскрипт хранит каждый вывод инструмента целиком; `GET /api/sessions/:id/messages` возвращает `tool.output`, обрезанный до 64 К
+  символов, с `tool.outputTruncated: true`; `GET /api/sessions/:id/messages/:mid/output` → `{ output }` (полностью).
 
-## Tidying up sessions
+## Наведение порядка в сессиях
 
-- `PATCH /api/sessions/:id { archived: boolean, stop?: boolean, title? }`: archiving a working session (a running turn or
-  a live terminal) → 409 unless `stop: true` (stop, then archive); archived sessions stay in `/api/state` with
-  `archived: true, archivedAt`; unarchive is allowed; virtual sub-agent sessions follow their parent.
-- `sessions.autoArchiveDays` (default 7, 0 = off; PUT also accepts `null` = off, stored and returned as 0; in /api/settings
-  as `sessions: { autoArchiveDays }`): on startup and
-  hourly, chats that are idle (not running, `waitingFor` null, not `interrupted`, no in-progress task assigned, not a
-  coordinator with live workers) and exited terminals whose `lastActivityAt` is older than N days are archived.
-- `DELETE /api/sessions/:id` refuses a working session (409) unless `?force=1`; it also removes the virtual children and
-  the run files.
+- `PATCH /api/sessions/:id { archived: boolean, stop?: boolean, title? }`: архивирование работающей сессии (идущий ход или
+  живой терминал) → 409, если нет `stop: true` (остановить, затем архивировать); архивные сессии остаются в `/api/state` с
+  `archived: true, archivedAt`; разархивирование разрешено; виртуальные сессии субагентов следуют за родителем.
+- `sessions.autoArchiveDays` (по умолчанию 7, 0 = выкл.; PUT также принимает `null` = выкл., хранится и возвращается как 0; в /api/settings
+  как `sessions: { autoArchiveDays }`): при старте и
+  каждый час архивируются простаивающие чаты (не работают, `waitingFor` null, не `interrupted`, нет назначенной задачи в работе, не
+  координатор с живыми исполнителями) и завершённые терминалы, чей `lastActivityAt` старше N дней.
+- `DELETE /api/sessions/:id` отказывает для работающей сессии (409), если нет `?force=1`; также удаляет виртуальных дочерних и
+  файлы запуска.
 
-## Auto-fill: repository suggestion, readable task log, PR decline
+## Автозаполнение: подсказка репозитория, читаемый журнал задачи, отклонение PR
 
-- `task.suggestedWorkspaceId` (flag `task-suggest`), recomputed on every create/update/import while `workspaceId` is
-  empty (else null): one repository workspace → it; else a repository whose name or folder name appears as a token in
-  the title/description/cached tracker attributes (`task.externalFields` from the last `GET /api/tasks/:id/external`:
-  Component/Компонент/Repository/Репозиторий/Сервис/Service), exact first, then the `-service` stem in either direction
-  (`payments` ↔ `payments-service`); else `db.prefs.lastWorkspaceBySpace[<key prefix>]` (written when a task of that
-  space is taken into work). Superseded (real machine: a guess picked an unrelated repo): the task also carries
-  `suggestedWorkspace: { id, confidence: 'high' | 'low', reason }` — `high` ONLY for the repo name (or its `-service` stem)
-  as a whole token in the tracker component/service/repository field or the title/description; the only repo and the
-  last repo of the key's space are `low`. `POST /api/tasks/:id/start { agent?, notes?, workspaceId?, location? }`: an
-  explicit `workspaceId` (the request's, else the task's) → its worktree; `location: 'root'` → the projects folder; else
-  the HIGH suggestion; else the projects folder (`kind: 'root'` workspace; without one, the only repository) — never a
-  low guess, and a guess is never recorded on the task. Parent tasks are coordinated as before.
-- Start in the projects folder: no worktree, cwd = the root folder, role worker, the task prompt (slash first) + «Ты в
+- `task.suggestedWorkspaceId` (флаг `task-suggest`), пересчитывается при каждом создании/обновлении/импорте, пока `workspaceId`
+  пуст (иначе null): один репозиторий-workspace → он; иначе репозиторий, чьё имя или имя папки встречается как токен в
+  названии/описании/кэшированных атрибутах трекера (`task.externalFields` из последнего `GET /api/tasks/:id/external`:
+  Component/Компонент/Repository/Репозиторий/Сервис/Service), сначала точное совпадение, затем основа `-service` в любом направлении
+  (`payments` ↔ `payments-service`); иначе `db.prefs.lastWorkspaceBySpace[<префикс ключа>]` (записывается, когда задача этого
+  пространства берётся в работу). Заменено (на реальной машине догадка выбирала посторонний репозиторий): задача также несёт
+  `suggestedWorkspace: { id, confidence: 'high' | 'low', reason }` — `high` ТОЛЬКО для имени репозитория (или его основы `-service`)
+  как целого токена в поле компонента/сервиса/репозитория трекера или в названии/описании; единственный репозиторий и
+  последний репозиторий пространства ключа — `low`. `POST /api/tasks/:id/start { agent?, notes?, workspaceId?, location? }`: явный
+  `workspaceId` (из запроса, иначе из задачи) → его рабочее дерево; `location: 'root'` → папка проектов; иначе
+  ВЫСОКАЯ подсказка; иначе папка проектов (workspace `kind: 'root'`; без неё — единственный репозиторий) — никогда не
+  низкая догадка, и догадка никогда не записывается в задачу. Родительские задачи координируются как раньше.
+- Запуск в папке проектов: без рабочего дерева, cwd = корневая папка, роль worker, промпт задачи (сначала слэш) + «Ты в
   папке со всеми проектами (<root>). Определи затронутые репозитории по SDD/описанию задачи (или спроси через ask);
   рабочие деревья создавай по правилам своей команды (<repo>-worktrees\<KEY>, ветка <branchTemplate> от <target>); после
-  финального сообщения — worker_done.» (no «stay on your branch» rule); `session.atRoot`, `task.location: 'root'`, status
-  in_progress, no branch yet. Linking: on every worktree list refresh and every 30 s while such a session runs, any
-  worktree of a registered repo whose branch contains the task key (case-insensitive, whole word) is added to
-  `task.worktrees: [{ workspaceId, path, branch }]` (+ `branch` / `workspaceId` when still empty), log type `worktree`
-  «Агент создал рабочее дерево: <repo> · <branch>»; suggest/commit/PR then work per worktree as usual.
-- Task log entries: `{ at, by, type, text, data? }`, `type` ∈ created, imported, status, started, agent_done,
+  финального сообщения — worker_done.» (правила «оставайся на своей ветке» нет); `session.atRoot`, `task.location: 'root'`, статус
+  in_progress, ветки пока нет. Связывание: при каждом обновлении списка рабочих деревьев и каждые 30 с, пока такая сессия работает, любое
+  рабочее дерево зарегистрированного репозитория, чья ветка содержит ключ задачи (без учёта регистра, как целое слово), добавляется в
+  `task.worktrees: [{ workspaceId, path, branch }]` (+ `branch` / `workspaceId`, когда они ещё пусты), запись журнала с типом `worktree`
+  «Агент создал рабочее дерево: <repo> · <branch>»; затем suggest/commit/PR работают для каждого рабочего дерева как обычно.
+- Записи журнала задачи: `{ at, by, type, text, data? }`, `type` ∈ created, imported, status, started, agent_done,
   agent_failed, review, rework, port, pr_created, tracker_transition, comment, worktree, agent_gone («Сессия агента
-  удалена» / «…перенесена в архив»: the assignee's chat was deleted or archived — `assigneeSessionId` and `agentState`
-  become null, the column stays); `text` is human Russian without session ids
-  or paths («Взята в работу: GigaCode, ветка feature/T-10», «Агент закончил», «PR #562 в develop создан»); ids, summaries,
-  verdicts are in `data`. Old entries have no `type` (show their `text`).
-- `POST /api/git/pr/decline { cwd, index }` (flag `pr-decline`) → `integrations.pr.declineTool` (default
-  `git_decline_pull_request`) with `integrations.pr.declineArgs` (default `{ project, repository, pullRequestIndex }`,
-  project/repository from origin), then the task's PR status is refreshed. Imported tasks are recognized by `task.source`.
+  удалена» / «…перенесена в архив»: чат исполнителя был удалён или архивирован — `assigneeSessionId` и `agentState`
+  становятся null, колонка остаётся); `text` — человеческий русский без id сессий
+  или путей («Взята в работу: GigaCode, ветка feature/T-10», «Агент закончил», «PR #562 в develop создан»); id, summary,
+  вердикты — в `data`. У старых записей нет `type` (показывается их `text`).
+- `POST /api/git/pr/decline { cwd, index }` (флаг `pr-decline`) → `integrations.pr.declineTool` (по умолчанию
+  `git_decline_pull_request`) с `integrations.pr.declineArgs` (по умолчанию `{ project, repository, pullRequestIndex }`,
+  project/repository из origin), затем обновляется статус PR задачи. Импортированные задачи распознаются по `task.source`.
 
-### Session recovery after a restart
-- On startup, every chat session that was `running` and could NOT be re-attached (pid gone / identity mismatch) gets
-  `interrupted: { at, reason: 'harness_restart' | 'reboot' | 'crash', lastActivity: string|null }` (reason: `reboot` when
-  the OS boot time is newer than the turn's start, `crash` when the previous harness did not shut down cleanly
-  (`server.json` left behind), else `harness_restart`; `lastActivity` = last tool/step summary of the interrupted turn);
-  status becomes `idle` with the existing system note; one notification `{ kind: 'recovery', text: 'Прервано сессий: N' }`.
-- `GET /api/recovery` → `{ sessions: [{ id, title, cwd, taskId, role, reason, at, lastActivity }], message }` (only
-  `interrupted` and not dismissed); `POST /api/recovery/resume { sessionIds, message? }` → delivers the message to each
-  (normal queue; continues the same CLI session via --resume), clears `interrupted`; `POST /api/recovery/dismiss
-  { sessionIds }` clears it without sending. Config `recovery: { autoResume: false, message: "Был перезапуск, твой
+### Восстановление сессий после перезапуска
+- При старте каждая чат-сессия, которая была `running` и НЕ могла быть переподключена (pid исчез / не совпала идентичность), получает
+  `interrupted: { at, reason: 'harness_restart' | 'reboot' | 'crash', lastActivity: string|null }` (reason: `reboot`, когда
+  время загрузки ОС позже начала хода, `crash`, когда предыдущий harness завершился некорректно
+  (остался `server.json`), иначе `harness_restart`; `lastActivity` = последнее резюме инструмента/шага прерванного хода);
+  статус становится `idle` с существующей системной заметкой; одно уведомление `{ kind: 'recovery', text: 'Прервано сессий: N' }`.
+- `GET /api/recovery` → `{ sessions: [{ id, title, cwd, taskId, role, reason, at, lastActivity }], message }` (только
+  `interrupted` и не закрытые); `POST /api/recovery/resume { sessionIds, message? }` → доставляет сообщение каждой
+  (обычная очередь; продолжает ту же сессию CLI через --resume), снимает `interrupted`; `POST /api/recovery/dismiss
+  { sessionIds }` снимает его без отправки. Конфигурация `recovery: { autoResume: false, message: "Был перезапуск, твой
   предыдущий ход прервался. Продолжи с того места, где остановился — сначала проверь текущее состояние рабочего дерева." }`
-  (in /api/settings); `autoResume: true` resumes all on startup (coordinators after their workers). Feature flag `recovery`.
-- Implementation: a turn whose saved pid is not adopted but whose file already has the `result` (it finished while the
-  harness was down) is NOT interrupted. Any delivery to the session clears `interrupted` (it was continued). The turn
-  start for `reboot` is `pidStartedAt` (else `lastActivityAt`); boot time = now − `os.uptime()`. `lastActivity` = the last
-  tool call («name input…») of the transcript, else the start of the last answer. The notification is sent once per
-  startup, after the identity checks.
+  (в /api/settings); `autoResume: true` возобновляет все при старте (координаторов — после их исполнителей). Флаг возможности `recovery`.
+- Реализация: ход, чей сохранённый pid не подхвачен, но в чьём файле уже есть `result` (он завершился, пока
+  harness был выключен), НЕ считается прерванным. Любая доставка в сессию снимает `interrupted` (её продолжили). Начало
+  хода для `reboot` — `pidStartedAt` (иначе `lastActivityAt`); время загрузки = now − `os.uptime()`. `lastActivity` = последний
+  вызов инструмента («name input…») транскрипта, иначе начало последнего ответа. Уведомление отправляется один раз за
+  запуск, после проверок идентичности.
 
-## Commit / PR messages written by the agent
+## Сообщения коммита / PR, написанные агентом
 
-`POST /api/git/generate { cwd, kind: 'commit' | 'pr', base? }` (header `x-job-id` for progress; feature `git-generate`)
-→ `{ title, body, model, ms }`. Context sent to the agent: the task of that cwd (key, title, description excerpt ≤ 1500
-chars, like /api/git/suggest), `git diff --stat` + the diff (staged + unstaged, ≤ 15000 chars, truncated per file with
-a marker) + untracked file names, and the last 10 commit subjects of the repo (its style); for `pr` also
-`git log <base>..HEAD --oneline`. The prompt (Russian) asks for JSON only: commit → `{ title ≤ 72 chars, starts with
-"<KEY> " when a key exists, body: 1–4 lines «что и зачем» }`; pr → `{ title ≤ 100 UTF-8 bytes, body ≤ min(limits.bodyBytes,
-300 chars) }`. One-off headless run of the default agent in the cwd: `agents.<id>.quickArgs` (gigacode default
-`["--safe-mode"]` — no MCP/skills/hooks, fast start; VERIFY on the target) + approval mode `plan` + model = the agent's
-`fast` grade when set; no harness preamble, no session, nothing recorded in the chat list; timeout
-`git.generateTimeoutSec` (default 120). If the quick args make the CLI fail before any event, retry once without them
-(and remember `agentMeta.quickArgsBroken`). The answer's first `{…}` JSON is parsed; limits enforced (truncate on a
-character boundary). Failure → 502 with the reason (the UI keeps the template prefill). Config `git.generateMessages:
-true` (UI auto-generates; false = only the manual button). `/api/git/suggest` without a task key: `commit.title` = ''
-(no branch-name fallback) and `commit.body` = '' (no file list).
+`POST /api/git/generate { cwd, kind: 'commit' | 'pr', base? }` (заголовок `x-job-id` для прогресса; возможность `git-generate`)
+→ `{ title, body, model, ms }`. Контекст, отправляемый агенту: задача этого cwd (ключ, название, фрагмент описания ≤ 1500
+символов, как в /api/git/suggest), `git diff --stat` + diff (индекс + рабочее дерево, ≤ 15000 символов, обрезается по файлам
+с маркером) + имена неотслеживаемых файлов и последние 10 заголовков коммитов репозитория (его стиль); для `pr` также
+`git log <base>..HEAD --oneline`. Промпт (на русском) просит только JSON: commit → `{ title ≤ 72 символов, начинается с
+"<KEY> ", когда ключ есть, body: 1–4 строки «что и зачем» }`; pr → `{ title ≤ 100 байт UTF-8, body ≤ min(limits.bodyBytes,
+300 символов) }`. Разовый безголовый запуск агента по умолчанию в cwd: `agents.<id>.quickArgs` (по умолчанию для gigacode
+`["--safe-mode"]` — без MCP/навыков/хуков, быстрый старт; ПРОВЕРИТЬ на целевой машине) + режим подтверждения `plan` + модель = градация агента
+`fast`, когда она задана; без преамбулы harness, без сессии, ничего не записывается в список чатов; таймаут
+`git.generateTimeoutSec` (по умолчанию 120). Если быстрые аргументы приводят к сбою CLI до любого события, повтор один раз без них
+(и запоминается `agentMeta.quickArgsBroken`). Разбирается первый JSON `{…}` ответа; ограничения применяются (обрезка по границе
+символа). Сбой → 502 с причиной (UI сохраняет предзаполнение по шаблону). Конфигурация `git.generateMessages:
+true` (UI генерирует автоматически; false = только ручная кнопка). `/api/git/suggest` без ключа задачи: `commit.title` = ''
+(без запасного варианта из имени ветки) и `commit.body` = '' (без списка файлов).
 
-## Commit / push / PR through the agent (its hooks and skills run)
+## Коммит / push / PR через агента (его хуки и навыки выполняются)
 
-Config `git.via: "agent" | "harness"` (default `"agent"`; /api/settings). `POST /api/git/commit|push|pr` accept
-`via` (overrides the config). With `via: "harness"` — as before (direct git / sourcecontrol MCP; git's own hooks run).
-With `via: "agent"`:
-- Target session: the task's worker session for that cwd if it exists and is not running (else it is queued after its
-  turn); otherwise a chat «Коммит · <KEY or branch>» in that cwd (role solo, default agent, normal chat in the sidebar,
-  reused for later commits of the same cwd).
-- The harness delivers an explicit instruction (Russian), e.g. commit: «Пользователь явно просит закоммитить изменения
+Конфигурация `git.via: "agent" | "harness"` (по умолчанию `"agent"`; /api/settings). `POST /api/git/commit|push|pr` принимают
+`via` (переопределяет конфигурацию). С `via: "harness"` — как раньше (прямой git / MCP sourcecontrol; собственные хуки git выполняются).
+С `via: "agent"`:
+- Целевая сессия: сессия исполнителя задачи для этого cwd, если она есть и не работает (иначе ставится в очередь после её
+  хода); иначе чат «Коммит · <KEY или ветка>» в этом cwd (роль solo, агент по умолчанию, обычный чат в боковой панели,
+  переиспользуется для следующих коммитов того же cwd).
+- harness доставляет явную инструкцию (на русском), например для коммита: «Пользователь явно просит закоммитить изменения
   этого рабочего дерева. Сообщение коммита (утверждено пользователем, не меняй):\n<title>\n\n<body>\nВыполни: git add -A
   (кроме путей git.excludeFromCommit), git commit с этим сообщением. Больше ничего не меняй и не правь код. В конце
   ответь строкой RESULT: <хэш коммита> или RESULT: ERROR <причина>.» Push: «… git push -u origin HEAD … RESULT: OK <ветка>
   | ERROR …». PR: «… создай PR через MCP sourcecontrol (head <branch>, base <base>, заголовок/описание утверждены) …
   RESULT: <html_url> | ERROR …».
-- The request returns at once `{ via: 'agent', sessionId, job }`; the job (x-job-id) stays open until that turn ends,
-  then the harness verifies the effect itself (commit: `git log -1` hash changed and matches RESULT; push: upstream/ahead
-  = 0; pr: the URL from RESULT or pr-status) and finishes the job with `{ ok, hash|url|branch, error? }`, plus a
-  notification on failure; the UI offers «Сделать напрямую» (`via: "harness"`).
-- `git` is in the default allow-list, so the agent is not stopped by permissions; `/full-task`'s §0 allows git writes on
-  an explicit request — the instruction says it is one.
-Feature flag `git-via-agent`.
+- Запрос сразу возвращает `{ via: 'agent', sessionId, job }`; задание (x-job-id) остаётся открытым, пока не закончится этот ход,
+  затем harness сам проверяет результат (commit: хэш `git log -1` изменился и совпадает с RESULT; push: upstream/ahead
+  = 0; pr: URL из RESULT или pr-status) и завершает задание с `{ ok, hash|url|branch, error? }`, плюс
+  уведомление при сбое; UI предлагает «Сделать напрямую» (`via: "harness"`).
+- `git` входит в белый список по умолчанию, поэтому агента не останавливают разрешения; §0 `/full-task` разрешает запись в git по
+  явной просьбе — в инструкции сказано, что это она и есть.
+Флаг возможности `git-via-agent`.
 
-## CLI chats are ordinary chats (no separate screen)
+## Чаты CLI — обычные чаты (отдельного экрана нет)
 
-The user wants dialogs started in the GigaCode CLI to be continuable in the UI and never lost — not a separate list.
-- Adoption: on startup, every 60 s while a UI client is connected, and on demand (`POST /api/history/adopt`), the
-  history reader (server/history.js) scans CLI chat records updated within `history.adoptDays` (default 14) and, for each
-  real chat (≥ 1 user message; not `*.runtime.json`; not owned by a harness session — its sessionId is no harness
-  session's externalSessionId; not a service run — cwd outside the harness dataDir, first user text not a helper prompt
-  (/models, /context, /compress, HARNESS_GENERATE_MESSAGE); title without the harness preamble), creates or refreshes a
-  harness chat session `{ origin: 'cli', externalSessionId: <record id>, cwd, title (first meaningful line ≤ 80),
-  lastActivityAt: record updated, status: idle, agent: the CLI's agent }` grouped by worktreePath/workspace like any
-  session. Archived or deleted sessions with a CLI session id — adopted ones and harness chats alike — are remembered
-  (`db.cliIgnored`) and never (re-)adopted.
-- `createdAt` of an adopted session is the CLI chat's start (`startTime`), not the adoption moment, so the sidebar keeps
-  the real order; sessions adopted earlier get it corrected on the next pass.
-- Transcript: until the first harness turn, `GET /api/sessions/:id/messages` serves the record's messages (mapped like
-  `/api/history/:agent/:id/messages`), refreshed when the record's mtime changes; the first harness turn imports them
-  into the harness transcript (`cliImportedAt`) and continues with `--resume <id>` as any chat. Later CLI-side activity
-  on an idle adopted session (record mtime newer than the harness transcript's last message) appends the new record
-  messages before the next harness turn.
-- Implementation (server/adopt.js): a record's folder = its explicit cwd, else the folder whose sha256 is its projectHash
-  among registered projects, their worktrees, the projects root's folders and session cwds (unknown → not adopted). Also
-  skipped: a chat whose only user message is a bare slash command (/clear). The transcript is the record's messages
-  imported with stable ids (re-imported while no harness turn ran); after harness turns the CLI's own recording of them
-  (≤ 15 s after the turn end) only moves the counter, later record messages are appended (`cliRecordCount`,
-  `cliRecordAt`, `cliImportedAt`). The harness's helper runs (model discovery, commit/PR messages, probes) run in
-  `<dataDir>/chats/helper/<kind>/<agent>` with their own settings `chatRecording: false`: they leave no CLI record.
-- Feature flag `cli-adopt`; config `history.adopt: true`, `history.adoptDays: 14`. Both in /api/settings as
-  `history: { adopt, adoptDays }` (1..365). `/api/history` (all/per-folder) stays
-  for the «История» tab (older chats).
+Пользователь хочет, чтобы диалоги, начатые в CLI GigaCode, можно было продолжить в UI и никогда не терять — а не отдельный список.
+- Усыновление: при старте, каждые 60 с, пока подключён клиент UI, и по требованию (`POST /api/history/adopt`)
+  читатель истории (server/history.js) сканирует записи чатов CLI, обновлённые в пределах `history.adoptDays` (по умолчанию 14), и для каждого
+  настоящего чата (≥ 1 сообщение пользователя; не `*.runtime.json`; не принадлежащего сессии harness — его sessionId не равен externalSessionId ни одной
+  сессии harness; не служебного запуска — cwd вне dataDir harness, первый пользовательский текст не промпт помощника
+  (/models, /context, /compress, HARNESS_GENERATE_MESSAGE); название без преамбулы harness) создаёт или обновляет
+  чат-сессию harness `{ origin: 'cli', externalSessionId: <id записи>, cwd, title (первая значимая строка ≤ 80),
+  lastActivityAt: запись обновлена, status: idle, agent: агент этого CLI }`, сгруппированную по worktreePath/workspace как любая
+  сессия. Архивные или удалённые сессии с id сессии CLI — как усыновлённые, так и чаты harness — запоминаются
+  (`db.cliIgnored`) и никогда не усыновляются (повторно).
+- `createdAt` усыновлённой сессии — это начало чата CLI (`startTime`), а не момент усыновления, поэтому боковая панель сохраняет
+  настоящий порядок; у сессий, усыновлённых раньше, оно исправляется на следующем проходе.
+- Транскрипт: до первого хода harness `GET /api/sessions/:id/messages` отдаёт сообщения записи (отображённые как
+  `/api/history/:agent/:id/messages`), обновляется при изменении mtime записи; первый ход harness импортирует их
+  в транскрипт harness (`cliImportedAt`) и продолжает с `--resume <id>`, как любой чат. Более поздняя активность на стороне CLI
+  в простаивающей усыновлённой сессии (mtime записи новее последнего сообщения транскрипта harness) дописывает новые сообщения записи
+  перед следующим ходом harness.
+- Реализация (server/adopt.js): папка записи = её явный cwd, иначе папка, чей sha256 равен её projectHash,
+  среди зарегистрированных проектов, их рабочих деревьев, папок корня проектов и cwd сессий (неизвестно → не усыновляется). Также
+  пропускается чат, единственное сообщение пользователя в котором — голая слэш-команда (/clear). Транскрипт — это сообщения записи,
+  импортированные со стабильными id (импортируются повторно, пока не было ходов harness); после ходов harness собственная запись CLI о них
+  (≤ 15 с после конца хода) только сдвигает счётчик, более поздние сообщения записи дописываются (`cliRecordCount`,
+  `cliRecordAt`, `cliImportedAt`). Вспомогательные запуски harness (обнаружение моделей, сообщения коммита/PR, пробы) выполняются в
+  `<dataDir>/chats/helper/<kind>/<agent>` с собственной настройкой `chatRecording: false`: они не оставляют записи CLI.
+- Флаг возможности `cli-adopt`; конфигурация `history.adopt: true`, `history.adoptDays: 14`. Оба в /api/settings как
+  `history: { adopt, adoptDays }` (1..365). `/api/history` (все/по папкам) остаётся
+  для вкладки «История» (более старые чаты).
 
-## Handoff: one input, the orchestrator decides (the main scenario)
+## Передача задачи: один ввод, решает оркестратор (основной сценарий)
 
-The user's CLI habit: in the projects folder, `/full-task <task link> [notes]` or `/full-task <what to do>`, and the agent
-picks the repository itself. `POST /api/handoff { input, notes?, agent?, approvalMode?, model? }` (job steps; feature
+Привычка пользователя из CLI: в папке проектов `/full-task <ссылка на задачу> [заметки]` или `/full-task <что сделать>`, и агент
+сам выбирает репозиторий. `POST /api/handoff { input, notes?, agent?, approvalMode?, model?, workspaceId? }` (шаги задания; возможность
 `handoff`) → `{ session, task | null }`:
-- `input` contains a tracker key or link (`/([A-Z][A-Z0-9_]+-\d+)/`, or a URL) and the tracker integration works →
-  import/refresh that task (as `/api/tasks/import`), then start it at the projects root (`location: 'root'`, notes) —
-  the existing start path (jumped semantics when a worker already runs);
-- otherwise (free text, or the tracker is off) → a chat at the projects root (role worker-like solo, title from the
-  text) whose first prompt = `agents.<id>.freePromptTemplate` (gigacode default `"/full-task {text}{notes}"`,
-  generic `"{text}{notes}"`; same template rules, slash first) + the root preamble (pick repos from the SDD/task or ask;
-  create worktrees by your own rules).
-- Text next to the key/link joins `notes` («<link> и проверь кеш» → notes «и проверь кеш»). A key/link the tracker cannot
-  import (unknown, tracker down) falls back to the free-text chat with `trackerError` in the response. `approvalMode` /
-  `model` apply to the started session. Job steps «Ищу задачу в трекере», «Запускаю агента».
-- No projects root → 400 «Укажите папку с проектами в Настройках».
-- `dryRun: true` → `{ prompt, agent, taskKey | null, targets | null, releaseWarning | null, location: 'root' }`: the exact first
-  message (slash command first, no harness preamble) from the same templates, notes and release lines; no side effects —
-  a key/link is taken by regex only (no tracker lookup; a task already on the board is used for its fields).
-- `GET /api/releases?workspaceId=&limit=10` → `[{ branch, version, repos }]` newest first, deduped by branch across repos
-  (the «＋ релиз» picker; same scan and cache; feature `release-resolve`).
-- Release references (`server/releases.js`, feature `release-resolve`): `GET /api/releases/resolve?text=&workspaceId=` →
-  `{ refs: [{ phrase, version, branch | null, repos, candidates }], onlyRelease }`. Phrases: «релиз 54», «релизную 1.54»,
-  «release 1.54.1», «release/1.54.0», «rel154» (→ 1.54; rel1541 → 1.54.1); «только в релиз …» = onlyRelease. Branches:
-  local and origin `release/*` / `release-*` of that workspace, or of every registered git repository (cached 5 min);
-  "54" = minor 54 of any major, newest first; "1.54" = the newest 1.54.x; "1.54.1" exact. Used by `/api/handoff` (text +
-  notes; body `targets` = the UI chips override), `/api/tasks/:id/start` and `/rework` (notes): a resolved release sets
-  the task's `targets` (onlyRelease → [release], else [git.defaultBase, release]) and the agent's notes get «Целевые ветки:
+- где стартует агент: в папке проектов (`workspaces.root`); если её нет — в проекте, заданном `workspaceId`, или в единственном открытом
+  проекте; иначе 400 «Откройте проект или укажите папку с проектами» (проектов нет) / «Выберите проект, в котором работать агенту»
+  (их несколько). В проекте задача запускается в этом репозитории (не `location: 'root'`); пробный запуск (dryRun) возвращает там `location: 'repo'`;
+- `input` содержит ключ или ссылку трекера (`/([A-Z][A-Z0-9_]+-\d+)/` или URL) и интеграция с трекером работает →
+  импортировать/обновить эту задачу (как `/api/tasks/import`), затем запустить её в корне проектов (`location: 'root'`, notes) —
+  существующий путь запуска (семантика jumped, когда исполнитель уже работает);
+- иначе (свободный текст или трекер выключен) → чат в корне проектов (роль worker-подобная solo, название из
+  текста), чей первый промпт = `agents.<id>.freePromptTemplate` (по умолчанию для gigacode `"/full-task {text}{notes}"`,
+  общий `"{text}{notes}"`; те же правила шаблонов, слэш первым) + преамбула корня (выбрать репозитории по SDD/задаче или спросить;
+  рабочие деревья создавать по своим правилам).
+- Текст рядом с ключом/ссылкой попадает в `notes` («<ссылка> и проверь кеш» → notes «и проверь кеш»). Ключ/ссылка, которую трекер не может
+  импортировать (неизвестная, трекер недоступен), возвращается к чату со свободным текстом с `trackerError` в ответе. `approvalMode` /
+  `model` применяются к запущенной сессии. Шаги задания «Ищу задачу в трекере», «Запускаю агента».
+- `dryRun: true` → `{ prompt, agent, taskKey | null, targets | null, releaseWarning | null, location: 'root' | 'repo' }`: точное первое
+  сообщение (слэш-команда первой, без преамбулы harness) из тех же шаблонов, заметок и строк о релизе; без побочных эффектов —
+  ключ/ссылка берётся только регулярным выражением (без обращения к трекеру; задача, уже находящаяся на доске, используется ради её полей).
+- `GET /api/releases?workspaceId=&limit=10` → `[{ branch, version, repos }]` сначала новейшие, без дублей по ветке среди репозиториев
+  (выбор «＋ релиз»; тот же скан и кэш; возможность `release-resolve`).
+- Ссылки на релизы (`server/releases.js`, возможность `release-resolve`): `GET /api/releases/resolve?text=&workspaceId=` →
+  `{ refs: [{ phrase, version, branch | null, repos, candidates }], onlyRelease }`. Фразы: «релиз 54», «релизную 1.54»,
+  «release 1.54.1», «release/1.54.0», «rel154» (→ 1.54; rel1541 → 1.54.1); «только в релиз …» = onlyRelease. Ветки:
+  локальные и origin `release/*` / `release-*` этого workspace или каждого зарегистрированного git-репозитория (кэш 5 мин);
+  "54" = minor 54 любого major, сначала новейшие; "1.54" = новейшая 1.54.x; "1.54.1" точно. Используется в `/api/handoff` (текст +
+  notes; `targets` в теле = чипы UI переопределяют), `/api/tasks/:id/start` и `/rework` (notes): найденный релиз задаёт
+  `targets` задачи (onlyRelease → [release], иначе [git.defaultBase, release]), а заметки агента получают «Целевые ветки:
   develop и release/1.54.1 (из «релиз 54»). Изменения нужны в обе: основная работа в develop, перенос в релиз — отдельной
   веткой feature/<KEY>-rel154 → PR в release/1.54.1.» (onlyRelease: «Целевая ветка: … Изменения нужны только в релиз.»);
-  an unresolved one → the text stays, the response carries `releaseWarning` «ветка релиза 54 не найдена».
-`GET /api/now` is NOT needed — the UI derives «Сейчас» from sessions + tasks.
+  ненайденный → текст остаётся, ответ несёт `releaseWarning` «ветка релиза 54 не найдена».
+`GET /api/now` НЕ нужен — UI выводит «Сейчас» из сессий + задач.
 
-## Feature flags (client/server version skew)
+## Экран первичной настройки (`screen: 'setup'`)
 
-`GET /api/state` returns `features: string[]` — the optional API groups this server implements, e.g. `sdd`, `subagents`,
+Экран первичной настройки занимает место «Главной», пока `user.setupDone` равно false И (CLI агента не найден ИЛИ не открыт ни один
+проект/папка проектов). Он спрашивает: путь к агенту, где лежат проекты и как агент получает задачу.
+- Агент получает задачу простым текстом (шаблоны по умолчанию): задача `{key}: {title}
+
+{description}
+
+{taskUrl}{notes}`, свободный текст
+  `{text}{notes}`, доработка `Задача {key} готова, но нужны правки: {notes}`.
+- Или собственной командой человека `/cmd` (её предлагают из `userCommands` в `GET /api/agents/:id/info`): тогда шаблоны задачи / свободного текста /
+  доработки становятся `/cmd {taskUrl}{notes}`, `/cmd {text}{notes}`, `/cmd {taskUrl} Задача готова, но нужны правки: {notes}`
+  (`taskPromptTemplate`, `freePromptTemplate`, `reworkPromptTemplate` в `PUT /api/settings`).
+- Завершение или пропуск настройки сохраняет `user.setupDone: true` (`PUT /api/settings`), и «Главная» больше не подменяется.
+
+## Флаги возможностей (рассогласование версий клиента и сервера)
+
+`GET /api/state` возвращает `features: string[]` — необязательные группы API, которые реализует этот сервер, например `sdd`, `subagents`,
 `virtual-sessions`, `worker-run`, `pr-status`, `branches`, `fs-search`, `agent-info`, `models-refresh`, `tracker-links`,
-`worktree-meta`, `open`, `board-columns`, `review-loop`, `skills-install`, `demo`, `health`. The UI calls an optional endpoint only
-when its flag is present (otherwise the feature is hidden or shows «недоступно в этой версии сервера») — no 404 noise.
-A server adds a flag in the same commit that adds the route; a test asserts every flag has a route.
+`worktree-meta`, `open`, `board-columns`, `review-loop`, `skills-install`, `demo`, `health`. UI вызывает необязательную конечную точку, только
+если её флаг присутствует (иначе возможность скрыта или показывает «недоступно в этой версии сервера») — без шума 404.
+Сервер добавляет флаг в том же коммите, который добавляет маршрут; тест проверяет, что у каждого флага есть маршрут.
 
-## Cross-platform (Windows, Linux, macOS)
+## Кроссплатформенность (Windows, Linux, macOS)
 
-- No platform-specific defaults in `harness.config.json`: `shell: null` and `agents.gigacode.command: null` mean "auto":
+- В `harness.config.json` нет значений по умолчанию, привязанных к платформе: `shell: null` и `agents.gigacode.command: null` означают «авто»:
   - shell: win32 → `powershell.exe -NoLogo -NoExit -Command [Console]::InputEncoding=[Console]::OutputEncoding=[System.Text.Encoding]::UTF8`;
-    others → `$SHELL` (fallback `/bin/bash`, then `/bin/sh`) with `-l`; env `LANG`/`LC_ALL` default to `C.UTF-8` when unset.
-  - gigacode command: win32 → `C:/Program Files/.gigacode/bin/gigacode.cmd` if it exists, else `gigacode` on PATH (+PATHEXT);
-    others → `gigacode` on PATH, else `~/.gigacode/bin/gigacode`.
-  An explicit value always wins; `--print-config` shows the resolved choice and why.
-- GigaCode launcher on POSIX: if the resolved command is an executable file that is not a `.cmd`, it is spawned directly
-  (no shell; a shebang script sets its own identity env and exit codes are honest) with the same argv after the
-  executable; `nodeArgs`/`cliEntry` resolution and identity parsing are Windows-only unless `node`+`cliEntry` are set
-  explicitly. Fallback parser for sh shims (`ROOT=…`, `export GIGACODE_PACKAGE_IDENTITY=…`, `"$ROOT/runtime/node/bin/node"`)
-  is used only when the direct spawn is not possible. VERIFY the real Linux install layout on a Linux machine.
-- Process control: Windows `taskkill /PID <pid> /T /F`; POSIX `process.kill(-pid, SIGTERM)` then `SIGKILL` after 3 s
-  (on POSIX agent turns, ACP agents and git network ops are spawned `detached` = own process group). Open folder:
+    остальные → `$SHELL` (запасной `/bin/bash`, затем `/bin/sh`) с `-l`; env `LANG`/`LC_ALL` по умолчанию `C.UTF-8`, если не заданы.
+  - команда gigacode: win32 → `C:/Program Files/.gigacode/bin/gigacode.cmd`, если существует, иначе `gigacode` из PATH (+PATHEXT);
+    остальные → `gigacode` из PATH, иначе `~/.gigacode/bin/gigacode`.
+  Явное значение всегда приоритетнее; `--print-config` показывает разрешённый выбор и причину.
+- Лаунчер GigaCode в POSIX: если разрешённая команда — исполняемый файл, не `.cmd`, он запускается напрямую
+  (без оболочки; shebang-скрипт сам задаёт своё окружение identity, а коды выхода честные) с тем же argv после
+  исполняемого файла; разрешение `nodeArgs`/`cliEntry` и разбор identity работают только в Windows, если `node`+`cliEntry` не заданы
+  явно. Запасной разбор шимов sh (`ROOT=…`, `export GIGACODE_PACKAGE_IDENTITY=…`, `"$ROOT/runtime/node/bin/node"`)
+  используется только когда прямой запуск невозможен. ПРОВЕРИТЬ настоящую раскладку установки в Linux на машине с Linux.
+- Управление процессами: Windows `taskkill /PID <pid> /T /F`; POSIX `process.kill(-pid, SIGTERM)`, затем `SIGKILL` через 3 с
+  (в POSIX ходы агентов, агенты ACP и сетевые операции git запускаются `detached` = собственная группа процессов). Открыть папку:
   `explorer.exe` / `open` / `xdg-open`.
-- Windows: NO child is ever spawned `detached` (one helper, `spawnOptions()` in runner.js, used by every spawn/execFile):
-  DETACHED_PROCESS makes Windows ignore CREATE_NO_WINDOW (`windowsHide`), and GigaCode's own console children (MCP stdio
-  servers, the shell tool, node) then each pop up a visible console window. A non-detached child with `windowsHide` gets
-  its own hidden console inherited by all its descendants; it is still a separate console (Ctrl+C in the harness
-  terminal does not reach it) and it outlives the harness (Node never kills children on Windows), so turns still
-  survive a harness restart.
-- Never signal a pid that may have been reused (Windows hands pids out again within milliseconds; a stray
-  `taskkill /T` or `process.kill` killed agents and git runs of other sessions): a turn kill records `res.killReason`
-  ('stop' | 'first_event_timeout' | 'auth_timeout') BEFORE signalling and skips a child that already exited, so the
-  turn reports that reason, not the exit code; the first-event timer re-reads the output files before deciding;
-  children that exit on stdin EOF (MCP stdio servers, ACP agents) are only tree-killed if still running 2 s later
-  (`endChild`); node-pty's Windows `kill()` delayed `process.kill(shellPid)` fallback is disabled (`killPty`,
-  patches the private `_getConsoleProcessList`; re-check on a node-pty upgrade) — closing the pseudoconsole ends the
-  attached processes.
-- Paths always via `path`; `~` expanded; worktree/stale cleanup identical; tests run on Windows and Linux (Node ≥ 22).
-- UI: shortcuts use Ctrl on Windows/Linux and ⌘ on macOS (labels adapt); font stacks include Linux fallbacks
+- Windows: НИ ОДИН дочерний процесс никогда не запускается `detached` (один помощник, `spawnOptions()` в runner.js, используется каждым spawn/execFile):
+  DETACHED_PROCESS заставляет Windows игнорировать CREATE_NO_WINDOW (`windowsHide`), и собственные консольные дочерние процессы GigaCode (stdio MCP-серверы,
+  инструмент оболочки, node) тогда каждый показывают видимое окно консоли. Недетачнутый дочерний процесс с `windowsHide` получает
+  собственную скрытую консоль, наследуемую всеми его потомками; это всё равно отдельная консоль (Ctrl+C в терминале harness
+  до неё не доходит), и она переживает harness (Node никогда не убивает дочерние процессы в Windows), так что ходы по-прежнему
+  переживают перезапуск harness.
+- Никогда не посылать сигнал pid, который мог быть использован повторно (Windows выдаёт pid снова в течение миллисекунд; случайный
+  `taskkill /T` или `process.kill` убивал агентов и запуски git других сессий): убийство хода записывает `res.killReason`
+  ('stop' | 'first_event_timeout' | 'auth_timeout') ПЕРЕД отправкой сигнала и пропускает дочерний процесс, который уже завершился, поэтому
+  ход сообщает эту причину, а не код выхода; таймер первого события перед решением перечитывает файлы вывода;
+  дочерние процессы, завершающиеся по EOF stdin (stdio MCP-серверы, агенты ACP), убиваются деревом только если всё ещё работают спустя 2 с
+  (`endChild`); отложенный запасной вариант `process.kill(shellPid)` в `kill()` node-pty для Windows отключён (`killPty`,
+  патчит приватный `_getConsoleProcessList`; перепроверить при обновлении node-pty) — закрытие псевдоконсоли завершает
+  подключённые процессы.
+- Пути всегда через `path`; `~` раскрывается; очистка рабочих деревьев/устаревших папок одинакова; тесты выполняются в Windows и Linux (Node ≥ 22).
+- UI: сочетания клавиш используют Ctrl в Windows/Linux и ⌘ в macOS (подписи подстраиваются); стеки шрифтов включают запасные для Linux
   (`"Inter","Ubuntu","Cantarell","Noto Sans"` / `"JetBrains Mono","DejaVu Sans Mono","Noto Sans Mono"`).
-- Implementation notes: `config.shell` = `{ command, args, reason }` (a PowerShell setting on Linux/macOS also means
-  auto); the terminal gets `LANG`/`LC_ALL=C.UTF-8` only when NEITHER is set. On POSIX a `.cmd` shim is still resolved the
-  Windows way (bundled node + cli-entry + identity), anything else executable runs directly. `--print-config` shows
-  `shell.reason` and `agents.<id>.command: { command, reason }`. git network operations run in their own process group
-  on POSIX so the timeout kills their remote helpers too.
-- Settings: `PUT /api/settings { agents: { <id>: { command, node, cliEntry } } }` — `command`: path, argv array or
-  `null` (auto); `node` + `cliEntry`: both paths or both null; saved to `harness.config.local.json`. `GET /api/settings`
-  returns them with `resolved` (the same `{ ok, command, node, entry, identity: boolean }` as
-  `GET /api/agents/:id/info`), so «Проверить» works right after saving.
+- Заметки по реализации: `config.shell` = `{ command, args, reason }` (настройка PowerShell в Linux/macOS тоже означает
+  авто); терминал получает `LANG`/`LC_ALL=C.UTF-8` только когда НЕ задана ни одна из них. В POSIX шим `.cmd` по-прежнему разрешается
+  по-windows-ному (встроенный node + cli-entry + identity), всё остальное исполняемое запускается напрямую. `--print-config` показывает
+  `shell.reason` и `agents.<id>.command: { command, reason }`. Сетевые операции git в POSIX выполняются в собственной группе процессов,
+  поэтому таймаут убивает и их удалённых помощников.
+- Настройки: `PUT /api/settings { agents: { <id>: { command, node, cliEntry } } }` — `command`: путь, массив argv или
+  `null` (авто); `node` + `cliEntry`: оба пути или оба null; сохраняется в `harness.config.local.json`. `GET /api/settings`
+  возвращает их с `resolved` (тот же `{ ok, command, node, entry, identity: boolean }`, что и
+  `GET /api/agents/:id/info`), поэтому «Проверить» работает сразу после сохранения.
 
-## Security
+## Безопасность
 
-- Listen on `config.host` (default 127.0.0.1).
-- Reject any HTTP/WS request whose `Host` header is not `127.0.0.1:<port>`, `localhost:<port>` or `[::1]:<port>`
-  (DNS-rebinding guard). WS also requires `Origin` absent or same host.
-- Random token in `<dataDir>/token` (created once). `index.html` is served with
-  `<meta name="harness-token" content="...">` injected; every `/api` call and `/ws` needs it.
-- No CORS headers. Static files only from `web/dist`. Request bodies capped at 1 MB.
-- Secrets for MCP servers only in the secrets file (outside the repo); `data/` and `harness.config.local.json` gitignored.
+- Слушать на `config.host` (по умолчанию 127.0.0.1).
+- Отклонять любой HTTP/WS-запрос, у которого заголовок `Host` не `127.0.0.1:<port>`, `localhost:<port>` или `[::1]:<port>`
+  (защита от DNS-rebinding). WS дополнительно требует, чтобы `Origin` отсутствовал или совпадал с хостом.
+- Случайный токен в `<dataDir>/token` (создаётся один раз). `index.html` отдаётся со вставленным
+  `<meta name="harness-token" content="...">`; каждый вызов `/api` и `/ws` требует его.
+- Заголовков CORS нет. Статические файлы только из `web/dist`. Тела запросов ограничены 1 МБ.
+- Секреты для MCP-серверов только в файле секретов (вне репозитория); `data/` и `harness.config.local.json` в gitignore.

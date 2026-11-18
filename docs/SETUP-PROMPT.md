@@ -1,116 +1,116 @@
-# Prompt for the agent on the target machine
+# Промпт для агента на целевой машине
 
-Clone the repository, open the folder in GigaCode (or another agent), and give it the text below.
-Replace `<...>` first.
+Клонируйте репозиторий, откройте папку в GigaCode (или другом агенте) и передайте ему текст ниже.
+Сначала замените `<...>`.
 
 ---
 
 ```text
-You are working in the sber-harness repository: a local, lightweight IDE for coding agents (GigaCode chats with
-history, orchestration where a coordinator starts workers and each worker gets its own chat, a kanban task board,
-an agents board, PowerShell terminals, files/diff/commit/PR). Everything is built and covered by tests on mocks.
-The facts about GigaCode, onework and sourcecontrol on this machine have already been implemented (docs/GIGACODE-FACTS.md).
-Your task: verify the integration live, fill in the local config, and fix only what turns out to differ in reality.
+Ты работаешь в репозитории sber-harness: это локальная лёгкая IDE для кодовых агентов (чаты с GigaCode с
+историей, оркестрация, где координатор запускает исполнителей (workers) и у каждого исполнителя свой чат, канбан-доска задач,
+доска агентов, терминалы PowerShell, файлы/diff/commit/пулл-реквест (PR)). Всё собрано и покрыто тестами на моках.
+Факты о GigaCode, onework и sourcecontrol на этой машине уже реализованы (docs/GIGACODE-FACTS.md).
+Твоя задача: проверить интеграцию вживую, заполнить локальный конфиг и исправить только то, что на деле окажется иным.
 
-Read first: docs/HANDOFF.md (what has been done and how it works), AGENTS.md, docs/INTEGRATION.md (the
-step-by-step plan, follow it exactly), docs/GIGACODE-FACTS.md, docs/ARCHITECTURE.md (the contract).
+Сначала прочитай: docs/HANDOFF.md (что сделано и как это работает), AGENTS.md, docs/INTEGRATION.md (пошаговый
+план, следуй ему точно), docs/GIGACODE-FACTS.md, docs/ARCHITECTURE.md (контракт).
 
-Data on this machine:
-- raw GigaCode/MCP samples: <PATH_TO .gigacode-facts, e.g. C:\Users\<login>\IdeaProjects\.gigacode-facts>
-- the old console (working solutions for launching gigacode, MCP and secrets): <PATH_TO_OLD_CONSOLE>
-- the secrets file: <PATH_TO_CONSOLE_MCP_SECRETS> (give it via env CONSOLE_MCP_SECRETS; never copy secrets anywhere)
-- the folder with service repositories: <for example C:\Users\<login>\IdeaProjects>, the tracker space code: <SPACE>,
-  the link to a task in the tracker: https://<tracker-host>/swtr/units/all/unit/{key}
-- a test repository and a test task for checking PRs and statuses: <REPOSITORY>, <TASK_KEY>
+Данные на этой машине:
+- сырые образцы GigaCode/MCP: <PATH_TO .gigacode-facts, e.g. C:\Users\<login>\IdeaProjects\.gigacode-facts>
+- старая консоль (рабочие решения для запуска gigacode, MCP и секретов): <PATH_TO_OLD_CONSOLE>
+- файл секретов: <PATH_TO_CONSOLE_MCP_SECRETS> (передай его через env CONSOLE_MCP_SECRETS; секреты никуда не копируй)
+- папка с репозиториями сервисов: <for example C:\Users\<login>\IdeaProjects>, код пространства трекера: <SPACE>,
+  ссылка на задачу в трекере: https://<tracker-host>/swtr/units/all/unit/{key}
+- тестовый репозиторий и тестовая задача для проверки PR и статусов: <REPOSITORY>, <TASK_KEY>
 
-Order (each step ends with evidence: the command and its output, or a description of what is visible in the UI):
+Порядок (каждый шаг заканчивается доказательством: команда и её вывод или описание того, что видно в UI):
 0. node -v (>= 22), npm install, npm test, npm run build, node server/index.js --print-config.
-1. Fixtures: replace the reconstructed test/fixtures/gigacode.*, onework.*, sourcecontrol.* with real files from
-   .gigacode-facts (mask internal hosts/logins/codes), run npm test, fix the normalizer/parsers until green
-   (docs/INTEGRATION.md section 1).
-2. Local config harness.config.local.json: workspaces.root/repos, agents.gigacode.models + settings.agents.modelGrades/
-   allowedGrades (as in the old console), integrations.tasks (enabled, space, urlTemplate), integrations.pr.enabled.
-   Do not edit harness.config.json.
-3. GigaCode (section 2): npm start → http://127.0.0.1:4777, a chat with GigaCode, the harness tools are visible, --resume
-   works. Check the mcpServers merge; if needed turn on agents.gigacode.inheritUserMcp. Decide /full-task vs
-   /full-task-ui (taskPromptTemplate).
-4. Tasks (section 3): mcp-call onework, "Sync" on the board, description and transitions in the drawer.
-5. PRs (section 4): on a test branch of <REPOSITORY>, create a PR, check that a repeat does not create a duplicate.
-6. Full scenario: "Take into work" on <TASK_KEY> → a worktree <repo>-worktrees/<KEY>, a chat with /full-task, agent
-   statuses in the sidebar; then a coordinator with two workers in different repositories.
-7. Section 6 of INTEGRATION.md: answer the open questions of docs/GIGACODE-FACTS.md live (mcpServers merge, hooks,
-   the agent schema and parent_tool_use_id, MCP timeout, the question tool, the denial text, --acp, /models, long
-   prompts, authorization), install the harness-orchestration skill (ask the user first), and check sub-agents as chats,
-   questions/permissions, ACP on a test chat, and recovery after a restart. Record the facts in GIGACODE-FACTS.md.
+1. Фикстуры: замени реконструированные test/fixtures/gigacode.*, onework.*, sourcecontrol.* настоящими файлами из
+   .gigacode-facts (замаскируй внутренние хосты/логины/коды), запусти npm test, исправляй нормализатор/парсеры, пока
+   тесты не позеленеют (docs/INTEGRATION.md, раздел 1).
+2. Локальный конфиг harness.config.local.json: workspaces.root/repos, agents.gigacode.models + settings.agents.modelGrades/
+   allowedGrades (как в старой консоли), integrations.tasks (enabled, space, urlTemplate), integrations.pr.enabled.
+   harness.config.json не редактируй.
+3. GigaCode (раздел 2): npm start → http://127.0.0.1:4777, чат с GigaCode, инструменты harness видны, --resume
+   работает. Проверь слияние mcpServers; при необходимости включи agents.gigacode.inheritUserMcp. Реши, что использовать:
+   /full-task или /full-task-ui (taskPromptTemplate).
+4. Задачи (раздел 3): mcp-call onework, "Sync" на доске, описание и переходы в панели задачи.
+5. PR (раздел 4): в тестовой ветке <REPOSITORY> создай PR, проверь, что повтор не создаёт дубликат.
+6. Полный сценарий: "Take into work" на <TASK_KEY> → рабочее дерево (worktree) <repo>-worktrees/<KEY>, чат с /full-task, статусы
+   агентов в боковой панели; затем координатор с двумя исполнителями в разных репозиториях.
+7. Раздел 6 INTEGRATION.md: ответь вживую на открытые вопросы docs/GIGACODE-FACTS.md (слияние mcpServers, хуки,
+   схема agent и parent_tool_use_id, таймаут MCP, инструмент вопросов, текст отказа, --acp, /models, длинные
+   промпты, авторизация), установи скилл harness-orchestration (сначала спроси пользователя) и проверь субагентов как чаты,
+   вопросы/разрешения, ACP в тестовом чате и восстановление после перезапуска. Запиши факты в GIGACODE-FACTS.md.
 
-Constraints:
-- Do not change the UI, orchestration or the API contract without need; if you have to, update docs/ARCHITECTURE.md
-  and both sides (server/ and web/) together.
-- CLI-specific code only in server/launchers.js, service-specific code only in server/integrations/.
-- No secrets, internal hosts or project codes in the repository; only in the local config and the secrets file.
-- The harness itself does not go to the network; agents start without a shell; commit/push/PR and tracker writes only
-  on explicit request.
-- After each step: npm test and npm run build are green, then a commit with a clear message.
+Ограничения:
+- Не меняй UI, оркестрацию или контракт API без необходимости; если приходится, обнови docs/ARCHITECTURE.md
+  и обе стороны (server/ и web/) вместе.
+- Код, специфичный для CLI, — только в server/launchers.js, код, специфичный для сервиса, — только в server/integrations/.
+- Никаких секретов, внутренних хостов и кодов проектов в репозитории; только в локальном конфиге и файле секретов.
+- Сам харнес не ходит в сеть; агенты запускаются без оболочки; commit/push/PR и записи в трекер — только
+  по явной просьбе.
+- После каждого шага: npm test и npm run build проходят, затем коммит с понятным сообщением.
 
-Done when: the checklist at the end of docs/INTEGRATION.md is fully complete. At the end, a short report: what was
-checked (with evidence), which settings were set (without secrets), which fixtures/tests were replaced or added, and
-what remains open.
+Готово, когда: чек-лист в конце docs/INTEGRATION.md выполнен полностью. В конце — короткий отчёт: что
+проверено (с доказательствами), какие настройки заданы (без секретов), какие фикстуры/тесты заменены или добавлены, и
+что осталось открытым.
 ```
 
 ---
 
-## Prompt for updating the installation (one prompt for everything; use it after every big update)
+## Промпт для обновления установки (один промпт на всё; используйте после каждого крупного обновления)
 
 ```text
-In the sber-harness repository on this machine: pull the latest changes from GitHub, clean up local leftovers, and
-check live what can only be checked here (real GigaCode, onework, sourcecontrol). Read docs/HANDOFF.md first.
+В репозитории sber-harness на этой машине: подтяни последние изменения с GitHub, убери локальные остатки и
+проверь вживую то, что можно проверить только здесь (настоящие GigaCode, onework, sourcecontrol). Сначала прочитай docs/HANDOFF.md.
 
-1. Local changes and the update.
-   - git status / git log origin/main..HEAD. Save local edits and local commits to a branch:
+1. Локальные изменения и обновление.
+   - git status / git log origin/main..HEAD. Сохрани локальные правки и локальные коммиты в ветку:
      git switch -c local/backup-<date> && git add -A && git commit -m "local backup" && git switch main.
-   - The separate «CLI» screen I had added locally is no longer needed: upstream shows CLI chats in the sidebar as
-     ordinary chats (feature cli-adopt). Do not carry it over.
-   - git fetch && git reset --hard origin/main (ONLY after the backup branch exists; harness.config.local.json and data/
-     are not in git and are not touched). If the backup has other useful changes besides the CLI screen, show them to me
-     and carry them over by hand.
-2. npm install && npm test && npm run build. Stop the old harness process (node server/index.js) and start it again.
-3. harness.config.local.json: remove what is no longer needed — a "models" array with a single model (the catalog
-   comes from /models), hand-written approvalModeMap / auto → auto-edit (now in code), a separate autoSandbox if you
-   set it (the sandbox is off by default because it was slow). Keep: workspaces.root, integrations.tasks (space etc.),
-   secrets in the secrets file.
-4. Check live and record the results in docs/GIGACODE-FACTS.md (section "Confirmed", raw output for anything unexpected):
-   a) «Главная» → paste a task link → under the field «Будет отправлено: /full-task <link>»; «Запустить» → the agent
-      starts in IdeaProjects, picks the project itself, its worktree is linked to the task. Add «и в релиз 54» to the
-      notes → a chip «develop + release/1.54.x» appears, and the agent gets a line about the release.
-   b) No console windows on messages; the turn ends right after the reply; «Новый чат» opens instantly, and a double
-      click does not create two chats.
-   c) Permissions: in «Авто-правки» run "git status" — does it run without a card (default allow-list
-      --allowed-tools)? If not: the exact flag name and pattern syntax from gigacode --help, fix allowedToolsFlag/
-      allowedToolsJoin in server/launchers.js plus the test. A denied command → «Разрешить и повторить» → does it run.
-   d) CLI chats: your recent GigaCode chats from the terminal are in the sidebar under their projects (terminal icon);
-      write «продолжи» in one — it continues with context; check that the turn is not shown twice (the 15 s heuristic
-      in server/history.js); /models, /context and the harness's own chats are not in the list.
-   e) Changes panel: GigaCode writes the commit message itself (✨); does --safe-mode work (if not, the harness falls
-      back by itself — record what happened); «Закоммитить» through the agent → the agent replies with a RESULT: line,
-      the harness shows the commit hash; «Push»; «Создать PR» through the agent.
-   f) «Пулл-реквесты» → «Мои»: are your open PRs visible; what git_get_user returned (if the login came from the OS
-      account name and does not match, set integrations.pr.me in Settings → PR); whether git_list_pull_requests
-      accepts author.
-   g) Context ring next to «Отправить»: numbers look right; «Сжать контекст» (/compress) works in headless mode.
-   h) Tasks: closed tasks (closed) are gone from the board, created ones are in «К работе».
-   i) ACP transport (if a chat uses it): tool cards show their real input under «Вход» (not {}), and a sub-agent chat
-      starts with its task, not {}. Capture the raw ACP output once: temporarily log JSON.stringify(params.update) per
-      line in server/acp.js (where session/update is handled), run a turn that calls a tool and a sub-agent, and replace
-      test/fixtures/gigacode.acp-late-input.ndjson with those lines (mask hosts/logins; keep the ids the test checks or
-      update the test). Remove the temporary log.
-   j) Live thinking is OFF by default (with --include-partial-messages on, tool calls came without their arguments). Check
-      it once: set agents.gigacode.partialMessagesFlag = "--include-partial-messages" in harness.config.local.json, run a
-      headless turn that reads a file, runs a command and searches; capture its raw stdout into test/fixtures/. Every tool
-      card must show its arguments and a «Размышляет» block must fill live. If arguments are missing, parse stream_event
-      content_block_start/input_json_delta in server/launchers.js with that fixture and a test, or leave the flag off. Harness tools: in a headless chat and in an ACP chat ask «перечисли инструменты mcp__harness» — are
-      they there in both? If not, answer question 1 in GIGACODE-FACTS (settings mcpServers merge) and fix it.
-   Fix anything that does not match only in server/launchers.js, server/history.js, server/integrations/, server/acp.js
-   (with a test); do not change UI and orchestration without need.
-5. npm test and npm run build green → a commit with a clear message → git push.
-Report: what was checked (with evidence), what was fixed, what remains open.
+   - Отдельный экран «CLI», который я добавлял локально, больше не нужен: upstream показывает чаты CLI в боковой панели как
+     обычные чаты (feature cli-adopt). Не переноси его.
+   - git fetch && git reset --hard origin/main (ТОЛЬКО после того, как ветка с резервной копией существует; harness.config.local.json и data/
+     не в git и не затрагиваются). Если в резервной копии есть другие полезные изменения, кроме экрана CLI, покажи их мне
+     и перенеси вручную.
+2. npm install && npm test && npm run build. Останови старый процесс харнеса (node server/index.js) и запусти его снова.
+3. harness.config.local.json: убери то, что больше не нужно, — массив "models" с единственной моделью (каталог
+   берётся из /models), вручную написанные approvalModeMap / auto → auto-edit (теперь в коде), отдельный autoSandbox, если
+   ты его задавал (песочница по умолчанию выключена, потому что была медленной). Оставь: workspaces.root, integrations.tasks (space и т. д.),
+   секреты в файле секретов.
+4. Проверь вживую и запиши результаты в docs/GIGACODE-FACTS.md (раздел "Confirmed", сырой вывод для всего неожиданного):
+   a) «Главная» → вставь ссылку на задачу → под полем «Будет отправлено: /full-task <ссылка>»; «Запустить» → агент
+      стартует в IdeaProjects, сам выбирает проект, его рабочее дерево привязано к задаче. Добавь «и в релиз 54» к
+      заметкам → появляется чип «develop + release/1.54.x», и агент получает строку о релизе.
+   b) Нет консольных окон при сообщениях; ход заканчивается сразу после ответа; «Новый чат» открывается мгновенно, а двойной
+      клик не создаёт два чата.
+   c) Разрешения: в режиме «Авто-правки» выполни "git status" — выполняется ли без карточки (список разрешённых по умолчанию
+      --allowed-tools)? Если нет: точное имя флага и синтаксис шаблона из gigacode --help, исправь allowedToolsFlag/
+      allowedToolsJoin в server/launchers.js плюс тест. Запрещённая команда → «Разрешить и повторить» → выполняется ли она.
+   d) Чаты CLI: твои недавние чаты GigaCode из терминала есть в боковой панели под своими проектами (значок терминала);
+      напиши «продолжи» в одном из них — он продолжается с контекстом; проверь, что ход не показывается дважды (эвристика 15 с
+      в server/history.js); /models, /context и собственные чаты харнеса в списке отсутствуют.
+   e) Панель Changes: GigaCode сам пишет сообщение коммита (✨); работает ли --safe-mode (если нет, харнес
+      откатывается сам — запиши, что произошло); «Закоммитить» через агента → агент отвечает строкой RESULT:, харнес
+      показывает хеш коммита; «Push»; «Создать PR» через агента.
+   f) «Пулл-реквесты» → «Мои»: видны ли твои открытые PR; что вернул git_get_user (если логин взят из имени
+      учётной записи ОС и не совпадает, задай integrations.pr.me в Settings → PR); принимает ли git_list_pull_requests
+      author.
+   g) Кольцо контекста рядом с «Отправить»: числа выглядят правильно; «Сжать контекст» (/compress) работает в headless-режиме.
+   h) Задачи: закрытые задачи (closed) исчезли с доски, созданные — в «К работе».
+   i) Транспорт ACP (если чат его использует): карточки инструментов показывают реальные входные данные под «Вход» (не {}), а чат
+      субагента начинается с его задачи, а не с {}. Один раз захвати сырой вывод ACP: временно логируй JSON.stringify(params.update) по
+      строке в server/acp.js (там, где обрабатывается session/update), запусти ход, вызывающий инструмент и субагента, и замени
+      test/fixtures/gigacode.acp-late-input.ndjson этими строками (замаскируй хосты/логины; сохрани id, которые проверяет тест, или
+      обнови тест). Убери временный лог.
+   j) Живое размышление по умолчанию ВЫКЛЮЧЕНО (при включённом --include-partial-messages вызовы инструментов приходили без аргументов). Проверь
+      это один раз: задай agents.gigacode.partialMessagesFlag = "--include-partial-messages" в harness.config.local.json, запусти
+      headless-ход, который читает файл, выполняет команду и ищет; сохрани его сырой stdout в test/fixtures/. Каждая карточка
+      инструмента должна показывать свои аргументы, а блок «Размышляет» должен заполняться вживую. Если аргументов нет, разбери stream_event
+      content_block_start/input_json_delta в server/launchers.js с этой фикстурой и тестом либо оставь флаг выключенным. Инструменты harness: в headless-чате и в чате ACP попроси «перечисли инструменты mcp__harness» — есть ли
+      они в обоих? Если нет, ответь на вопрос 1 в GIGACODE-FACTS (слияние mcpServers в настройках) и исправь.
+   Всё, что не совпадает, исправляй только в server/launchers.js, server/history.js, server/integrations/, server/acp.js
+   (с тестом); UI и оркестрацию без необходимости не меняй.
+5. npm test и npm run build проходят → коммит с понятным сообщением → git push.
+Отчёт: что проверено (с доказательствами), что исправлено, что осталось открытым.
 ```
