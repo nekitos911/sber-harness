@@ -30,10 +30,7 @@ const fill = (tpl: string, v: Record<string, string>) => tpl.replace(/\{(\w+)\}/
  */
 function usePromptPreview(input: string, notes: string, agentId: string, targets: string[]) {
   const settings = useSettings()
-  // shortcut: no own flag for dryRun on the server; it came before cli-adopt, so cli-adopt implies it
-  const own = useFeature('handoff-dry-run')
-  const adopt = useFeature('cli-adopt')
-  const dryRun = own || adopt
+  const dryRun = useFeature('handoff-dry-run')
   const [server, setServer] = useState<string | null>(null)
   const text = input.trim()
   useEffect(() => {
