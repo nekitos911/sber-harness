@@ -75,7 +75,7 @@
 .tree-group { margin-bottom: 8px; }
 .tree-row {
   position: relative; display: flex; align-items: center; gap: 7px;
-  height: 24px; padding: 0 4px 0 calc(8px + var(--depth, 0) * 16px);
+  height: 26px; padding: 0 4px 0 calc(8px + var(--depth, 0) * 16px); font-size: 13px;
   border-radius: var(--r-1); color: var(--ink-2); cursor: pointer; user-select: none;
   transition: background-color var(--t-fast) ease;
 }
@@ -90,11 +90,11 @@
 .tree-row:has(.actions):hover .wt-badges, .tree-row:has(.actions):focus-within .wt-badges { display: none; }
 
 /* Hierarchy: project (bold) → worktrees (16 px in) → sessions (32 px in); a guide line under an open project. */
-.tree-project { font-weight: 600; color: var(--ink); }
+.tree-project { font-weight: 600; font-size: 13.5px; color: var(--ink); }
 .tree-children { position: relative; }
 .tree-children::before { content: ""; position: absolute; left: 14px; top: 0; bottom: 6px; width: 1px; background: var(--rule-strong); pointer-events: none; z-index: 1; }
 .tree-path { font-weight: 400; font-size: 11.5px; color: var(--ink-3); }
-.tree-group[data-root] { margin-bottom: 4px; padding-bottom: 6px; border-bottom: 1px solid var(--rule-soft); }
+
 .tree-more { width: 100%; height: 24px; border: 0; background: none; font: inherit; font-size: 12px; color: var(--ink-3); text-align: left; }
 .tree-more .muted { color: var(--ink-4); }
 .tree-more svg { width: 13px !important; height: 13px !important; }
@@ -103,16 +103,17 @@
 
 /* The worktree on screen (and its sessions) is highlighted. */
 .wt { border-radius: var(--r-1); transition: background-color var(--t-fast) ease; }
-.wt[data-active="true"] { background: var(--deck); }
-.tree-wt .label { color: var(--ink); }
+/* the worktree on screen: a subtle rounded card (Orca's highlighted box) */
+.wt[data-active="true"] { background: var(--deck-2); border-radius: 6px; box-shadow: inset 0 0 0 1px var(--rule-soft); }
+.tree-wt .label { color: var(--ink); font-weight: 400; }
 .wt-badges { display: inline-flex; gap: 6px; flex-shrink: 0; }
 .wt-stat { display: inline-flex; align-items: center; gap: 1px; font-size: 11px; color: color-mix(in srgb, var(--lamp-run) 70%, var(--ink-3)); }
 .wt-stat svg { width: 10px; height: 10px; }
 
 /* Session activity rows: status, title - what it is doing, model, time. */
-.tree-sess { height: 24px; gap: 6px; font-size: 12.5px; }
+.tree-sess { height: 26px; gap: 6px; font-size: 13px; }
 .tree-sess .label { color: var(--ink); }
-.tree-sess .st { width: 13px; height: 13px; }
+.tree-sess .st { width: 14px; height: 14px; flex: none; }
 .sess-doing { color: var(--ink-3); }
 /* Colour only on the 14 px state icon: titles keep the text colour, the right meta stays muted. */
 .tree-sess .label { min-width: 72px; } /* the title never collapses to nothing; the meta on the right gives way */
@@ -273,3 +274,14 @@
 .app[data-rail] .sb-foot { justify-content: center; padding-left: 4px; padding-right: 4px; }
 .wt-orphan { cursor: default; }
 .wt-orphan .wt-mark svg { color: var(--signal); }
+
+/* calm session rows: title truncates first, then the activity; on the right the model gives way, the time never */
+.sess-model { flex: 0 1 auto; min-width: 0; max-width: 34%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); font-size: 11px; color: var(--ink-3); }
+.sess-time { flex: none; min-width: 3.4em; text-align: right; font-size: 11px; color: var(--ink-3); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tree-sess .label { min-width: 40px; }
+/* «Агенты» in the nav: amber running, violet waiting for you */
+.nav-dots { display: inline-flex; gap: 8px; }
+.nav-dot { display: inline-flex; align-items: center; gap: 4px; font-size: 11.5px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.nav-dot::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--lamp-run); }
+.nav-dot[data-k="wait"]::before { background: var(--lamp-ask); }
+.app[data-rail] .nav-dots { flex-direction: column; gap: 0; font-size: 9px; }
