@@ -72,6 +72,18 @@ test('no projects folder: nothing open → 400; one project → the agent starts
   }
 });
 
+test('integrations check: the tracker\'s server answers with the tools the harness calls; a code host that is not there says so; servers are editable', async () => {
+  const r = (await h.api('GET', '/api/integrations/check')).body;
+  assert.deepEqual([r.tasks.server, r.tasks.found, r.tasks.ok, r.tasks.missing], ['onework', true, true, []]);
+  assert.deepEqual([r.pr.server, r.pr.found, r.pr.ok], ['sourcecontrol', false, false]);
+  assert.ok(r.servers.includes('onework'));
+  assert.equal((await h.api('PUT', '/api/settings', { integrations: { pr: { server: 'onework' } } })).status, 200);
+  const again = (await h.api('GET', '/api/integrations/check')).body.pr;
+  assert.deepEqual([again.server, again.found, again.ok, again.missing], ['onework', true, false, ['git_create_pull_request']], 'answers, but it is not a code host');
+  assert.equal((await h.api('PUT', '/api/settings', { integrations: { pr: { server: ' ' } } })).status, 400);
+  await h.api('PUT', '/api/settings', { integrations: { pr: { server: 'sourcecontrol' } } });
+});
+
 test('dryRun: the exact first message (slash first, no preamble), targets and the warning — nothing imported or created', async () => {
   const before = (await h.api('GET', '/api/state')).body;
   const link = 'https://tracker.example/swtr/units/all/unit/PROJ-15430';

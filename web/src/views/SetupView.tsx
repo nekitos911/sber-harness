@@ -7,6 +7,7 @@ import type { Settings } from '../types'
 import { FolderPicker } from '../components/FolderPicker'
 import { Button, Input, Segmented, Select, Switch } from '../components/ui'
 import { CliPathFix } from './SettingsView'
+import { IntegrationStatus, useIntegrationsCheck } from '../components/IntegrationStatus'
 
 const SKILL = 'harness-orchestration'
 
@@ -66,6 +67,13 @@ export function SetupView() {
   const [installSkill, setInstallSkill] = useState(false)
   const [picking, setPicking] = useState(false)
   const [busy, setBusy] = useState(false)
+  const check = useIntegrationsCheck()
+  const tracker = settings?.integrations?.tasks
+  const savedSpace = [tracker?.space ?? []].flat().join(', ')
+  const [importOn, setImportOn] = useState<boolean | null>(null)
+  const [space, setSpace] = useState<string | null>(null)
+  const importing = importOn ?? !!tracker?.enabled
+  const spaces = (space ?? savedSpace).split(/[\s,]+/).map((x) => x.trim().toUpperCase()).filter(Boolean)
 
   const agentOk = !!meta?.resolved.ok
   const placesOk = !!root || projects.length > 0
@@ -87,7 +95,10 @@ export function SetupView() {
       const chosen = mode === 'command' ? cmd : null
       const changed = !skip && chosen !== current
       if (!skip && installSkill && skill !== 'installed') await tryApi('POST', `/agents/${encodeURIComponent(id)}/skills/install`, { name: SKILL, force: skill === 'different' || undefined })
-      await api<Settings>('PUT', '/settings', { user: { setupDone: true }, ...(changed ? { agents: { [id]: taskTemplates(chosen) } } : {}) })
+      // the tracker only when touched here, and only with a space to import from
+      const trackerPatch = !skip && (importOn !== null || space !== null) && (!importing || spaces.length)
+        ? { integrations: { tasks: { enabled: importing, ...(spaces.length ? { space: spaces.length === 1 ? spaces[0] : spaces } : {}) } } } : {}
+      await api<Settings>('PUT', '/settings', { user: { setupDone: true }, ...(changed ? { agents: { [id]: taskTemplates(chosen) } } : {}), ...trackerPatch })
       await loadSettings(true)
       if (!skip) loadAgentMeta(id, true)
       openScreen('home')
@@ -167,8 +178,26 @@ export function SetupView() {
             </div>
           </li>
         )}
+        {check.r !== null && (
+          <li className="firstrun-step" data-optional data-done={(check.r?.tasks.ok && check.r?.pr.ok) || undefined}>
+            {check.r?.tasks.ok && check.r?.pr.ok ? <Check className="setup-mark" aria-label="готово" /> : <Circle className="setup-mark" aria-label="необязательно" />}
+            <div className="firstrun-body">
+              <strong>Задачи из трекера и пулл-реквесты <span className="muted">· необязательно</span></strong>
+              <span className="muted">С ними задачи берутся с доски «Задачи» одной кнопкой, а PR создаётся прямо отсюда. Без них задачу можно описать словами, а PR создать вручную.</span>
+              <IntegrationStatus kind="tasks" check={check} />
+              {check.r?.tasks.ok && (
+                <div className="firstrun-actions">
+                  <Switch checked={importing} onChange={setImportOn} label="Подтягивать мои задачи из трекера" />
+                  <span>Подтягивать мои задачи из пространства</span>
+                  <Input mono aria-label="Пространство трекера" placeholder="например PROJ" value={space ?? savedSpace} onChange={(e) => setSpace(e.target.value)} />
+                </div>
+              )}
+              {check.r?.tasks.ok && importing && !spaces.length && <span className="field-warn">Укажите пространство (код проекта в трекере), из которого брать задачи.</span>}
+              <IntegrationStatus kind="pr" check={check} />
+            </div>
+          </li>
+        )}
       </ol>
-      <p className="muted firstrun-later">Трекер задач и пулл-реквесты подключаются в «Настройках», когда понадобятся.</p>
       <footer className="firstrun-foot">
         <button type="button" className="link-btn" disabled={busy} onClick={() => void finish(true)}>Пропустить</button>
         <span className="grow" />

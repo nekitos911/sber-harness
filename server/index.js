@@ -41,7 +41,7 @@ const NO_BUILD_HTML = '<!doctype html><meta charset="utf-8"><title>Harness</titl
 const GRADES = ['default', 'fast', 'review', 'explore'];
 // optional API groups this server implements (docs/ARCHITECTURE.md "Feature flags"); a flag ships with its route
 export const FEATURES = ['branches', 'fs-search', 'pr-status', 'agent-info', 'models-refresh', 'tracker-links', 'board-columns', 'review-loop',
-  'subagents', 'virtual-sessions', 'worker-run', 'skills-install', 'demo', 'worktree-meta', 'open', 'sdd', 'health', 'folders', 'include-dirs', 'questions', 'permissions', 'activity', 'rework', 'fs-raw', 'tracker-import', 'pr-decline', 'task-suggest', 'recovery', 'acp', 'worktree-lazy', 'cli-history', 'prs-mine', 'git-generate', 'git-via-agent', 'git-stage', 'handoff', 'release-resolve', 'cli-adopt', 'handoff-dry-run'];
+  'subagents', 'virtual-sessions', 'worker-run', 'skills-install', 'demo', 'worktree-meta', 'open', 'sdd', 'health', 'folders', 'include-dirs', 'questions', 'permissions', 'activity', 'rework', 'fs-raw', 'tracker-import', 'pr-decline', 'task-suggest', 'recovery', 'acp', 'worktree-lazy', 'cli-history', 'prs-mine', 'git-generate', 'git-via-agent', 'git-stage', 'handoff', 'release-resolve', 'cli-adopt', 'handoff-dry-run', 'integrations-check'];
 // titles of operations the UI may follow by sending x-job-id (WS { t: 'job' } frames)
 const JOB_TITLES = {
   'POST /api/tasks/sync': 'Синхронизация с трекером',
@@ -565,6 +565,10 @@ export async function startServer(opts = {}) {
         if (typeof t[k] !== 'string') fail(400, `integrations.tasks.${k}: нужна строка`);
         p[k] = t[k].trim();
       }
+      if ('server' in t) {
+        if (typeof t.server !== 'string' || !t.server.trim()) fail(400, 'integrations.tasks.server: имя MCP-сервера трекера');
+        p.server = t.server.trim();
+      }
       if ('statusMap' in t) {
         if (!isObj(t.statusMap) || Object.values(t.statusMap).some((v) => !STATUSES.includes(v))) fail(400, `integrations.tasks.statusMap: значения — из ${STATUSES.join(', ')}`);
         p.statusMap = t.statusMap;
@@ -582,6 +586,10 @@ export async function startServer(opts = {}) {
     if (i.pr !== undefined) {
       if (!isObj(i.pr) || ('enabled' in i.pr && typeof i.pr.enabled !== 'boolean' && i.pr.enabled !== 'auto')) fail(400, 'integrations.pr.enabled: true, false или "auto"');
       if ('enabled' in i.pr) out.pr = { enabled: i.pr.enabled };
+      if ('server' in i.pr) {
+        if (typeof i.pr.server !== 'string' || !i.pr.server.trim()) fail(400, 'integrations.pr.server: имя MCP-сервера пулл-реквестов');
+        out.pr = { ...out.pr, server: i.pr.server.trim() };
+      }
       if ('me' in i.pr) {
         if (i.pr.me !== null && (typeof i.pr.me !== 'string' || i.pr.me.trim().length > 100)) fail(400, 'integrations.pr.me: логин (строка до 100 символов) или null');
         out.pr = { ...out.pr, me: i.pr.me?.trim() || null };
@@ -1578,6 +1586,28 @@ export async function startServer(opts = {}) {
 
   // mcp, notifications
   route('GET', '/api/mcp/servers', () => mcp.status());
+  /**
+   * «Проверить подключение» of the tracker and the code host: is their MCP server defined (the harness's config or the
+   * agent's ~/.gigacode/settings.json), does it answer, has it the tools the harness calls. → { tasks, pr, servers }
+   */
+  route('GET', '/api/integrations/check', async () => {
+    const defs = serverDefs(config);
+    const check = async (server, need) => {
+      if (!server || !defs[server]) return { server: server || null, found: false, ok: false, missing: [] };
+      if (!defs[server].enabled) return { server, found: true, ok: false, missing: [], error: 'сервер выключен в настройках' };
+      try {
+        const tools = (await mcp.listTools(server)).map((x) => x.name);
+        const missing = need.filter((n) => n && !tools.includes(n));
+        return { server, found: true, ok: !missing.length, missing };
+      } catch (e) {
+        return { server, found: true, ok: false, missing: [], error: e.message };
+      }
+    };
+    const t = config.integrations.tasks || {};
+    const p = config.integrations.pr || {};
+    const [tasks, pr] = await Promise.all([check(t.server, [t.tools?.find, t.tools?.get]), check(p.server, [p.tool])]);
+    return { tasks, pr, servers: Object.keys(defs).filter((n) => n !== 'harness').sort() };
+  });
   route('POST', '/api/notifications/read-all', () => {
     for (const n of db.notifications) {
       if (!n.read) {

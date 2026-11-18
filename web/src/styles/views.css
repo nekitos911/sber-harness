@@ -678,3 +678,12 @@ button.prs-group[aria-expanded="true"] .chev { transform: rotate(90deg); }
 .handoff-examples { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin: 0 14px 6px; color: var(--ink-3); font-size: 12px; }
 .firstrun-example { margin: 0; padding: 8px 10px; border-radius: var(--r-2); background: var(--deck-2); color: var(--ink-2); font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; justify-self: stretch; }
 .firstrun-step[data-optional]:not([data-done]) > .setup-mark { color: var(--ink-4); }
+/* is the tracker / the code host connected: one line, what to do when not */
+.integ { display: grid; justify-items: start; gap: 4px; margin: 0; font-size: 12.5px; }
+.integ p { margin: 0; }
+.integ-line { display: flex; align-items: flex-start; gap: 6px; color: var(--ink-2); }
+.integ-line svg { width: 14px; height: 14px; flex-shrink: 0; margin-top: 2px; color: var(--lamp-wait); }
+.integ[data-ok] .integ-line svg { color: var(--lamp-done); }
+.integ-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.set-card > .integ { margin-bottom: 8px; }
+.integ-actions .select-trigger { width: auto; min-width: 200px; }

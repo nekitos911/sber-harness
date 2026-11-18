@@ -467,6 +467,10 @@ POST   /api/sessions/:id/attachments?name=  (raw bytes, any type, ≤10 MB) -> {
                                     name sanitized, never leaving the folder); the turn whose message mentions that folder
                                     gets it in includeDirs (ACP: fs roots)
 GET    /api/mcp/servers         -> [{ name, enabled, transport, ok, error?, problem?, tools: [{name, description}] }]
+GET    /api/integrations/check  -> { tasks: Check, pr: Check, servers: string[] }   // флаг integrations-check
+       // Check = { server, found, ok, missing: string[], error? }: найден ли MCP-сервер трекера / PR (конфиг харнесса или
+       // ~/.gigacode/settings.json агента), отвечает ли, есть ли у него инструменты, которые вызывает харнесс
+       // (tasks.tools.find/get, pr.tool). Сервер меняется в PUT /api/settings: integrations.tasks.server / integrations.pr.server.
                                     (only the servers the harness calls: integrations.tasks/pr.server and its own
                                     config.mcpServers — servers that come only from mcpServersFrom are not started)
 

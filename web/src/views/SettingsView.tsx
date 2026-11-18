@@ -13,6 +13,7 @@ import { useNow } from '../lib/useNow'
 import type { AgentSettings, BoardColumn, BoardSettings, GitBranches, Grade, Session, Settings, TaskStatus } from '../types'
 import { Skeleton } from '../components/bits'
 import { ModelPicker } from '../components/pickers/ModelPicker'
+import { IntegrationStatus, useIntegrationsCheck } from '../components/IntegrationStatus'
 import { Button, Chip, Disclosure, IconButton, Input, Segmented, Select, SuggestInput, Switch, Textarea } from '../components/ui'
 
 const MAIN = 'gigacode'
@@ -169,6 +170,7 @@ function BasicSettings({ form, update, fieldError, main }: SectionProps & { main
     update({ ...form, integrations: { ...form.integrations, tasks: { ...t, ...patch } } })
   const spaces = Array.isArray(t?.space) ? t.space : t?.space ? [t.space] : []
   const modeLabels = a?.approvalModeLabels ?? {}
+  const check = useIntegrationsCheck()
   if (!a) return null
   return (
     <section className="settings-section settings-basic" id="set-basic">
@@ -199,7 +201,8 @@ function BasicSettings({ form, update, fieldError, main }: SectionProps & { main
       )}
       {t && (
         <div className="set-card">
-          <h3>Трекер</h3>
+          <h3>Трекер задач</h3>
+          <IntegrationStatus kind="tasks" check={check} />
           <div className="set-rows">
             <Row label="Импорт задач"><Switch label="Импорт задач из трекера" checked={!!t.enabled} onChange={(v) => setT({ enabled: v })} /></Row>
             <Row label="Пространства" hint="Enter или запятая: добавить." error={fieldError('space')}>
@@ -209,6 +212,10 @@ function BasicSettings({ form, update, fieldError, main }: SectionProps & { main
           </div>
         </div>
       )}
+      <div className="set-card">
+        <h3>Пулл-реквесты</h3>
+        <IntegrationStatus kind="pr" check={check} />
+      </div>
       {acpOn && (
         <div className="set-card">
           <h3>Как запускать агента</h3>
