@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { CODE_ROOT } from '../server/config.js';
-import { startTestServer, tmpDir, rmrf, waitFor } from './helpers.js';
+import { startTestServer, tmpDir, rmrf, waitFor, makeRepo, gitIn } from './helpers.js';
 
 const root = tmpDir();
 const projects = path.join(root, 'проекты');
@@ -13,8 +13,10 @@ let h;
 
 before(async () => {
   fs.mkdirSync(projects);
+  gitIn(makeRepo(path.join(projects, 'сервис')), 'branch', 'release/1.54.0');
   h = await startTestServer({
-    workspaces: { root: projects },
+    workspaces: { root: projects, repos: [path.join(projects, 'сервис')] },
+    git: { defaultBase: 'develop' },
     mcpServers: { onework: stub('onework') },
     integrations: { tasks: { enabled: true, space: 'PROJ', urlTemplate: 'https://tracker.example/swtr/units/all/unit/{key}' } },
     agents: { mock: { taskPromptTemplate: '/full-task {taskUrl}{notes}', freePromptTemplate: '/full-task {text}{notes}' } },
@@ -58,4 +60,22 @@ test('no projects folder → 400', async () => {
   } finally {
     await bare.close();
   }
+});
+
+test('dryRun: the exact first message (slash first, no preamble), targets and the warning — nothing imported or created', async () => {
+  const before = (await h.api('GET', '/api/state')).body;
+  const link = 'https://tracker.example/swtr/units/all/unit/PROJ-15430';
+  const r = await h.api('POST', '/api/handoff', { input: `${link} поправь кеш в релиз 54`, notes: 'срочно', dryRun: true });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.deepEqual([r.body.taskKey, r.body.targets, r.body.releaseWarning, r.body.location, r.body.agent], ['PROJ-15430', ['develop', 'release/1.54.0'], null, 'root', 'mock']);
+  const [first, second] = r.body.prompt.split('\n');
+  assert.equal(first, `/full-task ${link} поправь кеш в релиз 54 срочно`);
+  assert.match(second, /^Целевые ветки: develop и release\/1\.54\.0 \(из «релиз 54»\)\. .*feature\/PROJ-15430-rel154 → PR в release\/1\.54\.0\.$/);
+  const after = (await h.api('GET', '/api/state')).body;
+  assert.deepEqual([after.sessions.length, after.tasks.length], [before.sessions.length, before.tasks.length]);
+  const real = (await h.api('POST', '/api/handoff', { input: `${link} поправь кеш в релиз 54`, notes: 'срочно' })).body;
+  assert.equal((await firstUser(real.session.id)).text, r.body.prompt, 'preview == the sent text');
+  await settle(real.session.id);
+  const free = (await h.api('POST', '/api/handoff', { input: 'сделай Y', dryRun: true })).body;
+  assert.deepEqual([free.prompt, free.taskKey, free.targets], ['/full-task сделай Y', null, null]);
 });

@@ -1407,6 +1407,9 @@ picks the repository itself. `POST /api/handoff { input, notes?, agent?, approva
   import (unknown, tracker down) falls back to the free-text chat with `trackerError` in the response. `approvalMode` /
   `model` apply to the started session. Job steps «Ищу задачу в трекере», «Запускаю агента».
 - No projects root → 400 «Укажите папку с проектами в Настройках».
+- `dryRun: true` → `{ prompt, agent, taskKey | null, targets | null, releaseWarning | null, location: 'root' }`: the exact first
+  message (slash command first, no harness preamble) from the same templates, notes and release lines; no side effects —
+  a key/link is taken by regex only (no tracker lookup; a task already on the board is used for its fields).
 - Release references (`server/releases.js`, feature `release-resolve`): `GET /api/releases/resolve?text=&workspaceId=` →
   `{ refs: [{ phrase, version, branch | null, repos, candidates }], onlyRelease }`. Phrases: «релиз 54», «релизную 1.54»,
   «release 1.54.1», «release/1.54.0», «rel154» (→ 1.54; rel1541 → 1.54.1); «только в релиз …» = onlyRelease. Branches:

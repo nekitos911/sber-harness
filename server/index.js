@@ -1216,12 +1216,16 @@ export async function startServer(opts = {}) {
    * The release targets of a text (or explicit targets): the task's targets are set (onlyRelease → [release], else
    * [defaultBase, release]); → { notes (with the «Целевые ветки: …» line), releaseWarning? }.
    */
-  async function withReleases(text, notes, task, explicit = null) {
+  async function planReleases(text, notes, task, explicit = null) {
     const ws = task?.workspaceId ? db.workspaces.find((w) => w.id === task.workspaceId && w.isGit) : null;
     const resolved = explicit ? null : await resolveReleases(text, gitRepos(ws));
     const plan = releasePlan({ resolved, base: config.git.defaultBase, key: task ? tasks.key(task) : null, explicit });
-    if (task && plan.targets) tasks.update(task.id, { targets: plan.targets }, 'user');
-    return { notes: [notes, plan.line].filter(Boolean).join('\n'), ...(plan.warning ? { releaseWarning: plan.warning } : {}) };
+    return { notes: [notes, plan.line].filter(Boolean).join('\n'), targets: plan.targets, releaseWarning: plan.warning };
+  }
+  async function withReleases(text, notes, task, explicit = null) {
+    const p = await planReleases(text, notes, task, explicit);
+    if (task && p.targets) tasks.update(task.id, { targets: p.targets }, 'user');
+    return { notes: p.notes, ...(p.releaseWarning ? { releaseWarning: p.releaseWarning } : {}) };
   }
   const targetsOf = (v) => {
     if (v == null) return null;
@@ -1230,7 +1234,7 @@ export async function startServer(opts = {}) {
   };
 
   route('POST', '/api/handoff', async ({ body }) => {
-    check(body, { input: 'string', notes: 'string?', agent: 'string?', approvalMode: 'string?', model: 'string?', targets: 'array?' });
+    check(body, { input: 'string', notes: 'string?', agent: 'string?', approvalMode: 'string?', model: 'string?', targets: 'array?', dryRun: 'boolean?' });
     const explicit = targetsOf(body.targets); // the UI's chips override what the text says
     const input = body.input.trim() || fail(400, 'нужен текст или ссылка на задачу');
     const root = db.workspaces.find((w) => w.kind === 'root') || fail(400, 'Укажите папку с проектами в Настройках');
@@ -1239,6 +1243,23 @@ export async function startServer(opts = {}) {
     const ref = input.match(/https?:\/\/\S+/)?.[0] || input.match(/[A-Z][A-Z0-9_]+-\d+/)?.[0];
     // the rest of the input next to the key/link is a note for the agent («/full-task <link> поправь ещё X»)
     const notes = [ref ? input.replace(ref, '').trim() : '', body.notes?.trim()].filter(Boolean).join(' ');
+    const relText = `${input} ${body.notes || ''}`;
+    const freePrompt = (relNotes) => render(agentCfg.freePromptTemplate ?? launchers[agentCfg.launcher]?.defaults.freePromptTemplate ?? '{text}{notes}', { text: input, notes: relNotes ? ` ${relNotes}` : '' });
+    if (body.dryRun) {
+      // the preview: the same templates, notes and release lines as below, nothing imported or created
+      const tracked = ref && config.integrations.tasks?.enabled;
+      const key = tracked && (ref.match(/[A-Z][A-Z0-9_]+-\d+/)?.[0] || null);
+      if (tracked && key) {
+        const tc = config.integrations.tasks;
+        const known = db.tasks.find((t) => t.externalId === key);
+        const stand = known || { id: key, externalId: key, title: '', description: '', parentId: null, branch: null, targets: [config.git.defaultBase], externalUrl: tc.urlTemplate ? fillTemplate(tc.urlTemplate, { key }) : /^https?:\/\//.test(ref) ? ref : null };
+        const p = await planReleases(relText, notes, stand, explicit);
+        const prompt = orch.previewTaskPrompt({ ...stand, ...(p.targets ? { targets: p.targets } : {}) }, { agent, cwd: root.path, notes: p.notes });
+        return { prompt, agent, taskKey: key, targets: p.targets, releaseWarning: p.releaseWarning, location: 'root' };
+      }
+      const p = await planReleases(relText, body.notes?.trim() || '', null, explicit);
+      return { prompt: freePrompt(p.notes), agent, taskKey: null, targets: p.targets, releaseWarning: p.releaseWarning, location: 'root' };
+    }
     let trackerError = null;
     let task = null;
     if (ref && config.integrations.tasks?.enabled) {
@@ -1248,14 +1269,13 @@ export async function startServer(opts = {}) {
     }
     jobStep('Запускаю агента');
     if (task) {
-      const rel = await withReleases(`${input} ${body.notes || ''}`, notes, task, explicit);
+      const rel = await withReleases(relText, notes, task, explicit);
       const s = await orch.start(task.id, { agent, notes: rel.notes, location: 'root', approvalMode: body.approvalMode, model: body.model });
       if (!s.jumped) await trackerOnStart(tasks.get(task.id));
       return { session: s, task: tasks.get(task.id), ...(rel.releaseWarning ? { releaseWarning: rel.releaseWarning } : {}) };
     }
-    const rel = await withReleases(`${input} ${body.notes || ''}`, body.notes?.trim() || '', null, explicit);
-    const tpl = agentCfg.freePromptTemplate ?? launchers[agentCfg.launcher]?.defaults.freePromptTemplate ?? '{text}{notes}';
-    const prompt = render(tpl, { text: input, notes: rel.notes ? ` ${rel.notes}` : '' });
+    const rel = await withReleases(relText, body.notes?.trim() || '', null, explicit);
+    const prompt = freePrompt(rel.notes);
     const s = await sessions.create({
       kind: 'chat', agent, cwd: root.path, title: titleFrom(input) || 'Задача', atRoot: true, prompt,
       ...(body.approvalMode ? { approvalMode: body.approvalMode } : {}), ...(body.model ? { model: body.model } : {}),

@@ -1293,6 +1293,8 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
     reworkTemplate,
     reworkPresets,
     gitViaAgent,
+    /** The first message a task worker would get (no preamble): the handoff preview. */
+    previewTaskPrompt: (task, { agent, cwd, notes = '' }) => taskPrompt(task, { id: '', agent, cwd, branch: '', workspaceId: task.workspaceId ?? null, settingsPath: '', approvalMode: null }, { notes }),
     port: (taskId, target, o) => port(tasks.get(taskId), target, o, null),
     waitRun,
     /** MCP tool list; the built-in-compatible `agent` alias only in orchestration.subagents "harness" mode */
