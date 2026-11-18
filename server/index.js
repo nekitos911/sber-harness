@@ -894,19 +894,22 @@ export async function startServer(opts = {}) {
     return null;
   }
 
-  // ---- /full-task SDD artifacts: polled while a session in that folder runs, broadcast on change ----
-  const sddSeen = new Map(); // folder key -> last JSON
+  // ---- /full-task SDD artifacts: polled while a session in that folder runs, broadcast on change (per session) ----
+  const sddScope = (s) => {
+    const task = s.taskId && tasks.find(s.taskId);
+    return { key: task ? tasks.key(task) : null, since: s.createdAt || 0 };
+  };
+  const sddSeen = new Map(); // session id -> last JSON
   let sddBusy = false;
   const sddTimer = setInterval(async () => {
     if (!wss.clients.size || sddBusy) return;
     sddBusy = true;
     try {
-      const cwds = new Map(db.sessions.filter((s) => s.status === 'running' && !s.virtual && s.cwd).map((s) => [metaKey(s.cwd), s.cwd]));
-      for (const [k, cwd] of cwds) {
-        const data = await readSdd(cwd);
+      for (const s of db.sessions.filter((x) => x.status === 'running' && !x.virtual && x.cwd)) {
+        const data = await readSdd(s.cwd, sddScope(s));
         const json = JSON.stringify(data);
-        if ((sddSeen.get(k) ?? '{"plans":[]}') !== json) bus.send({ t: 'sdd', cwd, ...data });
-        sddSeen.set(k, json);
+        if ((sddSeen.get(s.id) ?? '{"plans":[]}') !== json) bus.send({ t: 'sdd', cwd: s.cwd, sessionId: s.id, ...data });
+        sddSeen.set(s.id, json);
       }
     } finally {
       sddBusy = false;
@@ -1327,7 +1330,8 @@ export async function startServer(opts = {}) {
   });
 
   // files
-  route('GET', '/api/sdd', ({ query }) => readSdd(path.resolve(cwdOf(query))));
+  // sessionId: only that session's plans (its task key, or written since it started); without it every plan («показать все»)
+  route('GET', '/api/sdd', ({ query }) => readSdd(path.resolve(cwdOf(query)), query.sessionId ? sddScope(sessions.get(query.sessionId)) : null));
   route('GET', '/api/fs/dirs', ({ query }) => wfs.listDirs(query.path || '', { hidden: query.hidden === '1' }));
   route('GET', '/api/fs/list', ({ query }) => wfs.list(cwdOf(query), query.path || ''));
   route('GET', '/api/fs/search', ({ query }) => wfs.searchFiles(cwdOf(query), query.q || '', query.limit));

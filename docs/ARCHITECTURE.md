@@ -595,12 +595,17 @@ runs implementer/reviewer sub-agents with cross-model review and writes a ledger
   `<branch>`) — это и есть worktree задачи; не создавай другой. Коммиты/пуш/PR/трекер — только пользователь из UI.
   После финального сообщения твоей команды вызови worker_done с тем же текстом.» (session field `inWorktree: true`: the worker
   started in a linked worktree; the commit sentence is dropped when `orchestration.workerMayCommit`.)
-- SDD artifacts viewer: `GET /api/sdd?cwd=` → `{ plans: [{ name, dir, progress: { raw, items: [{ title, status }] },
+- SDD artifacts viewer: `GET /api/sdd?cwd=&sessionId=` → `{ plans: [{ name, dir, modifiedAt, progress: { raw, items: [{ title, status }], total, done },
   verdicts: [{ n, file, status: 'PASS'|'FAIL'|'ESCALATION_REQUIRED'|'INDEPENDENT_VERIFICATION_REQUIRED'|null,
   filesChanged: string[], commands: [{ cmd, result }], openQuestions, implementerModel, reviewerModel, secondReviewModel,
   notes, raw }] }] }` from `<cwd>/.superpowers/sdd/*/progress.md` and `verdicts/task-*.md` (tolerant parser of the
-  `key: value` block + list items; unparsed → `raw` only). While a session in that cwd runs, the server polls (3 s) and
-  broadcasts `{ t: 'sdd', cwd, plans }` on change.
+  `key: value` block + list items; unparsed → `raw` only). With `sessionId` only that session's plans: the plan name
+  contains its task key, or the plan's progress/verdict files changed after the session's `createdAt` (an old ledger
+  of another run at the projects root is not shown); without it every plan (the panel's «показать все»). An item's
+  status comes only from an explicit marker (`[x]`/`[ ]`/`[~]`, ✅/❌/⏳, `status: DONE|PASS|FAIL|…`); `done` is
+  the count of done items, or null when no item has a marker (`total` = item count; the UI then shows no fraction).
+  While a session runs, the server polls (3 s) and broadcasts `{ t: 'sdd', cwd, sessionId, plans }` (that session's
+  plans) on change.
 - `git.excludeFromCommit` (default `[".superpowers/"]`): `GET /api/git/status` marks matching files `service: true`;
   commit-all and the suggested file list skip them (pathspec `:(top,exclude)<pattern>`, so files staged earlier are skipped
   too); explicit `paths` drop them (400 when only service files are left); they are never pushed by the harness.

@@ -7,15 +7,18 @@ import path from 'node:path';
 const VERDICTS = ['PASS', 'FAIL', 'ESCALATION_REQUIRED', 'INDEPENDENT_VERIFICATION_REQUIRED'];
 const KEYS = ['status', 'files_changed', 'commands', 'open_questions', 'implementer_model', 'reviewer_model', 'second_review_model', 'notes'];
 
+/** Only explicit markers count: a checkbox, ✅/❌/⏳, or `status: DONE|PASS|FAIL|…`; a word in the text is no status. */
 function itemStatus(line) {
   const box = line.match(/^\s*(?:[-*]|\d+\.)\s*\[(.)\]/);
   if (box) return { x: 'done', X: 'done', ' ': 'pending', '~': 'in_progress', '-': 'in_progress', '!': 'failed' }[box[1]] ?? null;
-  if (/\b(done|pass(ed)?|complete(d)?|готово|сделано)\b/i.test(line)) return 'done';
-  if (/\b(in[ _-]?progress|wip|doing|в работе)\b/i.test(line)) return 'in_progress';
-  if (/\b(fail(ed)?|blocked)\b/i.test(line)) return 'failed';
-  return null;
+  if (/✅|✔/.test(line)) return 'done';
+  if (/❌|✖/.test(line)) return 'failed';
+  if (/⏳|🔄/.test(line)) return 'in_progress';
+  const st = line.replace(/[*`]/g, '').match(/\bstatus\s*[:=]\s*([A-Za-z_]+)/i)?.[1].toUpperCase();
+  return { DONE: 'done', PASS: 'done', PASSED: 'done', FAIL: 'failed', FAILED: 'failed', IN_PROGRESS: 'in_progress', PENDING: 'pending', TODO: 'pending' }[st] ?? null;
 }
 
+/** → { raw, items: [{ title, status }], total, done }; done is null when no item carries an explicit marker. */
 export function parseProgress(raw) {
   const items = [];
   for (const line of raw.split(/\r?\n/)) {
@@ -23,7 +26,8 @@ export function parseProgress(raw) {
     const title = line.replace(/^\s*(?:[-*]|\d+\.)\s*(\[.\]\s*)?/, '').trim();
     if (title) items.push({ title, status: itemStatus(line) });
   }
-  return { raw, items };
+  const marked = items.some((i) => i.status !== null);
+  return { raw, items, total: items.length, done: marked ? items.filter((i) => i.status === 'done').length : null };
 }
 
 /** verdicts/task-N.md -> { status, filesChanged, commands: [{ cmd, result }], openQuestions, *Model, notes, raw } */
@@ -68,21 +72,29 @@ export function parseVerdict(raw) {
 
 const read = (file) => fs.promises.readFile(file, 'utf8').catch(() => null);
 const list = (dir) => fs.promises.readdir(dir, { withFileTypes: true }).catch(() => []);
+const mtime = (file) => fs.promises.stat(file).then((s) => s.mtimeMs, () => 0);
 
-/** All plans under <cwd>/.superpowers/sdd (sorted by name), with progress and verdicts. Async: polled every 3 s. */
-export async function readSdd(cwd) {
+/**
+ * Plans under <cwd>/.superpowers/sdd (sorted by name), with progress, verdicts and modifiedAt (newest progress/verdict
+ * file). Async: polled every 3 s. With `forSession` { key, since } only the session's own: the plan name contains its
+ * task key, or its files changed after the session started (an old ledger of another run is not shown).
+ */
+export async function readSdd(cwd, forSession = null) {
   const root = path.join(cwd, '.superpowers', 'sdd');
   const dirs = (await list(root)).filter((d) => d.isDirectory()).map((d) => d.name).sort();
-  return {
-    plans: await Promise.all(dirs.map(async (name) => {
-      const dir = path.join(root, name);
-      const progressRaw = await read(path.join(dir, 'progress.md'));
-      const files = (await list(path.join(dir, 'verdicts'))).map((d) => d.name).filter((f) => /^task-\d+\.md$/i.test(f));
-      const verdicts = await Promise.all(files
-        .map((file) => ({ n: Number(file.match(/\d+/)[0]), file: path.join(dir, 'verdicts', file) }))
-        .sort((a, b) => a.n - b.n)
-        .map(async ({ n, file }) => ({ n, file, ...parseVerdict((await read(file)) ?? '') })));
-      return { name, dir, progress: progressRaw === null ? null : parseProgress(progressRaw), verdicts };
-    })),
-  };
+  const plans = await Promise.all(dirs.map(async (name) => {
+    const dir = path.join(root, name);
+    const progressFile = path.join(dir, 'progress.md');
+    const progressRaw = await read(progressFile);
+    const files = (await list(path.join(dir, 'verdicts'))).map((d) => d.name).filter((f) => /^task-\d+\.md$/i.test(f));
+    const verdicts = await Promise.all(files
+      .map((file) => ({ n: Number(file.match(/\d+/)[0]), file: path.join(dir, 'verdicts', file) }))
+      .sort((a, b) => a.n - b.n)
+      .map(async ({ n, file }) => ({ n, file, ...parseVerdict((await read(file)) ?? '') })));
+    const modifiedAt = Math.max(await mtime(progressFile), ...(await Promise.all(verdicts.map((v) => mtime(v.file))))) || null;
+    return { name, dir, modifiedAt, progress: progressRaw === null ? null : parseProgress(progressRaw), verdicts };
+  }));
+  if (!forSession) return { plans };
+  const key = forSession.key?.toLowerCase();
+  return { plans: plans.filter((p) => (key && p.name.toLowerCase().includes(key)) || (p.modifiedAt || 0) > (forSession.since || 0)) };
 }

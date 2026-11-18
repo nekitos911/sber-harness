@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import WebSocket from 'ws';
-import { readSdd, parseVerdict } from '../server/sdd.js';
+import { readSdd, parseVerdict, parseProgress } from '../server/sdd.js';
 import { scanModelRefs } from '../server/models.js';
 import { startTestServer, makeRepo, tmpDir, rmrf, gitIn, waitFor } from './helpers.js';
 
@@ -36,6 +36,14 @@ function copyTree(from, to) {
   }
 }
 const copyFixtures = (cwd) => copyTree(FIXTURES, path.join(cwd, '.superpowers', 'sdd'));
+/** Every file under dir gets mtime `at` (copyFileSync keeps the source mtime on Windows). */
+function touchTree(dir, at) {
+  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+    const p = path.join(dir, e.name);
+    if (e.isDirectory()) touchTree(p, at);
+    else fs.utimesSync(p, at, at);
+  }
+}
 
 test('parser: ledger items, PASS verdict with models, FAIL verdict in bold/arrow form, unknown status kept raw', async () => {
   const dir = path.join(root, 'plain');
@@ -74,8 +82,9 @@ test('GET /api/sdd and a WS broadcast while a session in that folder runs', asyn
     const s = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', cwd, prompt: '#silent' })).body;
     await waitFor(async () => (await h.api('GET', '/api/state')).body.sessions.find((x) => x.id === s.id).status === 'running');
     copyFixtures(cwd);
+    touchTree(path.join(cwd, '.superpowers'), new Date()); // written by the agent during this session
     const f = await waitFor(() => frames.at(-1), { timeout: 10000, what: 'sdd frame' });
-    assert.equal(f.cwd, cwd);
+    assert.deepEqual([f.cwd, f.sessionId], [cwd, s.id]);
     assert.deepEqual(f.plans[0].verdicts.map((v) => v.status), ['PASS', 'FAIL']);
     const viaApi = (await h.api('GET', `/api/sdd?cwd=${encodeURIComponent(cwd)}`)).body;
     assert.deepEqual(viaApi, JSON.parse(JSON.stringify({ plans: f.plans })));
@@ -119,4 +128,37 @@ test('modelRefs: frontmatter model and catalogue-family tokens checked against t
     { file, model: 'GLM-5.3-Flash', available: true }, // "-262k" suffix tolerated
     { file, model: 'Qwen3.5-Old-128k', available: false },
   ]);
+});
+
+test('a session sees only its own plans: its task key in the plan name, or files written since it started', async () => {
+  const cwd = path.join(root, 'корень проектов');
+  copyFixtures(cwd);
+  const old = new Date(Date.now() - 86400000);
+  touchTree(path.join(cwd, '.superpowers'), old); // a ledger of an earlier run
+  const task = (await h.api('POST', '/api/tasks', { title: 'своя задача' })).body;
+  const own = `${task.id}-план`;
+  copyTree(path.join(FIXTURES, '2026-11-17-limits'), path.join(cwd, '.superpowers', 'sdd', own));
+  touchTree(path.join(cwd, '.superpowers', 'sdd', own), old);
+  const names = async (q) => (await h.api('GET', `/api/sdd?cwd=${encodeURIComponent(cwd)}${q}`)).body.plans.map((p) => p.name);
+
+  const fresh = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', cwd })).body;
+  assert.deepEqual(await names(`&sessionId=${fresh.id}`), [], 'an unrelated old ledger is not shown for a new chat');
+  assert.equal((await names('')).length, 2, 'without sessionId: every plan («показать все»)');
+
+  const worker = (await h.api('POST', `/api/tasks/${task.id}/assign`, { agent: 'mock', cwd })).body;
+  assert.equal(worker.taskId, task.id);
+  assert.deepEqual(await names(`&sessionId=${worker.id}`), [own], 'the task key in the plan name');
+  await waitFor(async () => (await h.api('GET', '/api/state')).body.sessions.find((x) => x.id === worker.id).status !== 'running', { what: 'worker turn' });
+
+  touchTree(path.join(cwd, '.superpowers', 'sdd', '2026-11-17-limits'), new Date(Date.now() + 1000));
+  assert.deepEqual(await names(`&sessionId=${fresh.id}`), ['2026-11-17-limits'], 'written after the session started');
+  assert.equal((await h.api('GET', `/api/sdd?cwd=${encodeURIComponent(cwd)}&sessionId=нет`)).status, 404);
+});
+
+test('progress counts done/total only with explicit markers', () => {
+  const boxes = parseProgress('- [x] a\n- [ ] b\n- [~] c');
+  assert.deepEqual([boxes.done, boxes.total], [1, 3]);
+  const words = parseProgress('1. Шаг: готово\n2. Шаг: done\n3. третий');
+  assert.deepEqual([words.done, words.total, words.items.map((i) => i.status)], [null, 3, [null, null, null]]);
+  assert.equal(parseProgress('- a ✅\n- b status: **FAIL**\n- c Status: PASS\n- d').done, 2);
 });
