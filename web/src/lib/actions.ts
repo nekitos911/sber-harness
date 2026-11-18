@@ -11,8 +11,24 @@ export function adoptSession(s: Session) {
   openSession(s.id)
 }
 
+/**
+ * One creation at a time: repeated clicks while a chat/terminal is being created reuse the request in flight instead of
+ * creating more sessions; a creation that takes longer than a moment shows a toast so the click never looks ignored.
+ */
+let creating: Promise<void> | null = null
+function once(label: string, fn: () => Promise<void>): Promise<void> {
+  if (creating) return creating
+  const slow = setTimeout(() => toast(`${label}…`, 'info'), 700)
+  creating = fn().finally(() => { clearTimeout(slow); creating = null })
+  return creating
+}
+
 /** «Новый чат» without a form: default agent, given folder (or a repo-less chat when none). */
-export async function newChat(where: Where = {}) {
+export function newChat(where: Where = {}) {
+  return once('Создаю чат', () => createChat(where))
+}
+
+async function createChat(where: Where) {
   const st = getState()
   const enabled = st.agents.filter((a) => a.enabled)
   const agent = enabled.find((a) => a.id === st.defaultAgent)?.id ?? enabled[0]?.id
@@ -27,11 +43,13 @@ export async function newChat(where: Where = {}) {
 }
 
 /** «Новый терминал» without a form: the default shell in the given folder. */
-export async function newTerminal(where: Where) {
-  const s = await tryApi<Session>('POST', '/sessions', {
-    kind: 'terminal', agent: 'shell', cwd: where.cwd ?? undefined, workspaceId: where.workspaceId ?? undefined,
+export function newTerminal(where: Where) {
+  return once('Открываю терминал', async () => {
+    const s = await tryApi<Session>('POST', '/sessions', {
+      kind: 'terminal', agent: 'shell', cwd: where.cwd ?? undefined, workspaceId: where.workspaceId ?? undefined,
+    })
+    if (s) adoptSession(s)
   })
-  if (s) adoptSession(s)
 }
 
 /** The most specific workspace containing a folder (the projects folder contains every project). */
@@ -60,9 +78,11 @@ export function currentWhere(): { workspaceId: string | null; cwd: string | null
 }
 
 /** «Новый чат в папке…»: register the folder (non-git is fine) and start an instant chat there. */
-export async function newChatInFolder(path: string) {
-  const ws = await tryApi<Workspace>('POST', '/workspaces', { path, kind: 'folder' })
-  if (!ws) return
-  setState((st) => ({ workspaces: upsert(st.workspaces, ws) }))
-  await newChat({ workspaceId: ws.id, cwd: ws.path })
+export function newChatInFolder(path: string) {
+  return once('Создаю чат', async () => {
+    const ws = await tryApi<Workspace>('POST', '/workspaces', { path, kind: 'folder' })
+    if (!ws) return
+    setState((st) => ({ workspaces: upsert(st.workspaces, ws) }))
+    await createChat({ workspaceId: ws.id, cwd: ws.path })
+  })
 }

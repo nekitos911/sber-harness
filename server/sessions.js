@@ -19,6 +19,7 @@ const ARGV_PROMPT_MAX = 24000;
 export const newId = (prefix, bytes = 4) => `${prefix}_${randomBytes(bytes).toString('hex')}`;
 const isDir = (p) => { try { return fs.statSync(p).isDirectory(); } catch { return false; } };
 const insideDir = (dir, p) => { const r = path.relative(dir, p); return !r.startsWith('..') && !path.isAbsolute(r); };
+const samePath = (a, b) => (process.platform === 'win32' ? path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase() : path.resolve(a) === path.resolve(b));
 const sameDir = (a, b) => (process.platform === 'win32' ? path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase() : path.resolve(a) === path.resolve(b));
 
 /**
@@ -1129,12 +1130,17 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     // folder inside the data dir (the demo's <dataDir>/projects) is an ordinary place
     if (['chats', 'terms', 'runs'].some((d) => insideDir(path.join(store.dataDir, d), cwd))) return { workspaceId: null, worktreePath: null, system: true };
     let best = null;
-    for (const w of db.workspaces.filter((x) => x.isGit)) {
-      for (const t of await worktreesOf(w.path, fresh)) {
+    // all repos at once: one git process each, never one after another (17 repos × a slow git on Windows = seconds)
+    const lists = await Promise.all(db.workspaces.filter((x) => x.isGit).map(async (w) => [w, await worktreesOf(w.path, fresh)]));
+    for (const [w, list] of lists) {
+      for (const t of list) {
         if (insideDir(t.path, cwd) && (!best || t.path.length > best.path.length)) best = { id: w.id, path: t.path };
       }
     }
-    if (!best && !fresh && retry) return placeFor(cwd, true); // a worktree created in the last 30 s
+    // a worktree created in the last 30 s is not in the cache yet — but a registered non-git folder (the projects folder,
+    // a plain folder) is never inside a worktree, so a chat there never pays for a fresh scan of every repo
+    const knownFolder = db.workspaces.some((w) => !w.isGit && samePath(w.path, cwd));
+    if (!best && !fresh && retry && !knownFolder) return placeFor(cwd, true);
     if (best) return { workspaceId: best.id, worktreePath: best.path, system: false };
     const folder = db.workspaces.filter((w) => insideDir(w.path, cwd)).sort((a, b) => b.path.length - a.path.length)[0];
     return { workspaceId: folder?.id ?? null, worktreePath: null, system: false };
