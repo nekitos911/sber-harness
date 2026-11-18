@@ -188,8 +188,7 @@ async function fsRoots() {
   return roots;
 }
 
-/** Folders of `dir` (and with `files`, its files too: { file: true }) for the folder/file picker. */
-export async function listDirs(dir, { hidden = false, files = false } = {}) {
+export async function listDirs(dir, { hidden = false } = {}) {
   const p = path.resolve(dir || os.homedir());
   if (!path.isAbsolute(dir || p)) throw Object.assign(new Error('путь должен быть абсолютным'), { status: 400 });
   let entries;
@@ -203,9 +202,9 @@ export async function listDirs(dir, { hidden = false, files = false } = {}) {
     path: p,
     parent: parent === p ? null : parent,
     entries: entries
-      .filter((d) => (d.isDirectory() || (files && d.isFile())) && (hidden || !/^[.$]/.test(d.name)))
-      .map((d) => ({ name: d.name, path: path.join(p, d.name), ...(d.isDirectory() ? {} : { file: true }) }))
-      .sort((a, b) => Number(!!a.file) - Number(!!b.file) || a.name.localeCompare(b.name)), // folders first
+      .filter((d) => d.isDirectory() && (hidden || !/^[.$]/.test(d.name)))
+      .map((d) => ({ name: d.name, path: path.join(p, d.name) }))
+      .sort((a, b) => a.name.localeCompare(b.name)),
     roots: await fsRoots(),
   };
 }

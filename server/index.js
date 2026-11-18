@@ -1539,7 +1539,7 @@ export async function startServer(opts = {}) {
   // files
   // sessionId: only that session's plans (its task key, or written since it started); without it every plan («показать все»)
   route('GET', '/api/sdd', ({ query }) => readSdd(path.resolve(cwdOf(query)), query.sessionId ? sddScope(sessions.get(query.sessionId)) : null));
-  route('GET', '/api/fs/dirs', ({ query }) => wfs.listDirs(query.path || '', { hidden: query.hidden === '1', files: query.files === '1' }));
+  route('GET', '/api/fs/dirs', ({ query }) => wfs.listDirs(query.path || '', { hidden: query.hidden === '1' }));
   route('GET', '/api/fs/list', ({ query }) => wfs.list(cwdOf(query), query.path || ''));
   route('GET', '/api/fs/search', ({ query }) => wfs.searchFiles(cwdOf(query), query.q || '', query.limit));
   route('GET', '/api/fs/file', ({ query }) => wfs.readFile(cwdOf(query), check(query, { path: 'string' }).path));
@@ -1628,26 +1628,27 @@ export async function startServer(opts = {}) {
   }
 
   /**
-   * POST /api/sessions/:id/attachments (raw image bytes, Content-Type image/*): a screenshot pasted into the composer,
-   * saved in the chat's own folder → { path }. Raw bytes, not JSON: a screenshot is bigger than MAX_BODY as base64.
+   * POST /api/sessions/:id/attachments?name= (raw bytes): a file attached in the composer («+», the system file dialog) or
+   * a pasted screenshot, saved in the chat's own folder → { path }. Raw bytes, not JSON: a file is bigger than MAX_BODY as
+   * base64. The browser never tells a picked file's real path, hence the copy.
    */
-  async function serveUpload(req, res, sid) {
+  async function serveUpload(req, res, sid, u) {
     if (!tokenOk(req.headers['x-harness-token'])) return sendJson(res, 401, { error: 'нет x-harness-token или он неверный' });
     const dir = sessions.attachmentsDir(sid); // 404 for an unknown chat
-    const ext = { 'image/png': '.png', 'image/jpeg': '.jpg', 'image/gif': '.gif', 'image/webp': '.webp' }[String(req.headers['content-type'] || '').split(';')[0].trim()]
-      || fail(415, 'вставляются только картинки: png, jpg, gif, webp');
+    // the name as given, minus what a file system refuses or uses to climb (a separator, «..» stays a plain name)
+    const name = path.basename(String(u.searchParams.get('name') || 'file')).replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').trim().slice(-120) || 'file';
     const chunks = [];
     let size = 0;
     for await (const c of req) {
       size += c.length;
-      if (size > wfs.RAW_MAX) fail(413, `картинка больше ${wfs.RAW_MAX / 1024 / 1024} МБ`);
+      if (size > wfs.RAW_MAX) fail(413, `файл больше ${wfs.RAW_MAX / 1024 / 1024} МБ`);
       chunks.push(c);
     }
-    if (!size) fail(400, 'пустая картинка');
+    if (!size) fail(400, 'пустой файл');
     fs.mkdirSync(dir, { recursive: true });
     const stamp = new Date().toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15);
-    let file = path.join(dir, `screenshot-${stamp}${ext}`);
-    for (let n = 2; fs.existsSync(file); n++) file = path.join(dir, `screenshot-${stamp}-${n}${ext}`);
+    let file = path.join(dir, `${stamp}-${name}`);
+    for (let n = 2; fs.existsSync(file); n++) file = path.join(dir, `${stamp}-${n}-${name}`);
     fs.writeFileSync(file, Buffer.concat(chunks));
     return sendJson(res, 200, { path: file });
   }
@@ -1667,7 +1668,7 @@ export async function startServer(opts = {}) {
       if (u.pathname === '/api/health') return sendJson(res, 200, { ok: true, pid: process.pid, dataDir: config.dataDir });
       if (u.pathname === '/api/fs/raw' && req.method === 'GET') return serveRaw(req, res, u);
       const upload = req.method === 'POST' && /^\/api\/sessions\/([^/]+)\/attachments$/.exec(u.pathname);
-      if (upload) return await serveUpload(req, res, decodeURIComponent(upload[1]));
+      if (upload) return await serveUpload(req, res, decodeURIComponent(upload[1]), u);
       if (u.pathname === '/api' || u.pathname.startsWith('/api/')) {
         if (!tokenOk(req.headers['x-harness-token'])) return sendJson(res, 401, { error: 'нет x-harness-token или он неверный' });
         const candidates = routes.map((r) => ({ r, m: u.pathname.match(r.re) })).filter((x) => x.m);

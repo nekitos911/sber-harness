@@ -460,10 +460,11 @@ PUT    /api/fs/file             {cwd, path, content} -> { ok: true }
 DELETE /api/sessions/:id/queue/:qid -> Session: a queued message taken back (404 once the agent got it); the session's
                                     `queue` [{ id, from, text, at, recorded? }] is what the composer lists
 POST   /api/sessions/:id/queue/send  -> Session: a queue left after a failed start goes now (409 when empty)
-POST   /api/sessions/:id/attachments  (raw image bytes, Content-Type image/png|jpeg|gif|webp, ≤10 MB) -> { path }:
-                                    a screenshot pasted into the composer, saved in <dataDir>/runs/<id>/attachments; the
-                                    turn whose message mentions that folder gets it in includeDirs (ACP: fs roots)
-GET    /api/fs/dirs?path=&files=1 -> also the folder's files ({ name, path, file: true }), folders first («Файл с диска…»)
+POST   /api/sessions/:id/attachments?name=  (raw bytes, any type, ≤10 MB) -> { path }: a file attached with the
+                                    composer's «+» (the system file dialog: the browser gives bytes, never a path) or a
+                                    pasted screenshot, saved as <stamp>-<name> in <dataDir>/runs/<id>/attachments (the
+                                    name sanitized, never leaving the folder); the turn whose message mentions that folder
+                                    gets it in includeDirs (ACP: fs roots)
 GET    /api/mcp/servers         -> [{ name, enabled, transport, ok, error?, problem?, tools: [{name, description}] }]
                                     (only the servers the harness calls: integrations.tasks/pr.server and its own
                                     config.mcpServers — servers that come only from mcpServersFrom are not started)

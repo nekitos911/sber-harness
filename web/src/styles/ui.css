@@ -193,7 +193,6 @@ button.chip[aria-pressed="true"] { background: var(--signal-soft); color: var(--
 .fp-item { display: flex; align-items: center; gap: 8px; width: 100%; height: 28px; padding: 0 8px; border: 0; border-radius: var(--r-1); background: none; color: var(--ink); font-size: 13px; text-align: left; }
 .fp-item svg { width: 14px; height: 14px; flex-shrink: 0; color: var(--ink-3); }
 .fp-item:hover, .fp-item:focus-visible, .fp-item[aria-selected="true"]:focus { background: var(--deck-2); outline: none; }
-.fp-item[data-picked] { background: var(--signal-soft); box-shadow: inset 2px 0 0 var(--signal); }
 .fp-up { color: var(--ink-3); }
 .fp-empty { padding: 8px; font-size: 12.5px; }
 .fp-recent { display: grid; align-content: start; gap: 2px; min-width: 0; }

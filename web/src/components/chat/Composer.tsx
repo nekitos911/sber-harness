@@ -1,16 +1,13 @@
 import { useLayoutEffect, useRef, useState } from 'react'
-import { ArrowUp, AtSign, Clock, FolderOpen, Pencil, Plus, Slash, Square, X } from 'lucide-react'
+import { ArrowUp, Clock, Pencil, Plus, Square, X } from 'lucide-react'
 import { tryApi } from '../../api'
 import { getState, setDraft, setState, toast, useStore, upsertSession } from '../../store'
 import type { Session } from '../../types'
-import { MenuButton, Select } from '../ui'
+import { IconButton, Select } from '../ui'
 import { MentionMirror, useComposerSuggest } from './Suggest'
 import { ModelPicker } from '../pickers/ModelPicker'
 import { ContextRing } from './ContextRing'
 import { FULL_ACCESS, modeShort, useSettings } from '../../lib/agents'
-import { pathFor } from '../../lib/agentComment'
-import { normPath } from '../../lib/format'
-import { FolderPicker } from '../FolderPicker'
 
 export function Composer({ session, active }: { session: Session; active: boolean }) {
   const agent = useStore((s) => s.agents.find((a) => a.id === session.agent))
@@ -19,7 +16,7 @@ export function Composer({ session, active }: { session: Session; active: boolea
   const [sending, setSending] = useState(false)
   const [caret, setCaret] = useState(0)
   const [scroll, setScroll] = useState(0)
-  const [picking, setPicking] = useState(false) // «Файл с диска…»
+  const fileInput = useRef<HTMLInputElement>(null) // «+»: the system's file dialog
   const ref = useRef<HTMLTextAreaElement>(null)
   const running = session.status === 'running'
 
@@ -57,29 +54,18 @@ export function Composer({ session, active }: { session: Session; active: boolea
     })
   }
 
-  /** «Файл с диска…»: @path as the chat sees it; a file outside the chat's folders opens its folder to the agent too. */
-  const mentionFile = async (file: string) => {
-    setPicking(false)
-    const sees = (d: string) => normPath(file).startsWith(`${normPath(d)}/`)
-    if (!sees(session.cwd) && !(session.includeDirs ?? []).some(sees)) {
-      const dir = file.replace(/[\\/][^\\/]*$/, '')
-      const s = await tryApi<Session>('PATCH', `/sessions/${session.id}`, { includeDirs: [...(session.includeDirs ?? []), dir] })
-      if (!s) return
-      setState((st) => ({ sessions: upsertSession(st.sessions, s) }))
-      toast(`Агенту открыта папка ${dir}`)
+  /**
+   * «+» (the system's own file dialog) and Ctrl+V with an image: the browser gives the file's bytes, never its path, so a
+   * copy is saved in the chat's folder at the harness and that path goes into the message (quoted when the name has spaces,
+   * quotes or brackets). Files of the project are mentioned with @ instead.
+   */
+  const attach = async (files: File[]) => {
+    for (const f of files) {
+      const r = await tryApi<{ path: string }>('POST', `/sessions/${session.id}/attachments?name=${encodeURIComponent(f.name || 'file')}`, f)
+      if (!r) return
+      insert(/^[\p{L}\p{N}_./\\:@+-]+$/u.test(r.path) ? `${r.path} ` : `"${r.path}" `)
     }
-    const p = pathFor(session.cwd, file)
-    // GigaCode reads «@path» only for plain names; quotes, brackets or spaces («console.log('a').js») break its parser —
-    // such a file goes as a quoted path the agent reads with its own tool
-    insert(/^[\p{L}\p{N}_./\\:@+-]+$/u.test(p) ? `@${p} ` : `"${p}" `)
-  }
-
-  /** Ctrl+V with an image: saved in the chat's folder at the harness, its path goes into the message. */
-  const pasteImage = async (img: File) => {
-    const r = await tryApi<{ path: string }>('POST', `/sessions/${session.id}/attachments`, img)
-    if (!r) return
-    insert(`${r.path} `)
-    toast('Скриншот сохранён — агент получит путь к нему')
+    if (files.length) toast(files.length === 1 ? `Приложен ${files[0].name || 'файл'} — агент получит путь к нему` : `Приложено файлов: ${files.length}`)
   }
 
   const send = async () => {
@@ -127,7 +113,7 @@ export function Composer({ session, active }: { session: Session; active: boolea
           const img = [...e.clipboardData.files].find((f) => f.type.startsWith('image/'))
           if (!img) return // text pastes as usual
           e.preventDefault()
-          void pasteImage(img)
+          void attach([img])
         }}
         onKeyDown={(e) => {
           if (suggest.onKeyDown(e)) return
@@ -136,18 +122,9 @@ export function Composer({ session, active }: { session: Session; active: boolea
       />
       </div>
       {suggest.popover}
-      {picking && <FolderPicker files title="Файл для агента" submitLabel="Упомянуть файл" initial={session.cwd} onPick={(f) => void mentionFile(f)} onClose={() => setPicking(false)} />}
       <div className="composer-bar">
-        <MenuButton
-          label="Вставить"
-          icon={<Plus />}
-          up
-          items={[
-            { label: 'Упомянуть файл', hint: '@', icon: <AtSign />, onSelect: () => insert('@') },
-            { label: 'Файл с диска…', icon: <FolderOpen />, onSelect: () => setPicking(true) },
-            { label: 'Команда агента', hint: '/', icon: <Slash />, onSelect: () => insert('/') },
-          ]}
-        />
+        <IconButton label="Приложить файл" icon={<Plus />} onClick={() => fileInput.current?.click()} />
+        <input ref={fileInput} type="file" multiple hidden onChange={(e) => { void attach([...(e.target.files ?? [])]); e.target.value = '' }} />
         {modes.length > 0 && (
           <Select
             size="sm"

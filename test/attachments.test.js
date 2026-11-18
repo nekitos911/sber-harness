@@ -1,5 +1,5 @@
-// A screenshot pasted into the composer is saved in the chat's own folder and readable by the CLI on the turn that
-// mentions it; the folder picker can list files too («Файл с диска…»).
+// A file attached in the composer («+», the system dialog) or a pasted screenshot is saved in the chat's own folder and
+// readable by the CLI on the turn that mentions it.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -18,14 +18,21 @@ test('paste a screenshot: saved for the chat, its folder joins the turn that men
   try {
     const s = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', cwd: repo, prompt: 'привет' })).body;
     await waitFor(async () => (await h.api('GET', '/api/state')).body.sessions.find((x) => x.id === s.id).status === 'idle', { what: 'idle' });
-    const upload = (type, body) => fetch(`${h.srv.url}/api/sessions/${s.id}/attachments`, { method: 'POST', headers: { 'x-harness-token': h.srv.token, 'content-type': type }, body });
+    const upload = (type, body, name = 'image.png') => fetch(`${h.srv.url}/api/sessions/${s.id}/attachments?name=${encodeURIComponent(name)}`, { method: 'POST', headers: { 'x-harness-token': h.srv.token, 'content-type': type }, body });
 
     const r = await upload('image/png', PNG);
     assert.equal(r.status, 200);
     const { path: shot } = await r.json();
-    assert.ok(path.isAbsolute(shot) && shot.endsWith('.png') && fs.readFileSync(shot).equals(PNG));
+    assert.ok(path.isAbsolute(shot) && shot.endsWith('-image.png') && fs.readFileSync(shot).equals(PNG));
     assert.ok(!shot.startsWith(repo), 'not inside the repository');
-    assert.equal((await upload('text/plain', 'hi')).status, 415);
+    // any file from the «+» dialog, under its own name; a name never climbs out of the chat's folder
+    const log = await (await upload('', 'строка лога', 'log.txt')).json();
+    assert.ok(log.path.endsWith('-log.txt') && fs.readFileSync(log.path, 'utf8') === 'строка лога');
+    for (const climb of ['../../evil:1.txt', '..\\..\\evil:1.txt']) {
+      const evil = await (await upload('text/plain', 'x', climb)).json();
+      assert.equal(path.dirname(evil.path), path.dirname(shot), `stays in the attachments folder: ${climb}`);
+      assert.ok(path.basename(evil.path).endsWith('evil_1.txt'), path.basename(evil.path));
+    }
     assert.equal((await fetch(`${h.srv.url}/api/sessions/${s.id}/attachments`, { method: 'POST', headers: { 'content-type': 'image/png' }, body: PNG })).status, 401);
     assert.equal((await upload('image/png', PNG.subarray(0, 0))).status, 400);
 
@@ -42,17 +49,3 @@ test('paste a screenshot: saved for the chat, its folder joins the turn that men
   }
 });
 
-test('the folder picker lists files on request, folders first', async () => {
-  const dir = path.join(root, 'выбор');
-  fs.mkdirSync(path.join(dir, 'b-папка'), { recursive: true });
-  fs.writeFileSync(path.join(dir, 'a-файл.txt'), 'x');
-  const h = await startTestServer();
-  try {
-    const q = encodeURIComponent(dir);
-    assert.deepEqual((await h.api('GET', `/api/fs/dirs?path=${q}`)).body.entries.map((e) => e.name), ['b-папка']);
-    const withFiles = (await h.api('GET', `/api/fs/dirs?path=${q}&files=1`)).body.entries;
-    assert.deepEqual(withFiles.map((e) => [e.name, !!e.file]), [['b-папка', false], ['a-файл.txt', true]]);
-  } finally {
-    await h.close();
-  }
-});
