@@ -80,6 +80,66 @@ export function QuestionCard({ id, text, options, multiSelect, answered, closed,
   )
 }
 
+/**
+ * Several questions in one call: each with its options (or its own words), one «Ответить на все» — the agent gets the
+ * answers together, numbered, in the next message.
+ */
+function QuestionsCard({ id, parts, answered, closed, send }: {
+  id: string
+  parts: { text: string; header?: string; options: { label: string; description?: string }[]; multiSelect?: boolean }[]
+  answered?: string | null
+  closed?: boolean
+  send: (answers: string[]) => Promise<boolean>
+}) {
+  const [answer, setAnswer] = useAnswer(id, answered)
+  const [picked, setPicked] = useState<string[][]>(() => parts.map(() => []))
+  const [free, setFree] = useState<string[]>(() => parts.map(() => ''))
+  const [busy, setBusy] = useState(false)
+  const value = (i: number) => free[i].trim() || picked[i].join(', ')
+  const ready = parts.every((_, i) => !!value(i))
+  const pick = (i: number, label: string, multi?: boolean) => setPicked((all) => all.map((p, j) => (j !== i ? p : multi ? (p.includes(label) ? p.filter((x) => x !== label) : [...p, label]) : [label])))
+  if (answer || closed) {
+    return <div className="ask-card ask-done ask-done-many" role="note"><CircleHelp aria-hidden /><span>{answer ? <>Вы ответили:<br /><span className="ask-answers">{answer}</span></> : 'Вопросы закрыты'}</span></div>
+  }
+  const submit = async () => {
+    if (!ready || busy) return
+    setBusy(true)
+    const answers = parts.map((_, i) => value(i))
+    const ok = await send(answers)
+    setBusy(false)
+    if (ok) setAnswer(answers.map((a, i) => `${i + 1}. ${a}`).join('\n'))
+  }
+  return (
+    <section className="ask-card" aria-label="Вопросы агента">
+      <header className="ask-head"><CircleHelp aria-hidden />Агент спрашивает · вопросов: {parts.length}</header>
+      <ol className="ask-parts">
+        {parts.map((p, i) => (
+          <li key={i} className="ask-part" data-done={!!value(i) || undefined}>
+            {p.header && <span className="ask-part-head">{p.header}</span>}
+            <div className="ask-text"><Markdown text={p.text} /></div>
+            {p.options.length > 0 && (
+              <div className="ask-options" role="group" aria-label={`Варианты ответа ${i + 1}`}>
+                {p.options.map((o) => (
+                  <button key={o.label} type="button" className="btn ask-option" aria-pressed={picked[i].includes(o.label)} onClick={() => pick(i, o.label, p.multiSelect)}>
+                    <span>{o.label}</span>
+                    {o.description && <span className="ask-option-desc">{o.description}</span>}
+                  </button>
+                ))}
+              </div>
+            )}
+            <input className="input" aria-label={`Свой ответ ${i + 1}`} placeholder={p.options.length ? 'Или свой ответ…' : 'Ваш ответ…'} value={free[i]}
+              onChange={(e) => setFree((all) => all.map((x, j) => (j === i ? e.target.value : x)))} />
+          </li>
+        ))}
+      </ol>
+      <div className="ask-submit">
+        <span className="muted">{ready ? 'Все ответы на месте' : `Осталось ответить: ${parts.filter((_, i) => !value(i)).length}`}</span>
+        <Button size="sm" variant="primary" busy={busy} disabled={!ready || busy} onClick={() => void submit()}>Ответить на все</Button>
+      </div>
+    </section>
+  )
+}
+
 /** The harness `ask` MCP tool (harness.ask / mcp__harness__ask): its question waits in the asking chat. */
 export const isAskTool = (name: string) => /^(mcp__)?harness(\.|__)ask$/.test(name)
 
@@ -101,6 +161,10 @@ export function MessageQuestion({ m }: { m: Message }) {
   const q = m.question
   const to = m.from && m.from !== 'user' ? m.from : m.sessionId // an `ask` from a worker is answered in that worker
   const post = async (text: string) => (await tryApi('POST', `/sessions/${encodeURIComponent(to)}/messages`, { text })) !== undefined
+  if (q?.parts && q.parts.length > 1) {
+    return <QuestionsCard id={m.id} parts={q.parts} answered={q.answer} closed={!!q.answered}
+      send={(answers) => post(`Ответы на вопросы:\n${q.parts!.map((p, i) => `${i + 1}. «${p.text.split('\n')[0].slice(0, 200)}» — ${answers[i]}`).join('\n')}`)} />
+  }
   if (q) {
     return <QuestionCard id={m.id} text={q.text} options={q.options} multiSelect={q.multiSelect} answered={q.answer} closed={!!q.answered}
       send={(a) => post(`Ответ на вопрос «${q.text.split('\n')[0].slice(0, 200)}»: ${a}`)} />

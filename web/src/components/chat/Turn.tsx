@@ -42,7 +42,7 @@ export function buildItems(list: Message[], runningTurn: number | null, newSince
     if (m.kind === 'question') questions = true
     // The answer given in a question card is shown there («Вы ответили: …»), not again as a bubble.
     if (m.kind === 'user' && (!m.from || m.from === 'user')) {
-      const answer = asked || (questions && m.text.startsWith('Ответ на вопрос «'))
+      const answer = asked || (questions && (m.text.startsWith('Ответ на вопрос «') || m.text.startsWith('Ответы на вопросы:')))
       asked = false
       if (answer) continue
     }

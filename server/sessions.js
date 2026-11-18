@@ -93,13 +93,19 @@ export const signedCode = (code) => (Number.isInteger(code) && code > 0x7fffffff
 
 /** A structured question tool call -> { text, options: [{label, description?}], multiSelect } (tolerant of shapes). */
 export function parseQuestion(input = {}) {
-  const q = Array.isArray(input?.questions) ? input.questions[0] || {} : input || {};
-  const opts = Array.isArray(q.options) ? q.options : Array.isArray(input?.options) ? input.options : [];
-  return {
-    text: String(q.question ?? q.text ?? q.prompt ?? input?.question ?? ''),
-    options: opts.map((o) => (typeof o === 'string' ? { label: o } : { label: String(o?.label ?? o?.text ?? o?.value ?? ''), ...(o?.description ? { description: String(o.description) } : {}) })).filter((o) => o.label),
-    multiSelect: !!(q.multiSelect ?? input?.multiSelect),
+  const one = (q, outer = {}) => {
+    const opts = Array.isArray(q.options) ? q.options : Array.isArray(outer.options) ? outer.options : [];
+    return {
+      text: String(q.question ?? q.text ?? q.prompt ?? outer.question ?? ''),
+      options: opts.map((o) => (typeof o === 'string' ? { label: o } : { label: String(o?.label ?? o?.text ?? o?.value ?? ''), ...(o?.description ? { description: String(o.description) } : {}) })).filter((o) => o.label),
+      multiSelect: !!(q.multiSelect ?? outer.multiSelect),
+    };
   };
+  const list = Array.isArray(input?.questions) ? input.questions.filter((q) => q && typeof q === 'object') : [];
+  if (list.length < 2) return one(list[0] || input || {}, input || {});
+  // several questions in one call: all of them in one card (the text lists them for the inbox), answered together
+  const parts = list.map((q) => ({ ...one(q), ...(q.header ? { header: String(q.header) } : {}) }));
+  return { text: parts.map((p, i) => `${i + 1}. ${p.text}`).join('\n'), options: [], multiSelect: false, parts };
 }
 
 /**
@@ -1557,7 +1563,7 @@ ${note.trim()}` : text });
       // the open question card of the CLI gets the answer (the Inbox tells answered from cancelled by it)
       const q = store.messages(sid).findLast((m) => m.kind === 'question' && !m.question?.answered);
       if (q) {
-        q.question = { ...q.question, answered: true, answer: text.replace(/^Ответ на вопрос «.*?»: /s, '').trim(), answeredAt: Date.now() };
+        q.question = { ...q.question, answered: true, answer: text.replace(/^Ответ на вопрос «.*?»: /s, '').replace(/^Ответы на вопросы:\n/, '').trim(), answeredAt: Date.now() };
         updateMessage(s, q);
       }
       if (q || asked) hooks.questionAnswered?.(s); // its notification is answered (and read) too

@@ -399,3 +399,11 @@ svg.step-icon.spinner { color: var(--lamp-run); }
 .msg-atts .chip svg { width: 12px; height: 12px; }
 /* a turn cut by a restart: a question, not an error */
 .chat-alert-soft { border-color: var(--rule-strong); background: var(--deck-2); color: var(--ink-2); }
+/* several questions in one card: numbered, each with its options and its own words; one «Ответить на все» */
+.ask-parts { display: grid; gap: 12px; margin: 0; padding: 0 0 0 20px; }
+.ask-part { display: grid; gap: 6px; }
+.ask-part::marker { color: var(--ink-3); font-weight: 600; }
+.ask-part-head { color: var(--ink-3); font-size: 11.5px; text-transform: uppercase; letter-spacing: .03em; }
+.ask-option[aria-pressed="true"] { border-color: var(--signal); box-shadow: inset 0 0 0 1px var(--signal); }
+.ask-submit { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.ask-done-many .ask-answers { white-space: pre-line; font-weight: 600; }

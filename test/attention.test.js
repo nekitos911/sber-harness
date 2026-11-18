@@ -46,6 +46,12 @@ test('ask: the session waits for an answer until something is delivered to it', 
 test("the CLI's own question tool becomes a question card; its headless tool result stays hidden", async () => {
   assert.deepEqual(parseQuestion({ question: 'Да?', options: ['да', { label: 'нет', description: 'отказ' }] }),
     { text: 'Да?', options: [{ label: 'да' }, { label: 'нет', description: 'отказ' }], multiSelect: false });
+  // several questions in one call: none is lost — one card with all of them
+  const many = parseQuestion({ questions: [{ question: 'Где файлы?', header: 'Папка', options: [{ label: 'в tmp' }, { label: 'в проекте' }] }, { question: 'Проверять модели?', options: ['да', 'нет'] }, { question: 'Разрешить запись?', multiSelect: true, options: ['скиллы', 'запись'] }] });
+  assert.equal(many.parts.length, 3);
+  assert.equal(many.text, '1. Где файлы?\n2. Проверять модели?\n3. Разрешить запись?');
+  assert.deepEqual([many.parts[0].header, many.parts[1].options.map((o) => o.label), many.parts[2].multiSelect], ['Папка', ['да', 'нет'], true]);
+  assert.equal(parseQuestion({ questions: [{ question: 'Один?' }] }).parts, undefined, 'one question: the plain card');
   const s = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', cwd: root, prompt: '#question Какую БД? | Postgres | Oracle' })).body;
   await idle(s.id);
   const msgs = await messages(s.id);
