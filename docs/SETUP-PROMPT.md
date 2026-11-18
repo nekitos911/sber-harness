@@ -98,6 +98,11 @@ check live what can only be checked here (real GigaCode, onework, sourcecontrol)
       accepts author.
    g) Context ring next to «Отправить»: numbers look right; «Сжать контекст» (/compress) works in headless mode.
    h) Tasks: closed tasks (closed) are gone from the board, created ones are in «К работе».
+   i) ACP transport (if a chat uses it): tool cards show their real input under «Вход» (not {}), and a sub-agent chat
+      starts with its task, not {}. Capture the raw ACP output once: temporarily log JSON.stringify(params.update) per
+      line in server/acp.js (where session/update is handled), run a turn that calls a tool and a sub-agent, and replace
+      test/fixtures/gigacode.acp-late-input.ndjson with those lines (mask hosts/logins; keep the ids the test checks or
+      update the test). Remove the temporary log.
    Fix anything that does not match only in server/launchers.js, server/history.js, server/integrations/, server/acp.js
    (with a test); do not change UI and orchestration without need.
 5. npm test and npm run build green → a commit with a clear message → git push.

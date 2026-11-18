@@ -1073,7 +1073,8 @@ session (`<cli> --acp [--approval-mode m] [--model m] [--include-directories …
 `initialize` (clientCapabilities fs.read/write true, terminal false) → `session/new {cwd, mcpServers:[harness + agentMcpServers]}`
 (or `session/load {sessionId}` when the agent supports loadSession and we have externalSessionId) → per message
 `session/prompt {sessionId, prompt:[{type:'text',text}]}`; `session/update` notifications map to the same Messages
-(agent_message_chunk → assistant text delta, agent_thought_chunk → thought, tool_call/tool_call_update → tool, plan →
+(agent_message_chunk → assistant text delta, agent_thought_chunk → thought, tool_call/tool_call_update → tool (a call may come with rawInput {} and its real input in a later
+tool_call_update: the card, and for agent calls the sub-agent chat title and task message, are filled then), plan →
 system plan note); `session/request_permission {toolCall, options[{optionId,name,kind}]}` → a `permission` Message with
 the agent's options (`transport: 'acp'`), the JSON-RPC request is held until `POST /api/sessions/:id/permission`
 answers `{outcome:{outcome:'selected', optionId}}` (or `cancelled` on Stop); `fs/read_text_file` / `fs/write_text_file`

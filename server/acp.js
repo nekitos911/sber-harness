@@ -91,9 +91,15 @@ export function acpEvents(update) {
       return update.content?.type === 'text' ? [{ type: 'thought', text: update.content.text, delta: true }] : [];
     case 'tool_call':
       return [{ type: 'tool_call', id: update.toolCallId, name: update.title || update.kind || 'tool', input: update.rawInput ?? null }];
-    case 'tool_call_update':
-      if (update.status !== 'completed' && update.status !== 'failed') return [];
-      return [{ type: 'tool_result', id: update.toolCallId, output: textOf(update.content) || (update.rawOutput != null ? JSON.stringify(update.rawOutput) : ''), isError: update.status === 'failed' }];
+    case 'tool_call_update': {
+      // the call came with rawInput {} (announced before the model finished it); the real input follows in an update
+      const hasInput = update.rawInput != null && JSON.stringify(update.rawInput) !== '{}';
+      const out = hasInput ? [{ type: 'tool_input', id: update.toolCallId, input: update.rawInput }] : [];
+      if (update.status === 'completed' || update.status === 'failed') {
+        out.push({ type: 'tool_result', id: update.toolCallId, output: textOf(update.content) || (update.rawOutput != null ? JSON.stringify(update.rawOutput) : ''), isError: update.status === 'failed' });
+      }
+      return out;
+    }
     case 'plan':
       return [{ type: 'plan', text: `План:\n${(update.entries || []).map((e) => `${e.status === 'completed' ? '✓' : e.status === 'in_progress' ? '…' : '·'} ${e.content}`).join('\n')}` }];
     default:

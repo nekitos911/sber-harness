@@ -366,24 +366,47 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
   const virtualId = (sid, toolId) => `${sid}~${toolId}`;
 
   /** Level 1: a built-in sub-agent call (agent/fork tool) becomes a read-only chat nested under its parent. */
-  function openVirtual(s, ev) {
-    const input = ev.input && typeof ev.input === 'object' ? ev.input : {};
+  /** Title, model and first message of a sub-agent chat, from the agent/fork call's input. */
+  function virtualInfo(name, raw) {
+    const input = raw && typeof raw === 'object' ? raw : {};
+    const kind = input.subagent_type || (name.toLowerCase() === 'fork' ? 'fork' : 'agent');
+    return {
+      title: subagentTitle(kind, input.description || input.prompt),
+      model: typeof input.model === 'string' ? input.model : null,
+      prompt: typeof input.prompt === 'string' ? input.prompt : JSON.stringify(input),
+    };
+  }
+
+  function openVirtual(s, ev, c) {
     const id = virtualId(s.id, ev.id);
     const now = Date.now();
-    const kind = input.subagent_type || (ev.name.toLowerCase() === 'fork' ? 'fork' : 'agent');
+    const info = virtualInfo(ev.name, ev.input);
     const v = find(id) || {
-      id, kind: 'chat', virtual: true, title: subagentTitle(kind, input.description || input.prompt), agent: s.agent, launcherId: null,
+      id, kind: 'chat', virtual: true, title: info.title, agent: s.agent, launcherId: null,
       cwd: s.cwd, workspaceId: s.workspaceId, worktreePath: s.worktreePath ?? null, system: !!s.system, branch: s.branch, role: 'subagent', parentId: s.id, taskId: s.taskId, status: 'running',
-      externalSessionId: null, settingsPath: null, model: typeof input.model === 'string' ? input.model : null, approvalMode: null,
+      externalSessionId: null, settingsPath: null, model: info.model, approvalMode: null,
       autoReport: false, queued: 0, preview: '', command: null, pid: null, tokensIn: 0, tokensOut: 0, phase: null, turnOffset: null,
       createdAt: now, lastActivityAt: now,
     };
     if (!find(id)) db.sessions.push(v);
     Object.assign(v, { status: 'running', lastActivityAt: now });
     emit(v);
-    const prompt = typeof input.prompt === 'string' ? input.prompt : JSON.stringify(input);
-    addMessage(v, { kind: 'user', text: prompt, from: s.id });
+    (c.virtualPrompts ||= new Map()).set(id, addMessage(v, { kind: 'user', text: info.prompt, from: s.id }));
     return id;
+  }
+
+  /** The real input arrived after the call (ACP): redo the chat's title, model and task message. */
+  function fillVirtual(c, id, name, input) {
+    const v = find(id);
+    if (!v) return;
+    const info = virtualInfo(name, input);
+    Object.assign(v, { title: info.title, model: info.model ?? v.model });
+    emit(v);
+    const first = c.virtualPrompts?.get(id);
+    if (first) {
+      first.text = info.prompt;
+      updateMessage(v, first);
+    }
   }
 
   /** Events of a built-in sub-agent (parentToolId) go into its virtual chat with the usual message shapes. */
@@ -599,13 +622,27 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
         const qTools = config.agents[s.agent]?.questionTools ?? QUESTION_TOOLS;
         if (qTools.includes(String(ev.name).replace(/^.*[.:]/, ''))) {
           // the CLI's own question: a card the user answers; whatever headless returns for the call stays hidden
-          c.questions = new Set([...(c.questions || []), ev.id]);
-          addMessage(s, { kind: 'question', text: '', question: { id: ev.id, ...parseQuestion(ev.input) } });
+          (c.questions ||= new Map()).set(ev.id, addMessage(s, { kind: 'question', text: '', question: { id: ev.id, ...parseQuestion(ev.input) } }));
           setWaiting(s, 'answer');
           break;
         }
-        const sub = SUBAGENT_TOOLS.test(ev.name) ? openVirtual(s, ev) : null;
+        const sub = SUBAGENT_TOOLS.test(ev.name) ? openVirtual(s, ev, c) : null;
         c.tools.set(ev.id, addMessage(s, { kind: 'tool', text: ev.name, tool: { id: ev.id, name: ev.name, input: ev.input, output: null, status: 'running', ...(sub ? { subSessionId: sub } : {}) } }));
+        break;
+      }
+      case 'tool_input': {
+        // ACP announces a call with an empty rawInput and sends the real one in a later tool_call_update
+        const q = c.questions?.get(ev.id);
+        if (q) {
+          q.question = { ...q.question, ...parseQuestion(ev.input) };
+          updateMessage(s, q);
+          break;
+        }
+        const m = c.tools.get(ev.id);
+        if (!m) break;
+        m.tool = { ...m.tool, input: ev.input };
+        updateMessage(s, m);
+        if (m.tool.subSessionId) fillVirtual(c, m.tool.subSessionId, m.tool.name, ev.input);
         break;
       }
       case 'tool_result': {

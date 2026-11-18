@@ -86,6 +86,24 @@ test('a prompt streams text, thought and plan; the next message reuses the same 
   assert.equal(records().length, 1, 'one process, one session/new');
 });
 
+test('a call announced with rawInput {} gets its input from the later tool_call_update (card and sub-agent chat)', async () => {
+  const lines = fs.readFileSync(path.join(CODE_ROOT, 'test', 'fixtures', 'gigacode.acp-late-input.ndjson'), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  const evs = lines.flatMap(acpEvents);
+  assert.deepEqual(evs.filter((e) => e.type === 'tool_input').map((e) => e.id), ['toolu_01', 'toolu_02']);
+  assert.equal(evs.find((e) => e.type === 'tool_call').input && JSON.stringify(evs.find((e) => e.type === 'tool_call').input), '{}');
+
+  await send(chat.id, '#late');
+  const tool = await waitFor(async () => (await messages(chat.id)).find((m) => m.tool?.id === 'toolu_01' && m.tool.status === 'ok'), { what: 'ToolSearch done' });
+  assert.deepEqual(tool.tool.input, { query: 'harness', max_results: 5 });
+  const agent = (await messages(chat.id)).find((m) => m.tool?.id === 'toolu_02');
+  assert.equal(agent.tool.input.subagent_type, 'general-purpose');
+  const sub = await session(agent.tool.subSessionId);
+  assert.equal(sub.title, 'general-purpose · Проверка оркестрации');
+  const first = (await messages(sub.id)).find((m) => m.kind === 'user');
+  assert.equal(first.text, 'Проверь, что инструменты harness видны, и ответь одной строкой.');
+  await idle(chat.id);
+});
+
 test('an error stop reason (max_tokens) is shown although the turn closes at its result', async () => {
   await send(chat.id, '#maxtokens');
   const err = await waitFor(async () => (await messages(chat.id)).find((m) => m.kind === 'error' && /max_tokens/.test(m.text)), { what: 'stop reason error' });

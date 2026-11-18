@@ -1,0 +1,6 @@
+{"sessionUpdate":"tool_call","toolCallId":"toolu_01","title":"ToolSearch","kind":"other","status":"pending","rawInput":{}}
+{"sessionUpdate":"tool_call_update","toolCallId":"toolu_01","title":"ToolSearch","rawInput":{"query":"harness","max_results":5}}
+{"sessionUpdate":"tool_call_update","toolCallId":"toolu_01","status":"completed","content":[{"type":"content","content":{"type":"text","text":"No tools found matching harness. Try broader keywords or use `select:ToolName`."}}]}
+{"sessionUpdate":"tool_call","toolCallId":"toolu_02","title":"Agent","kind":"think","status":"pending","rawInput":{}}
+{"sessionUpdate":"tool_call_update","toolCallId":"toolu_02","title":"Проверка оркестрации","rawInput":{"description":"Проверка оркестрации","prompt":"Проверь, что инструменты harness видны, и ответь одной строкой.","subagent_type":"general-purpose"}}
+{"sessionUpdate":"tool_call_update","toolCallId":"toolu_02","status":"completed","content":[{"type":"content","content":{"type":"text","text":"Инструменты harness на месте."}}]}

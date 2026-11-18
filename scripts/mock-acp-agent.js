@@ -80,6 +80,11 @@ async function prompt({ sessionId, prompt: parts }) {
       say(sessionId, ' отказано, иду другим путём');
     }
   }
+  if (/#late\b/.test(text)) {
+    // tool calls announced with rawInput {} whose input arrives in a later tool_call_update
+    const lines = fs.readFileSync(new URL('../test/fixtures/gigacode.acp-late-input.ndjson', import.meta.url), 'utf8').split('\n').filter(Boolean);
+    for (const l of lines) update(sessionId, JSON.parse(l));
+  }
   say(sessionId, ' Done.');
   return { stopReason: /#maxtokens\b/.test(text) ? 'max_tokens' : 'end_turn' };
 }
