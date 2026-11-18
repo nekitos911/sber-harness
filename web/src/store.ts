@@ -24,7 +24,7 @@ export interface WtTabs { cwd: string; tabs: Tab[]; active: string | null }
 export type Loc = { screen: Screen } | { cwd: string; tab: string | null }
 
 export type DialogRequest =
-  | { kind: 'workspace' }
+  | { kind: 'workspace'; from?: string } // from: where «Обзор…» starts (the projects folder)
   | { kind: 'chat'; workspaceId?: string; cwd?: string }
   | { kind: 'terminal'; workspaceId?: string; cwd?: string }
   | { kind: 'worktree'; workspaceId?: string }
@@ -131,8 +131,11 @@ function readPrefs(): Prefs {
     for (const [k, e] of Object.entries(p.wt ?? {})) {
       if (e && typeof e.cwd === 'string' && Array.isArray(e.tabs)) wt[k] = { cwd: e.cwd, tabs: e.tabs, active: typeof e.active === 'string' ? e.active : null }
     }
-    // a start opens «Главная», unless a chat or file was on screen (that comes back)
-    return { ...defaultPrefs, ...p, view: validView(p.view) && p.view.kind === 'wt' ? p.view : defaultPrefs.view, wt }
+    // a start opens «Главная», unless a chat or file was on screen (that comes back); a reload of this tab (F5) comes
+    // back to the screen it showed — the agents board one was watching
+    let reload = false
+    try { reload = sessionStorage.getItem('harness:tab') === '1'; sessionStorage.setItem('harness:tab', '1') } catch { /* storage off */ }
+    return { ...defaultPrefs, ...p, view: validView(p.view) && (p.view.kind === 'wt' || reload) ? p.view : defaultPrefs.view, wt }
   } catch {
     return defaultPrefs
   }

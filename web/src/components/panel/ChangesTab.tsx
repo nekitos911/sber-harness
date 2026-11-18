@@ -378,8 +378,9 @@ function LinkedWorktrees({ cwd, error }: { cwd: string; error: string }) {
   if (!list.length) {
     return (
       <div className="empty">
-        <p>Здесь нет git-репозитория: изменения появятся в рабочих деревьях, которые создадут агенты этого чата.</p>
-        <p className="mono" style={{ fontSize: 11 }}>{error}</p>
+        <p>Это папка с проектами, а не сам проект. Изменения появятся здесь, когда агент этого чата начнёт работу в одном из проектов.</p>
+        <button type="button" className="btn btn-sm" onClick={() => openDialog({ kind: 'workspace', from: cwd })}>Открыть проект…</button>
+        <Disclosure summary="Подробности"><p className="mono" style={{ fontSize: 11 }}>{error}</p></Disclosure>
       </div>
     )
   }

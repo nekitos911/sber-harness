@@ -16,6 +16,8 @@ import { ModelPicker } from '../components/pickers/ModelPicker'
 import { Button, Chip, Disclosure, IconButton, Input, Segmented, Select, SuggestInput, Switch, Textarea } from '../components/ui'
 
 const MAIN = 'gigacode'
+/** The agent the settings lead with: the default one (mock in the demo), else GigaCode. */
+const mainAgent = (form: Settings) => (form.agents[form.defaultAgent] ? form.defaultAgent : form.agents[MAIN] ? MAIN : form.defaultAgent)
 const VARS = ['{taskUrl}', '{notes}', '{key}', '{title}', '{description}', '{targets}', '{branch}', '{repo}']
 const TIMEOUTS = [60, 120, 180, 300]
 const SYNC = [{ v: 0, l: 'выключено' }, { v: 60, l: 'каждую минуту' }, { v: 300, l: 'каждые 5 мин' }, { v: 900, l: 'каждые 15 мин' }, { v: 1800, l: 'каждые 30 мин' }]
@@ -92,7 +94,7 @@ export function SettingsView() {
   }
   const fieldError = (f: string) => (saveError?.field === f ? saveError.text : undefined)
 
-  const main = form.agents[MAIN] ? MAIN : form.defaultAgent
+  const main = mainAgent(form)
   const others = Object.keys(form.agents).filter((id) => id !== main)
 
   return (
@@ -784,7 +786,7 @@ function PrSection({ form, update }: Omit<SectionProps, 'fieldError'>) {
 function OrchestrationSection({ form, update }: Omit<SectionProps, 'fieldError'>) {
   const o = form.orchestration ?? {}
   const mode = o.reviewMode ?? 'builtin'
-  const agentId = form.agents[MAIN] ? MAIN : form.defaultAgent
+  const agentId = mainAgent(form)
   return (
     <section className="settings-section" id="set-orchestration">
       <h2>Оркестрация</h2>
@@ -854,7 +856,7 @@ function ReviewRows({ form, update }: Omit<SectionProps, 'fieldError'>) {
   const o = form.orchestration ?? {}
   const r = o.review ?? {}
   const set = (patch: Partial<NonNullable<typeof r>>) => update({ ...form, orchestration: { ...o, review: { ...r, ...patch } } })
-  const agentId = r.agent ?? (form.agents[MAIN] ? MAIN : form.defaultAgent)
+  const agentId = r.agent ?? mainAgent(form)
   const agent = form.agents[agentId]
   const catalog = normModels(agent?.models)
   const grade = (r.grade ?? 'review') as Grade

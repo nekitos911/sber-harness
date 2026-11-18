@@ -52,13 +52,23 @@ test('free text: a chat at the projects root named after the text, its prompt fr
   await settle(session.id);
 });
 
-test('no projects folder → 400', async () => {
+test('no projects folder: nothing open → 400; one project → the agent starts in it', async () => {
   const bare = await startTestServer();
   try {
     const r = await bare.api('POST', '/api/handoff', { input: 'сделай X' });
-    assert.deepEqual([r.status, r.body.error], [400, 'Укажите папку с проектами в Настройках']);
+    assert.deepEqual([r.status, r.body.error], [400, 'Откройте проект или укажите папку с проектами']);
   } finally {
     await bare.close();
+  }
+  const one = await startTestServer({ workspaces: { repos: [path.join(projects, 'сервис')] } });
+  try {
+    assert.equal((await one.api('POST', '/api/handoff', { input: 'X', dryRun: true })).body.location, 'repo');
+    const r = await one.api('POST', '/api/handoff', { input: 'сделай Y' });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.deepEqual([!!r.body.session.atRoot, path.resolve(r.body.session.cwd)], [false, path.resolve(projects, 'сервис')]);
+    await waitFor(async () => { const s = (await one.api('GET', '/api/state')).body.sessions.find((x) => x.id === r.body.session.id); return !s.pid && s.status !== 'running' && !s.turnClosing; }, { what: 'settled' });
+  } finally {
+    await one.close();
   }
 });
 

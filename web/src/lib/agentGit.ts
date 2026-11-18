@@ -3,6 +3,7 @@ import { getState, setState, toast, wtKey } from '../store'
 import { endJob, startJob, watchJob } from './jobs'
 import { refreshGit } from './git'
 import { loadPr } from './pr'
+import { loadPrsMine } from './prsMine'
 import { shortHash } from './format'
 
 export type GitKind = 'commit' | 'push' | 'pr'
@@ -38,9 +39,11 @@ export async function gitAction<T>(cwd: string, kind: GitKind, body: Record<stri
   clear(cwd) // the previous action's line goes: this one is what matters now
   try {
     const res = await api<T & { via?: string; sessionId?: string; job?: string }>('POST', `/git/${kind}`, { cwd, ...body, ...(via ? { via } : {}) }, { jobId })
-    if (res?.via !== 'agent') return res
+    // a new PR belongs in «Мои» at once, not after «Обновить»
+    const fresh = () => { if (kind === 'pr') loadPrsMine('mine', true) }
+    if (res?.via !== 'agent') { if (res) fresh(); return res }
     const k = wtKey(cwd)
-    const direct = () => void gitAction(cwd, kind, body, 'harness', onOk).then((r) => { if (r && r !== 'agent') { clear(cwd); onOk?.(); refreshGit(cwd); loadPr(cwd, true) } })
+    const direct = () => void gitAction(cwd, kind, body, 'harness', onOk).then((r) => { if (r && r !== 'agent') { clear(cwd); onOk?.(); refreshGit(cwd); loadPr(cwd, true); settleErrors(res.sessionId) } })
     setState((s) => ({ agentGit: { ...s.agentGit, [k]: { kind, sessionId: res.sessionId ?? null, started: Date.now(), status: 'running', direct } } }))
     watchJob(typeof res.job === 'string' ? res.job : jobId, (ev: JobDone) => {
       const r = ev.result ?? ev
@@ -50,7 +53,7 @@ export async function gitAction<T>(cwd: string, kind: GitKind, body: Record<stri
       loadPr(cwd, true)
       // the agent's commit may land after its turn's last event: once more a moment later
       window.setTimeout(() => refreshGit(cwd), 1500)
-      if (ok) onOk?.()
+      if (ok) { onOk?.(); fresh() }
     })
     return 'agent'
   } catch (e) {
@@ -58,6 +61,13 @@ export async function gitAction<T>(cwd: string, kind: GitKind, body: Record<stri
     return undefined
   } finally {
     endJob(jobId)
+  }
+}
+
+/** A direct retry worked: the agent attempt's red line in «Входящие» is settled, not left as an open problem. */
+function settleErrors(sid?: string) {
+  for (const n of getState().notifications) {
+    if (sid && n.sessionId === sid && n.kind === 'error' && !n.read) void api('POST', `/notifications/${encodeURIComponent(n.id)}/read`).catch(() => {})
   }
 }
 

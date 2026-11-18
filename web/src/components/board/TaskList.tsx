@@ -28,7 +28,7 @@ function TaskRow({ t, byId, session, onOpen }: { t: Task; byId: Map<string, Task
   return (
     <div className="task-row" role="listitem" data-child={t.parentId ? true : undefined}>
       <button type="button" className="task-row-main" onClick={() => onOpen(t.id)}>
-        <span className="mono task-row-key">{t.parentId ? "↳ " : ""}{taskKey(t, byId)}</span>
+        <span className="mono task-row-key">{t.parentId ? <span data-tip={`подзадача ${taskKey(t, byId)}`}>↳ {t.externalId ?? t.id}</span> : taskKey(t, byId)}</span>
         <span className="task-row-title">{t.title}</span>
       </button>
       <span className="chip task-row-status">{t.externalStatus ?? statusLabel(t.status)}</span>
@@ -37,9 +37,10 @@ function TaskRow({ t, byId, session, onOpen }: { t: Task; byId: Map<string, Task
       </span>
       <span className="task-row-actions">
         {session ? (
-          <button type="button" className="btn btn-sm" onClick={() => openSession(session.id)}><MessageSquare />Открыть сессию</button>
+          <button type="button" className="btn btn-sm" onClick={() => openSession(session.id)}><MessageSquare />{t.status === 'done' ? 'Открыть результат' : 'Открыть сессию'}</button>
         ) : null}
-        {!running && (
+        {/* a finished task is not handed out again: «Доработать» in the task does that */}
+        {!running && t.status !== 'done' && (
           <>
             <button ref={btn} type="button" className="btn btn-sm" aria-expanded={handing} onClick={() => setHanding(true)}><Play />Передать агенту</button>
             {handing && <HandoffPopover task={t} anchor={btn} open onClose={() => setHanding(false)} />}

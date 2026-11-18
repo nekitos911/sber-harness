@@ -48,7 +48,16 @@ export const useGit = (cwd: string | null) => useStore((s) => (cwd ? s.git[wtKey
 export function useGitWatch(cwd: string | null) {
   const sig = useStore((s) => (cwd ? s.sessions.filter((x) => normPath(x.cwd) === normPath(cwd)).map((x) => x.id + x.status).join() : ''))
   const loaded = useStore((s) => s.loaded)
-  useEffect(() => { if (cwd) refreshGit(cwd) }, [cwd, sig, loaded])
+  // back from a terminal tab (a change made by hand) or from another window: the panel must not stay stale
+  const tab = useStore((s) => (cwd ? s.wt[wtKey(cwd)]?.active ?? '' : ''))
+  useEffect(() => { if (cwd) refreshGit(cwd) }, [cwd, sig, loaded, tab])
+  useEffect(() => {
+    if (!cwd) return
+    const on = () => { if (document.visibilityState === 'visible') refreshGit(cwd) }
+    window.addEventListener('focus', on)
+    document.addEventListener('visibilitychange', on)
+    return () => { window.removeEventListener('focus', on); document.removeEventListener('visibilitychange', on) }
+  }, [cwd])
 }
 
 export const diffOf = (files: DiffFile[] | null | undefined, path: string) => {

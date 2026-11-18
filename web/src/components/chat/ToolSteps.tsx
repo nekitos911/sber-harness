@@ -59,6 +59,10 @@ function stepLine(t: ToolCall): { icon: ReactNode; text: ReactNode } {
   }
 }
 
+/** A sub-agent's chat: the built-in one's virtual chat, or a harness worker's (worker_run / agent answer `{ sessionId }`). */
+const subChat = (t: ToolCall) => t.subSessionId
+  ?? (/(^|__)(worker_run|worker_start|agent)$/.test(t.name) && t.output ? /"sessionId"\s*:\s*"([^"]+)"/.exec(t.output)?.[1] ?? null : null)
+
 const editLines = (e: NonNullable<ReturnType<typeof fileEdit>>): DiffLine[] =>
   e.lines.map((l) => ({ kind: l.kind === '+' ? 'add' : l.kind === '-' ? 'del' : 'ctx', text: l.text, old: null, new: null }))
 
@@ -71,7 +75,6 @@ function StepDetails({ t, ms }: { t: ToolCall; ms: number | null }) {
   const lines = out.split('\n')
   return (
     <div className="step-details">
-      {t.subSessionId && <button type="button" className="step-link" onClick={() => openSession(t.subSessionId!)}>Открыть чат субагента</button>}
       {e ? <DiffLines lines={editLines(e)} numbers={false} limit={400} label={`Изменения ${basename(e.file)}`} />
         : emptyInput(t.input)
           ? <p className="muted tool-noinput">{t.status === 'running' ? 'аргументы ещё не пришли' : 'без аргументов'}</p>
@@ -92,6 +95,7 @@ function StepRow({ m, next, live }: { m: Message; next?: Message; live: boolean 
   const sec = useElapsed(m.at, running && live)
   const ms = next ? next.at - m.at : running ? sec * 1000 : null
   const { icon, text } = stepLine(t)
+  const sub = subChat(t)
   return (
     <div className="step" data-current={running || undefined} data-error={t.status === 'error' || undefined}>
       <Disclosure
@@ -104,6 +108,8 @@ function StepRow({ m, next, live }: { m: Message; next?: Message; live: boolean 
       >
         <StepDetails t={t} ms={ms} />
       </Disclosure>
+      {/* its report stays one click away after it finished (the finished chat is archived, not lost) */}
+      {sub && <button type="button" className="step-link" onClick={() => openSession(sub)}>Открыть чат субагента</button>}
     </div>
   )
 }

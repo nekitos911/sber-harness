@@ -670,3 +670,5 @@ button.prs-group[aria-expanded="true"] .chev { transform: rotate(90deg); }
 .flow-next { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--ink-2); }
 .flow-next > span { flex: 1; min-width: 0; }
 .handoff-add-note { justify-self: start; margin: 0 14px 4px; font-size: 12px; }
+/* «Например:» under an empty task box: what else to ask an agent (a spec, an explanation, an estimate) */
+.handoff-examples { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin: 0 14px 6px; color: var(--ink-3); font-size: 12px; }

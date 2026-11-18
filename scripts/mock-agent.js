@@ -170,7 +170,7 @@ if (prompt.includes('Пользователь явно просит')) {
     } else if (prompt.includes('отправить ветку')) {
       run('push', '-q', '-u', 'origin', 'HEAD');
       line = `RESULT: OK ${run('rev-parse', '--abbrev-ref', 'HEAD')}`;
-    } else line = 'RESULT: ERROR mock не создаёт PR';
+    } else line = 'RESULT: ERROR в демо агент не создаёт PR — нажмите «Сделать напрямую»';
   } catch (e) {
     line = `RESULT: ERROR ${String(e.message).split('\n')[0]}`;
   }

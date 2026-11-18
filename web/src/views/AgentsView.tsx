@@ -13,16 +13,16 @@ import { sessionVisualState, type VisualState } from '../lib/sessionState'
 import { archiveSession, renameSession, sessionMenu } from '../lib/sessionActions'
 import { MenuButton, Segmented, Select } from '../components/ui'
 
-/** Lanes by visual state; «Ждут вас» shows only when someone does. */
+/** Lanes by visual state, problems first (a narrow window stacks them); an empty optional lane is not drawn. */
 const DAY = 86400000
 const BUSY_OR_WAITING = new Set<string>(['running', 'starting', 'stalled', 'waiting_answer', 'waiting_permission', 'auth'])
 
 const GROUPS: { id: string; label: string; hint: string; match: VisualState[]; optional?: boolean }[] = [
   { id: 'you', label: 'Ждут вас', hint: 'вопрос, разрешение, вход или прерваны', match: ['waiting_answer', 'waiting_permission', 'auth', 'interrupted'], optional: true },
-  { id: 'run', label: 'Работают', hint: 'идёт ход', match: ['running', 'starting', 'stalled'] },
+  { id: 'fail', label: 'Ошибки', hint: 'упали или завершились', match: ['error', 'exited'], optional: true },
+  { id: 'run', label: 'Работают', hint: 'идёт ход', match: ['running', 'starting', 'stalled'], optional: true },
   { id: 'idle', label: 'Ответили', hint: 'ход закончен — можно писать дальше', match: ['idle', 'stopped'] },
   { id: 'done', label: 'Задача выполнена', hint: 'агент задачи отчитался (worker_done)', match: ['done'] },
-  { id: 'fail', label: 'Ошибки', hint: 'упали или завершились', match: ['error', 'exited'], optional: true },
 ]
 
 /** Coordinator first, then its workers from the same group right under it. */
@@ -113,8 +113,12 @@ export function AgentsView() {
 function AgentCard({ s, nested, parent }: { s: Session; nested: boolean; parent?: Session }) {
   const agents = useStore((st) => st.agents)
   const tasks = useStore((st) => st.tasks)
+  const notes = useStore((st) => st.notifications)
   const now = useNow()
   const line = useStateLine(s)
+  // waiting: what it asks (the question / the command), so it can be judged from the board; a click leads to the card
+  const asks = s.waitingFor === 'answer' ? 'question' : s.waitingFor === 'permission' ? 'permission' : null
+  const ask = asks && notes.filter((n) => n.sessionId === s.id && n.kind === asks).reduce<typeof notes[number] | null>((a, n) => (!a || n.at > a.at ? n : a), null)?.text
   const [mode, setMode] = useState<'message' | 'assign' | null>(null)
   const [editing, setEditing] = useState(false)
   const [text, setText] = useState('')
@@ -160,11 +164,13 @@ function AgentCard({ s, nested, parent }: { s: Session; nested: boolean; parent?
         <button type="button" className="agent-parent" onClick={() => openSession(parent.id)}>↳ от {parent.title}</button>
       )}
       {s.branch && <div className="agent-where"><Branch name={s.branch} /></div>}
-      {s.preview && !s.waitingFor && <p className="agent-preview">{s.preview}</p>/* waiting: its state says what it needs, not the last «Done.» */}
+      {ask
+        ? <button type="button" className="agent-preview agent-ask" onClick={() => openSession(s.id)} data-tip="Открыть и ответить">{ask}</button>
+        : s.preview && !s.waitingFor && <p className="agent-preview">{s.preview}</p>/* waiting: its state says what it needs, not the last «Done.» */}
       <div className="agent-foot" data-open={mode !== null || undefined}>
         <span className="muted num">{ago(s.lastActivityAt, now)}</span>
         <span className="grow" />
-        {!s.virtual && <button type="button" className="icon-btn icon-btn-sm" aria-label="Написать агенту" data-tip="Написать" aria-pressed={mode === 'message'} onClick={() => setMode(mode === 'message' ? null : 'message')}><Send /></button>}
+        {!s.virtual && !asks && <button type="button" className="icon-btn icon-btn-sm" aria-label="Написать агенту" data-tip="Написать" aria-pressed={mode === 'message'} onClick={() => setMode(mode === 'message' ? null : 'message')}><Send /></button>}
         {s.archived && <button type="button" className="btn btn-sm" onClick={() => void archiveSession(s, false)}><ArchiveRestore />Вернуть</button>}
         {!s.virtual && <MenuButton label="Ещё действия" icon={<Ellipsis />} align="right" className="icon-btn-sm" items={[
           ...(!s.archived ? [{ label: 'Дать задачу…', icon: <ListPlus />, onSelect: () => setMode('assign') }] : []),

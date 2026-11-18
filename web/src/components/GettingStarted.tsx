@@ -1,13 +1,14 @@
 import { useEffect, useState } from 'react'
 import { Check, Circle, CircleAlert } from 'lucide-react'
 import { api, errorText, tryApi } from '../api'
-import { openScreen, toast, useStore } from '../store'
+import { openDialog, openScreen, toast, useStore } from '../store'
 import { loadDraft, saveDraft } from '../lib/draft'
 import type { AgentMeta, Settings } from '../types'
 import { FolderPicker } from './FolderPicker'
 import { Disclosure } from './ui'
 
-type Step = { key: string; done: boolean; title: string; hint: string; optional?: boolean; action?: { label: string; run: () => void } }
+type Action = { label: string; run: () => void }
+type Step = { key: string; done: boolean; title: string; hint: string; optional?: boolean; action?: Action; alt?: Action }
 
 /**
  * «Начало работы» on the home screen: what this installation still needs before a task can go to an agent — each step
@@ -17,6 +18,7 @@ export function GettingStarted() {
   const agents = useStore((s) => s.agents)
   const defaultAgent = useStore((s) => s.defaultAgent)
   const root = useStore((s) => s.workspaces.find((w) => w.kind === 'root'))
+  const projects = useStore((s) => s.workspaces.filter((w) => !w.kind).length)
   const integrations = useStore((s) => s.integrations)
   const agent = agents.find((a) => a.id === defaultAgent && a.enabled) ?? agents.find((a) => a.enabled)
   const [info, setInfo] = useState<AgentMeta | null>(null)
@@ -43,7 +45,9 @@ export function GettingStarted() {
   const skill = info.skills?.['harness-orchestration']
   const steps: Step[] = [
     { key: 'cli', done: info.resolved.ok, title: info.resolved.ok ? `${agent.label} найден` : `Укажите путь к ${agent.label}`, hint: info.resolved.ok ? 'Агент запускается.' : `Не найден запуск агента${info.resolved.error ? `: ${info.resolved.error}` : ''}. Укажите путь в настройках.`, action: settings },
-    { key: 'root', done: !!root, title: 'Папка с проектами', hint: root ? root.path : 'Здесь агент начинает задачу и сам выбирает нужный проект.', action: { label: 'Выбрать папку…', run: () => setPicking(true) } },
+    // a folder with all the projects (the agent picks one), or just a project: not everyone keeps them in one place
+    { key: 'root', done: !!root || projects > 0, title: 'Где ваши проекты', hint: root ? root.path : projects ? `Открыто проектов: ${projects}. Папка со всеми проектами — необязательно: тогда агент сам выберет нужный.` : 'Папка, где лежат все проекты (агент сам выберет нужный), или один проект.',
+      action: { label: 'Папка со всеми проектами…', run: () => setPicking(true) }, alt: { label: 'Один проект…', run: () => openDialog({ kind: 'workspace' }) } },
     { key: 'skill', done: skill === 'installed', optional: true, title: 'Навык оркестрации', hint: skill === 'installed' ? 'Агент запускает субагентов отдельными чатами.' : 'Без него агент не знает, как запускать субагентов через харнесс.', action: { label: skill === 'different' ? 'Обновить' : 'Установить', run: () => void install() } },
     { key: 'auth', done: info.auth === 'ok', optional: info.auth !== 'required', title: 'Вход в агента', hint: info.auth === 'required' ? 'Агент просит войти: откройте ссылку из чата или войдите в настройках.' : info.auth === 'ok' ? 'Вход выполнен.' : 'Станет ясно при первом запуске; если агент попросит войти — откройте ссылку.', action: info.auth === 'required' ? settings : undefined },
     { key: 'tasks', done: integrations.tasks, optional: true, title: 'Трекер задач', hint: integrations.tasks ? 'Задачи подтягиваются на доску.' : 'Необязательно: без трекера задачу можно описать словами.', action: integrations.tasks ? undefined : settings },
@@ -69,6 +73,7 @@ export function GettingStarted() {
               <strong>{s.title}</strong>
               <span className="muted">{s.hint}</span>
             </div>
+            {!s.done && s.alt && <button type="button" className="btn btn-sm" onClick={s.alt.run}>{s.alt.label}</button>}
             {!s.done && s.action && <button type="button" className="btn btn-sm" onClick={s.action.run}>{s.action.label}</button>}
           </li>
         ))}

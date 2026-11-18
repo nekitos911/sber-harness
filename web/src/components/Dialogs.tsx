@@ -30,7 +30,7 @@ export function Dialogs() {
 
 function DialogSwitch({ d }: { d: DialogRequest }) {
   switch (d.kind) {
-    case 'workspace': return <WorkspaceDialog />
+    case 'workspace': return <WorkspaceDialog from={d.from} />
     case 'chat': return <ChatDialog workspaceId={d.workspaceId} cwd={d.cwd} />
     case 'terminal': return <TerminalDialog workspaceId={d.workspaceId} cwd={d.cwd} />
     case 'worktree': return <WorktreeDialog workspaceId={d.workspaceId} />
@@ -62,10 +62,10 @@ function useBusy() {
 
 // ---------- workspace ----------
 
-function WorkspaceDialog() {
+function WorkspaceDialog({ from }: { from?: string }) {
   const [path, setPath] = useState('')
   const [name, setName] = useState('')
-  const [picking, setPicking] = useState(false)
+  const [picking, setPicking] = useState(!!from)
   const [busy, run, step] = useBusy()
   const valid = isAbsolutePath(path)
   return (
@@ -95,7 +95,7 @@ function WorkspaceDialog() {
         {!path && <span className="field-hint">Выберите папку кнопкой «Обзор…» или вставьте путь.</span>}
       </div>
       {picking && (
-        <FolderPicker title="Папка проекта" initial={path || null} submitLabel="Выбрать эту папку"
+        <FolderPicker title="Папка проекта" initial={path || from || null} submitLabel="Выбрать эту папку"
           onClose={() => setPicking(false)} onPick={(p) => { setPath(p); setPicking(false) }} />
       )}
       <label className="field">

@@ -275,14 +275,15 @@ function buildTree(sessions: Session[], query: string, worktrees: Record<string,
   return { owner, roots, kids, loose: roots.filter((s) => !owner(s)), terminals, system, all: sorted, from }
 }
 
-const WAITS: Partial<Record<string, string>> = { waiting_permission: 'разрешение', waiting_answer: 'вопрос', auth: 'вход', stalled: 'нет вывода' }
+const WAITS: Partial<Record<string, string>> = { waiting_permission: 'разрешение', waiting_answer: 'вопрос', auth: 'вход', stalled: 'нет вывода', error: 'ошибка', interrupted: 'прервана' }
+const DAY = 24 * 3600_000
 
-/** «Ждут вас»: every chat waiting for a person (or silent), longest waiting first; the tree stays calm. */
+/** «Ждут вас»: every chat waiting for a person (or silent, or failed in the last day), longest waiting first; the tree stays calm. */
 function AttentionSection({ tree }: { tree: Tree }) {
   const workspaces = useStore((s) => s.workspaces)
   const now = useNow()
   const list = tree.all
-    .filter((s) => WAITS[sessionVisualState(s)])
+    .filter((s) => { const v = sessionVisualState(s); return WAITS[v] && (!(v === 'error' || v === 'interrupted') || (!s.archived && now - s.lastActivityAt < DAY)) })
     .sort((a, b) => (a.lastEventAt ?? a.lastActivityAt) - (b.lastEventAt ?? b.lastActivityAt))
   if (!list.length) return null
   return (

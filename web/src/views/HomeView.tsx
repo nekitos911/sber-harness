@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { ArrowUp, FolderOpen, GitCompareArrows, MessageSquare, Wrench } from 'lucide-react'
 import { api, errorText } from '../api'
-import { openSession, openWorktree, showPanel, toast, useFeature, useStore } from '../store'
+import { openDialog, openSession, openWorktree, showPanel, toast, useFeature, useStore } from '../store'
 import { adoptSession } from '../lib/actions'
 import { endJob, startJob, useJobStep } from '../lib/jobs'
 import { loadDraft, saveDraft } from '../lib/draft'
@@ -71,10 +71,22 @@ export function HomeView() {
   )
 }
 
+/** What else an agent can be asked, for people who do not write code (an analyst): a click starts the sentence. */
+const EXAMPLES = [
+  { label: 'спецификация по SDD', text: 'Подготовь спецификацию по SDD к задаче ' },
+  { label: 'объяснить, как устроено', text: 'Объясни простыми словами, как устроено ' },
+  { label: 'оценить задачу', text: 'Оцени задачу: что придётся поменять и какие есть риски — ' },
+]
+
 function Handoff() {
   const agents = useStore((s) => s.agents)
   const defaultAgent = useStore((s) => s.defaultAgent)
-  const root = useStore((s) => s.workspaces.find((w) => w.kind === 'root'))
+  const workspaces = useStore((s) => s.workspaces)
+  const root = workspaces.find((w) => w.kind === 'root')
+  const repos = workspaces.filter((w) => !w.kind)
+  // where the agent starts: the projects folder; without one (not everyone keeps all projects in one), a project
+  const [projectId, setProjectId] = useState<string | null>(null)
+  const where = root ?? repos.find((w) => w.id === projectId) ?? (repos.length === 1 ? repos[0] : undefined)
   const settings = useSettings()
   const handoffOn = useFeature('handoff')
   const enabled = agents.filter((a) => a.enabled)
@@ -107,7 +119,7 @@ function Handoff() {
 
   const go = async () => {
     const text = input.trim()
-    if (!text || job || !root) return
+    if (!text || job || !where) return
     const id = startJob('Передать агенту', true)
     setJob(id)
     setError(null)
@@ -116,9 +128,9 @@ function Handoff() {
       const opts = { agent: agentId || undefined, approvalMode: mode ?? undefined, model: model ?? undefined }
       const r = handoffOn
         ? await api<{ session: Session; task: Task | null; jumped?: boolean; trackerError?: string; releaseWarning?: string }>('POST', '/handoff',
-          { input: text, notes: notes.trim() || undefined, ...opts, ...(targets.length ? { targets } : {}) }, { jobId: id })
+          { input: text, notes: notes.trim() || undefined, ...opts, ...(targets.length ? { targets } : {}), ...(root ? {} : { workspaceId: where.id }) }, { jobId: id })
         // older servers: a chat at the projects folder with the text as its first message
-        : { session: await api<Session>('POST', '/sessions', { kind: 'chat', cwd: root.path, workspaceId: root.id, prompt: [text, notes.trim()].filter(Boolean).join('\n\n'), ...opts }) }
+        : { session: await api<Session>('POST', '/sessions', { kind: 'chat', cwd: where.path, workspaceId: where.id, prompt: [text, notes.trim()].filter(Boolean).join('\n\n'), ...opts }) }
       if ('trackerError' in r && r.trackerError) setNotice(r.trackerError)
       if ('jumped' in r && r.jumped) toast('Задача уже в работе: открыл текущую сессию')
       if ('releaseWarning' in r && r.releaseWarning) toast(r.releaseWarning, 'info')
@@ -149,6 +161,11 @@ function Handoff() {
         <textarea ref={box} className="handoff-input" rows={2} autoFocus value={input} disabled={!!job}
           placeholder={`Ссылка или ключ задачи (PROJ-123) или что сделать${command ? `, ${command} добавится сам` : ''}`} aria-label="Задача для агента"
           onChange={(e) => edit(e.target.value)} onKeyDown={onKey} />
+        {!input && !job && (
+          <p className="handoff-examples"><span>Например:</span>
+            {EXAMPLES.map((x) => <button key={x.label} type="button" className="link-btn" onClick={() => { edit(x.text); box.current?.focus() }}>{x.label}</button>)}
+          </p>
+        )}
         {/* one field on arrival: notes are optional — opened on purpose, or when a saved note exists */}
         {!showNotes && !job && <button type="button" className="link-btn handoff-add-note" onClick={() => setNotesOpen(true)}>＋ заметка для агента</button>}
         {showNotes && (
@@ -170,18 +187,29 @@ function Handoff() {
             <Select size="sm" label="Режим" className={FULL_ACCESS.has(effectiveMode ?? '') ? 'mode-select mode-access' : 'mode-select'} value={effectiveMode ?? ''} onChange={setMode} display={modeShort(effectiveMode ?? '')}
               options={agent.approvalModes.map((m) => ({ value: m, label: modeShort(m), hint: agent.approvalModeLabels?.[m] }))} />
           )}
+          {!root && repos.length > 1 && (
+            <Select size="sm" label="Проект" placeholder="Выберите проект" value={where?.id ?? ''} onChange={setProjectId}
+              options={repos.map((w) => ({ value: w.id, label: w.name }))} />
+          )}
           <span className="grow" />
-          <button type="button" className="btn btn-primary handoff-go" disabled={!input.trim() || !!job || !root} onClick={() => void go()}>
+          <button type="button" className="btn btn-primary handoff-go" disabled={!input.trim() || !!job || !where} onClick={() => void go()}>
             {job ? (step ? `${step}…` : 'Запускаю…') : <>Запустить<ArrowUp aria-hidden /></>}
           </button>
         </div>
       </div>
       {root ? (
         <p className="handoff-note">Агент запустится в {basename(root.path)}{command ? <> с <span className="mono">{command}</span></> : null}: сам выберет проект и заведёт для задачи свою ветку.</p>
+      ) : where ? (
+        <p className="handoff-note">Агент запустится в проекте {where.name}{command ? <> с <span className="mono">{command}</span></> : null} и заведёт для задачи свою ветку.</p>
+      ) : repos.length ? (
+        <p className="handoff-note">Выберите проект — или укажите папку, где лежат все проекты: тогда агент выберет сам.
+          <button type="button" className="btn btn-sm" onClick={() => setPicking(true)}><FolderOpen />Папка со всеми проектами…</button>
+        </p>
       ) : (
         <p className="handoff-note handoff-warn">
-          Укажите папку с проектами: агент начнёт работу в ней.
-          <button type="button" className="btn btn-sm" onClick={() => setPicking(true)}><FolderOpen />Выбрать папку…</button>
+          Где ваши проекты? Откройте проект, в котором работать, или папку, где лежат все проекты.
+          <button type="button" className="btn btn-sm" onClick={() => openDialog({ kind: 'workspace' })}><FolderOpen />Открыть проект…</button>
+          <button type="button" className="btn btn-sm" onClick={() => setPicking(true)}>Папка со всеми проектами…</button>
         </p>
       )}
       {notice && <p className="handoff-note handoff-warn" role="status">Трекер не ответил ({notice}): агент запущен по тексту.</p>}

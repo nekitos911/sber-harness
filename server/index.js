@@ -1258,11 +1258,18 @@ export async function startServer(opts = {}) {
   };
 
   route('POST', '/api/handoff', async ({ body }) => {
-    check(body, { input: 'string', notes: 'string?', agent: 'string?', approvalMode: 'string?', model: 'string?', targets: 'array?', dryRun: 'boolean?' });
+    check(body, { input: 'string', notes: 'string?', agent: 'string?', approvalMode: 'string?', model: 'string?', targets: 'array?', dryRun: 'boolean?', workspaceId: 'string?' });
     notGarbled(body.input, body.notes);
     const explicit = targetsOf(body.targets); // the UI's chips override what the text says
     const input = body.input.trim() || fail(400, 'нужен текст или ссылка на задачу');
-    const root = db.workspaces.find((w) => w.kind === 'root') || fail(400, 'Укажите папку с проектами в Настройках');
+    // where the agent starts: the projects folder; without one, the project picked (or the only one) — not everyone keeps
+    // all projects in one folder
+    const repos = db.workspaces.filter((w) => !w.kind);
+    const root = (body.workspaceId && (db.workspaces.find((w) => w.id === body.workspaceId) || fail(404, `проект ${body.workspaceId} не найден`)))
+      || db.workspaces.find((w) => w.kind === 'root') || (repos.length === 1 ? repos[0] : null)
+      || fail(400, repos.length ? 'Выберите проект, в котором работать агенту' : 'Откройте проект или укажите папку с проектами');
+    const atRoot = root.kind === 'root';
+    const location = atRoot ? 'root' : 'repo';
     const agent = body.agent || config.defaultAgent;
     const agentCfg = config.agents[agent] || fail(400, `неизвестный агент «${agent}»`);
     const ref = input.match(/https?:\/\/\S+/)?.[0] || input.match(/[A-Z][A-Z0-9_]+-\d+/)?.[0];
@@ -1280,10 +1287,10 @@ export async function startServer(opts = {}) {
         const stand = known || { id: key, externalId: key, title: '', description: '', parentId: null, branch: null, targets: [config.git.defaultBase], externalUrl: tc.urlTemplate ? fillTemplate(tc.urlTemplate, { key }) : /^https?:\/\//.test(ref) ? ref : null };
         const p = await planReleases(relText, notes, stand, explicit);
         const prompt = orch.previewTaskPrompt({ ...stand, ...(p.targets ? { targets: p.targets } : {}) }, { agent, cwd: root.path, notes: p.notes });
-        return { prompt, agent, taskKey: key, targets: p.targets, releaseWarning: p.releaseWarning, location: 'root' };
+        return { prompt, agent, taskKey: key, targets: p.targets, releaseWarning: p.releaseWarning, location };
       }
       const p = await planReleases(relText, body.notes?.trim() || '', null, explicit);
-      return { prompt: freePrompt(p.notes), agent, taskKey: null, targets: p.targets, releaseWarning: p.releaseWarning, location: 'root' };
+      return { prompt: freePrompt(p.notes), agent, taskKey: null, targets: p.targets, releaseWarning: p.releaseWarning, location };
     }
     let trackerError = null;
     let task = null;
@@ -1295,14 +1302,14 @@ export async function startServer(opts = {}) {
     jobStep('Запускаю агента');
     if (task) {
       const rel = await withReleases(relText, notes, task, explicit);
-      const s = await orch.start(task.id, { agent, notes: rel.notes, location: 'root', approvalMode: body.approvalMode, model: body.model });
+      const s = await orch.start(task.id, { agent, notes: rel.notes, ...(atRoot ? { location: 'root' } : { workspaceId: root.id }), approvalMode: body.approvalMode, model: body.model });
       if (!s.jumped) await trackerOnStart(tasks.get(task.id));
       return { session: s, task: tasks.get(task.id), ...(rel.releaseWarning ? { releaseWarning: rel.releaseWarning } : {}) };
     }
     const rel = await withReleases(relText, body.notes?.trim() || '', null, explicit);
     const prompt = freePrompt(rel.notes);
     const s = await sessions.create({
-      kind: 'chat', agent, cwd: root.path, title: titleFrom(input) || 'Задача', atRoot: true, prompt,
+      kind: 'chat', agent, cwd: root.path, ...(atRoot ? {} : { workspaceId: root.id }), title: titleFrom(input) || 'Задача', atRoot, prompt,
       ...(body.approvalMode ? { approvalMode: body.approvalMode } : {}), ...(body.model ? { model: body.model } : {}),
     });
     return { session: s, task: null, ...(trackerError ? { trackerError } : {}), ...(rel.releaseWarning ? { releaseWarning: rel.releaseWarning } : {}) };
