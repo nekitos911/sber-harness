@@ -416,6 +416,23 @@ GET    /api/git/pr-status?cwd=  -> { pr: { index, title, state: 'open'|'merged'|
                                      reviewers: [{ status }], base, updatedAt } | null, error?: string }
                                  (observe-only, via integrations.pr.listTool for the current branch: OPEN first, else the
                                   most recent MERGED/DECLINED with that head; 501 when integrations.pr is disabled)
+GET    /api/prs?scope=mine|tracked&refresh=1 -> { me, items: [{ workspaceId, repo, project, index, title, state, url,
+                                     head, base, author, reviewers: [{ name, status }], mergeable, updatedAt, createdAt,
+                                     taskId, taskKey, sessionId, byAgent }], errors: [{ repo, error }], at }
+                                 (feature `prs-mine`; every registered git repository with a parseable origin, listTool
+                                  { project, repository, state: 'OPEN', author: me, page: 1, limit: 100 } — a server that
+                                  rejects `author` is asked without it — and the items' pr_creator/author must be me;
+                                  me = integrations.pr.meTool (default git_get_user, args {}, login|username|name, cached
+                                  24 h, VERIFY the args/shape); 4 repositories at a time, per-repo errors collected; the
+                                  whole answer cached 3 min, refresh=1 bypasses, refreshed every integrations.pr.refreshSec
+                                  while a UI client is connected. taskId/taskKey: a task of that repo whose branch (or
+                                  task.worktrees branch) is the head, else whose key (externalId or id) is a token in the
+                                  head name; sessionId/byAgent: the head is a worktree createdBy 'agent' (its session) or
+                                  the task has an assignee. scope=tracked: every author, only heads that are task
+                                  branches or worktrees of the repo.)
+                                 integrations.pr.enabled: true | false | "auto" (default): "auto" = on when a console MCP
+                                 server named integrations.pr.server exists (and, once its tools were listed, offers
+                                 `tool`); /api/settings shows `{ enabled, active }`, /api/state integrations.pr = active.
 GET    /api/fs/list?cwd=&path=  -> [{ name, path, dir: boolean, size }]   (path relative to cwd; '' = root; dirs first; skips .git and node_modules)
 GET    /api/fs/file?cwd=&path=  -> { path, content, size, binary: boolean }   (text up to 2 MB; binary => content '')
 PUT    /api/fs/file             {cwd, path, content} -> { ok: true }

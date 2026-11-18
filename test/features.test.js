@@ -50,6 +50,7 @@ test('each feature flag has a working route (not 404/405)', async () => {
       'worktree-lazy': ['GET', `/api/worktrees/info?path=${q}`],
       'cli-history': ['GET', `/api/history?cwd=${q}`, (b) => Array.isArray(b)],
       sdd: ['GET', `/api/sdd?cwd=${q}`, (b) => Array.isArray(b.plans)],
+      'prs-mine': ['GET', '/api/prs?scope=mine'], // 501 here: no sourcecontrol server (enabled auto)
     };
     for (const flag of FEATURES) {
       const probe = probes[flag];

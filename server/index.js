@@ -24,8 +24,8 @@ import { readSdd } from './sdd.js';
 import { createHistory, historyMessages } from './history.js';
 import { runJob, jobStep, JOB_ID_RE } from './jobs.js';
 import { DEMO_PORT, demoOverrides, seedDemoRepos, seedDemoTasks } from './demo.js';
-import { importTasks, importIssue, transitionTask, getExternal, getTransitions, importChildren, syncColumn } from './integrations/tasks.js';
-import { createPullRequest, prStatus, refreshTaskPr, declinePullRequest } from './integrations/pr.js';
+import { importTasks, importIssue, transitionTask, getExternal, getTransitions, importChildren, syncColumn, getPath } from './integrations/tasks.js';
+import { createPullRequest, prStatus, refreshTaskPr, declinePullRequest, prEnabled, prMe, repoPulls, prAuthor } from './integrations/pr.js';
 
 const MAX_BODY = 1024 * 1024;
 const MIME = {
@@ -38,7 +38,7 @@ const NO_BUILD_HTML = '<!doctype html><meta charset="utf-8"><title>Harness</titl
 const GRADES = ['default', 'fast', 'review', 'explore'];
 // optional API groups this server implements (docs/ARCHITECTURE.md "Feature flags"); a flag ships with its route
 export const FEATURES = ['branches', 'fs-search', 'pr-status', 'agent-info', 'models-refresh', 'tracker-links', 'board-columns', 'review-loop',
-  'subagents', 'virtual-sessions', 'worker-run', 'skills-install', 'demo', 'worktree-meta', 'open', 'sdd', 'health', 'folders', 'include-dirs', 'questions', 'permissions', 'activity', 'rework', 'fs-raw', 'tracker-import', 'pr-decline', 'task-suggest', 'recovery', 'acp', 'worktree-lazy', 'cli-history'];
+  'subagents', 'virtual-sessions', 'worker-run', 'skills-install', 'demo', 'worktree-meta', 'open', 'sdd', 'health', 'folders', 'include-dirs', 'questions', 'permissions', 'activity', 'rework', 'fs-raw', 'tracker-import', 'pr-decline', 'task-suggest', 'recovery', 'acp', 'worktree-lazy', 'cli-history', 'prs-mine'];
 // titles of operations the UI may follow by sending x-job-id (WS { t: 'job' } frames)
 const JOB_TITLES = {
   'POST /api/tasks/sync': 'Синхронизация с трекером',
@@ -252,6 +252,7 @@ export async function startServer(opts = {}) {
   async function refreshPrs() {
     if (prRefreshing) return;
     prRefreshing = true;
+    if (prsCache.has('mine')) collectPrs('mine', true).catch(() => {}); // the «Пулл-реквесты» screen stays fresh
     try {
       for (const t of db.tasks) {
         const ws = t.branch && db.workspaces.find((w) => w.id === t.workspaceId);
@@ -261,11 +262,75 @@ export async function startServer(opts = {}) {
       prRefreshing = false;
     }
   }
+  /**
+   * GET /api/prs: open pull requests of every registered git repository with a parseable origin. mine = mine
+   * (the code host's login), tracked = those whose head is a task branch or a worktree of that repository. Linked to
+   * tasks (a task key in the head branch) and agents (an agent-made worktree / the task's assignee). Cached 3 min.
+   */
+  const prsCache = new Map(); // scope -> { at, data: Promise }
+  function collectPrs(scope, fresh = false) {
+    if (!prEnabled(config, mcp)) fail(501, 'интеграция PR выключена (integrations.pr.enabled)');
+    if (!config.integrations.pr.listTool) fail(501, 'не настроен integrations.pr.listTool');
+    const hit = prsCache.get(scope);
+    if (!fresh && hit && Date.now() - hit.at < 180000) return hit.data;
+    const data = (async () => {
+      const errors = [];
+      let me = null;
+      if (scope === 'mine') {
+        try {
+          me = await prMe({ config, mcp });
+        } catch (e) {
+          return { me: null, items: [], errors: [{ repo: null, error: e.message }], at: Date.now() };
+        }
+      }
+      const slots = limiter(4);
+      const lists = await Promise.all(db.workspaces.filter((w) => w.isGit && !w.kind).map((ws) => slots(async () => {
+        const { project, repository, repo } = await git.remoteInfo(ws.path).catch(() => ({}));
+        if (!project || !repository) return [];
+        try {
+          const [pulls, wts] = await Promise.all([repoPulls({ config, mcp, project, repository, author: me }), git.worktrees(ws.path).catch(() => [])]);
+          return pulls.map((p) => prItem(ws, { project, repo }, p, wts)).filter((it) => scope === 'mine' || it.tracked).map(({ tracked, ...it }) => it);
+        } catch (e) {
+          errors.push({ repo, error: e.message });
+          return [];
+        }
+      })));
+      const items = lists.flat().sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+      return { me, items, errors, at: Date.now() };
+    })();
+    prsCache.set(scope, { at: Date.now(), data });
+    data.catch(() => prsCache.delete(scope));
+    return data;
+  }
+
+  /** One pull request of `ws` as a /api/prs item; `tracked`: its head is a task branch or a worktree of the repo. */
+  function prItem(ws, { project, repo }, p, wts) {
+    const cfg = config.integrations.pr;
+    const head = p.head?.name ?? null;
+    const own = (t) => !t.workspaceId || t.workspaceId === ws.id;
+    const token = (k) => k && head && new RegExp(`(^|[^A-Za-z0-9])${k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![0-9])`, 'i').test(head);
+    const task = db.tasks.find((t) => own(t) && head && (t.branch === head || (t.worktrees || []).some((w) => w.branch === head)))
+      || db.tasks.find((t) => own(t) && !t.hidden && (token(t.externalId) || token(t.id)));
+    const wt = head && wts.find((w) => !w.main && w.branch === head);
+    const meta = wt ? db.worktreeMeta?.[metaKey(wt.path)] : null;
+    const agentWt = meta?.createdBy === 'agent';
+    const sessionId = (agentWt && (meta.createdBySession || db.sessions.find((s) => !s.virtual && samePath(s.worktreePath || s.cwd, wt.path))?.id)) || task?.assigneeSessionId || null;
+    return {
+      workspaceId: ws.id, repo, project, index: p.index ?? null, title: p.title ?? '', state: String(p.state ?? '').toLowerCase(),
+      url: getPath(p, cfg.urlPath ?? 'html_url') ?? null, head, base: p.base?.name ?? null, author: prAuthor(p),
+      reviewers: Array.isArray(p.reviewers) ? p.reviewers.map((r) => ({ name: r?.username ?? r?.name ?? r?.login ?? null, status: r?.status ?? null })) : [],
+      mergeable: typeof p.mergeable === 'boolean' ? p.mergeable : null,
+      updatedAt: Date.parse(p.updated_at) || null, createdAt: Date.parse(p.created_at) || null,
+      taskId: task?.id ?? null, taskKey: task ? tasks.key(task) : null, sessionId, byAgent: !!(agentWt || task?.assigneeSessionId),
+      tracked: !!(task?.branch === head || (task?.worktrees || []).some((w) => w.branch === head) || wt),
+    };
+  }
+
   function schedulePrs() {
     clearInterval(prTimer);
     const cfg = config.integrations.pr;
     const sec = Number(cfg?.refreshSec) || 0;
-    if (!cfg?.enabled || !cfg.listTool || sec <= 0) return;
+    if (!prEnabled(config, mcp) || !cfg.listTool || sec <= 0) return;
     prTimer = setInterval(() => { if (wss.clients.size > 0) refreshPrs(); }, Math.max(sec, 30) * 1000);
     prTimer.unref?.();
   }
@@ -327,7 +392,8 @@ export async function startServer(opts = {}) {
       },
       integrations: {
         tasks: { enabled: !!t.enabled, space: t.space ?? null, urlTemplate: t.urlTemplate ?? '', statusMap: t.statusMap || {}, closedStatuses: t.closedStatuses || [], onStartTransition: t.onStartTransition ?? null },
-        pr: { enabled: !!pr.enabled, limits: pr.limits || null },
+        // enabled: true | false | "auto" (on when the console MCP server `server` exists); active = the effective state
+        pr: { enabled: pr.enabled ?? 'auto', active: prEnabled(config, mcp), limits: pr.limits || null },
       },
     };
   }
@@ -488,7 +554,7 @@ export async function startServer(opts = {}) {
       out.tasks = { ...out.tasks, ...p };
     }
     if (i.pr !== undefined) {
-      if (!isObj(i.pr) || ('enabled' in i.pr && typeof i.pr.enabled !== 'boolean')) fail(400, 'integrations.pr.enabled: нужно true или false');
+      if (!isObj(i.pr) || ('enabled' in i.pr && typeof i.pr.enabled !== 'boolean' && i.pr.enabled !== 'auto')) fail(400, 'integrations.pr.enabled: true, false или "auto"');
       if ('enabled' in i.pr) out.pr = { enabled: i.pr.enabled };
     }
     return out;
@@ -881,7 +947,7 @@ export async function startServer(opts = {}) {
     features: FEATURES,
     recentFolders: db.prefs?.recentFolders || [],
     demo: !!opts.demo,
-    integrations: { tasks: !!config.integrations.tasks?.enabled, pr: !!config.integrations.pr?.enabled, tasksProblem },
+    integrations: { tasks: !!config.integrations.tasks?.enabled, pr: prEnabled(config, mcp), tasksProblem },
   }));
   route('GET', '/api/settings', () => settingsView());
   route('GET', '/api/recovery', () => sessions.recoveryList());
@@ -1181,9 +1247,13 @@ export async function startServer(opts = {}) {
   route('GET', '/api/git/log', ({ query }) => git.log(cwdOf(query), Math.min(Math.max(Number(query.n) || 50, 1), 1000)));
   route('GET', '/api/git/suggest', ({ query }) => orch.gitSuggest(cwdOf(query)));
   route('GET', '/api/git/branches', ({ query }) => git.branches(cwdOf(query)));
+  route('GET', '/api/prs', ({ query }) => {
+    if (!['mine', 'tracked', undefined].includes(query.scope)) fail(400, 'scope: mine или tracked');
+    return collectPrs(query.scope || 'mine', query.refresh === '1');
+  });
   route('GET', '/api/git/pr-status', async ({ query }) => {
     const cwd = cwdOf(query);
-    if (!config.integrations.pr?.enabled) fail(501, 'интеграция PR выключена (integrations.pr.enabled)');
+    if (!prEnabled(config, mcp)) fail(501, 'интеграция PR выключена (integrations.pr.enabled)');
     const branch = await git.currentBranch(cwd);
     if (!branch) return { pr: null };
     try {
@@ -1214,7 +1284,7 @@ export async function startServer(opts = {}) {
   });
   route('POST', '/api/git/pr', async ({ body }) => {
     check(body, { cwd: 'string', title: 'string', body: 'string?', base: 'string?' });
-    if (!config.integrations.pr?.enabled) fail(501, 'создание PR выключено (integrations.pr.enabled)');
+    if (!prEnabled(config, mcp)) fail(501, 'создание PR выключено (integrations.pr.enabled)');
     const branch = (await git.currentBranch(body.cwd)) || fail(400, 'в cwd не выбрана ветка');
     const base = body.base || config.git.defaultBase;
     const r = await createPullRequest({

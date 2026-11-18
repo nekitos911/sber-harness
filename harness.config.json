@@ -159,8 +159,9 @@
       "onStartTransition": null
     },
     "pr": {
-      "enabled": false,
+      "enabled": "auto",
       "server": "sourcecontrol",
+      "meTool": "git_get_user",
       "tool": "git_create_pull_request",
       "args": {
         "project": "{project}",

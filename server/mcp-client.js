@@ -268,6 +268,7 @@ export function createMcpManager(config) {
     }
   }
 
+  const seen = new Map(); // server -> tool names of its last tools/list (integrations "auto" checks a tool exists)
   const listTools = (name) => withClient(name, async (request) => {
     const tools = [];
     let cursor;
@@ -276,6 +277,7 @@ export function createMcpManager(config) {
       tools.push(...(r?.tools || []));
       cursor = r?.nextCursor;
     } while (cursor);
+    seen.set(name, tools.map((t) => t.name));
     return tools;
   });
 
@@ -288,6 +290,7 @@ export function createMcpManager(config) {
   return {
     listTools,
     callTool,
+    toolsSeen: (name) => seen.get(name) ?? null,
     async status() {
       return Promise.all(Object.entries(serverDefs(config)).map(async ([name, def]) => {
         const row = { name, enabled: def.enabled, transport: def.transport, ok: false, tools: [] };

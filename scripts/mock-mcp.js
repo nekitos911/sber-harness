@@ -91,8 +91,9 @@ function pullRequests(name, value, args) {
     return value;
   }
   if (!Array.isArray(value?.pulls)) return value;
-  const want = (p) => (!args.head || p.head?.name === args.head) && (!args.state || String(p.state).toLowerCase() === String(args.state).toLowerCase());
-  const fixtureOnes = value.pulls.filter((p) => !args.head || p.head?.name === args.head);
+  const repoOf = (p) => !args.project || !args.repository || !p.html_url || String(p.html_url).includes(`/${args.project}/${args.repository}/pulls/`);
+  const want = (p) => repoOf(p) && (!args.head || p.head?.name === args.head) && (!args.state || String(p.state).toLowerCase() === String(args.state).toLowerCase());
+  const fixtureOnes = value.pulls.filter((p) => repoOf(p) && (!args.head || p.head?.name === args.head));
   return { ...value, pulls: [...fixtureOnes, ...st.pulls.filter(want)] };
 }
 
