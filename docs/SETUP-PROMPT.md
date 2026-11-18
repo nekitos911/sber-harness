@@ -103,9 +103,11 @@ check live what can only be checked here (real GigaCode, onework, sourcecontrol)
       line in server/acp.js (where session/update is handled), run a turn that calls a tool and a sub-agent, and replace
       test/fixtures/gigacode.acp-late-input.ndjson with those lines (mask hosts/logins; keep the ids the test checks or
       update the test). Remove the temporary log.
-   j) Thinking shows live: in a headless chat a «Размышляет» block appears and fills while the agent works (the harness
-      passes --include-partial-messages; if the CLI rejects it, a ⚠ note says so once and the turn reruns without it — record
-      which happened). Harness tools: in a headless chat and in an ACP chat ask «перечисли инструменты mcp__harness» — are
+   j) Live thinking is OFF by default (with --include-partial-messages on, tool calls came without their arguments). Check
+      it once: set agents.gigacode.partialMessagesFlag = "--include-partial-messages" in harness.config.local.json, run a
+      headless turn that reads a file, runs a command and searches; capture its raw stdout into test/fixtures/. Every tool
+      card must show its arguments and a «Размышляет» block must fill live. If arguments are missing, parse stream_event
+      content_block_start/input_json_delta in server/launchers.js with that fixture and a test, or leave the flag off. Harness tools: in a headless chat and in an ACP chat ask «перечисли инструменты mcp__harness» — are
       they there in both? If not, answer question 1 in GIGACODE-FACTS (settings mcpServers merge) and fix it.
    Fix anything that does not match only in server/launchers.js, server/history.js, server/integrations/, server/acp.js
    (with a test); do not change UI and orchestration without need.

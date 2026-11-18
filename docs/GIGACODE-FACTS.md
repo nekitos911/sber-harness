@@ -39,7 +39,7 @@ One JSON object per line. Every event has `session_id` (equal to the init `uuid`
 | type | meaning |
 |---|---|
 | `system` + `subtype:"init"` | first event: `session_id`, `cwd`, `tools[]`, `mcp_servers[{name,status}]`, `model` (without the `-262k` suffix), `permission_mode`, `qwen_code_version`, `agents[]`, `slash_commands[]` |
-| `stream_event` | wrapper; observed only `event.type:"goal_state"` (`{v, goal, activity}`) |
+| `stream_event` | wrapper; observed only `event.type:"goal_state"` (`{v, goal, activity}`). SEEN 2026-11-18 with `--include-partial-messages`: 2 of 3 parallel tool calls stayed without arguments (read_file, run_shell_command) — the flag is opt-in until a raw capture shows the shape |
 | `assistant` | `message.content[]`: `{type:"text",text}` and/or `{type:"tool_use",id,name,input}`; `message.usage` per step |
 | `user` | tool results: `message.content[{type:"tool_result",tool_use_id,is_error,content}]` (not a human message) |
 | `result` | end of run: `subtype:"success"`, `is_error`, `duration_ms`, `num_turns`, `result` (final text), `usage{input_tokens,output_tokens,cache_read_input_tokens,total_tokens}` |

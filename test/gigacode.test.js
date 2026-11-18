@@ -58,7 +58,11 @@ before(async () => {
   repo = makeRepo(path.join(root, 'репо'));
   process.env.MOCK_AGENT_ARGV_FILE = argvFile;
   h = await startTestServer({
-    agents: { giga: giga(shim, { node: process.execPath, cliEntry: entry, autoSandbox: 'workspace' }), gigabad: giga(badShim) },
+    agents: {
+      giga: giga(shim, { node: process.execPath, cliEntry: entry, autoSandbox: 'workspace' }), gigabad: giga(badShim),
+      // live thinking turned on in the config (off by default until verified on the target)
+      gigapartial: giga(shim, { node: process.execPath, cliEntry: entry, partialMessagesFlag: '--include-partial-messages' }),
+    },
     integrations: { tasks: { enabled: true, server: 'nope', tools: { find: 'x' } } },
   });
 });
@@ -106,7 +110,7 @@ test('exact argv on new and resumed turns; settings.json without permissions; id
   await waitFor(async () => (await h.api('GET', `/api/sessions/${s.id}/messages`)).body.some((m) => m.kind === 'assistant' && m.text.includes(`resumed ${ext}, turn 2`)), { what: 'turn 2' });
 
   const [first, second] = runs().filter((r) => r.env.HARNESS_SESSION_ID === s.id);
-  const tail = ['--approval-mode', 'auto', '--output-format', 'stream-json', '--include-partial-messages']; // auto runs under the workspace sandbox
+  const tail = ['--approval-mode', 'auto', '--output-format', 'stream-json']; // auto runs under the workspace sandbox; no partial messages by default
   // orchestration.subagents "harness" (default): the sub-agent context block leads the first prompt of a CLI session
   assert.deepEqual(first.argv, ['--max-old-space-size=6144', entry, '-p', `${SUBAGENT_CONTEXT}\n\nhello`, ...tail]);
   assert.deepEqual(second.argv, ['--max-old-space-size=6144', entry, '--resume', ext, '-p', 'again', ...tail]);
@@ -144,7 +148,7 @@ test('exact argv on new and resumed turns; settings.json without permissions; id
 });
 
 test('a CLI that rejects --include-partial-messages: remembered, the same turn runs again without it', async () => {
-  const s = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'giga', cwd: repo, prompt: '#nopartial привет' })).body;
+  const s = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'gigapartial', cwd: repo, prompt: '#nopartial привет' })).body;
   await waitFor(async () => (await h.api('GET', `/api/sessions/${s.id}/messages`)).body.some((m) => m.kind === 'assistant'), { what: 'answer after the retry' });
   const msgs = (await h.api('GET', `/api/sessions/${s.id}/messages`)).body;
   assert.ok(msgs.some((m) => m.kind === 'system' && m.text.includes('--include-partial-messages')), 'says why it retried');

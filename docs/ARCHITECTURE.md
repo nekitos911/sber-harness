@@ -254,7 +254,8 @@ Launchers: `gigacode`, `qwen`, `gemini` (same argv family: `[--resume <id>] -p <
 stream-json --verbose --permission-mode <mode> [--model] [--resume <id>] --mcp-config <file> --allowedTools mcp__harness
 --disallowedTools Task Agent`), `mock` (`node scripts/mock-agent.js` with the gigacode argv). One shared tolerant
 normalizer handles the Claude/Qwen style (`system/assistant/user/result`, `stream_event` — live text/thinking deltas; headless
-GigaCode runs with `partialMessagesFlag` `--include-partial-messages`, and a CLI that rejects it before any output is
+GigaCode runs with `partialMessagesFlag` (opt-in: `agents.gigacode.partialMessagesFlag: "--include-partial-messages"`; off by
+default — with it on the target, tool calls came without their arguments), and a CLI that rejects it before any output is
 remembered in `agentMeta.<id>.partialUnsupported` and the same turn runs again without it; GigaCode and claude) and the
 Gemini style (`init/message/tool_use/tool_result/error/result`; gemini). Any object with `session_id`/`sessionId`
 yields a `session` event. Tokens come from the `result` event only (per-step assistant usage does not add up to it).

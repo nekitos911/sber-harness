@@ -41,13 +41,14 @@ function stepLine(t: ToolCall): { icon: ReactNode; text: ReactNode } {
   }
   if (/^(skill|activate_skill|use_skill)$/i.test(t.name)) return { icon: <Sparkles />, text: <>Навык {String(input.skill ?? input.name ?? '')}</> }
   const file = pathOf(t.input)
+  const now = t.status === 'running' // «Читает» while it runs, «Прочитано» once done
   switch (toolKind(t.name)) {
-    case 'read': return { icon: <Eye />, text: <>Прочитано <span className="mono">{file ? basename(file) : summarizeInput(t.input)}</span></> }
+    case 'read': return { icon: <Eye />, text: <>{now ? 'Читает' : 'Прочитано'} <span className="mono">{file ? basename(file) : summarizeInput(t.input)}</span></> }
     case 'edit': {
       const e = fileEdit(t.input)
-      return { icon: <Pencil />, text: <>Изменено <span className="mono">{file ? basename(file) : summarizeInput(t.input)}</span>{e && <span className="diff-stat num"> <span className="add">+{e.added}</span> <span className="del">−{e.removed}</span></span>}</> }
+      return { icon: <Pencil />, text: <>{now ? 'Изменяет' : 'Изменено'} <span className="mono">{file ? basename(file) : summarizeInput(t.input)}</span>{e && <span className="diff-stat num"> <span className="add">+{e.added}</span> <span className="del">−{e.removed}</span></span>}</> }
     }
-    case 'shell': return { icon: <SquareTerminal />, text: <span className="mono">{String(input.command ?? input.cmd ?? summarizeInput(t.input))}</span> }
+    case 'shell': return { icon: <SquareTerminal />, text: <span className="mono">{String(input.command ?? input.cmd ?? (summarizeInput(t.input) || t.name))}</span> } // no arguments yet: at least the tool
     case 'search': return { icon: <Search />, text: <>Поиск <span className="mono">{String(input.pattern ?? input.query ?? summarizeInput(t.input))}</span></> }
     case 'mcp': {
       const [server, tool] = mcpParts(t.name)
