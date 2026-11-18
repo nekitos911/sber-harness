@@ -63,6 +63,7 @@ function useBusy() {
 function WorkspaceDialog() {
   const [path, setPath] = useState('')
   const [name, setName] = useState('')
+  const [picking, setPicking] = useState(false)
   const [busy, run, step] = useBusy()
   const valid = isAbsolutePath(path)
   return (
@@ -82,11 +83,19 @@ function WorkspaceDialog() {
         closeDialog()
       })}
     >
-      <label className="field">
-        <span>Путь к папке</span>
-        <input className="input mono" autoFocus placeholder="D:\projects\my-service" value={path} onChange={(e) => setPath(e.target.value)} />
+      <div className="field">
+        <span>Папка проекта</span>
+        <div className="chips-row" style={{ flexWrap: 'nowrap' }}>
+          <input className="input mono" style={{ flex: 1 }} aria-label="Путь к папке" placeholder="D:\projects\my-service" value={path} onChange={(e) => setPath(e.target.value)} />
+          <Button icon={<FolderPlus />} autoFocus onClick={() => setPicking(true)}>Обзор…</Button>
+        </div>
         {path && !valid && <span className="field-error">Нужен абсолютный путь, например C:\code\app</span>}
-      </label>
+        {!path && <span className="field-hint">Выберите папку кнопкой «Обзор…» или вставьте путь.</span>}
+      </div>
+      {picking && (
+        <FolderPicker title="Папка проекта" initial={path || null} submitLabel="Выбрать эту папку"
+          onClose={() => setPicking(false)} onPick={(p) => { setPath(p); setPicking(false) }} />
+      )}
       <label className="field">
         <span>Название</span>
         <input className="input" placeholder={path ? basename(path) : 'по имени папки'} value={name} onChange={(e) => setName(e.target.value)} />
