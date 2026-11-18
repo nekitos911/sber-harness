@@ -146,13 +146,15 @@ export function ChangesTab({ cwd }: { cwd: string }) {
     toast(res.summary || res.output?.trim().split('\n').pop() || 'Отправлено', 'ok')
     refreshGit(cwd)
   }
-  const stage = async (paths: string[], on: boolean) => {
-    if ((await tryApi('POST', `/git/${on ? 'stage' : 'unstage'}`, { cwd, paths })) !== undefined) refreshGit(cwd)
+  // paths, or every change at once ({ all: true }: «Добавить всё в индекс» / «Убрать всё из индекса»)
+  const stage = async (paths: string[] | 'all', on: boolean) => {
+    if ((await tryApi('POST', `/git/${on ? 'stage' : 'unstage'}`, paths === 'all' ? { cwd, all: true } : { cwd, paths })) !== undefined) refreshGit(cwd)
   }
   const discard = (f: GitFile) => openDialog({
     kind: 'confirm', title: `Отменить изменения в ${splitPath(f.path).name}?`, danger: true, ok: 'Отменить изменения',
     text: f.status === '?' ? `Новый файл ${f.path} будет удалён.` : `Изменения в ${f.path} будут потеряны.`,
-    onConfirm: () => void tryApi('POST', '/git/discard', { cwd, paths: [f.path] }).then((r) => { if (r !== undefined) refreshGit(cwd) }),
+    // confirm: true only after this dialog — the server refuses a discard without it
+    onConfirm: () => void tryApi('POST', '/git/discard', { cwd, paths: [f.path], confirm: true }).then((r) => { if (r !== undefined) refreshGit(cwd) }),
   })
   const createPr = () => openDialog({ kind: 'pr', cwd, base: suggest?.pr.base ?? undefined })
 
@@ -167,8 +169,8 @@ export function ChangesTab({ cwd }: { cwd: string }) {
     { label: 'Только push', onSelect: () => void push() },
     { label: 'Создать PR', disabled: !prEnabled, onSelect: createPr },
     ...(stageOn ? [
-      { label: 'Добавить всё в индекс', divider: true, disabled: !unstaged.length, onSelect: () => void stage(unstaged.map((f) => f.path), true) },
-      { label: 'Убрать всё из индекса', disabled: !staged.length, onSelect: () => void stage(staged.map((f) => f.path), false) },
+      { label: 'Добавить всё в индекс', divider: true, disabled: !unstaged.length, onSelect: () => void stage('all', true) },
+      { label: 'Убрать всё из индекса', disabled: !staged.length, onSelect: () => void stage('all', false) },
     ] : []),
   ]
   const moreItems: MenuItem[] = [
@@ -248,11 +250,11 @@ export function ChangesTab({ cwd }: { cwd: string }) {
       {files.length === 0 && <p className="muted scm-clean">Рабочая копия чистая: агенты здесь ничего не меняли или всё закоммичено.</p>}
       {staged.length > 0 && (
         <FileGroup label="Проиндексировано" files={staged.filter(match)} total={staged.length} cwd={cwd} git={git} staged stageOn={stageOn}
-          onAll={() => void stage(staged.map((f) => f.path), false)} onStage={(f) => void stage([f.path], false)} onDiscard={discard} />
+          onAll={() => void stage('all', false)} onStage={(f) => void stage([f.path], false)} onDiscard={discard} />
       )}
       {unstaged.length > 0 && (
         <FileGroup label="Изменения" files={unstaged.filter(match)} total={unstaged.length} cwd={cwd} git={git} stageOn={stageOn}
-          onAll={() => void stage(unstaged.map((f) => f.path), true)} onStage={(f) => void stage([f.path], true)} onDiscard={discard} />
+          onAll={() => void stage('all', true)} onStage={(f) => void stage([f.path], true)} onDiscard={discard} />
       )}
       {service.length > 0 && (
         <Disclosure className="service-files" summary={<span className="muted">Служебные, не коммитятся (.superpowers) · {service.length}</span>}>

@@ -47,6 +47,8 @@ export async function gitAction<T>(cwd: string, kind: GitKind, body: Record<stri
       setState((s) => ({ agentGit: { ...s.agentGit, [k]: { ...s.agentGit[k]!, status: ok ? 'ok' : 'error', text: ok ? DONE_TEXT[kind](r) : undefined, url: r.url ?? null, error: ok ? undefined : ev.error || r.error || 'агент не подтвердил результат' } } }))
       refreshGit(cwd)
       loadPr(cwd, true)
+      // the agent's commit may land after its turn's last event: once more a moment later
+      window.setTimeout(() => refreshGit(cwd), 1500)
       if (ok) onOk?.()
     })
     return 'agent'
