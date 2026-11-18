@@ -157,7 +157,7 @@ function AgentCard({ s, nested, parent }: { s: Session; nested: boolean; parent?
       {task && (
         <button type="button" className="agent-task" onClick={() => openTask(task.id)} data-tip={task.title} data-tip-trunc>
           <span className="mono">{task.externalId ?? task.id}</span>
-          <span className="ellipsis">{task.title}</span>
+          {!s.title.includes(task.title) && <span className="ellipsis">{task.title}</span>/* the chat is usually named after the task: once is enough */}
         </button>
       )}
       {!nested && parent && (
