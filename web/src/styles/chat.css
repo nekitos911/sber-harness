@@ -415,3 +415,7 @@ svg.step-icon.spinner { color: var(--lamp-run); }
 .perm-actions { flex-wrap: wrap; min-width: 0; }
 .perm-actions .btn { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .perm-card { min-width: 0; overflow-wrap: anywhere; }
+/* the queue header folds the list (like a step group) */
+.cq-toggle { display: inline-flex; align-items: center; gap: 6px; padding: 0; border: 0; background: none; color: inherit; font: inherit; cursor: pointer; text-align: left; }
+.cq-toggle svg { width: 14px; height: 14px; flex-shrink: 0; color: var(--ink-3); }
+.cq-toggle:hover { color: var(--ink); }

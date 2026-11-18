@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef, useState } from 'react'
-import { ArrowUp, Clock, FileText, Pencil, Plus, Square, X } from 'lucide-react'
+import { ArrowUp, ChevronDown, ChevronUp, Clock, FileText, Pencil, Plus, Square, X } from 'lucide-react'
 import { tryApi } from '../../api'
 import { getState, setDraft, setState, useStore, upsertSession } from '../../store'
 import type { Session } from '../../types'
@@ -181,7 +181,10 @@ function agentLine(text: string) {
  */
 function QueueList({ session }: { session: Session }) {
   const queue = session.queue ?? []
+  // folds like a step list: a long queue (agents' reports piling up) starts folded, the header still counts them
+  const [open, setOpen] = useState<boolean | null>(null)
   if (!queue.length) return null
+  const shown = open ?? queue.length <= 3
   const running = session.status === 'running'
   const take = async (id: string) => {
     const s = await tryApi<Session>('DELETE', `/sessions/${session.id}/queue/${id}`)
@@ -200,12 +203,15 @@ ${q.text}` : q.text)
   return (
     <div className="composer-queue" role="list" aria-label="Очередь сообщений">
       <div className="cq-head">
-        <span>{running ? `В очереди: ${queue.length} — уйдёт после текущего шага` : `В очереди: ${queue.length} — агент сейчас не работает`}</span>
+        <button type="button" className="cq-toggle" aria-expanded={shown} onClick={() => setOpen(!shown)}>
+          {shown ? <ChevronUp aria-hidden /> : <ChevronDown aria-hidden />}
+          <span>{running ? `В очереди: ${queue.length} — уйдёт после текущего шага` : `В очереди: ${queue.length} — агент сейчас не работает`}</span>
+        </button>
         {running
           ? <button type="button" className="link-btn" data-tip="Остановить текущий шаг и отправить очередь сразу; контекст сохраняется, помощники доработают и пришлют результат" onClick={() => void tryApi('POST', `/sessions/${session.id}/queue/send`, { interrupt: true })}>Прервать и отправить</button>
           : <button type="button" className="link-btn" onClick={() => void tryApi('POST', `/sessions/${session.id}/queue/send`)}>Отправить сейчас</button>}
       </div>
-      {queue.map((q) => (
+      {shown && queue.map((q) => (
         <div key={q.id} className="cq-item" role="listitem">
           <Clock aria-hidden />
           <span className="cq-text" data-tip={q.from !== 'user' ? q.text.slice(0, 600) : undefined}>{q.from !== 'user' ? agentLine(q.text) : q.text}</span>
