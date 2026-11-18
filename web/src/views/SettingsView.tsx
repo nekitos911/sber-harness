@@ -645,8 +645,19 @@ function PrSection({ form, update }: Omit<SectionProps, 'fieldError'>) {
     <section className="settings-section" id="set-pr">
       <h2>Pull requests</h2>
       <div className="set-rows">
-        <Row label="Создание PR" hint="Кнопка «Создать PR» в панели изменений.">
-          <Switch label="Создание PR" checked={!!pr.enabled} onChange={(v) => update({ ...form, integrations: { ...form.integrations, pr: { ...pr, enabled: v } } })} />
+        <Row label="PR-интеграция" hint={pr.active === undefined ? 'Кнопка «Создать PR» в панели изменений и экран «Пулл-реквесты».'
+          : pr.active ? 'Включена: «Создать PR» и экран «Пулл-реквесты» работают.' : 'Сейчас выключена: MCP-сервер sourcecontrol не найден или интеграция выключена.'}>
+          <Segmented label="PR-интеграция" value={String(pr.enabled ?? 'auto') as 'auto' | 'true' | 'false'}
+            onChange={(v) => update({ ...form, integrations: { ...form.integrations, pr: { ...pr, enabled: v === 'auto' ? 'auto' : v === 'true' } } })}
+            options={[
+              { value: 'auto', label: pr.enabled === 'auto' || pr.enabled === undefined ? (pr.active ? 'Авто (найден sourcecontrol)' : 'Авто (sourcecontrol не найден)') : 'Авто', hint: 'Включается сама, когда есть MCP-сервер sourcecontrol' },
+              { value: 'true', label: 'Вкл' },
+              { value: 'false', label: 'Выкл' },
+            ]} />
+        </Row>
+        <Row label="Ваш логин" hint="Для «Мои PR». Пусто — берётся из sourcecontrol (git_get_user), а если он не ответил — имя пользователя ОС.">
+          <input className="input mono" aria-label="Ваш логин в sourcecontrol" placeholder="авто" value={pr.me ?? ''}
+            onChange={(e) => update({ ...form, integrations: { ...form.integrations, pr: { ...pr, me: e.target.value || null } } })} />
         </Row>
         <Row label="Ограничения" hint="Лимиты сервера sourcecontrol, в байтах UTF-8 (кириллица — 2 байта на букву).">
           <span className="set-readonly">заголовок до <span className="num">{lim.titleBytes ?? 100}</span> байт, описание до <span className="num">{lim.bodyBytes ?? 512}</span> байт</span>

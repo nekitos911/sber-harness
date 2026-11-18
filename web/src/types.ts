@@ -128,6 +128,7 @@ export interface Session {
   // the context after the last turn; lastTurn = that turn's own usage (older drafts sent input/output/cached flat)
   context?: { tokens: number; at?: number; lastTurn?: { input?: number; output?: number; cacheRead?: number } | null; input?: number; output?: number; cached?: number } | null
   contextLimit?: number | null // the model's window
+  cliModel?: string | null // the model the CLI reported at the turn start (when the chat uses the default)
   mcpStatus?: { name: string; status: string }[] // MCP servers as the CLI reported them at the turn's start
   effectiveApprovalMode?: string | null // what the CLI really runs with (e.g. auto → auto-edit)
   system?: boolean // harness-internal (login terminal, discovery…): shown only under «Служебное»
@@ -327,7 +328,8 @@ export interface Settings {
   board?: BoardSettings
   integrations?: {
     tasks?: { enabled?: boolean; space?: string | string[]; urlTemplate?: string; statusMap?: Record<string, string>; closedStatuses?: string[]; onStartTransition?: string | null }
-    pr?: { enabled?: boolean; limits?: { titleBytes?: number; bodyBytes?: number } }
+    // enabled «auto» = on when the sourcecontrol MCP server is there; active = whether it is on right now
+    pr?: { enabled?: boolean | 'auto'; active?: boolean; me?: string | null; limits?: { titleBytes?: number; bodyBytes?: number } }
   }
 }
 
@@ -354,7 +356,7 @@ export type ServerEvent =
   | { t: 'notify'; n: Notification }
   | { t: 'workspaces'; workspaces: Workspace[] }
   | { t: 'subagents'; sessionId: string; items: SubAgent[] }
-  | { t: 'sdd'; cwd: string; plans: SddPlan[] }
+  | { t: 'sdd'; cwd: string; sessionId?: string | null; plans: SddPlan[] }
   | { t: 'worktree.meta'; path: string; meta: WorktreeMeta }
   | { t: 'term'; id: string; data: string }
   | { t: 'term.replay'; id: string; data: string }

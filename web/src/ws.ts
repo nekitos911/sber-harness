@@ -4,7 +4,7 @@ import { desktopNotify } from './lib/notify'
 import { saveDraft } from './lib/draft'
 import { applyJobEvent } from './lib/jobs'
 import { loadRecovery } from './lib/recovery'
-import { loadSdd } from './lib/sdd'
+import { normalizePlans, sddKey } from './lib/sdd'
 import type { AppState, ClientEvent, Message, ServerEvent, Session, SubAgent, Worktree } from './types'
 
 type TermListener = (data: string, replay: boolean) => void
@@ -230,13 +230,10 @@ function apply(ev: ServerEvent) {
       }))
       break
     }
-    case 'sdd': {
-      setState((s) => ({ sdd: { ...s.sdd, [wtKey(ev.cwd)]: ev.plans } }))
-      // the plans of single chats in this folder are asked again (the server filters them)
-      const prefix = `${wtKey(ev.cwd)}|`
-      for (const k of Object.keys(getState().sdd)) if (k.startsWith(prefix)) loadSdd(ev.cwd, true, k.slice(prefix.length))
+    case 'sdd':
+      // with sessionId: only that chat's plans (the server filters them); without: the whole folder
+      setState((s) => ({ sdd: { ...s.sdd, [sddKey(ev.cwd, ev.sessionId)]: normalizePlans(ev.plans) } }))
       break
-    }
     case 'term':
     case 'term.replay':
       terms.get(ev.id)?.(ev.data, ev.t === 'term.replay')

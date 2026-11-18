@@ -8,6 +8,13 @@ const inflight = new Set<string>()
 /** Store key: a folder's plans, or only those relevant to one chat (its task key, files it changed). */
 export const sddKey = (cwd: string, sessionId?: string | null) => (sessionId ? `${wtKey(cwd)}|${sessionId}` : wtKey(cwd))
 
+/** Server plans in a safe shape (missing arrays → []); keeps progress.done (null = no markers in the ledger). */
+export const normalizePlans = (plans: unknown): SddPlan[] => (Array.isArray(plans) ? (plans as SddPlan[]).map((p) => ({
+  ...p,
+  progress: { raw: p?.progress?.raw ?? '', items: Array.isArray(p?.progress?.items) ? p.progress.items : [], done: p?.progress?.done },
+  verdicts: Array.isArray(p?.verdicts) ? p.verdicts : [],
+})) : [])
+
 /**
  * /full-task ledger and verdicts of a worktree — with `sessionId` only the plans of that chat; null when this server
  * has no /api/sdd. Live updates come over WS.
@@ -18,7 +25,7 @@ export function loadSdd(cwd: string, force = false, sessionId?: string | null) {
   if (inflight.has(k) || (!force && k in getState().sdd)) return
   inflight.add(k)
   api<{ plans: SddPlan[] }>('GET', `/sdd${qs({ cwd, sessionId })}`)
-    .then((r) => (Array.isArray(r?.plans) ? r.plans.map((p) => ({ ...p, progress: { raw: p?.progress?.raw ?? '', items: Array.isArray(p?.progress?.items) ? p.progress.items : [] }, verdicts: Array.isArray(p?.verdicts) ? p.verdicts : [] })) : []), () => null)
+    .then((r) => normalizePlans(r?.plans), () => null)
     .then((plans) => setState((s) => ({ sdd: { ...s.sdd, [k]: plans } })))
     .finally(() => inflight.delete(k))
 }
