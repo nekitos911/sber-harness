@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { FileText, RefreshCw } from 'lucide-react'
 import { api, errorText, qs } from '../api'
-import { openTab } from '../store'
+import { openTab, useStore, wtKey } from '../store'
+import { PR_STATE } from '../lib/pr'
 import { parseDiff, type DiffFile } from '../lib/diff'
 import { plural } from '../lib/format'
 import { Skeleton } from '../components/bits'
@@ -18,6 +19,7 @@ export function DiffView({ cwd, path }: { cwd: string; path: string | null }) {
   const [diff, setDiff] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [tick, setTick] = useState(0)
+  const pr = useStore((s) => s.prs[wtKey(cwd)])
   const git = useGit(cwd) // a fresh git read (a turn ended, a commit) re-reads this diff too
 
   useEffect(() => {
@@ -60,7 +62,11 @@ export function DiffView({ cwd, path }: { cwd: string; path: string | null }) {
         ) : diff === null ? (
           <Skeleton rows={8} label="Загрузка diff…" />
         ) : files.length === 0 ? (
-          <div className="empty"><p>Изменений нет.</p></div>
+          <div className="empty">
+            <p>Изменений нет{git?.status?.ahead ? ': всё закоммичено' : ''}.</p>
+            {/* after a PR the work is not gone — it is there */}
+            {pr && typeof pr === 'object' && 'url' in pr && <p>Изменения отправлены в <a href={pr.url} target="_blank" rel="noreferrer noopener">PR #{pr.index}</a> · {PR_STATE[pr.state]}.</p>}
+          </div>
         ) : (
           files.map((f, i) => <FileDiff key={`${f.path}:${i}`} cwd={cwd} f={f} open={i < OPEN_FILES} />)
         )}
