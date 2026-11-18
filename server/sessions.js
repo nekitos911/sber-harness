@@ -373,6 +373,21 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
 
   /** Built-in sub-agent activity (parent_tool_use_id) -> compact lines on the parent tool call, not the main chat. */
   const SUBAGENT_TOOLS = /^(agent|fork)$/i;
+  // harness `agent` calls whose stream line has not come yet: parent id -> [{ prompt, workerId, at }] (see adoptVirtual)
+  const adopted = new Map();
+  function takeAdopted(parentId, prompt) {
+    const list = (adopted.get(parentId) || []).filter((x) => Date.now() - x.at < 10 * 60000);
+    const i = list.findIndex((x) => x.prompt === prompt);
+    const hit = i >= 0 ? list.splice(i, 1)[0] : null;
+    if (list.length) adopted.set(parentId, list); else adopted.delete(parentId);
+    return hit?.workerId ?? null;
+  }
+  /** The copy goes; the parent's tool line opens the real chat (in place: the running turn writes this message again). */
+  function replaceCopy(v, workerId) {
+    const line = [...(runtime(v.parentId).cur?.tools?.values() ?? []), ...store.messages(v.parentId)].find((m) => m.tool?.subSessionId === v.id);
+    if (line) { line.tool.subSessionId = workerId; updateMessage(get(v.parentId), line); }
+    api.remove(v.id, { force: true });
+  }
   const virtualId = (sid, toolId) => `${sid}~${toolId}`;
 
   /** Level 1: a built-in sub-agent call (agent/fork tool) becomes a read-only chat nested under its parent. */
@@ -391,6 +406,8 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     const id = virtualId(s.id, ev.id);
     const now = Date.now();
     const info = virtualInfo(ev.name, ev.input);
+    const real = takeAdopted(s.id, info.prompt);
+    if (real) return real;
     const v = find(id) || {
       id, kind: 'chat', virtual: true, title: info.title, agent: s.agent, launcherId: null,
       cwd: s.cwd, workspaceId: s.workspaceId, worktreePath: s.worktreePath ?? null, system: !!s.system, branch: s.branch, role: 'subagent', parentId: s.id, taskId: s.taskId, status: 'running',
@@ -408,8 +425,10 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
   /** The real input arrived after the call (ACP): redo the chat's title, model and task message. */
   function fillVirtual(c, id, name, input) {
     const v = find(id);
-    if (!v) return;
+    if (!v?.virtual) return;
     const info = virtualInfo(name, input);
+    const real = takeAdopted(v.parentId, info.prompt);
+    if (real) return replaceCopy(v, real);
     Object.assign(v, { title: info.title, model: info.model ?? v.model });
     emit(v);
     const first = c.virtualPrompts?.get(id);
@@ -1602,6 +1621,19 @@ ${note.trim()}` : text });
       }
       if (n) console.log(`[harness] auto-archived ${n} inactive session(s)`);
       return n;
+    },
+
+    /**
+     * The harness's own `agent` tool (worker_run with the built-in tool's arguments) can reach the stream as a call named
+     * «agent» (ACP shows the bare MCP tool name): it opened a read-only copy as if it were the built-in sub-agent while
+     * the harness started the real chat. The copy of that call goes; its tool line opens the real chat. → adopted?
+     */
+    adoptVirtual(parentId, workerId, prompt) {
+      const promptOf = (v) => store.messages(v.id).find((m) => m.kind === 'user')?.text ?? '';
+      const v = db.sessions.find((x) => x.virtual && x.parentId === parentId && x.status === 'running' && promptOf(x) === prompt);
+      if (v) return replaceCopy(v, workerId);
+      // not in the stream yet (or its arguments are not): matched when they come (openVirtual / fillVirtual)
+      adopted.set(parentId, [...(adopted.get(parentId) || []), { prompt, workerId, at: Date.now() }]);
     },
 
     remove(sid, { force = false } = {}) {

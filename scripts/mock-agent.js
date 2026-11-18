@@ -273,7 +273,24 @@ async function runSubagent(profile, spec, extra = {}) {
   }
 }
 
+/** #agentmcp <type> <prompt>: the harness's `agent` MCP tool, its call reaching the stream under the bare name «agent». */
+async function runAgentTool(type, prompt) {
+  const id = `agent_${++toolSeq}`;
+  const args = { subagent_type: type, description: 'probe', prompt };
+  emit({ type: 'tool_use', tool_name: 'agent', tool_id: id, parameters: args });
+  try {
+    const r = await runAndWait('agent', args);
+    emit({ type: 'tool_result', tool_id: id, status: 'success', output: JSON.stringify(r) });
+    return say(` agent result: ${r.summary}`);
+  } catch (e) {
+    emit({ type: 'tool_result', tool_id: id, status: 'error', output: e.message });
+    return say(` agent failed: ${e.message}`);
+  }
+}
+
 for (const l of lines) {
+  const am = l.match(/#agentmcp\s+(\S+)\s+(.+)/);
+  if (am) { await runAgentTool(am[1], am[2].trim()); continue; }
   const m = l.match(/#spawn\s+(.+)/);
   const run = l.match(/#run\s+(\S+)\s+(.+)/);
   const runwt = l.match(/#runwt\s+(\S+)\s+(.+)/); // a sub-agent in a new worktree (persistent)

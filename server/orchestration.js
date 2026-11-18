@@ -1133,7 +1133,11 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
         worktree: str('current or new; omit it for the automatic choice (new when workspace is another repository, else current)', { enum: ['current', 'new'] }), workspace: str('another repository (workspace name): a persistent child there'),
         timeoutMin: { type: 'number', description: 'minutes to wait (default 60)' },
       }, ['prompt']),
-      run: (a, c) => workerRun({ ...a, profile: a.subagent_type, spec: a.prompt }, c),
+      run: async (a, c) => {
+        const r = await workerRun({ ...a, profile: a.subagent_type, spec: a.prompt }, c);
+        sessions.adoptVirtual(c.id, r.sessionId, a.prompt); // one chat per helper, not the real one and a copy
+        return r;
+      },
     },
     {
       name: 'worker_list',

@@ -224,3 +224,13 @@ test('first-run setup: the person\'s own commands and skills are found; setupDon
   s = (await h.api('GET', '/api/settings')).body;
   assert.equal(s.user.setupDone, true);
 });
+
+test('the harness agent tool reaching the stream as «agent»: one chat per helper — the read-only copy goes, the tool line opens the real chat', async () => {
+  const caller = await chat('#agentmcp general-purpose проверь возможности #done ок');
+  await waitFor(async () => (await messages(caller.id)).some((m) => m.kind === 'assistant' && m.text.includes('agent result:')), { timeout: 20000, what: 'result' });
+  const kids = (await state()).sessions.filter((s) => s.parentId === caller.id);
+  assert.deepEqual(kids.map((s) => !!s.virtual), [false], 'only the real helper chat, no virtual copy');
+  const line = (await messages(caller.id)).find((m) => m.kind === 'tool' && m.tool?.name === 'agent');
+  assert.equal(line.tool.subSessionId, kids[0].id, '«Открыть чат субагента» leads to the real chat');
+  assert.match(kids[0].title, /general-purpose/);
+});
