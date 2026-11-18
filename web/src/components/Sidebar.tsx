@@ -754,8 +754,8 @@ function SessionRow({ s, nested, level = 0, caret, via, from }: {
   // the model (as the picker names it); the agent's name only tells something when chats of several agents are listed
   const modelId = s.model ?? s.cliModel
   const catalog = useStore((st) => st.agents.find((x) => x.id === s.agent)?.models)
-  const model = !cards.showModel ? '' : s.kind === 'terminal' ? 'shell' : modelId ? modelLabel(modelId, normModels(catalog)) : mixed ? s.agent : ''
-  const when = cards.showTime ? relTime(s.lastActivityAt, now) : ''
+  const model = !cards.showModel ? '' : s.kind === 'terminal' ? 'shell' : modelId ? modelLabel(modelId, normModels(catalog)).replace(/-\d+[km]$/i, '') : mixed ? s.agent : ''
+  const when = cards.showTime ? relTime(s.lastActivityAt, now).replace('только что', 'сейчас') : '' // short: the title needs the room
   return (
     <>
     <div
