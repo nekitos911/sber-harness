@@ -335,8 +335,16 @@ export interface Settings {
   }
 }
 
-export interface GitFile { path: string; x: string; y: string; status: 'M' | 'A' | 'D' | 'R' | '?' | 'U'; service?: boolean /* .superpowers etc.: never committed */ }
-export interface GitStatus { branch: string | null; upstream: string | null; ahead: number; behind: number; files: GitFile[] }
+export interface GitFile {
+  path: string; x: string; y: string; status: 'M' | 'A' | 'D' | 'R' | '?' | 'U'
+  service?: boolean // .superpowers etc.: never committed
+  staged?: boolean // in the index (servers with staging, feature git-stage)
+}
+export interface GitStatus {
+  branch: string | null; upstream: string | null; ahead: number; behind: number; files: GitFile[]
+  totals?: { added: number; removed: number } // the whole change set's +/−
+  webUrl?: string | null // the branch in the code host, when known
+}
 export interface GitCommit { hash: string; subject: string; author: string; at: number }
 export interface GitSuggest {
   taskId: string | null

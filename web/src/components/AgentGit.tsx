@@ -1,10 +1,8 @@
 import { X } from 'lucide-react'
-import { api } from '../api'
-import { openSession, setState, toast, useFeature, useStore, wtKey } from '../store'
+import { openSession, useStore, wtKey } from '../store'
 import { useElapsed } from '../lib/live'
-import { clear, type GitVia } from '../lib/agentGit'
-import type { Settings } from '../types'
-import { Button, Segmented } from './ui'
+import { clear } from '../lib/agentGit'
+import { Button } from './ui'
 
 const DOING = { commit: 'Агент коммитит…', push: 'Агент отправляет ветку…', pr: 'Агент создаёт PR…' }
 
@@ -32,29 +30,5 @@ export function AgentGitLine({ cwd }: { cwd: string }) {
         {job.direct && <Button size="sm" onClick={() => { clear(cwd); job.direct!() }}>Сделать напрямую</Button>}
       </span>
     </div>
-  )
-}
-
-const VIA_TIP = 'Через агента — работают хуки и навыки GigaCode, медленнее; напрямую — git из harness'
-
-/** «Через агента · Напрямую»: git.via, saved in the settings at once. */
-export function ViaSwitch() {
-  const on = useFeature('git-via-agent')
-  const settings = useStore((s) => s.settings)
-  if (!on || !settings) return null
-  const via: GitVia = settings.git.via ?? 'agent'
-  const set = async (v: GitVia) => {
-    try {
-      const saved = await api<Settings>('PUT', '/settings', { ...settings, git: { ...settings.git, via: v } })
-      setState({ settings: saved ?? { ...settings, git: { ...settings.git, via: v } } })
-    } catch (e) {
-      toast(`Не удалось сохранить: ${(e as Error).message}`, 'error')
-    }
-  }
-  return (
-    <span className="via-switch" data-tip={VIA_TIP}>
-      <Segmented size="sm" label="Как коммитить и отправлять" value={via} onChange={(v) => void set(v)}
-        options={[{ value: 'agent', label: 'Через агента' }, { value: 'harness', label: 'Напрямую' }]} />
-    </span>
   )
 }

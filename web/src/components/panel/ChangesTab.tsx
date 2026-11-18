@@ -1,46 +1,61 @@
-import { useEffect, useRef, useState } from 'react'
-import { ArrowDown, ArrowUp, ChevronRight, GitPullRequest, RotateCcw, Upload } from 'lucide-react'
-import { api, qs } from '../../api'
-import { openDialog, openTab, openTask, openWorktree, showPanel, toast, useFeature, useStore } from '../../store'
+import { useEffect, useRef, useState, type MouseEvent } from 'react'
+import { ArrowRight, ChevronDown, ChevronRight, Ellipsis, ExternalLink, File, FileCode, FileJson, FileText, GitBranch, GitPullRequest, Minus, Plus, RotateCcw, Search, Sparkles } from 'lucide-react'
+import { api, qs, tryApi } from '../../api'
+import { getState, openDialog, openTab, openTask, openWorktree, setState, showPanel, toast, useFeature, useStore } from '../../store'
 import { basename, normPath, plural, relTime, shortHash } from '../../lib/format'
 import { loadDraft, saveDraft } from '../../lib/draft'
-import { diffOf, gsLetter, refreshGit, splitPath, useGit } from '../../lib/git'
+import { gsLetter, refreshGit, splitPath, useGit } from '../../lib/git'
 import { useNow } from '../../lib/useNow'
-import type { GitCommit, GitFile, GitSuggest } from '../../types'
-import type { DiffFile } from '../../lib/diff'
-import { DiffLines } from '../DiffLines'
-import { Button, Disclosure } from '../ui'
-import { PrCard } from '../PrChip'
+import type { GitCommit, GitFile, GitSuggest, Settings } from '../../types'
+import { Disclosure, Menu, type MenuItem } from '../ui'
 import { openPrSettings, usePr } from '../../lib/pr'
 import { Skeleton } from '../bits'
-import { GenerateButton, GenerateStatus, useGenerate, type Generated } from '../GenerateMessage'
-import { AgentGitLine, ViaSwitch } from '../AgentGit'
-import { currentVia, gitAction } from '../../lib/agentGit'
+import { GenerateStatus, useGenerate, type Generated } from '../GenerateMessage'
+import { AgentGitLine } from '../AgentGit'
+import { currentVia, gitAction, type GitVia } from '../../lib/agentGit'
 import { useSettings } from '../../lib/agents'
+import { BranchPicker } from '../pickers/BranchPicker'
+import { openFolder } from '../WorktreeMenu'
 
 // what the agent wrote per change set: a remount (tab switch, panel toggle) shows it again without a new run
 const generatedCache = new Map<string, Generated>()
 
 const STATUS_LABEL: Record<GitFile['status'], string> = { M: 'изменён', A: 'добавлен', D: 'удалён', R: 'переименован', '?': 'новый, не в git', U: 'конфликт' }
+const TITLE_MAX = 72
 
+/** The message box holds title and body as one text: the first line is the title. */
+const split = (msg: string) => { const [t = '', ...rest] = msg.split('\n'); return { title: t.trim(), body: rest.join('\n').trim() } }
+const join = (g: { title: string; body: string }) => (g.body ? `${g.title}\n\n${g.body}` : g.title)
+
+/**
+ * «Изменения» (like Orca's source control): PR button, file search and «⋯»; the branch with the change totals and its
+ * upstream; one message box (✨ writes it); a split «Закоммитить» button; staged and unstaged files; commits folded below.
+ */
 export function ChangesTab({ cwd }: { cwd: string }) {
   const prEnabled = useStore((s) => s.integrations.pr)
+  const prSupported = useFeature('pr-status')
+  const stageOn = useFeature('git-stage')
   const git = useGit(cwd)
   const now = useNow()
+  const pr = usePr(prEnabled && prSupported ? cwd : null)
   const [suggest, setSuggest] = useState<GitSuggest | null>(null)
   const [log, setLog] = useState<GitCommit[] | null>(null)
   const draftKey = `commit:${normPath(cwd)}`
   const [saved] = useState(() => loadDraft<{ title: string; body: string }>(draftKey)) // typed before a reload
-  const [title, setTitle] = useState(saved?.title ?? '')
-  const [body, setBody] = useState(saved?.body ?? '')
+  const [msg, setMsg] = useState(saved ? join(saved) : '')
   const touched = useRef(!!saved) // once the user edits, prefill never overwrites their text
-  const generated = useRef(false) // the fields hold the agent's text: the template prefill no longer replaces it
+  const generated = useRef(false) // the box holds the agent's text: the template prefill no longer replaces it
   const gen = useGenerate(cwd, 'commit')
   const settings = useSettings()
   const autoGen = gen.on && settings?.git.generateMessages !== false
   const [busy, setBusy] = useState<'commit' | 'push' | null>(null)
-  const [pushOutput, setPushOutput] = useState<string | null>(null)
-  const [open, setOpen] = useState<Set<string>>(() => new Set())
+  const [query, setQuery] = useState<string | null>(null) // null = the search field is closed
+  const [menu, setMenu] = useState<'more' | 'split' | null>(null)
+  const moreRef = useRef<HTMLButtonElement>(null)
+  const splitRef = useRef<HTMLButtonElement>(null)
+  const commitsKey = `commits:open:${normPath(cwd)}`
+  const [commitsOpen, setCommitsOpenState] = useState(() => loadDraft<boolean>(commitsKey) ?? false)
+  const setCommitsOpen = (v: boolean) => { setCommitsOpenState(v); saveDraft(commitsKey, v || null) }
 
   const status = git?.status ?? null
   const filesSig = status?.files.map((f) => f.status + f.path).join('|') ?? ''
@@ -54,7 +69,7 @@ export function ChangesTab({ cwd }: { cwd: string }) {
     api<GitSuggest>('GET', `/git/suggest${qs({ cwd })}`).then((s) => {
       if (!live) return
       setSuggest(s)
-      if (!touched.current && !generated.current) { setTitle(s.commit.title); setBody(s.commit.body) }
+      if (!touched.current && !generated.current) setMsg(join(s.commit))
     }, () => undefined)
     api<GitCommit[]>('GET', `/git/log${qs({ cwd, n: 12 })}`).then((l) => { if (live) setLog(l) }, () => undefined)
     return () => { live = false }
@@ -69,15 +84,14 @@ export function ChangesTab({ cwd }: { cwd: string }) {
     if (!r || touched.current) return // never over what the person typed meanwhile
     generatedCache.set(sig, r)
     generated.current = true
-    setTitle(r.title)
-    setBody(r.body)
+    setMsg(join(r))
   }
-  // Auto: once per change set, 800 ms after it settles, while the fields are untouched and the panel is on screen.
+  // Auto: once per change set, 800 ms after it settles, while the box is untouched and the panel is on screen.
   const askedFor = useRef<string | null>(null)
   useEffect(() => {
     if (!autoGen || !hasChanges || touched.current || askedFor.current === changeSig) return
     const cached = generatedCache.get(changeSig)
-    if (cached) { askedFor.current = changeSig; generated.current = true; setTitle(cached.title); setBody(cached.body); return }
+    if (cached) { askedFor.current = changeSig; generated.current = true; setMsg(join(cached)); return }
     const t = window.setTimeout(() => {
       if (document.visibilityState !== 'visible' || touched.current) return
       askedFor.current = changeSig
@@ -89,143 +103,168 @@ export function ChangesTab({ cwd }: { cwd: string }) {
   if (git?.error) return <LinkedWorktrees cwd={cwd} error={git.error} />
   if (!status) return <div className="wpanel-section"><Skeleton rows={4} /></div>
 
-  const edit = (next: { title?: string; body?: string }) => {
+  const edit = (v: string) => {
     touched.current = true
     if (gen.running) gen.cancel() // typing wins over a message still being written
-    const d = { title, body, ...next }
-    setTitle(d.title)
-    setBody(d.body)
-    saveDraft(draftKey, d)
+    setMsg(v)
+    saveDraft(draftKey, split(v))
   }
-  const reapply = () => {
-    if (!suggest) return
-    touched.current = false
-    saveDraft(draftKey, null)
-    setTitle(suggest.commit.title)
-    setBody(suggest.commit.body)
-  }
-
-  // the message is committed: the fields start over (a new change set may get a new generated message)
+  // the message is committed: the box starts over (a new change set may get a new generated message)
   const committed = () => {
     touched.current = false
     generated.current = false
     saveDraft(draftKey, null)
-    setTitle('')
-    setBody('')
+    setMsg('')
   }
-  const commit = async () => {
-    const message = body.trim() ? `${title.trim()}\n\n${body.trim()}` : title.trim()
+
+  const files = status.files.filter((f) => !f.service)
+  const service = status.files.filter((f) => f.service)
+  // staging: only when the server reports it (GitFile.staged) and can change it (feature git-stage); else commit-all
+  const staged = stageOn ? files.filter((f) => f.staged) : []
+  const unstaged = stageOn ? files.filter((f) => !f.staged) : files
+  const { title } = split(msg)
+  const via = currentVia()
+
+  const commit = async (then?: () => void) => {
     setBusy('commit')
-    // through the agent (git.via «agent»): its hooks and skills run; the line under the buttons follows it
-    const res = await gitAction<{ hash: string }>(cwd, 'commit', { message }, currentVia(), committed)
+    const paths = staged.length ? staged.map((f) => f.path) : undefined
+    // through the agent (git.via «agent»): its hooks and skills run; the line under the button follows it
+    const res = await gitAction<{ hash: string }>(cwd, 'commit', { message: join(split(msg)), ...(paths ? { paths } : {}) }, via, () => { committed(); then?.() })
     setBusy(null)
     if (!res || res === 'agent') return
     toast(`Закоммичено ${shortHash(res.hash)}`, 'ok')
     committed()
     refreshGit(cwd)
+    then?.()
   }
-
   const push = async () => {
     setBusy('push')
-    const res = await gitAction<{ summary?: string; output?: string }>(cwd, 'push', {}, currentVia())
+    const res = await gitAction<{ summary?: string; output?: string }>(cwd, 'push', {}, via)
     setBusy(null)
     if (!res || res === 'agent') return
-    // «Новая ветка feature/T-2 в origin»; git's own words only on request
+    // «Новая ветка feature/T-2 в origin»; git's own words in the toast's details only
     toast(res.summary || res.output?.trim().split('\n').pop() || 'Отправлено', 'ok')
-    setPushOutput(res.output?.trim() || null)
     refreshGit(cwd)
   }
-
-  const toggle = (path: string) => {
-    const next = new Set(open)
-    if (next.has(path)) next.delete(path)
-    else next.add(path)
-    setOpen(next)
+  const stage = async (paths: string[], on: boolean) => {
+    if ((await tryApi('POST', `/git/${on ? 'stage' : 'unstage'}`, { cwd, paths })) !== undefined) refreshGit(cwd)
   }
+  const discard = (f: GitFile) => openDialog({
+    kind: 'confirm', title: `Отменить изменения в ${splitPath(f.path).name}?`, danger: true, ok: 'Отменить изменения',
+    text: f.status === '?' ? `Новый файл ${f.path} будет удалён.` : `Изменения в ${f.path} будут потеряны.`,
+    onConfirm: () => void tryApi('POST', '/git/discard', { cwd, paths: [f.path] }).then((r) => { if (r !== undefined) refreshGit(cwd) }),
+  })
+  const createPr = () => openDialog({ kind: 'pr', cwd, base: suggest?.pr.base ?? undefined })
 
-  const files = status.files.filter((f) => !f.service)
-  const service = status.files.filter((f) => f.service)
+  // the primary action follows the state: commit the selection, everything, or push what is ahead
+  const mode: 'selected' | 'all' | 'push' = staged.length ? 'selected' : files.length || !status.ahead ? 'all' : 'push'
+  const primaryLabel = busy === 'commit' ? 'Коммит…' : busy === 'push' ? 'Push…'
+    : mode === 'selected' ? `Закоммитить выбранные (${staged.length})` : mode === 'push' ? `Push ↑${status.ahead}` : 'Закоммитить всё'
+  const primaryDisabled = !!busy || gen.running || (mode === 'push' ? false : !files.length || !title)
+  const primary = () => (mode === 'push' ? void push() : void commit())
+  const splitItems: MenuItem[] = [
+    { label: 'Закоммитить и отправить', disabled: !files.length || !title, onSelect: () => void commit(() => void push()) },
+    { label: 'Только push', onSelect: () => void push() },
+    { label: 'Создать PR', disabled: !prEnabled, onSelect: createPr },
+    ...(stageOn ? [
+      { label: 'Добавить всё в индекс', divider: true, disabled: !unstaged.length, onSelect: () => void stage(unstaged.map((f) => f.path), true) },
+      { label: 'Убрать всё из индекса', disabled: !staged.length, onSelect: () => void stage(staged.map((f) => f.path), false) },
+    ] : []),
+  ]
+  const moreItems: MenuItem[] = [
+    { label: 'Обновить', onSelect: () => refreshGit(cwd) },
+    { label: 'Просмотреть весь дифф', disabled: !files.length, onSelect: () => openTab({ kind: 'diff', cwd, path: null }) },
+    { label: 'Открыть папку', onSelect: () => openFolder(cwd) },
+    ...(via ? [
+      { label: `${via === 'agent' ? '✓ ' : ''}Через агента`, divider: true, hint: 'работают хуки и навыки GigaCode', onSelect: () => void saveVia('agent') },
+      { label: `${via === 'harness' ? '✓ ' : ''}Напрямую`, hint: 'git из harness', onSelect: () => void saveVia('harness') },
+    ] : []),
+  ]
+  const q = query?.trim().toLowerCase() ?? ''
+  const match = (f: GitFile) => !q || f.path.toLowerCase().includes(q)
+  const prInfo = pr && typeof pr === 'object' && 'index' in pr ? pr : null
+  const totals = status.totals ?? git?.files?.reduce((t, f) => ({ added: t.added + f.added, removed: t.removed + f.removed }), { added: 0, removed: 0 })
   const taskKey = suggest?.taskId ? suggest.key ?? suggest.taskId : null
-  const totals = git?.files?.reduce((t, f) => ({ add: t.add + f.added, del: t.del + f.removed }), { add: 0, del: 0 })
 
   return (
-    <>
-      <section className="wpanel-section changes">
-        <h3>
-          {files.length === 0 ? 'Нет изменений' : <>Изменено файлов: <span className="num">{files.length}</span></>}
-          {totals && files.length > 0 && <span className="diff-stat num"><span className="add">+{totals.add}</span> <span className="del">−{totals.del}</span></span>}
-          {(status.ahead > 0 || status.behind > 0) && (
-            <span className="muted num ahead" data-tip={status.upstream ?? ''}>
-              {status.ahead > 0 && <><ArrowUp size={11} aria-label="впереди" />{status.ahead} </>}
-              {status.behind > 0 && <><ArrowDown size={11} aria-label="позади" />{status.behind}</>}
-            </span>
-          )}
-          {files.length > 0 && (
-            <button type="button" className="btn btn-ghost btn-sm" style={{ marginLeft: 'auto' }} onClick={() => openTab({ kind: 'diff', cwd, path: null })}>
-              Весь diff
-            </button>
-          )}
-        </h3>
-        {files.length === 0 ? (
-          <p className="muted">Рабочая копия чистая: агенты здесь ничего не меняли или всё закоммичено.</p>
+    <div className="scm">
+      <div className="scm-head">
+        {prInfo ? (
+          <a className="btn btn-sm" href={prInfo.url} target="_blank" rel="noreferrer noopener" data-tip={prInfo.title}><GitPullRequest />Открыть PR #{prInfo.index}</a>
         ) : (
-          <ul className="change-list">
-            {files.map((f) => (
-              <ChangeRow key={f.path} cwd={cwd} f={f} diff={diffOf(git?.files, f.path)} loaded={!!git?.files} open={open.has(f.path)} onToggle={() => toggle(f.path)} />
-            ))}
-          </ul>
+          <button type="button" className="btn btn-sm" disabled={!prEnabled || !branch || branch === suggest?.pr.base}
+            data-tip={!prEnabled ? 'PR-интеграция не настроена' : branch === suggest?.pr.base ? 'Ветка совпадает с базовой' : undefined}
+            onClick={createPr}><GitPullRequest />Создать PR</button>
         )}
-        {service.length > 0 && (
-          <Disclosure className="service-files" summary={<span className="muted">Служебные, не коммитятся (.superpowers) · {service.length}</span>}>
-            <ul className="change-list">
-              {service.map((f) => (
-                <ChangeRow key={f.path} cwd={cwd} f={f} diff={diffOf(git?.files, f.path)} loaded={!!git?.files} open={open.has(f.path)} onToggle={() => toggle(f.path)} />
-              ))}
-            </ul>
-          </Disclosure>
-        )}
-      </section>
+        {!prEnabled && <button type="button" className="link" onClick={openPrSettings}>настроить</button>}
+        {taskKey && suggest?.taskId && <button type="button" className="chip chip-mono" data-tip="Открыть задачу" onClick={() => openTask(suggest.taskId!)}>{taskKey}</button>}
+        <span className="grow" />
+        <button type="button" className="icon-btn icon-btn-sm" aria-label="Искать файл" aria-pressed={query !== null} data-tip="Искать в изменённых файлах" onClick={() => setQuery(query === null ? '' : null)}><Search /></button>
+        <button ref={moreRef} type="button" className="icon-btn icon-btn-sm" aria-label="Ещё" aria-expanded={menu === 'more'} onClick={() => setMenu(menu === 'more' ? null : 'more')}><Ellipsis /></button>
+        <Menu anchor={moreRef} open={menu === 'more'} onClose={() => setMenu(null)} items={moreItems} label="Изменения" placement="bottom-end" />
+      </div>
 
-      <section className="wpanel-section">
-        <h3>
-          Коммит
-          {taskKey && suggest?.taskId && (
-            <button type="button" className="chip chip-mono" data-tip="Открыть задачу" onClick={() => openTask(suggest.taskId!)}>{taskKey}</button>
-          )}
-          {gen.on ? (
-            <span style={{ marginLeft: 'auto' }}>
-              <GenerateButton g={gen} onClick={() => { touched.current = false; saveDraft(draftKey, null); void generate(changeSig) }} />
-            </span>
-          ) : suggest && (title !== suggest.commit.title || body !== suggest.commit.body) && (
-            <button type="button" className="btn btn-ghost btn-sm" style={{ marginLeft: 'auto' }} onClick={reapply} data-tip="Подставить предложенные заголовок и описание">
-              <RotateCcw />
-              Предложенный текст
-            </button>
-          )}
-        </h3>
-        <div className="commit-box" data-generating={gen.running || undefined}>
-          <input className="input" aria-label="Сообщение коммита" placeholder="Сообщение коммита" value={title} disabled={gen.running} onChange={(e) => edit({ title: e.target.value })} />
-          <textarea className="textarea" aria-label="Описание коммита" placeholder="Описание — что и зачем (необязательно)" rows={4} value={body} disabled={gen.running} onChange={(e) => edit({ body: e.target.value })} />
-          <GenerateStatus g={gen} onRetry={() => void generate(changeSig)} />
-          <div className="actions">
-            <Button variant="primary" busy={busy === 'commit'} disabled={!title.trim() || !files.length || !!busy} onClick={commit}>
-              {busy === 'commit' ? 'Коммит…' : `Закоммитить ${files.length ? files.length : ''}`.trim()}
-            </Button>
-            <Button icon={<Upload />} busy={busy === 'push'} disabled={!!busy} onClick={push} tip={status.upstream ? `в ${status.upstream}` : 'Опубликовать ветку'}>
-              {busy === 'push' ? 'Push…' : 'Push'}
-            </Button>
-          </div>
-          <AgentGitLine cwd={cwd} />
-          <ViaSwitch />
-          {pushOutput && <Disclosure className="cli-raw" summary={<span className="muted">Подробности push</span>}><pre className="mono">{pushOutput}</pre></Disclosure>}
+      <div className="scm-branch">
+        <BranchPicker cwd={cwd} branch={branch} placement="bottom-start" label="Сменить ветку">
+          <GitBranch aria-hidden /><span className="mono ellipsis">{branch ?? 'нет ветки'}</span><ChevronDown aria-hidden />
+        </BranchPicker>
+        {totals && (totals.added > 0 || totals.removed > 0) && (
+          <span className="diff-stat num"><span className="add">+{totals.added}</span> <span className="del">−{totals.removed}</span></span>
+        )}
+      </div>
+      {status.upstream && (
+        <div className="scm-upstream">
+          <ArrowRight aria-hidden /><span className="mono ellipsis">{status.upstream}</span>
+          <span className="num muted" data-tip="Впереди / позади upstream">↑{status.ahead} ↓{status.behind}</span>
+          {status.webUrl && <a className="icon-btn icon-btn-sm" href={status.webUrl} target="_blank" rel="noreferrer noopener" aria-label="Открыть в репозитории" data-tip="Открыть ветку в репозитории"><ExternalLink /></a>}
         </div>
-      </section>
+      )}
 
-      <PrSection cwd={cwd} enabled={prEnabled} branch={status.branch} base={suggest?.pr.base ?? null} />
+      <div className="scm-message" data-generating={gen.running || undefined}>
+        <textarea className="textarea" aria-label="Сообщение коммита" placeholder="Сообщение" rows={3} value={msg} disabled={gen.running} onChange={(e) => edit(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !primaryDisabled) { e.preventDefault(); primary() } }} />
+        {gen.on && (
+          <button type="button" className="icon-btn icon-btn-sm scm-gen" aria-label="Сгенерировать сообщение" data-tip="Сгенерировать: GigaCode напишет по изменениям и задаче"
+            disabled={gen.running} onClick={() => { touched.current = false; saveDraft(draftKey, null); void generate(changeSig) }}>
+            <Sparkles className={gen.running ? 'spinner' : undefined} />
+          </button>
+        )}
+      </div>
+      {title.length > TITLE_MAX && <p className="scm-hint">Первая строка — заголовок: <span className="num">{title.length}/{TITLE_MAX}</span>, лучше короче.</p>}
+      <GenerateStatus g={gen} onRetry={() => void generate(changeSig)} />
 
-      <section className="wpanel-section">
-        <h3>Последние коммиты</h3>
-        {log === null ? <Skeleton rows={3} /> : log.length === 0 ? <p className="muted">Коммитов пока нет.</p> : (
+      <div className="split-btn">
+        <button type="button" className="btn btn-primary" disabled={primaryDisabled} onClick={primary}>{primaryLabel}</button>
+        <button ref={splitRef} type="button" className="btn btn-primary split-more" aria-label="Другие действия" aria-expanded={menu === 'split'} disabled={!!busy}
+          onClick={() => setMenu(menu === 'split' ? null : 'split')}><ChevronDown /></button>
+        <Menu anchor={splitRef} open={menu === 'split'} onClose={() => setMenu(null)} items={splitItems} label="Коммит и отправка" placement="bottom-end" />
+      </div>
+      <AgentGitLine cwd={cwd} />
+
+      {query !== null && (
+        <input className="input scm-search" autoFocus placeholder="Найти файл" aria-label="Найти в изменённых файлах" value={query}
+          onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => e.key === 'Escape' && setQuery(null)} />
+      )}
+      {files.length === 0 && <p className="muted scm-clean">Рабочая копия чистая: агенты здесь ничего не меняли или всё закоммичено.</p>}
+      {staged.length > 0 && (
+        <FileGroup label="Проиндексировано" files={staged.filter(match)} total={staged.length} cwd={cwd} git={git} staged stageOn={stageOn}
+          onAll={() => void stage(staged.map((f) => f.path), false)} onStage={(f) => void stage([f.path], false)} onDiscard={discard} />
+      )}
+      {unstaged.length > 0 && (
+        <FileGroup label="Изменения" files={unstaged.filter(match)} total={unstaged.length} cwd={cwd} git={git} stageOn={stageOn}
+          onAll={() => void stage(unstaged.map((f) => f.path), true)} onStage={(f) => void stage([f.path], true)} onDiscard={discard} />
+      )}
+      {service.length > 0 && (
+        <Disclosure className="service-files" summary={<span className="muted">Служебные, не коммитятся (.superpowers) · {service.length}</span>}>
+          <ul className="change-list">{service.map((f) => <ChangeRow key={f.path} cwd={cwd} f={f} git={git} />)}</ul>
+        </Disclosure>
+      )}
+
+      <section className="scm-group">
+        <button type="button" className="scm-group-head" aria-expanded={commitsOpen} onClick={() => setCommitsOpen(!commitsOpen)}>
+          <ChevronRight className="chev" aria-hidden />Коммиты{log && <span className="num muted">{log.length}</span>}
+        </button>
+        {commitsOpen && (log === null ? <Skeleton rows={3} /> : log.length === 0 ? <p className="muted">Коммитов пока нет.</p> : (
           <div>
             {log.map((c) => (
               <div key={c.hash} className="commit-row" data-tip={c.subject}>
@@ -235,71 +274,79 @@ export function ChangesTab({ cwd }: { cwd: string }) {
               </div>
             ))}
           </div>
-        )}
+        ))}
       </section>
-    </>
+    </div>
   )
 }
 
-/** One changed file: status letter, name strong + dir muted, +N −M; row opens the diff tab, chevron expands it inline. */
-function ChangeRow({ cwd, f, diff, loaded, open, onToggle }: { cwd: string; f: GitFile; diff: DiffFile | undefined; loaded: boolean; open: boolean; onToggle: () => void }) {
-  const { dir, name } = splitPath(f.path)
-  return (
-    <li className="change" data-open={open}>
-      <div className="change-row">
-        <button type="button" className="change-chev" aria-expanded={open} aria-label={open ? `Свернуть diff ${name}` : `Показать diff ${name} здесь`} onClick={onToggle}>
-          <ChevronRight aria-hidden />
-        </button>
-        <button type="button" className="change-open" data-tip={`${f.path}: ${STATUS_LABEL[f.status]}. Открыть diff во вкладке`} onClick={() => openTab({ kind: 'diff', cwd, path: f.path })}>
-          <span className="gs" data-s={f.status} aria-label={STATUS_LABEL[f.status]}>{gsLetter(f.status)}</span>
-          <span className="change-name">{name}</span>
-          {dir && <span className="change-dir">{dir}</span>}
-          <span className="diff-stat num">
-            {diff ? <><span className="add">+{diff.added}</span> <span className="del">−{diff.removed}</span></> : loaded ? '' : '…'}
-          </span>
-        </button>
-      </div>
-      <div className="collapse" data-open={open}>
-        <div>
-          {open && (diff
-            ? diff.status === 'binary' ? <p className="muted diff-note">Двоичный файл.</p> : <DiffLines lines={diff.lines} limit={300} label={`Изменения ${f.path}`} />
-            : <p className="muted diff-note">{loaded ? 'Diff недоступен.' : 'Загрузка…'}</p>)}
-        </div>
-      </div>
-    </li>
-  )
+/** git.via, saved in the settings at once (the «⋯» menu). */
+async function saveVia(v: GitVia) {
+  const settings = getState().settings
+  if (!settings) return
+  try {
+    const saved = await api<Settings>('PUT', '/settings', { ...settings, git: { ...settings.git, via: v } })
+    setState({ settings: saved ?? { ...settings, git: { ...settings.git, via: v } } })
+  } catch (e) {
+    toast(`Не удалось сохранить: ${(e as Error).message}`, 'error')
+  }
 }
 
-/** Always visible: the branch's PR (open it), «Создать PR», or why PRs are unavailable and where to set them up. */
-function PrSection({ cwd, enabled, branch, base }: { cwd: string; enabled: boolean; branch: string | null; base: string | null }) {
-  const supported = useFeature('pr-status')
-  const pr = usePr(enabled && supported ? cwd : null)
-  const off = !enabled || pr === 'off'
+type GitData = ReturnType<typeof useGit>
+
+/** «ПРОИНДЕКСИРОВАНО n» / «ИЗМЕНЕНИЯ n»: collapsible, «＋/− всё» and «Просмотреть всё» in the header. */
+function FileGroup({ label, files, total, cwd, git, staged = false, stageOn, onAll, onStage, onDiscard }: {
+  label: string; files: GitFile[]; total: number; cwd: string; git: GitData; staged?: boolean; stageOn: boolean
+  onAll: () => void; onStage: (f: GitFile) => void; onDiscard: (f: GitFile) => void
+}) {
+  const [open, setOpen] = useState(true)
   return (
-    <section className="wpanel-section">
-      <h3><GitPullRequest aria-hidden />Пулл-реквест</h3>
-      {!supported ? (
-        <p className="muted">Статус PR недоступен в этой версии сервера.</p>
-      ) : off ? (
-        <div className="pr-off">
-          <span className="muted">PR-интеграция не настроена.</span>
-          <button type="button" className="btn btn-sm" onClick={openPrSettings}>Настроить</button>
-        </div>
-      ) : pr === undefined ? (
-        <Skeleton rows={1} label="Проверяем PR…" />
-      ) : pr && typeof pr === 'object' && 'error' in pr ? (
-        <p className="field-error">Не удалось узнать статус PR: {pr.error}</p>
-      ) : pr ? (
-        <PrCard pr={pr} />
-      ) : branch && base && branch !== base ? (
-        <div className="pr-off">
-          <span className="muted">Для <span className="mono">{branch}</span> PR ещё нет.</span>
-          <button type="button" className="btn btn-sm" onClick={() => openDialog({ kind: 'pr', cwd, base })}><GitPullRequest />Создать PR</button>
-        </div>
-      ) : (
-        <p className="muted">Ветка <span className="mono">{branch ?? '—'}</span> совпадает с базовой: PR создаётся из ветки задачи.</p>
+    <section className="scm-group">
+      <div className="scm-group-head-row">
+        <button type="button" className="scm-group-head" aria-expanded={open} onClick={() => setOpen(!open)}>
+          <ChevronRight className="chev" aria-hidden />{label}<span className="num muted">{total}</span>
+        </button>
+        <span className="scm-group-actions">
+          {stageOn && <button type="button" className="icon-btn icon-btn-sm" aria-label={staged ? 'Убрать всё из индекса' : 'Добавить всё в индекс'} data-tip={staged ? 'Убрать всё из индекса' : 'Добавить всё в индекс'} onClick={onAll}>{staged ? <Minus /> : <Plus />}</button>}
+          <button type="button" className="link" onClick={() => openTab({ kind: 'diff', cwd, path: null })}>Просмотреть всё</button>
+        </span>
+      </div>
+      {open && (
+        <ul className="change-list">
+          {files.map((f) => <ChangeRow key={f.path} cwd={cwd} f={f} git={git} staged={staged} stageOn={stageOn} onStage={() => onStage(f)} onDiscard={() => onDiscard(f)} />)}
+        </ul>
       )}
     </section>
+  )
+}
+
+const ICONS: [RegExp, typeof File][] = [[/\.(tsx?|jsx?|java|kt|py|go|rs|cs|sql|sh|ps1)$/i, FileCode], [/\.(json|ya?ml|toml|xml)$/i, FileJson], [/\.(md|txt|adoc)$/i, FileText]]
+const iconOf = (path: string) => ICONS.find(([re]) => re.test(path))?.[1] ?? File
+const stop = (fn: () => void) => (e: MouseEvent) => { e.stopPropagation(); fn() }
+
+/** A changed file: type icon, name strong + dir muted, +N −M, the coloured status letter; a click opens its diff. */
+function ChangeRow({ cwd, f, git, staged = false, stageOn = false, onStage, onDiscard }: {
+  cwd: string; f: GitFile; git: GitData; staged?: boolean; stageOn?: boolean; onStage?: () => void; onDiscard?: () => void
+}) {
+  const { dir, name } = splitPath(f.path)
+  const diff = git?.files?.find((d) => d.path === f.path)
+  const Icon = iconOf(f.path)
+  return (
+    <li className="change">
+      <div className="change-row" role="button" tabIndex={0} data-tip={`${f.path}: ${STATUS_LABEL[f.status]}`} data-tip-trunc
+        onClick={() => openTab({ kind: 'diff', cwd, path: f.path })} onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); openTab({ kind: 'diff', cwd, path: f.path }) } }}>
+        <Icon className="change-icon" aria-hidden />
+        <span className="change-name">{name}</span>
+        {dir && <span className="change-dir">{dir}</span>}
+        <span className="change-actions">
+          <button type="button" className="icon-btn icon-btn-sm" aria-label={`Открыть ${name}`} data-tip="Открыть файл" onClick={stop(() => openTab({ kind: 'file', cwd, path: f.path }))}><File /></button>
+          {stageOn && onDiscard && <button type="button" className="icon-btn icon-btn-sm" aria-label={`Отменить изменения в ${name}`} data-tip="Отменить изменения" onClick={stop(onDiscard)}><RotateCcw /></button>}
+          {stageOn && onStage && <button type="button" className="icon-btn icon-btn-sm" aria-label={staged ? `Убрать ${name} из индекса` : `Добавить ${name} в индекс`} data-tip={staged ? 'Убрать из индекса' : 'Добавить в индекс'} onClick={stop(onStage)}>{staged ? <Minus /> : <Plus />}</button>}
+        </span>
+        <span className="diff-stat num">{diff ? <><span className="add">+{diff.added}</span> <span className="del">−{diff.removed}</span></> : ''}</span>
+        <span className="gs" data-s={f.status} aria-label={STATUS_LABEL[f.status]}>{gsLetter(f.status)}</span>
+      </div>
+    </li>
   )
 }
 

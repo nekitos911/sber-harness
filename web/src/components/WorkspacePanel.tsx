@@ -79,7 +79,7 @@ export function WorkspacePanel() {
       </div>
       <div className="wpanel-where" data-tip={cwd}>
         <strong className="ellipsis">{name}</strong>
-        {git?.status?.branch && <BranchPicker cwd={cwd} branch={git.status.branch} placement="bottom-start"><Branch name={git.status.branch} /></BranchPicker>}
+        {git?.status?.branch && tab !== 'changes' && <BranchPicker cwd={cwd} branch={git.status.branch} placement="bottom-start"><Branch name={git.status.branch} /></BranchPicker>}
       </div>
       <div className="wpanel-body" key={`${cwd}|${tab}`}>
         <ErrorBoundary key={tab} area={tab === 'files' ? 'файлы' : tab === 'verdicts' ? 'вердикты' : tab === 'history' ? 'историю' : 'изменения'}>
