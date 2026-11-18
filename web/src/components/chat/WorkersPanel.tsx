@@ -2,7 +2,8 @@ import { useState } from 'react'
 import { normPath } from '../../lib/format'
 import { ChevronDown } from 'lucide-react'
 import { tryApi } from '../../api'
-import { openSession, useStore } from '../../store'
+import { openDialog, openSession, useStore } from '../../store'
+import { archiveSession } from '../../lib/sessionActions'
 import { plural, relTime, tokens } from '../../lib/format'
 import { useNow } from '../../lib/useNow'
 import { useCurrentTool, useStartingLabel } from '../../lib/live'
@@ -77,6 +78,16 @@ export function WorkersPanel({ sessionId, workers }: { sessionId: string; worker
   )
 }
 
+/** A harness worker stops by itself; GigaCode's built-in sub-agent lives in its parent's process — only the whole turn stops. */
+function stopWorker(w: Session) {
+  if (!w.virtual) return void tryApi('POST', `/sessions/${w.id}/stop`)
+  openDialog({
+    kind: 'confirm', title: 'Остановить весь ход чата?', danger: true, ok: 'Остановить ход',
+    text: 'Это встроенный субагент GigaCode: он работает внутри процесса родительского чата, и отдельно его не остановить. Остановится текущий ход чата вместе со всеми его субагентами.',
+    onConfirm: () => void tryApi('POST', `/sessions/${w.parentId}/stop`),
+  })
+}
+
 function WorkerRow({ w, now, nested }: { w: Session; now: number; nested?: boolean }) {
   const tool = useCurrentTool(w)
   const starting = useStartingLabel(w)
@@ -94,9 +105,9 @@ function WorkerRow({ w, now, nested }: { w: Session; now: number; nested?: boole
         {w.tokensIn + w.tokensOut > 0 && <span data-tip="токены">{tokens(w.tokensIn + w.tokensOut)}</span>}
         <span>{relTime(w.lastActivityAt, now)}</span>
       </span>
-      {w.status === 'running' && !w.virtual && (
-        <button type="button" className="link-btn" onClick={() => void tryApi('POST', `/sessions/${w.id}/stop`)}>Остановить</button>
-      )}
+      {w.status === 'running'
+        ? <button type="button" className="link-btn" onClick={() => stopWorker(w)}>Остановить</button>
+        : <button type="button" className="link-btn" onClick={() => void archiveSession(w)}>Убрать</button>}
     </div>
   )
 }
