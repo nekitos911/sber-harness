@@ -77,6 +77,9 @@ One JSON object per line. Every event has `session_id` (equal to the init `uuid`
   discovered catalogue.
 - CONFIRMED: `/models` lists ids WITH the context suffix (`DeepSeek-V4.1-Flash-1017-262k`) while the CLI and configs use
   them without (`DeepSeek-V4.1-Flash-1017`): the harness compares models by base id (suffix `-<n>k|m` stripped).
+  CONFIRMED again (ACP chat, 2026-11-18): `--model DeepSeek-V4.1-Flash-1017-262k` kills the CLI at start («not present in
+  the current backend catalogue»). The gigacode launcher (`stripModelSuffix`) passes `--model` and the run settings'
+  `modelGrades` without the suffix, whatever id the picker or a grade holds.
 
 ## 4. Custom commands and built-in sub-agents
 

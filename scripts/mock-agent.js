@@ -62,7 +62,8 @@ const delivered = prompt.startsWith('[harness] Message from');
 const lines = delivered ? [] : prompt.split(/\r?\n/).filter((l) => !l.startsWith('[harness]'));
 const has = (re) => lines.some((l) => re.test(l));
 
-if (opt('--model') && catalogue.length && !catalogue.includes(model)) {
+// like GigaCode: /models lists «X-262k», the CLI takes «X» (the listed id itself is accepted too, for older tests)
+if (opt('--model') && catalogue.length && !catalogue.some((c) => c === model || c.replace(/-\d+[km]$/i, '') === model)) {
   // GigaCode's fatal error for a renamed/removed model: nothing on stdout, exit 1
   process.stderr.write(`An unexpected critical error occurred:\nError: The selected model '${model}' is not present in the current backend catalogue\n`);
   process.exit(1);

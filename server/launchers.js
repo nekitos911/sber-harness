@@ -393,6 +393,12 @@ export function cliApprovalMode(defaults, agentCfg, mode) {
   return (agentCfg.approvalModeMap ?? defaults.approvalModeMap ?? {})[mode] ?? mode;
 }
 
+/**
+ * The id the CLI takes for --model. GigaCode: /models lists ids WITH the context suffix («DeepSeek-V4.1-Flash-1017-262k»), the
+ * CLI wants them without — passing the listed id crashes it at start («not present in the current backend catalogue»).
+ */
+const cliModel = (defaults, model) => (model && defaults.stripModelSuffix ? String(model).replace(/-\d+[km]$/i, '') : model);
+
 function geminiFamily(id, defaults, resolve) {
   return {
     id,
@@ -412,7 +418,7 @@ function geminiFamily(id, defaults, resolve) {
       // live thinking/text deltas (stream_event); off once the CLI rejected the flag (agentMeta.partialUnsupported)
       const partial = agentCfg.partialMessagesFlag === undefined ? defaults.partialMessagesFlag : agentCfg.partialMessagesFlag;
       if (partial) args.push(partial);
-      const model = session.model || agentCfg.model;
+      const model = cliModel(defaults, session.model || agentCfg.model);
       if (model) args.push('--model', model);
       for (const dir of session.includeDirs || []) args.push(INCLUDE_FLAG, dir); // every turn: a new process
       // headless cannot ask: what the user allowed goes in as an allow-list (VERIFY flag/pattern syntax)
@@ -429,7 +435,7 @@ function geminiFamily(id, defaults, resolve) {
       const args = ['--acp'];
       const mode = cliApprovalMode(defaults, agentCfg, session.approvalMode || agentCfg.approvalMode);
       if (mode) args.push('--approval-mode', mode);
-      const model = session.model || agentCfg.model;
+      const model = cliModel(defaults, session.model || agentCfg.model);
       if (model) args.push('--model', model);
       for (const dir of session.includeDirs || []) args.push(INCLUDE_FLAG, dir);
       return args;
@@ -439,7 +445,10 @@ function geminiFamily(id, defaults, resolve) {
       return name ? { [name]: settingsPath } : {};
     },
     prepare(ctx) {
-      writeAtomic(ctx.settingsPath, JSON.stringify(sessionSettings(ctx), null, 2));
+      const st = sessionSettings(ctx);
+      // a grade pointing at «X-262k» crashes the CLI like --model does: grades get the id the CLI takes
+      st.agents.modelGrades = Object.fromEntries(Object.entries(st.agents.modelGrades).map(([g, m]) => [g, cliModel(defaults, m)]));
+      writeAtomic(ctx.settingsPath, JSON.stringify(st, null, 2));
     },
     parse: normalize,
   };
@@ -473,7 +482,7 @@ const claude = {
 export const launchers = {
   // cold start (hundreds of tools, ~9 MCP servers) can take 30-60 s before system/init
   // quickArgs: one-off helper runs (commit/PR messages) start without MCP/skills/hooks (VERIFY --safe-mode on the target)
-  gigacode: geminiFamily('gigacode', { freePromptTemplate: '/full-task {text}{notes}', quickArgs: ['--safe-mode'], compressCommand: '/compress', contextCommand: '/context', command: 'gigacode', settingsEnv: 'GIGACODE_SYSTEM_SETTINGS_PATH', firstEventTimeoutMs: 120000, continueArgs: ['-c'], approvalModeMap: { auto: 'auto-edit' }, allowedToolsFlag: '--allowed-tools', allowedTools: DEFAULT_ALLOWED_TOOLS, autoSandbox: null, partialMessagesFlag: '--include-partial-messages', reworkPromptTemplate: '/full-task {taskUrl} Задача готова, но нужны правки: {notes}' }, (cfg) => resolveGigacode(cfg)),
+  gigacode: geminiFamily('gigacode', { freePromptTemplate: '/full-task {text}{notes}', quickArgs: ['--safe-mode'], compressCommand: '/compress', contextCommand: '/context', command: 'gigacode', settingsEnv: 'GIGACODE_SYSTEM_SETTINGS_PATH', firstEventTimeoutMs: 120000, continueArgs: ['-c'], approvalModeMap: { auto: 'auto-edit' }, allowedToolsFlag: '--allowed-tools', allowedTools: DEFAULT_ALLOWED_TOOLS, autoSandbox: null, partialMessagesFlag: '--include-partial-messages', stripModelSuffix: true, reworkPromptTemplate: '/full-task {taskUrl} Задача готова, но нужны правки: {notes}' }, (cfg) => resolveGigacode(cfg)),
   qwen: geminiFamily('qwen', { command: 'qwen', settingsEnv: 'QWEN_CODE_SYSTEM_SETTINGS_PATH', firstEventTimeoutMs: 30000, approvalModeMap: { auto: 'auto-edit' }, allowedToolsFlag: '--allowed-tools', allowedTools: DEFAULT_ALLOWED_TOOLS }),
   gemini: geminiFamily('gemini', { command: 'gemini', settingsEnv: 'GEMINI_CLI_SYSTEM_SETTINGS_PATH', firstEventTimeoutMs: 30000 }),
   claude,

@@ -305,3 +305,18 @@ test('mcpExclude goes into the run settings under the configured key only', () =
   assert.deepEqual([gemini.excludeMCPServers, gemini.mcp], [['java-lsp'], undefined]);
   assert.equal(settings({}).mcp, undefined);
 });
+
+test('--model goes without the /models context suffix (GigaCode rejects «X-262k» at start), headless and ACP', () => {
+  const g = launchers.gigacode;
+  const modelOf = (args) => args[args.indexOf('--model') + 1];
+  const session = { model: 'DeepSeek-V4.1-Flash-1017-262k' };
+  assert.equal(modelOf(g.buildArgs({ prompt: 'x', session, agentCfg: {} })), 'DeepSeek-V4.1-Flash-1017');
+  assert.equal(modelOf(g.acpArgs({ session, agentCfg: {} })), 'DeepSeek-V4.1-Flash-1017');
+  assert.equal(modelOf(g.buildArgs({ prompt: 'x', session: { model: 'GigaChat-3.5-Ultra-Preview' }, agentCfg: {} })), 'GigaChat-3.5-Ultra-Preview', 'an id without a suffix is kept');
+});
+
+test('model grades in the run settings lose the context suffix too (a grade at «X-262k» crashes GigaCode)', () => {
+  const file = path.join(root, 'grades-settings.json');
+  launchers.gigacode.prepare({ settingsPath: file, agentCfg: { settings: { agents: { modelGrades: { review: 'GLM-5.3-Flash-262k', strong: 'GigaChat-3.5-Ultra-Preview' }, allowedGrades: ['review'] } } }, harnessMcp: { command: 'node', args: [] }, agentMcpServers: {} });
+  assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')).agents, { modelGrades: { review: 'GLM-5.3-Flash', strong: 'GigaChat-3.5-Ultra-Preview' }, allowedGrades: ['review'] });
+});
