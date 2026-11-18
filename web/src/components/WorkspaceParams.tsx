@@ -19,6 +19,7 @@ export const useSbPrefs = () => useSyncExternalStore((f) => { subs.add(f); retur
 
 const SORT: [SortBy, string][] = [['activity', 'Активность агентов'], ['name', 'Имя'], ['new', 'Новые'], ['changes', 'Изменения']]
 const ORDER: [ProjectOrder, string][] = [['manual', 'Вручную'], ['alpha', 'По алфавиту'], ['activity', 'По активности']]
+const AGES: [number, string][] = [[0, "Не скрывать"], [1, "1 дня"], [3, "3 дней"], [7, "7 дней"], [14, "14 дней"], [30, "30 дней"]]
 const FILTERS: [keyof SbPrefs, string][] = [
   ['hideSleeping', 'Скрыть спящие рабочие пространства'],
   ['hideMain', 'Скрыть основную ветку'],
@@ -82,6 +83,10 @@ export function WorkspaceParams({ projects }: { projects: Workspace[] }) {
             <SwitchRow label="Время" checked={p.showTime} onChange={toggle('showTime')} />
           </Sub>
           <div className="sbp-sec">Фильтры</div>
+          <Sub id="age" label="Скрывать чаты старше" value={AGES.find(([v]) => v === p.chatsMaxAgeDays)?.[1] ?? `${p.chatsMaxAgeDays} дн.`} sub={sub} setSub={setSub}>
+            {AGES.map(([v, label]) => <Radio key={v} checked={p.chatsMaxAgeDays === v} onSelect={() => setSbPrefs({ chatsMaxAgeDays: v })}>{label}</Radio>)}
+            <p className="sbp-hint">По последней активности. Открытый чат и те, что работают или ждут вас, видны всегда.</p>
+          </Sub>
           {FILTERS.map(([k, label]) => <SwitchRow key={k} label={label} checked={!!p[k]} onChange={toggle(k)} />)}
           <p className="sbp-hint">Чаты, которые ждут вас, видны всегда — в «Требуют внимания».</p>
           <div className="sbp-foot">

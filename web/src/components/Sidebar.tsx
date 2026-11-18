@@ -11,7 +11,7 @@ import { basename, normPath, plural, relTime, subTitle, tokens } from '../lib/fo
 import { loadDraft, saveDraft } from '../lib/draft'
 import { newChat, newTerminal } from '../lib/actions'
 import type { Session, Task, Workspace, Worktree } from '../types'
-import { compareRows, filteredOut, moveTo, orderProjects, prGroup, PR_GROUPS, statusGroup, STATUS_GROUPS, type SbPrefs } from '../lib/sidebarPrefs'
+import { compareRows, filteredOut, moveTo, orderProjects, prGroup, PR_GROUPS, staleChat, statusGroup, STATUS_GROUPS, type SbPrefs } from '../lib/sidebarPrefs'
 import type { VisualState } from '../lib/sessionState'
 import { loadPr } from '../lib/pr'
 import { setSbPrefs, useSbPrefs, WorkspaceParams } from './WorkspaceParams'
@@ -51,12 +51,15 @@ export function Sidebar() {
   const waiting = agents.filter((s) => WAITING_YOU.has(sessionVisualState(s))).length
   const allWorktrees = useStore((s) => s.worktrees)
   const leaving = useLeaving(sessions)
-  const showCli = useSbPrefs().showCli // «Чаты из CLI» in the workspace parameters
-  const tree = useMemo(() => buildTree(sessions.filter((s) => (!s.archived || leaving.has(s.id)) && (showCli || s.origin !== 'cli')), query, allWorktrees), [sessions, query, allWorktrees, leaving, showCli])
+  const sbp = useSbPrefs() // «Чаты из CLI», «Скрывать чаты старше» in the workspace parameters
+  const openTab = useStore((s) => (s.view.kind === 'wt' ? s.wt[normPath(s.view.cwd)]?.active : null))
+  const hourly = Math.floor(useNow() / 3600000) // the age filter moves on hourly, not every tick
+  const tree = useMemo(() => buildTree(sessions.filter((s) => (!s.archived || leaving.has(s.id)) && (sbp.showCli || s.origin !== 'cli') &&
+    (openTab === `s:${s.id}` || !staleChat(sbp, s, hourly * 3600000))), query, allWorktrees), [sessions, query, allWorktrees, leaving, sbp, openTab, hourly])
   const filtering = !!query.trim()
   const rootWs = workspaces.find((w) => w.kind === 'root')
   const projects = workspaces.filter((w) => w.kind !== 'root')
-  const prefs = useSbPrefs()
+  const prefs = sbp
   // Quiet projects (no sessions, no changes, not on screen) wait behind «Ещё N»; «Скрыть без сессий и изменений» drops them.
   const [showAll, setShowAllState] = useState(() => loadDraft<boolean>('sb:all') ?? false)
   const setShowAll = (v: boolean) => { setShowAllState(v); saveDraft('sb:all', v || null) }
@@ -128,7 +131,7 @@ export function Sidebar() {
         {!grouped && quiet.length > 0 && !prefs.hideEmpty && (
           <button type="button" className="tree-row tree-more" style={depth(0)} aria-expanded={showAll} onClick={() => setShowAll(!showAll)}>
             <Ellipsis aria-hidden />
-            {showAll ? 'Свернуть тихие проекты' : <>Ещё {quiet.length} {plural(quiet.length, 'проект', 'проекта', 'проектов')} <span className="muted">без сессий и изменений</span></>}
+            <span className="ellipsis">{showAll ? 'Свернуть тихие проекты' : <>Ещё {quiet.length} {plural(quiet.length, 'проект', 'проекта', 'проектов')} <span className="muted">без сессий и изменений</span></>}</span>
           </button>
         )}
         {tree.loose.length > 0 && (

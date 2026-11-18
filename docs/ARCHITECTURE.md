@@ -1384,6 +1384,8 @@ The user wants dialogs started in the GigaCode CLI to be continuable in the UI a
   harness chat session `{ origin: 'cli', externalSessionId: <record id>, cwd, title (first meaningful line ≤ 80),
   lastActivityAt: record updated, status: idle, agent: the CLI's agent }` grouped by worktreePath/workspace like any
   session. Archived or deleted adopted sessions are remembered (`db.cliIgnored`) and never re-adopted.
+- `createdAt` of an adopted session is the CLI chat's start (`startTime`), not the adoption moment, so the sidebar keeps
+  the real order; sessions adopted earlier get it corrected on the next pass.
 - Transcript: until the first harness turn, `GET /api/sessions/:id/messages` serves the record's messages (mapped like
   `/api/history/:agent/:id/messages`), refreshed when the record's mtime changes; the first harness turn imports them
   into the harness transcript (`cliImportedAt`) and continues with `--resume <id>` as any chat. Later CLI-side activity

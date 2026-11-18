@@ -83,6 +83,7 @@ export function createAdopter({ config, store, sessions, history }) {
       if (!users.length || isServiceChat(users)) continue;
       const own = owned.get(rec.id);
       if (own) {
+        if (own.origin === 'cli' && rec.startedAt && own.createdAt > rec.startedAt) sessions.update(own.id, { createdAt: rec.startedAt }); // adopted before this fix
         if (own.origin === 'cli' && refresh(own, rec, msgs)) refreshed++;
         continue; // a harness chat's own CLI session
       }
@@ -90,7 +91,7 @@ export function createAdopter({ config, store, sessions, history }) {
       if (!cwd || inside(store.dataDir, cwd)) continue; // unknown folder, or a run of the harness itself
       const s = await sessions.create({ kind: 'chat', agent, cwd, title: cliTitle(users[0]) || `Чат CLI ${String(rec.id).slice(0, 8)}` });
       sessions.importMessages(s.id, msgs);
-      sessions.update(s.id, { origin: 'cli', externalSessionId: rec.id, historyId: rec.id, lastActivityAt: rec.updatedAt || Date.now(), cliRecordAt: rec.updatedAt, cliRecordCount: rec.messages.length });
+      sessions.update(s.id, { origin: 'cli', createdAt: rec.startedAt || rec.updatedAt || s.createdAt, externalSessionId: rec.id, historyId: rec.id, lastActivityAt: rec.updatedAt || Date.now(), cliRecordAt: rec.updatedAt, cliRecordCount: rec.messages.length });
       adopted++;
     }
     return { adopted, refreshed };

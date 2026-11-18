@@ -22,22 +22,28 @@ export interface SbPrefs {
   hideDetached: boolean
   hideEmpty: boolean // without sessions and changes
   showCli: boolean // chats adopted from the CLI history
+  chatsMaxAgeDays: number // 0: all chats; else idle chats untouched for longer are hidden
 }
 
 export const DEFAULT_PREFS: SbPrefs = {
   hiddenProjects: [], folders: true, group: 'project', sort: 'activity', order: 'manual', projectOrder: [],
   cards: 'compact', showAction: true, showModel: true, showTime: true,
   hideSleeping: false, hideMain: false, hideAgentMade: false, hideExternal: false, hideDetached: false, hideEmpty: false,
-  showCli: true,
+  showCli: true, chatsMaxAgeDays: 0,
 }
 
 /** Something is hidden by the choice: the dot on the sliders button. */
 export const hidesSomething = (p: SbPrefs) =>
-  p.hiddenProjects.length > 0 || !p.folders || !p.showCli || p.hideSleeping || p.hideMain || p.hideAgentMade || p.hideExternal || p.hideDetached || p.hideEmpty
+  p.hiddenProjects.length > 0 || !p.folders || !p.showCli || p.chatsMaxAgeDays > 0 || p.hideSleeping || p.hideMain || p.hideAgentMade || p.hideExternal || p.hideDetached || p.hideEmpty
 
 /** Every setting at its default (the manual order is the user's arrangement, not a setting). */
 export const isDefault = (p: SbPrefs) =>
   (Object.keys(DEFAULT_PREFS) as (keyof SbPrefs)[]).every((k) => k === 'projectOrder' || JSON.stringify(p[k]) === JSON.stringify(DEFAULT_PREFS[k]))
+
+/** «Скрывать чаты старше N дней»: an idle chat with no activity for N days; one that works or waits for you never is. */
+export function staleChat(p: SbPrefs, s: { lastActivityAt: number; status: string; waitingFor?: string | null }, now: number): boolean {
+  return p.chatsMaxAgeDays > 0 && s.status !== "running" && !s.waitingFor && now - s.lastActivityAt > p.chatsMaxAgeDays * 86400000
+}
 
 export interface WtFacts { main: boolean; detached: boolean; sleeping: boolean; createdBy?: string | null; empty: boolean }
 

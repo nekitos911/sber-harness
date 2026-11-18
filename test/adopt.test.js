@@ -63,6 +63,7 @@ test('only the real CLI chat is adopted: titled, grouped, transcript from the re
   const [s] = cli;
   assert.deepEqual([s.externalSessionId, s.title, path.resolve(s.cwd), s.workspaceId, s.status, s.agent], ['cli-chat-1', 'Сделай отчёт по лимитам', path.resolve(repo), ws.id, 'idle', 'mock']);
   assert.deepEqual((await messages(s.id)).map((m) => m.kind), ['user', 'assistant']);
+  assert.ok(Math.abs(s.createdAt - (Date.now() - 60 * 60000)) < 30000, 'created when the CLI chat started (sidebar order), not when adopted');
   assert.equal((await h.api('POST', '/api/history/adopt')).body.adopted, 0, 'once');
 
   // the user went on in the CLI before touching it in the UI

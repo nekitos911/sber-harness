@@ -1,7 +1,7 @@
 // Run: node --test web/src/lib/sidebarPrefs.test.ts
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { DEFAULT_PREFS, compareRows, filteredOut, hidesSomething, isDefault, moveTo, orderProjects, prGroup, statusGroup } from './sidebarPrefs.ts'
+import { DEFAULT_PREFS, compareRows, filteredOut, hidesSomething, isDefault, moveTo, orderProjects, prGroup, staleChat, statusGroup } from './sidebarPrefs.ts'
 
 const wt = { main: false, detached: false, sleeping: false, createdBy: 'user', empty: false }
 
@@ -62,4 +62,16 @@ test('project order: manual keeps the dragged order, new ones after; drag moves 
   assert.deepEqual(moveTo(['a', 'b', 'c', 'd'], 'a', 'c'), ['b', 'c', 'a', 'd'])
   assert.deepEqual(moveTo(['a', 'b', 'c', 'd'], 'd', 'b'), ['a', 'd', 'b', 'c'])
   assert.deepEqual(moveTo(['a', 'b'], 'a', 'zz'), ['a', 'b'])
+})
+
+test('«Скрывать чаты старше N дней»: by last activity; a chat that works or waits for you never hides', () => {
+  const now = Date.parse('2026-11-18T12:00:00Z')
+  const old = { lastActivityAt: now - 4 * 86400000, status: 'idle', waitingFor: null }
+  assert.equal(staleChat(DEFAULT_PREFS, old, now), false)
+  const p = { ...DEFAULT_PREFS, chatsMaxAgeDays: 3 }
+  assert.equal(staleChat(p, old, now), true)
+  assert.equal(staleChat(p, { ...old, lastActivityAt: now - 2 * 86400000 }, now), false)
+  assert.equal(staleChat(p, { ...old, status: 'running' }, now), false)
+  assert.equal(staleChat(p, { ...old, waitingFor: 'answer' }, now), false)
+  assert.equal(hidesSomething(p), true)
 })
