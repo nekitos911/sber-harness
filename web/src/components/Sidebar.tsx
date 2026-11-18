@@ -7,6 +7,7 @@ import { api } from '../api'
 import { runJob } from '../lib/jobs'
 import { useCurrentTool, useStateLine } from '../lib/live'
 import { dur, sessionVisualState } from '../lib/sessionState'
+import { modelLabel, normModels } from '../lib/agents'
 import { basename, normPath, plural, relTime, subTitle, tokens } from '../lib/format'
 import { loadDraft, saveDraft } from '../lib/draft'
 import { newChat, newTerminal } from '../lib/actions'
@@ -735,7 +736,10 @@ function SessionRow({ s, nested, level = 0, caret, via, from }: {
       : v === 'stalled' || v === 'starting' ? line
         : v === 'running' ? (tool ? `Выполняет: ${tool}` : watching ? 'Наблюдает за исполнителями' : '') : !nested && (v === 'idle' || v === 'done') ? preview : ''
   const detailed = cards.cards === 'detailed' && !!doing
-  const model = cards.showModel ? (s.kind === 'terminal' ? 'shell' : s.model ?? s.agent) : ''
+  // the model (as the picker names it); the agent's name only tells something when chats of several agents are listed
+  const modelId = s.model ?? s.cliModel
+  const catalog = useStore((st) => st.agents.find((x) => x.id === s.agent)?.models)
+  const model = !cards.showModel ? '' : s.kind === 'terminal' ? 'shell' : modelId ? modelLabel(modelId, normModels(catalog)) : mixed ? s.agent : ''
   const when = cards.showTime ? relTime(s.lastActivityAt, now) : ''
   return (
     <>

@@ -68,7 +68,10 @@ export function Composer({ session, active }: { session: Session; active: boolea
       setState((st) => ({ sessions: upsertSession(st.sessions, s) }))
       toast(`Агенту открыта папка ${dir}`)
     }
-    insert(`@${pathFor(session.cwd, file).replace(/ /g, '\\ ')} `)
+    const p = pathFor(session.cwd, file)
+    // GigaCode reads «@path» only for plain names; quotes, brackets or spaces («console.log('a').js») break its parser —
+    // such a file goes as a quoted path the agent reads with its own tool
+    insert(/^[\p{L}\p{N}_./\\:@+-]+$/u.test(p) ? `@${p} ` : `"${p}" `)
   }
 
   /** Ctrl+V with an image: saved in the chat's folder at the harness, its path goes into the message. */
