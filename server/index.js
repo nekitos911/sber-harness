@@ -182,7 +182,7 @@ export async function startServer(opts = {}) {
   const catalog = createModelCatalog({ config, store, getUrl: () => url });
   const sessions = createSessions({ config, store, bus, getUrl: () => url, catalog, crashed });
   catalog.useAcp((agent, text) => sessions.acpPrompt(agent, text)); // /models on a warm ACP process when there is one
-  const orch = createOrchestration({ config, store, bus, tasks, sessions });
+  const orch = createOrchestration({ config, store, bus, tasks, sessions, addWorkspace: (p) => addWorkspace(p) });
   const mcp = createMcpManager(config);
   const tokenBuf = Buffer.from(store.token);
   const tokenOk = (t) => typeof t === 'string' && t.length === store.token.length && timingSafeEqual(Buffer.from(t), tokenBuf);

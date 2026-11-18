@@ -1582,7 +1582,7 @@ ${note.trim()}` : text });
       return api.deliver(sid, { from: 'harness', text: CONTINUE(reason) });
     },
 
-    deliver(sid, { from = 'user', text, options }) {
+    deliver(sid, { from = 'user', text, options, report = false }) {
       const s = get(sid);
       if (s.virtual) fail(409, 'внутренний субагент — писать можно только в родительский чат');
       if (typeof text !== 'string' || !text.trim()) fail(400, 'нужен текст сообщения');
@@ -1615,7 +1615,8 @@ ${note.trim()}` : text });
         s.title = titleFrom(text) || s.title;
         delete s.autoTitle;
       }
-      s.queue.push({ id: newId('q'), from, text, at: Date.now(), ...(options ? { options } : {}) });
+      if (report) s.queue = s.queue.filter((q) => !(q.report && q.from === from)); // its newer report says it all
+      s.queue.push({ id: newId('q'), from, text, at: Date.now(), ...(options ? { options } : {}), ...(report ? { report: true } : {}) });
       if (!r.running) {
         startTurn(s);
         return { queued: false };

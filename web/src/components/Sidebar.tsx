@@ -256,13 +256,15 @@ function buildTree(sessions: Session[], query: string, worktrees: Record<string,
   const chats = listed.filter((s) => s.kind !== 'terminal')
   const byId = new Map(chats.map((s) => [s.id, s]))
   const sorted = [...chats].sort((a, b) => a.createdAt - b.createdAt)
-  // A child in another worktree (or marked persistent, e.g. a per-service orchestrator) is a full participant: it sits
-  // under its own worktree with «от: <parent>», not nested under the parent's row.
+  // A child in another project or in a worktree of its own (e.g. a per-service orchestrator) is a full participant: it
+  // sits under that worktree with «от: <parent>». A child that only works in another folder of the same project (the
+  // projects folder's helpers) stays nested under its parent — it is still that chat's helper.
   const place = (s: Session) => worktreeOf(s, paths) ?? normPath(s.cwd)
+  const apart = (s: Session, p: Session) => owner(s) !== owner(p) || (!!worktreeOf(s, paths) && place(s) !== place(p))
   const from = new Map<string, Session>()
   for (const s of sorted) {
     const p = s.parentId ? byId.get(s.parentId) : undefined
-    if (p && (s.persistent || place(s) !== place(p))) from.set(s.id, p)
+    if (p && apart(s, p)) from.set(s.id, p)
   }
   const kids = new Map<string, Session[]>()
   for (const s of sorted) {

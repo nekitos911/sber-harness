@@ -95,7 +95,7 @@ export function commonDir(paths) {
   return common.length > 1 && common.join('') ? common.join(path.sep) : null; // never a drive/filesystem root
 }
 
-export function createOrchestration({ config, store, bus, tasks, sessions }) {
+export function createOrchestration({ config, store, bus, tasks, sessions, addWorkspace = null }) {
   const db = store.db;
   const gitCfg = () => ({ branchTemplate: 'feature/{key}', portBranchTemplate: '{branch}-{targetSlug}', commitTitleTemplate: '{key} {title}', prTitleTemplate: '{key} {title}', ...config.git });
   const label = (s) => `${s.title} (${s.id})`;
@@ -107,6 +107,26 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
 
   // orphan locks: assignees whose session no longer exists
   for (const t of db.tasks) if (t.assigneeSessionId && !sessions.find(t.assigneeSessionId)) t.assigneeSessionId = null;
+
+  /** Git repositories right inside the projects folder (names): what an agent there can pass as `workspace`. */
+  function rootRepos() {
+    const root = db.workspaces.find((w) => w.kind === 'root');
+    if (!root) return [];
+    try {
+      return fs.readdirSync(root.path, { withFileTypes: true }).filter((d) => d.isDirectory() && fs.existsSync(path.join(root.path, d.name, '.git'))).map((d) => d.name);
+    } catch { return []; }
+  }
+
+  /** `workspace` of a tool call: a registered project, else a git repository of that name in the projects folder (opened). */
+  async function knownWorkspace(ref) {
+    const lower = String(ref).toLowerCase();
+    const hit = db.workspaces.find((w) => w.id === ref) || db.workspaces.find((w) => w.name.toLowerCase() === lower);
+    if (hit) return hit;
+    const root = db.workspaces.find((w) => w.kind === 'root');
+    const name = rootRepos().find((n) => n.toLowerCase() === lower);
+    if (root && name && addWorkspace) return addWorkspace(path.join(root.path, name));
+    return workspaceRef(ref);
+  }
 
   function workspaceRef(ref) {
     const lower = String(ref).toLowerCase();
@@ -244,7 +264,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
       if (pending.length) fail(409, `у задачи ${task.id} есть незавершённые зависимости: ${pending.join(', ')}`);
     } else if (!o.spec) fail(400, 'нужен task_id или spec');
     if (o.worktree && !PLACEMENTS[o.worktree]) fail(400, 'worktree: "current", "new-child" (или "new") или "new-top-level"');
-    const ws = o.workspace ? workspaceRef(o.workspace) : o.workspaceId ? findWs(o.workspaceId) || fail(404, `рабочая папка ${o.workspaceId} не найдена`) : task ? findWs(task.workspaceId) : null;
+    const ws = o.workspace ? await knownWorkspace(o.workspace) : o.workspaceId ? findWs(o.workspaceId) || fail(404, `рабочая папка ${o.workspaceId} не найдена`) : task ? findWs(task.workspaceId) : null;
     // the caller works outside the task's repository (projects root, a plain folder, another repo)
     const elsewhere = !!(caller && !o.cwd && ws && ws.id !== caller.workspaceId);
     // no explicit placement from an agent: its own worktree when it is in the task's repo, else a new worktree there
@@ -269,7 +289,10 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
       if (here || (placement === 'new-child' && caller && !o.workspace)) cwd = caller.worktreePath || caller.cwd;
       let branch;
       let made = null;
-      if (placement !== 'current') {
+      // a helper asked for its own worktree in a folder that is no repository (a test, notes): nothing to isolate — it
+      // works right there instead of failing (said in its task)
+      const inPlace = placement !== 'current' && !task && !o.workspace && !(await git.isRepo(cwd));
+      if (placement !== 'current' && !inPlace) {
         jobStep('Создание worktree');
         made = task ? await taskWorktree(task, cwd, o.branch, name) : await specWorktree(cwd, o.branch, name);
         cwd = made.wt.path;
@@ -305,7 +328,10 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
         patch.snapshot = { title: task.title, description: task.description, externalStatus: task.externalStatus ?? null, at: patch.takenAt };
       }
       try {
-        sessions.deliver(s.id, { from: by, text: o.spec ?? taskPrompt({ ...task, ...patch }, s, { notes: o.notes }) });
+        const inPlaceNote = inPlace ? `[harness] Отдельное рабочее дерево не создано: ${cwd} — не git-репозиторий; работай прямо в этой папке.
+
+` : '';
+      sessions.deliver(s.id, { from: by, text: o.spec ? `${inPlaceNote}${o.spec}` : taskPrompt({ ...task, ...patch }, s, { notes: o.notes }) });
       } catch (e) {
         // never an orphan: no worker session or worktree stays behind a failed start
         sessions.remove(s.id, { force: true });
@@ -338,7 +364,12 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
 
   /** A new worktree for an ad-hoc spec worker: branch = the explicit one, else the name, else sub/agent-<id>. */
   async function specWorktree(cwd, explicitBranch, name) {
-    if (!(await git.isRepo(cwd))) fail(400, `нельзя создать рабочее дерево: ${cwd} — не git-репозиторий`);
+    if (!(await git.isRepo(cwd))) {
+      const repos = db.workspaces.some((w) => w.kind === 'root' && path.resolve(w.path) === path.resolve(cwd)) ? rootRepos() : [];
+      fail(400, repos.length
+        ? `нельзя создать рабочее дерево в папке проектов ${cwd}: она не git-репозиторий. Укажи workspace — проект, в котором нужно дерево (worktree: "new", workspace: "<имя>"); проекты здесь: ${repos.slice(0, 20).join(', ')}`
+        : `нельзя создать рабочее дерево: ${cwd} — не git-репозиторий; укажи workspace — проект (см. workspace_list)`);
+    }
     const want = git.sanitizeBranch(explicitBranch || name || `sub/agent-${newId('x').slice(2)}`);
     const branch = explicitBranch ? want : await git.uniqueBranch(cwd, want);
     const existed = (await git.worktrees(cwd)).some((w) => w.branch === branch);
@@ -499,7 +530,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
     // «Полный доступ» of the caller wins: its helpers never ask the person (a read-only profile is told so in words below);
     // otherwise a mode of its own (argument, profile), else the caller's
     const callerMode = caller.approvalMode ?? config.agents[caller.agent]?.approvalMode ?? null;
-    const callerFull = FULL_ACCESS_MODES.has(callerMode);
+    const callerFull = [...FULL_ACCESS_MODES].includes(callerMode); // a Set here; an array in an older copy works too
     const asked = a.approvalMode ?? profile?.meta.approvalMode ?? null;
     const readOnlyWanted = asked === 'plan';
     let mode = callerFull ? callerMode : asked ?? callerMode;
@@ -511,7 +542,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
     if (readOnly) mode = 'default';
     // a child in its own worktree or repository is persistent (a per-service orchestrator); a same-worktree helper is
     // ephemeral: archived once settled and depth-limited
-    const other = a.workspace ? workspaceRef(a.workspace) : null;
+    const other = a.workspace ? await knownWorkspace(a.workspace) : null;
     const elsewhere = !!other && other.id !== caller.workspaceId;
     if (a.worktree === 'current' && elsewhere) fail(400, `«${other.name}» — другой репозиторий: запустите с worktree: "new" (или без worktree — выбор автоматический)`);
     // no explicit worktree: another repository gets a new worktree there (never its main checkout), else here
@@ -583,7 +614,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
   function reportToAsker(s, { status, summary }) {
     if (!s?.askedParent || !s.parentId || !sessions.find(s.parentId)) return;
     sessions.update(s.id, { askedParent: false });
-    sessions.deliver(s.parentId, { from: s.id, text: fromSession(s, `Result (${status}):\n${clipResult(summary, s.id)}`) });
+    sessions.deliver(s.parentId, { from: s.id, text: fromSession(s, `Result (${status}):\n${clipResult(summary, s.id)}`), report: true });
   }
 
   // ---- harness review loop (orchestration.reviewMode "harness") ----
@@ -605,7 +636,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
       return { ok: true, review: 'started', taskStatus: task.status, readyTasks: ready.map((t) => t.id) };
     }
     const parent = c.parentId && sessions.find(c.parentId);
-    if (parent) sessions.deliver(parent.id, { from: c.id, text: fromSession(c, report) });
+    if (parent) sessions.deliver(parent.id, { from: c.id, text: fromSession(c, report), report: true });
     notify({ kind: status, sessionId: c.id, taskId: task?.id ?? null, text: `${c.title}: ${summary}` });
     return { ok: true, taskStatus: port ? null : task?.status ?? null, readyTasks: ready.map((t) => t.id) };
   }
@@ -1329,7 +1360,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
             // reported again (a short probe first, the full result now): the caller's wait is over — the update comes as a message
             sessions.update(c.id, { report: { status: a.status, summary: a.summary, at: Date.now() } });
             const parent = c.parentId && sessions.find(c.parentId);
-            if (parent) sessions.deliver(parent.id, { from: c.id, text: fromSession(c, `Updated result (${a.status}):\n${clipResult(a.summary, c.id)}`) });
+            if (parent) sessions.deliver(parent.id, { from: c.id, text: fromSession(c, `Updated result (${a.status}):\n${clipResult(a.summary, c.id)}`), report: true });
             return { ok: true, note: 'the updated result was sent to the caller as a message' };
           }
           settleRun(sessions.get(c.id), { status: a.status, summary: a.summary });

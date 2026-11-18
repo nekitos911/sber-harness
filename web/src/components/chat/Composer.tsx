@@ -165,6 +165,16 @@ export function Composer({ session, active }: { session: Session; active: boolea
   )
 }
 
+/** A message from another agent in the queue, in a line: who, and what (a report: «закончил — done»). */
+function agentLine(text: string) {
+  const m = /^\[harness\] Message from (.+?) \([^)]*\):\s*([\s\S]*)$/.exec(text)
+  if (!m) return <><span className="muted">от агента: </span>{text}</>
+  const first = m[2].trim().split('\n').find((l) => l.trim()) ?? ''
+  const done = /finished.*with status: (\w+)/.exec(first) || /^(?:Updated result|Result) \((\w+)\)/.exec(first)
+  const what = done ? `закончил — ${done[1]}` : first.replace(/^Question:\s*/, 'вопрос: ')
+  return <><strong>{m[1]}</strong><span className="muted">: {what}</span></>
+}
+
 /**
  * What waits for the agent, above the input: each queued message with «×» to take it back. When nothing runs (the
  * last turn failed before its process started) the queue would wait for the next message — «Отправить сейчас» sends it.
@@ -198,7 +208,7 @@ ${q.text}` : q.text)
       {queue.map((q) => (
         <div key={q.id} className="cq-item" role="listitem">
           <Clock aria-hidden />
-          <span className="cq-text">{q.from !== 'user' && <span className="muted">от агента: </span>}{q.text}</span>
+          <span className="cq-text" data-tip={q.from !== 'user' ? q.text.slice(0, 600) : undefined}>{q.from !== 'user' ? agentLine(q.text) : q.text}</span>
           <span className="cq-actions">
             {q.from === 'user' && <button type="button" className="icon-btn icon-btn-sm" aria-label="Изменить: вернуть в поле ввода" onClick={(e) => void edit(q, e.currentTarget)}><Pencil /></button>}
             <button type="button" className="icon-btn icon-btn-sm" aria-label="Отменить: убрать из очереди" onClick={() => void take(q.id)}><X /></button>
