@@ -1367,6 +1367,21 @@ With `via: "agent"`:
   an explicit request — the instruction says it is one.
 Feature flag `git-via-agent`.
 
+## Handoff: one input, the orchestrator decides (the main scenario)
+
+The user's CLI habit: in the projects folder, `/full-task <task link> [notes]` or `/full-task <what to do>`, and the agent
+picks the repository itself. `POST /api/handoff { input, notes?, agent?, approvalMode?, model? }` (job steps; feature
+`handoff`) → `{ session, task | null }`:
+- `input` contains a tracker key or link (`/([A-Z][A-Z0-9_]+-\d+)/`, or a URL) and the tracker integration works →
+  import/refresh that task (as `/api/tasks/import`), then start it at the projects root (`location: 'root'`, notes) —
+  the existing start path (jumped semantics when a worker already runs);
+- otherwise (free text, or the tracker is off) → a chat at the projects root (role worker-like solo, title from the
+  text) whose first prompt = `agents.<id>.freePromptTemplate` (gigacode default `"/full-task {text}{notes}"`,
+  generic `"{text}{notes}"`; same template rules, slash first) + the root preamble (pick repos from the SDD/task or ask;
+  create worktrees by your own rules).
+- No projects root → 400 «Укажите папку с проектами в Настройках».
+`GET /api/now` is NOT needed — the UI derives «Сейчас» from sessions + tasks.
+
 ## Feature flags (client/server version skew)
 
 `GET /api/state` returns `features: string[]` — the optional API groups this server implements, e.g. `sdd`, `subagents`,
