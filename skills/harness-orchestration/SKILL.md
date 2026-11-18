@@ -23,14 +23,16 @@ coordinator, call `ask`, then end your turn; the harness wakes you with the answ
 
 ```text
 agent(subagent_type, prompt, model?)                              # a helper in YOUR worktree; returns its result
-worker_start(task_id | spec, worktree: "current" | "new-child" | "new-top-level", name?, workspace?, agent?, model?)
+worker_start(task_id | spec, worktree?: "current" | "new-child" | "new-top-level", name?, workspace?, agent?, model?)
 ```
 
 - **Helpers** (explore, review, implement one step) in your own working copy: `agent` — same arguments as the built-in
   `agent` tool (`subagent_type` = profile from `~/.gigacode/agents/<name>.md`, `prompt`, `model` = id or grade like
   `review`). It runs as its own chat and returns `{ status, summary, sessionId }`. Several in parallel = several calls
   in one turn. Helpers do not start helpers of their own; finished helpers are archived automatically.
-- **Workers** for independent or parallel work: `worker_start`, returns at once. Placement:
+- **Workers** for independent or parallel work: `worker_start`, returns at once. Placement (omit `worktree` and the
+  harness picks it: `current` when you work in the task's repository, else `new-top-level` in the task's repository;
+  the result says which, e.g. `placement: "new-top-level (auto)"`; an explicit `current` in another repository fails):
   - `current` — your working copy (only when nobody else edits the same files);
   - `new-child` — a NEW git worktree of the same repository, nested under yours in the UI; give it a short `name`
     (`ft-core-free`); use it when workers would edit files in parallel;

@@ -266,7 +266,7 @@ test('take into work on a parent task starts a coordinator with the plan of its 
   assert.match(prompt, /You are the COORDINATOR/);
   assert.match(prompt, new RegExp(`- ${subA.id} "A side" - workspace: svc-a - deps: none`));
   assert.match(prompt, new RegExp(`- ${subB.id} "B side" - workspace: svc-b - deps: ${subA.id}`));
-  assert.match(prompt, new RegExp(`worker_start\\(\\{ task_id, worktree: "new" \\}\\).*feature/${parent.id}`));
+  assert.match(prompt, new RegExp(`worker_start\\(\\{ task_id \\}\\) \\(placement automatic.*feature/${parent.id}`));
   await h.api('POST', `/api/sessions/${s.id}/stop`);
 
   const loose = (await h.api('POST', '/api/tasks', { title: 'No repo yet' })).body;

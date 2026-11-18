@@ -149,9 +149,37 @@ test('placement current: a worker started by an agent runs in that agent\'s work
   const other = makeRepo(path.join(root, 'другой репо'));
   const ws2 = (await h.api('POST', '/api/workspaces', { path: other })).body;
   const t2 = (await h.api('POST', '/api/tasks', { title: 'чужая', workspaceId: ws2.id })).body;
-  const r = await h.api('POST', '/api/agent/worker_start', { task_id: t2.id }, { 'x-harness-session': w.id });
-  assert.equal(r.status, 400);
+  const r = await h.api('POST', '/api/agent/worker_start', { task_id: t2.id, worktree: 'current' }, { 'x-harness-session': w.id });
+  assert.equal(r.status, 400, 'an explicit current in another repository');
   assert.match(r.body.error, /new-top-level/);
+  // no placement: chosen automatically — a new worktree in the task's repository
+  const auto = await h.api('POST', '/api/agent/worker_start', { task_id: t2.id }, { 'x-harness-session': w.id });
+  assert.equal(auto.status, 200, auto.body?.error);
+  assert.equal(auto.body.placement, 'new-top-level (auto)');
+  assert.equal(path.dirname(path.resolve(auto.body.cwd)), path.resolve(`${other}-worktrees`));
+  await settled(auto.body.id);
+});
+
+test('auto placement: a root coordinator starts a subtask worker in a new worktree of the subtask repo; worker_run likewise', async () => {
+  const projects = path.join(root, 'проекты');
+  fs.mkdirSync(projects, { recursive: true });
+  const coord = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', cwd: projects, role: 'coordinator' })).body;
+  const parent = (await h.api('POST', '/api/tasks', { title: 'два сервиса' })).body;
+  const sub = (await h.api('POST', '/api/tasks', { title: 'часть в репо', workspaceId: ws.id, parentId: parent.id })).body;
+  const r = await h.api('POST', '/api/agent/worker_start', { task_id: sub.id }, { 'x-harness-session': coord.id });
+  assert.equal(r.status, 200, r.body?.error);
+  assert.equal(r.body.placement, 'new-top-level (auto)');
+  assert.equal(path.dirname(path.resolve(r.body.cwd)), path.resolve(`${repo}-worktrees`));
+  await settled(r.body.id);
+
+  const caller = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', cwd: projects })).body;
+  const run = await h.api('POST', '/api/agent/worker_run', { spec: 'посмотри #done ок', workspace: ws.name }, { 'x-harness-session': caller.id });
+  assert.equal(run.status, 200, run.body?.error);
+  assert.equal(run.body.placement, 'new (auto)');
+  const child = await session(run.body.sessionId);
+  assert.equal(path.dirname(path.resolve(child.cwd)), path.resolve(`${repo}-worktrees`));
+  assert.equal((await h.api('POST', '/api/agent/worker_run', { spec: 'x', workspace: ws.name, worktree: 'current' }, { 'x-harness-session': caller.id })).status, 400);
+  await settled(child.id);
 });
 
 test('the assignee chat archived or deleted: the task keeps its column, no longer points at it', async () => {

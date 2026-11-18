@@ -243,20 +243,24 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
       if (pending.length) fail(409, `у задачи ${task.id} есть незавершённые зависимости: ${pending.join(', ')}`);
     } else if (!o.spec) fail(400, 'нужен task_id или spec');
     if (o.worktree && !PLACEMENTS[o.worktree]) fail(400, 'worktree: "current", "new-child" (или "new") или "new-top-level"');
-    const placement = PLACEMENTS[o.worktree || 'current'];
-    if (placement === 'new-top-level' && !o.workspace) fail(400, 'для new-top-level нужен workspace — репозиторий из workspace_list');
+    const ws = o.workspace ? workspaceRef(o.workspace) : o.workspaceId ? findWs(o.workspaceId) || fail(404, `рабочая папка ${o.workspaceId} не найдена`) : task ? findWs(task.workspaceId) : null;
+    // the caller works outside the task's repository (projects root, a plain folder, another repo)
+    const elsewhere = !!(caller && !o.cwd && ws && ws.id !== caller.workspaceId);
+    // no explicit placement from an agent: its own worktree when it is in the task's repo, else a new worktree there
+    const auto = !o.worktree && !!caller && !o.cwd;
+    const placement = o.worktree ? PLACEMENTS[o.worktree] : auto && elsewhere && ws.isGit ? 'new-top-level' : 'current';
+    if (placement === 'new-top-level' && !ws) fail(400, 'для new-top-level нужен workspace — репозиторий из workspace_list');
+    if (o.worktree && placement === 'current' && elsewhere) {
+      fail(400, `${task ? `задача ${tasks.key(task)} — в` : 'указан'} репозиторий «${ws.name}», а вы работаете в другом: запустите с worktree: "new-top-level", workspace: "${ws.name}" (или без worktree — выбор автоматический)`);
+    }
+    // current = where the caller works (its worktree), never the repository's main checkout
+    const here = !!caller && !o.cwd && placement === 'current' && !elsewhere;
     const name = o.name ? git.sanitizeBranch(o.name).replace(/\//g, '-') : null;
     const agent = o.agent || (caller?.kind === 'chat' ? caller.agent : null) || config.defaultAgent;
     // fail fast, before any worktree or session exists
     jobStep('Проверка агента');
     sessions.resolveAgent(agent);
     if (!o.spec) promptTemplate(agent);
-    const ws = o.workspace ? workspaceRef(o.workspace) : o.workspaceId ? findWs(o.workspaceId) || fail(404, `рабочая папка ${o.workspaceId} не найдена`) : task ? findWs(task.workspaceId) : null;
-    // current = where the caller works (its worktree), never the repository's main checkout
-    const here = caller && !o.cwd && placement === 'current';
-    if (here && ws && ws.id !== caller.workspaceId) {
-      fail(400, `${task ? `задача ${tasks.key(task)} — в` : 'указан'} репозиторий «${ws.name}», а вы работаете в другом: запустите с worktree: "new-top-level", workspace: "${ws.name}"`);
-    }
 
     const run = (async () => {
       let cwd = o.cwd ? path.resolve(o.cwd) : ws ? ws.path : caller?.cwd || config.root;
@@ -286,7 +290,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
           parentId: caller?.id ?? null, taskId: task?.id ?? null, model: o.model, branch, inWorktree, includeDirs, autoIncludeDirs: true, atRoot: o.atRoot === true,
           persistent: !!caller && (placement !== 'current' || !task),
         });
-        sessions.update(s.id, { placement, ...(name ? { worktreeName: name } : {}), ...(o.workspace ? { placementWorkspace: o.workspace } : {}), ...(o.retryOf ? { retryOf: o.retryOf } : {}) });
+        sessions.update(s.id, { placement, ...(auto ? { placementAuto: true } : {}), ...(name ? { worktreeName: name } : {}), ...(o.workspace ? { placementWorkspace: o.workspace } : {}), ...(o.retryOf ? { retryOf: o.retryOf } : {}) });
       } catch (e) {
         if (made?.created) await git.removeWorktree(made.repo, made.wt.path).catch(() => {});
         throw e;
@@ -396,7 +400,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
       '',
       `Plan for ${key} "${task.title}" (task id ${task.id}). Subtasks:`,
       ...(subs.length ? subs.map(line) : ['- (none yet)']),
-      `Start a worker for every READY subtask with worker_start({ task_id, worktree: "new" }): each subtask runs in its own repository on the same branch name ${branch}.`,
+      `Start a worker for every READY subtask with worker_start({ task_id }) (placement automatic: a new worktree in the subtask's repository): each subtask runs in its own repository on the same branch name ${branch}.`,
       `If the spec needs more repositories, call workspace_list and create the missing subtasks with task_create({ parent_id: "${task.id}", workspace, title, description }), then start them. End your turn after starting workers.`,
     ].join('\n');
   }
@@ -491,12 +495,17 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
     if (mode && agentCfg.approvalModes?.length && !agentCfg.approvalModes.includes(mode)) mode = null;
     // a child in its own worktree or repository is persistent (a per-service orchestrator); a same-worktree helper is
     // ephemeral: archived once settled and depth-limited
-    const persistent = a.worktree === 'new' || !!a.workspace;
+    const other = a.workspace ? workspaceRef(a.workspace) : null;
+    const elsewhere = !!other && other.id !== caller.workspaceId;
+    if (a.worktree === 'current' && elsewhere) fail(400, `«${other.name}» — другой репозиторий: запустите с worktree: "new" (или без worktree — выбор автоматический)`);
+    // no explicit worktree: another repository gets a new worktree there (never its main checkout), else here
+    const worktree = a.worktree || (elsewhere && other.isGit ? 'new' : 'current');
+    const persistent = worktree === 'new' || !!a.workspace;
     if (!persistent && atDepthLimit(caller)) fail(409, NO_SUBAGENTS);
-    const base = a.workspace ? workspaceRef(a.workspace).path : caller.cwd;
-    let cwd = base;
+    const base = other && elsewhere ? other.path : caller.worktreePath || caller.cwd;
+    let cwd = a.workspace || worktree === 'new' ? base : caller.cwd;
     let branch = a.workspace ? await git.currentBranch(base) : caller.branch;
-    if (a.worktree === 'new') {
+    if (worktree === 'new') {
       const name = a.name ? git.sanitizeBranch(a.name).replace(/\//g, '-') : null;
       const wantBranch = name || git.sanitizeBranch(`sub/${a.profile || 'agent'}-${newId('x').slice(2)}`);
       const wt = await git.addWorktree(base, { branch: await git.uniqueBranch(base, wantBranch), worktreeRoot: config.worktreeRoot, dirName: name });
@@ -515,11 +524,11 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
     } catch (e) {
       // never an orphan: no sub-agent chat or worktree stays behind a failed start
       if (s) sessions.remove(s.id, { force: true });
-      if (a.worktree === 'new') await git.removeWorktree(base, cwd).catch(() => {});
+      if (worktree === 'new') await git.removeWorktree(base, cwd).catch(() => {});
       throw e;
     }
-    if (a.worktree === 'new') sessions.patch(caller.id, { includeDirs: [...(caller.includeDirs || []), cwd] }, { strict: false });
-    return { sessionId: s.id };
+    if (worktree === 'new') sessions.patch(caller.id, { includeDirs: [...(caller.includeDirs || []), cwd] }, { strict: false });
+    return { sessionId: s.id, placement: a.worktree ? worktree : `${worktree} (auto)` };
   }
 
   async function waitRun(sessionId, timeoutMs = 25000) {
@@ -659,7 +668,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
         registry,
         'Rules:',
         '- Split the work into tasks with task_create; put ordering into deps. Every task spec must be self-contained (goal, files, constraints, how to verify).',
-        '- Start workers with worker_start (task_id; worktree "new" gives the worker its own git worktree and branch).',
+        '- Start workers with worker_start(task_id) without worktree: the placement is automatic (a new worktree in the task\'s repository when you work elsewhere, your own worktree when it is the same repository); worktree "new-child" gives a new worktree of your repository.',
         helpers,
         '- After starting workers END YOUR TURN. The harness wakes you with a message for every worker report, question or escalation. Do not poll.',
         '- Answer worker questions with send_message(to: <worker session id>, body); ask the user with send_message(to: "user") when needed.',
@@ -951,7 +960,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
         task_id: str('existing task id'), spec: str('ad-hoc assignment (no board task unless task: true)'), title: str('title for an ad-hoc spec'),
         task: { type: 'boolean', description: 'with spec: also create a board task for it' },
         agent: str('agent id from the config'), workspace: str('workspace id or name to run in'),
-        worktree: str('placement: current (this worktree, default) | new-child (a new worktree of your repository, nested under yours) | new-top-level (a new worktree in another repository: needs workspace); new = new-child', { enum: ['current', 'new', 'new-child', 'new-top-level'] }),
+        worktree: str('placement; omit it for the automatic choice: current when you work in the task\'s repository, else new-top-level (a new worktree in the task\'s repository). current (this worktree) | new-child (a new worktree of your repository, nested under yours) | new-top-level (a new worktree in another repository: workspace or the task\'s); new = new-child', { enum: ['current', 'new', 'new-child', 'new-top-level'] }),
         name: str('short worktree name for a new worktree (e.g. ft-core); its folder is <repo>-worktrees/<name>'),
         branch: str('branch for a new worktree (default from the task key)'), model: str('model id'),
       }),
@@ -964,7 +973,8 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
           const title = (a.title || a.spec.split('\n').find((l) => l.trim()) || 'task').trim().slice(0, 80);
           task = tasks.create({ title, description: a.spec, workspaceId: a.workspace ? workspaceRef(a.workspace).id : c?.workspaceId ?? null }, c?.id || 'user');
         }
-        return sessionInfo(await startWorker(task, { ...a, spec: a.task_id ? undefined : a.spec }, c));
+        const s = await startWorker(task, { ...a, spec: a.task_id ? undefined : a.spec }, c);
+        return { ...sessionInfo(s), placement: s.placementAuto ? `${s.placement} (auto)` : s.placement };
       },
     },
     {
@@ -973,7 +983,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
       inputSchema: obj({
         profile: str('agent profile name'), spec: str('the assignment'), model: str('model id or grade name'),
         approvalMode: str('approval mode'), title: str('chat title'),
-        worktree: str('current (default) or new', { enum: ['current', 'new'] }), workspace: str('another repository (workspace name): a persistent child there'),
+        worktree: str('current or new; omit it for the automatic choice (new when workspace is another repository, else current)', { enum: ['current', 'new'] }), workspace: str('another repository (workspace name): a persistent child there'),
         name: str('short worktree name for worktree new'), timeoutMin: { type: 'number', description: 'minutes to wait (default 60)' },
       }, ['spec']),
       run: (a, c) => workerRun(a, c),
@@ -984,7 +994,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
       inputSchema: obj({
         subagent_type: str('agent type / profile name'), prompt: str('the task for the sub-agent'), model: str('model id or grade name'),
         description: str('short description'), approvalMode: str('approval mode'),
-        worktree: str('current (default) or new', { enum: ['current', 'new'] }), workspace: str('another repository (workspace name): a persistent child there'),
+        worktree: str('current or new; omit it for the automatic choice (new when workspace is another repository, else current)', { enum: ['current', 'new'] }), workspace: str('another repository (workspace name): a persistent child there'),
         timeoutMin: { type: 'number', description: 'minutes to wait (default 60)' },
       }, ['prompt']),
       run: (a, c) => workerRun({ ...a, profile: a.subagent_type, spec: a.prompt }, c),
