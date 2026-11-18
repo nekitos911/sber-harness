@@ -56,3 +56,38 @@ Done when: the checklist at the end of docs/INTEGRATION.md is fully complete. At
 checked (with evidence), which settings were set (without secrets), which fixtures/tests were replaced or added, and
 what remains open.
 ```
+
+---
+
+## Prompt for updating an existing installation (the machine already has the harness)
+
+```text
+In the sber-harness repository on this machine, pull the latest changes from GitHub and check them live.
+
+1. git status: if there are uncommitted local edits, show them to me and commit or stash them
+   (harness.config.local.json and data/ are not in git and do not need touching). Then git pull.
+   On conflicts, keep the upstream version wherever upstream solves the same problem (auto approval,
+   models by baseId, permissions, sidebar); carry your own facts over into docs/GIGACODE-FACTS.md.
+2. npm install, npm test, npm run build. Restart the harness (stop the old node server/index.js process first).
+3. In harness.config.local.json remove the overrides that are no longer needed: a "models" array with a single model
+   (the catalog is now discovered automatically), and hand-written approvalModeMap / auto → auto-edit (the harness now does
+   that itself if the sandbox does not start).
+4. Check live and record the facts in docs/GIGACODE-FACTS.md (section "Confirmed"):
+   a) "Full access" = auto + tools.sandbox=workspace: does the agent run commands and edit files without asking;
+      if the sandbox does not start, does the notification appear and does the turn re-run as "Auto-edit"
+      (exact stderr text);
+   b) --allowed-tools: run "run git status" in "Auto-edit" mode; does the command run without a card
+      (the default allow-list); if not — the real flag name and pattern syntax from gigacode --help, then fix
+      allowedToolsFlag/allowedToolsJoin in server/launchers.js and the test;
+   c) a denied command → the card "the CLI denied" → "Allow and retry": does the command run on the retry;
+   d) the turn ends right after the reply (no hanging "Writing the reply"), and no console windows appear;
+   e) "Take into work" on a test task with "Where" = "All projects": the agent starts in the projects folder with
+      /full-task, creates the worktree itself, and the harness links it to the task;
+   f) sub-agents: the agent starts helpers via mcp__harness__agent (separate chats), they go to the archive when finished;
+      a child orchestrator in another worktree (new-child) stays;
+   g) ACP (Settings → GigaCode → Transport → ACP) on a test chat: MCP starts once, permissions wait for an answer;
+   h) recovery: kill node while an agent is running → after startup the "Session recovery" window.
+   Fix anything that does not match only in server/launchers.js / server/acp.js / server/integrations/ (with a test).
+5. npm test and npm run build are green → a commit with a clear message → git push (if this machine has access).
+Report: what was checked (with evidence), what was fixed, what remains open.
+```
