@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, type KeyboardEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { ArrowUp, FolderOpen, GitCompareArrows, MessageSquare, Wrench } from 'lucide-react'
 import { api, errorText } from '../api'
 import { openSession, openWorktree, showPanel, toast, useFeature, useStore } from '../store'
@@ -8,7 +8,7 @@ import { loadDraft, saveDraft } from '../lib/draft'
 import { ago, basename, normPath } from '../lib/format'
 import { dur, sessionVisualState, STATE_LABEL, type VisualState } from '../lib/sessionState'
 import { useCurrentTool, useTurnStart } from '../lib/live'
-import { modeShort, useSettings } from '../lib/agents'
+import { FULL_ACCESS, modeShort, useSettings } from '../lib/agents'
 import { useNow } from '../lib/useNow'
 import { listedChat } from '../lib/pending'
 import type { Session, Settings, Task } from '../types'
@@ -20,6 +20,38 @@ import { ReworkPopover } from '../components/board/Rework'
 import { ReleaseChips, useReleaseTargets } from '../components/ReleaseTargets'
 
 const LINK = /https?:\/\/\S+|\b[A-Z][A-Z0-9_]+-\d+\b/
+const REF = /https?:\/\/\S+|[A-Z][A-Z0-9_]+-\d+/
+const fill = (tpl: string, v: Record<string, string>) => tpl.replace(/\{(\w+)\}/g, (m, k: string) => (k in v ? v[k] : m))
+
+/**
+ * What the agent will get, as the server builds it: a task link/key → the agent's task template («/full-task {taskUrl}{notes}»),
+ * anything else → its free-text template. With `handoff-dry-run` the server says it itself (POST /handoff dryRun).
+ */
+function usePromptPreview(input: string, notes: string, agentId: string) {
+  const settings = useSettings()
+  const dryRun = useFeature('handoff-dry-run')
+  const [server, setServer] = useState<string | null>(null)
+  const text = input.trim()
+  useEffect(() => {
+    setServer(null)
+    if (!dryRun || !text) return
+    let live = true
+    const t = window.setTimeout(() => {
+      api<{ prompt?: string }>('POST', '/handoff', { dryRun: true, input: text, notes: notes.trim() || undefined, agent: agentId || undefined })
+        .then((r) => { if (live && r?.prompt) setServer(r.prompt) }, () => undefined)
+    }, 300)
+    return () => { live = false; window.clearTimeout(t) }
+  }, [dryRun, text, notes, agentId])
+  if (!text) return ''
+  if (server) return server
+  const conf = settings?.agents[agentId] as ({ taskPromptTemplate?: string | null; freePromptTemplate?: string | null } | undefined)
+  const ref = text.match(REF)?.[0]
+  const rest = [ref ? text.replace(ref, '').trim() : '', notes.trim()].filter(Boolean).join(' ')
+  if (ref && conf?.taskPromptTemplate) return fill(conf.taskPromptTemplate, { taskUrl: ref, key: ref, title: '', notes: rest ? ` ${rest}` : '' }).trim()
+  // shortcut: gigacode's built-in free template until the server previews it (handoff-dry-run)
+  const free = conf?.freePromptTemplate ?? (agentId === 'gigacode' ? '/full-task {text}{notes}' : '{text}{notes}')
+  return fill(free, { text, notes: notes.trim() ? ` ${notes.trim()}` : '' }).trim()
+}
 
 /**
  * «Главная»: hand a task to the agent the way the CLI does it (/full-task <link> in the projects folder: the agent picks
@@ -60,6 +92,8 @@ function Handoff() {
   const [picking, setPicking] = useState(false)
   const box = useRef<HTMLTextAreaElement>(null)
   const rel = useReleaseTargets(`${input} ${notes}`) // «релиз 54» → develop + release/1.54.0
+  const preview = usePromptPreview(input, notes, agentId)
+  const [previewOpen, setPreviewOpen] = useState(false)
 
   const edit = (v: string) => { setInput(v); saveDraft('home:input', v || null); setError(null) }
   const editNotes = (v: string) => { setNotes(v); saveDraft('home:notes', v || null) }
@@ -110,21 +144,25 @@ function Handoff() {
       <h1>Передать задачу агенту</h1>
       <div className="handoff-box" data-busy={!!job || undefined}>
         <textarea ref={box} className="handoff-input" rows={2} autoFocus value={input} disabled={!!job}
-          placeholder="Ссылка на задачу, ключ (BPMNT-14932) или что сделать…" aria-label="Задача для агента"
+          placeholder={`Ссылка или ключ задачи (BPMNT-14932) или что сделать${command ? `, ${command} добавится сам` : ''}`} aria-label="Задача для агента"
           onChange={(e) => edit(e.target.value)} onKeyDown={onKey} onFocus={() => setNotesOpen(true)} />
         {showNotes && (
           <textarea className="handoff-notes" rows={2} value={notes} disabled={!!job} placeholder="Заметки для агента (необязательно)" aria-label="Заметки"
             onChange={(e) => editNotes(e.target.value)} onKeyDown={onKey} />
         )}
+        {preview && (
+          <button type="button" className="handoff-preview" aria-expanded={previewOpen} onClick={() => setPreviewOpen(!previewOpen)}>
+            <span className="handoff-preview-label">Будет отправлено:</span>
+            <span className="mono handoff-preview-text" data-open={previewOpen || undefined}>{preview}</span>
+          </button>
+        )}
         <ReleaseChips rel={rel} />
         <div className="handoff-bar">
-          {enabled.length > 1 && (
-            <Select size="sm" label="Агент" value={agentId} onChange={(v) => { setAgentId(v); setModel(null); setMode(null) }}
-              options={enabled.map((a) => ({ value: a.id, label: a.label }))} />
-          )}
+          <Select size="sm" label="Агент" value={agentId} onChange={(v) => { setAgentId(v); setModel(null); setMode(null) }}
+            options={enabled.map((a) => ({ value: a.id, label: a.label }))} />
           {agentId && <ModelPicker agentId={agentId} label="Модель" value={model} onChange={setModel} placement="bottom-start" />}
           {agent && agent.approvalModes.length > 0 && (
-            <Select size="sm" label="Режим" value={effectiveMode ?? ''} onChange={setMode} display={modeShort(effectiveMode ?? '')}
+            <Select size="sm" label="Режим" className={FULL_ACCESS.has(effectiveMode ?? '') ? 'mode-select mode-access' : 'mode-select'} value={effectiveMode ?? ''} onChange={setMode} display={modeShort(effectiveMode ?? '')}
               options={agent.approvalModes.map((m) => ({ value: m, label: modeShort(m), hint: agent.approvalModeLabels?.[m] }))} />
           )}
           <span className="grow" />
