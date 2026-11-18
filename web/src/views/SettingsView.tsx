@@ -268,6 +268,12 @@ function AgentSection({ id, form, update, fieldError, primary }: SectionProps & 
         )}
         {primary && <McpServersRow id={id} a={a} set={set} />}
         {primary && a.allowedTools !== undefined && <AllowedToolsRow a={a} set={set} />}
+        {primary && a.autoSandbox !== undefined && (
+          <Row label="Песочница для «Полного доступа»"
+            hint="Выключено (быстрее): «Полный доступ» работает как авто-правки + разрешённые команды. Включено: настоящий auto в песочнице рабочей папки GigaCode — без вопросов, но запуск может быть медленнее.">
+            <Switch label="Песочница для «Полного доступа»" checked={!!a.autoSandbox} onChange={(v) => set({ autoSandbox: v ? 'workspace' : null })} />
+          </Row>
+        )}
         {primary && form.permissions?.allowedToolsByWorkspace !== undefined && <ProjectToolsRow form={form} update={update} />}
       </div>
       <Advanced id={`agent-${id}`}>

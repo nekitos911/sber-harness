@@ -294,6 +294,7 @@ export interface AgentSettings {
   acpIdleMin?: number | null // ACP: unload an idle chat's process after N minutes (null = never)
   mcpExclude?: string[] // MCP servers (from the CLI's own config) not started for harness sessions
   allowedTools?: string[] // tool patterns the CLI may run without asking, e.g. run_shell_command(git)
+  autoSandbox?: 'workspace' | 'workspace-offline' | null // «Полный доступ» as real auto under the CLI sandbox (slower)
 }
 
 export interface Settings {

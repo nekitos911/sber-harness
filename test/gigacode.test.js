@@ -58,7 +58,7 @@ before(async () => {
   repo = makeRepo(path.join(root, 'репо'));
   process.env.MOCK_AGENT_ARGV_FILE = argvFile;
   h = await startTestServer({
-    agents: { giga: giga(shim, { node: process.execPath, cliEntry: entry }), gigabad: giga(badShim) },
+    agents: { giga: giga(shim, { node: process.execPath, cliEntry: entry, autoSandbox: 'workspace' }), gigabad: giga(badShim) },
     integrations: { tasks: { enabled: true, server: 'nope', tools: { find: 'x' } } },
   });
 });
@@ -250,8 +250,8 @@ test('approval modes: auto -> auto-edit for headless GigaCode; autoSandbox keeps
     const args = gl.buildArgs({ prompt: 'x', session: { approvalMode, includeDirs: [] }, agentCfg });
     return args[args.indexOf('--approval-mode') + 1];
   };
-  assert.equal(modeOf({}), 'auto', 'gigacode default: auto under the workspace sandbox');
-  assert.equal(modeOf({ autoSandbox: null }), 'auto-edit', 'no sandbox: auto is mapped');
+  assert.equal(modeOf({}), 'auto-edit', 'gigacode default: no sandbox (it slowed runs down), auto is mapped');
+  assert.equal(modeOf({ autoSandbox: 'workspace' }), 'auto', 'opt-in sandbox keeps auto');
   assert.equal(modeOf({}, 'plan'), 'plan');
   assert.equal(modeOf({ autoSandbox: null, approvalModeMap: {} }), 'auto', 'an explicit empty map disables the mapping');
   assert.equal(gl.effectiveMode({ session: { approvalMode: 'auto' }, agentCfg: { autoSandbox: null } }), 'auto-edit');
@@ -265,7 +265,8 @@ test('approval modes: auto -> auto-edit for headless GigaCode; autoSandbox keeps
   assert.ok(allowed({ autoSandbox: null }, 'auto').includes('run_shell_command(git)'), 'auto mapped to auto-edit gets the list');
   assert.ok(allowed({}, 'default').includes('run_shell_command(mvn)'));
   assert.deepEqual(allowed({}, 'plan'), []);
-  assert.deepEqual(allowed({}, 'auto'), []);
+  assert.ok(allowed({}, 'auto').includes('run_shell_command(git)'), 'default auto (mapped) gets the list');
+  assert.deepEqual(allowed({ autoSandbox: 'workspace' }, 'auto'), []);
   assert.equal(allowed({}, 'default', { allowedTools: ['run_shell_command(git)', 'run_shell_command(kubectl)'] }).filter((x) => x === 'run_shell_command(git)').length, 1, 'deduplicated');
   assert.ok(allowed({}, 'plan', { grantsOnce: ['write_file'] }).includes('write_file'), 'a grant also in plan');
   const harnessMcp = { command: 'node', args: [], env: {} };

@@ -1093,8 +1093,10 @@ of the project root path), or via `gigacode sessions …` (VERIFY subcommands, e
 ## Permissions strategy for GigaCode (no yolo): work without constant prompts
 
 GigaCode has no yolo; headless denies everything not pre-allowed. Three layers, so a task runs end-to-end unattended:
-1. **«Полный доступ» = `auto` + workspace sandbox** (`agents.gigacode.autoSandbox: "workspace"` by default — the CLI's own
-   documented way: `settings.tools.sandbox`). The sandbox scope is the session cwd (+ includeDirs); a task started at the
+1. **«Полный доступ» = auto-edit + the allow-list by default; `auto` + workspace sandbox is OPT-IN**
+   (`agents.gigacode.autoSandbox: null` by default — the sandbox made runs noticeably slower on the real machine;
+   Settings → «Песочница для «Полного доступа»» sets `"workspace"`, the CLI's documented `settings.tools.sandbox`).
+   When enabled, the sandbox scope is the session cwd (+ includeDirs); a task started at the
    projects root therefore covers every repo and `<repo>-worktrees`. Self-healing: if a turn fails fatally with a
    sandbox-related error (stderr matches `/sandbox/i` before any event), the harness sets
    `agentMeta.<id>.sandboxBroken = { at, error }`, maps auto → auto-edit for that agent from then on (approvalModeMap),
@@ -1107,7 +1109,7 @@ GigaCode has no yolo; headless denies everything not pre-allowed. Three layers, 
 3. Remaining denials → «Разрешить и повторить» (one-turn / session allow-list grants), or ACP (real waiting) when enabled.
 The effective mode + sandbox + allow-list used by a turn are recorded on the turn's user message (`runInfo`) and shown
 in the chat header tooltip-free popover «Как запущен агент».
-Implementation: the gigacode launcher defaults are `autoSandbox: "workspace"`, `approvalModeMap: { auto: "auto-edit" }`
+Implementation: the gigacode launcher defaults are `autoSandbox: null`, `approvalModeMap: { auto: "auto-edit" }`
 (applied only without a sandbox) and `allowedTools` = the list above (qwen: the same list, no sandbox); an agent config
 value overrides them (`autoSandbox: null` = no sandbox). The default list goes into auto-edit/default turns only (auto
 under the sandbox needs none, plan only reads); the chat's `allowedTools` and one-turn grants are added in every mode.

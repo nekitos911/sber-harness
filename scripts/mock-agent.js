@@ -6,7 +6,7 @@
 //   #ask <q> | <option> | ...   ask({ question, options })   #crash  exit 1 with stderr   #silent  sleep, no output
 //   #slow           stream slowly for ~5 s          #raw   print two non-JSON lines
 //   #nooutput       stderr only, exit 0 (silent failure)   #warn  stderr warning on a normal run
-//   #auth           login link on stderr, ~2 s wait, then a normal run
+//   #auth [ms]      login link on stderr, a wait (default 2000 ms), then a normal run
 //   #run <profile> <spec>   worker_run (a sub-agent in its own chat); waits, then says "worker_run result: <summary>"
 //   #runwt <profile> <spec> the same in a new worktree (a persistent child)
 //   #deny <tool>    a tool call the CLI denies in headless mode   #question <q> | <option> | ...   its own question tool
@@ -87,7 +87,8 @@ if (has(/#warn\b/)) process.stderr.write('Warning: MCP server(s) failed to start
 if (has(/#auth\b/)) {
   // first run on a machine: the CLI asks for a browser login, waits, then starts normally
   process.stderr.write('Please open https://auth.example/device?code=ABCD-EFGH to sign in\n');
-  await sleep(2000);
+  const ms = lines.map((l) => l.match(/#auth\s+(\d+)/)).find(Boolean)?.[1];
+  await sleep(Number(ms ?? 2000)); // `#auth <ms>`: how long the login takes
 }
 if (has(/#silent\b/)) {
   await sleep(120000);

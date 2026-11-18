@@ -56,8 +56,9 @@ protected by a token plus a Host check.
   (long-poll + progress, survives a harness restart). If the model uses the built-in `agent`, a virtual read-only chat is
   built from the stream.
 - **Questions/permissions.** `ask` and GigaCode's question tool become a card with options. GigaCode has no yolo, so
-  three layers keep it from asking: "Full access" = `auto` + `tools.sandbox: workspace` (self-healing: if the sandbox
-  does not start, auto-edit plus the allow-list is used and the user is notified); a default allow-list of routine
+  three layers keep it from asking: "Full access" = auto-edit + the allow-list by default (fast); real `auto` +
+  `tools.sandbox: workspace` is opt-in in Settings because the sandbox slowed runs down on the real machine
+  (self-healing: if the sandbox does not start, auto-edit plus the allow-list is used and the user is notified); a default allow-list of routine
   commands (`--allowed-tools run_shell_command(git)` …) on every auto-edit/default turn; denials that are left become a
   card "the CLI denied" with "Allow and retry" (a grant for one turn, the session or the project via `--allowed-tools`).
   In ACP mode the agent really waits for the answer to `request_permission`. Exactly how the turn ran is in `runInfo`
