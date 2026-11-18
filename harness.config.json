@@ -16,7 +16,7 @@
     "excludeFromCommit": [".superpowers/"]
   },
   "tasks": {
-    "promptTemplate": "{key}: {title}\n\n{description}\n\nЦелевые ветки: {targets}\nСсылка: {taskUrl}{notes}"
+    "promptTemplate": "{key}: {title}\n\n{description}\n\nСсылка: {taskUrl}{notes}"
   },
   "session": { "idleWindowSec": 90 },
   "orchestration": {
