@@ -39,6 +39,7 @@ export type DialogRequest =
   | { kind: 'confirm'; title: string; text: string; ok: string; danger?: boolean; onConfirm: () => void }
   | { kind: 'session-archive'; id: string } // still working: confirm stopping it
   | { kind: 'session-perms'; id: string }
+  | { kind: 'bind-task'; id: string } // «Привязать задачу» to a chat that worked without one
 
 export interface Toast { id: number; text: string; tone: 'info' | 'ok' | 'error'; href?: string; leaving?: boolean }
 
@@ -200,7 +201,7 @@ document.documentElement.dataset.theme = state.scheme
 
 export type Feature = 'sdd' | 'subagents' | 'virtual-sessions' | 'worker-run' | 'pr-status' | 'branches' | 'fs-search'
   | 'agent-info' | 'models-refresh' | 'tracker-links' | 'worktree-meta' | 'open' | 'board-columns' | 'review-loop' | 'skills-install' | 'demo'
-  | 'fs-raw' | 'rework' | 'tracker-import' | 'folders' | 'include-dirs' | 'acp' | 'pr-decline' | 'questions' | 'permissions' | 'activity' | 'recovery' | 'cli-history' | 'prs-mine' | 'git-generate' | 'git-via-agent' | 'git-stage' | 'handoff' | 'release-resolve' | 'handoff-dry-run' | 'cli-adopt' | 'integrations-check' | 'pick-folder' | 'checks' | 'revive'
+  | 'fs-raw' | 'rework' | 'tracker-import' | 'folders' | 'include-dirs' | 'acp' | 'pr-decline' | 'questions' | 'permissions' | 'activity' | 'recovery' | 'cli-history' | 'prs-mine' | 'git-generate' | 'git-via-agent' | 'git-stage' | 'handoff' | 'release-resolve' | 'handoff-dry-run' | 'cli-adopt' | 'integrations-check' | 'pick-folder' | 'checks' | 'revive' | 'bind-task'
 
 /** Whether this server implements an optional API group (no flag list = an older server = none). */
 export const hasFeature = (f: Feature) => state.features.includes(f)

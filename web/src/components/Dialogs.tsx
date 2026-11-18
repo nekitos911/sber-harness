@@ -9,7 +9,7 @@ import { loadDraft, saveDraft } from '../lib/draft'
 import type { GitSuggest, Session, Task, Workspace, Worktree } from '../types'
 import { Modal } from './ui/Dialog'
 import { CleanupDialog, DeleteWorktreeDialog, WorktreeInfoDialog } from './WorktreeMenu'
-import { Button, Chip, Disclosure, Segmented, Select, SuggestInput } from './ui'
+import { Button, Checkbox, Chip, Disclosure, Segmented, Select, SuggestInput } from './ui'
 import { modeShort, useSettings } from '../lib/agents'
 import { pendingDeps, taskKey } from '../lib/tasks'
 import { loadPr } from '../lib/pr'
@@ -44,6 +44,7 @@ function DialogSwitch({ d }: { d: DialogRequest }) {
     case 'confirm': return <Modal title={d.title} submitLabel={d.ok} danger={d.danger} onClose={closeDialog} onSubmit={() => { closeDialog(); d.onConfirm() }}><p>{d.text}</p></Modal>
     case 'session-archive': return <SessionArchiveDialog id={d.id} />
     case 'session-perms': return <SessionPermsDialog id={d.id} />
+    case 'bind-task': return <BindTaskDialog id={d.id} />
     case 'folder-chat': return <FolderPicker title="Новый чат в папке" submitLabel="Начать чат здесь" onClose={closeDialog} onPick={(p) => { closeDialog(); void newChatInFolder(p) }} />
   }
 }
@@ -631,6 +632,42 @@ function SessionPermsDialog({ id }: { id: string }) {
         <div className="chips-row">{list.map((p) => <Chip key={p} mono onRemove={() => void remove(p)} removeLabel={`Убрать ${p}`}>{p}</Chip>)}</div>
       ) : <p className="muted">Отдельных разрешений нет: действуют общие из настроек агента.</p>}
       <p className="field-hint">Появляются, когда в карточке разрешения выбрано «Разрешать всегда в этой сессии».</p>
+    </Modal>
+  )
+}
+
+// ---------- bind a task to a chat ----------
+
+/**
+ * «Привязать задачу»: the chat worked from a sentence («поправь X в сервисе»), the tracker task comes now — its
+ * worktrees and branch go to the task, and the commit then starts with the task key.
+ */
+function BindTaskDialog({ id }: { id: string }) {
+  const [ref, setRef] = useState('')
+  const [rename, setRename] = useState(true)
+  const [busy, run] = useBusy()
+  const key = /[A-Z][A-Z0-9_]+-\d+/.exec(ref)?.[0] ?? null
+  return (
+    <Modal
+      title="Привязать задачу"
+      submitLabel="Привязать"
+      busy={busy}
+      disabled={!key}
+      onClose={closeDialog}
+      onSubmit={() => run(async () => {
+        const r = await tryApi<{ task: Task; renamed: string[]; worktrees: unknown[] }>('POST', `/sessions/${id}/task`, { ref: ref.trim(), rename })
+        if (!r) return
+        toast(`Задача ${key} привязана${r.worktrees.length ? ` · рабочих деревьев: ${r.worktrees.length}` : ''}${r.renamed.length ? ` · ветка: ${r.renamed.join(', ')}` : ''}`, 'ok')
+        closeDialog()
+      })}
+    >
+      <p className="muted">Чат работал без задачи. Укажите её: ветка и рабочие деревья, которые сделал агент, будут связаны с задачей, а коммит начнётся с её ключа — «{key ?? 'КЛЮЧ'} текст коммита».</p>
+      <div className="field">
+        <span>Задача</span>
+        <input className="input" autoFocus aria-label="Ключ или ссылка на задачу" placeholder="PROJ-123 или ссылка на задачу" value={ref} onChange={(e) => setRef(e.target.value)} />
+        {ref.trim() && !key && <span className="field-error">Не вижу ключа задачи — например PROJ-123</span>}
+      </div>
+      <Checkbox checked={rename} onChange={setRename}>Переименовать ветку по правилу веток задач (feature/{key ?? 'КЛЮЧ'}), если она ещё не отправлена</Checkbox>
     </Modal>
   )
 }

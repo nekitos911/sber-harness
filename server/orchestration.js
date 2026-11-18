@@ -1421,6 +1421,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions, addWo
       .sort((a, b) => b.lastActivityAt - a.lastActivityAt)
       .map((s) => tasks.find(s.taskId))
       .find(Boolean) || null;
+    task ||= db.tasks.find((t) => (t.worktrees || []).some((w) => samePath(w.path, dir))) || null;
     if (!task && st.branch) {
       const mainPath = (await git.worktrees(dir).catch(() => []))[0]?.path;
       const inRepo = (t) => !!mainPath && !!findWs(t.workspaceId) && samePath(findWs(t.workspaceId).path, mainPath);
@@ -1584,9 +1585,24 @@ export function createOrchestration({ config, store, bus, tasks, sessions, addWo
      */
     async linkAgentWorktrees(lists = null) {
       const open = db.tasks.filter((t) => t.location === 'root' && t.status !== 'done');
-      if (!open.length) return 0;
+      const rootChats = db.sessions.filter((s) => s.atRoot && s.kind === 'chat' && !s.virtual && !s.archived);
+      if (!open.length && !rootChats.length) return 0;
       const pairs = lists || await Promise.all(db.workspaces.filter((w) => w.isGit).map(async (w) => [w, await git.worktrees(w.path).catch(() => [])]));
       let linked = 0;
+      // a worktree nobody claimed, made while one projects-folder chat worked (its agent ran git or its own command):
+      // that chat's — its changes panel lists it, a task bound to the chat later gets it
+      for (const [, list] of pairs) {
+        for (const wt of list.slice(1)) { // [0] is the repository's main checkout
+          if (db.worktreeMeta?.[wtKey(wt.path)]?.createdBy) continue;
+          let born;
+          try { born = fs.statSync(wt.path).birthtimeMs; } catch { continue; }
+          const by = rootChats.filter((s) => s.createdAt <= born + 5000 && (s.status === 'running' || s.lastActivityAt >= born - 5000));
+          if (by.length !== 1) continue; // nobody, or several at once: not guessed
+          markWorktree(wt.path, { createdBy: 'agent', createdBySession: by[0].id });
+          linked++;
+        }
+      }
+      if (!open.length) return linked;
       for (const [ws, list] of pairs) {
         if (!ws.isGit) continue;
         for (const wt of list) {
@@ -1607,6 +1623,41 @@ export function createOrchestration({ config, store, bus, tasks, sessions, addWo
         }
       }
       return linked;
+    },
+
+    /**
+     * «Привязать задачу» to a chat that worked without one: the task gets the chat and the worktrees its agent made (a
+     * branch not pushed yet is renamed to the team's feature/<KEY> when `rename`), so the commit and the PR carry the key.
+     */
+    async bindTask(task, s, { rename = true } = {}) {
+      const key = tasks.key(task);
+      // the meta is keyed by a normalized path: the real one (its case) comes from the repositories' worktree lists
+      const keys = new Set(Object.entries(db.worktreeMeta || {}).filter(([, m]) => m.createdBySession === s.id).map(([k]) => k));
+      const all = (await Promise.all(db.workspaces.filter((w) => w.isGit).map((w) => git.worktrees(w.path).catch(() => [])))).flat();
+      const mine = keys.size ? all.filter((w) => keys.has(wtKey(w.path))).map((w) => w.path) : [];
+      const paths = [...new Set([...mine, ...(!s.atRoot && (await git.isRepo(s.cwd)) ? [s.worktreePath || s.cwd] : [])])].filter((p) => fs.existsSync(p));
+      const esc = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const hasKey = (b) => new RegExp(`(^|[^A-Za-z0-9])${esc}($|[^A-Za-z0-9])`, 'i').test(b || '');
+      const worktrees = [...(task.worktrees || [])];
+      const renamed = [];
+      for (const p of paths) {
+        let branch = await git.currentBranch(p).catch(() => null);
+        const st = await git.status(p).catch(() => null);
+        if (rename && branch && !hasKey(branch) && !st?.upstream) {
+          const want = git.sanitizeBranch(render(gitCfg().branchTemplate, { key, id: task.id }));
+          const next = await git.uniqueBranch(p, want);
+          await git.git(p, ['branch', '-m', next]);
+          renamed.push(`${branch} → ${next}`);
+          branch = next;
+        }
+        const main = (await git.worktrees(p).catch(() => []))[0]?.path;
+        const ws = main && db.workspaces.find((w) => w.isGit && samePath(w.path, main));
+        if (!worktrees.some((w) => samePath(w.path, p))) worktrees.push({ workspaceId: ws?.id ?? null, path: p, branch });
+      }
+      tasks.update(task.id, { assigneeSessionId: s.id, worktrees, ...(task.branch || !worktrees[0]?.branch ? {} : { branch: worktrees[0].branch }), ...(task.workspaceId || !worktrees[0]?.workspaceId ? {} : { workspaceId: worktrees[0].workspaceId }), ...(s.atRoot ? { location: 'root' } : {}), ...(task.status === 'todo' || task.status === 'backlog' ? { status: 'in_progress' } : {}) }, 'harness');
+      sessions.update(s.id, { taskId: task.id });
+      tasks.addLog(task.id, 'harness', `Задача привязана к чату «${s.title}»${worktrees.length ? `; рабочих деревьев: ${worktrees.length}` : ''}${renamed.length ? `; ветка: ${renamed.join(', ')}` : ''}`, 'bound', { sessionId: s.id, renamed });
+      return { task: tasks.get(task.id), session: sessions.get(s.id), renamed, worktrees };
     },
   };
 }

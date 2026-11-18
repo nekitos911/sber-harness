@@ -43,7 +43,7 @@ const NO_BUILD_HTML = '<!doctype html><meta charset="utf-8"><title>Harness</titl
 const GRADES = ['default', 'fast', 'review', 'explore'];
 // optional API groups this server implements (docs/ARCHITECTURE.md "Feature flags"); a flag ships with its route
 export const FEATURES = ['branches', 'fs-search', 'pr-status', 'agent-info', 'models-refresh', 'tracker-links', 'board-columns', 'review-loop',
-  'subagents', 'virtual-sessions', 'worker-run', 'skills-install', 'demo', 'worktree-meta', 'open', 'sdd', 'health', 'folders', 'include-dirs', 'questions', 'permissions', 'activity', 'rework', 'fs-raw', 'tracker-import', 'pr-decline', 'task-suggest', 'recovery', 'acp', 'worktree-lazy', 'cli-history', 'prs-mine', 'git-generate', 'git-via-agent', 'git-stage', 'handoff', 'release-resolve', 'cli-adopt', 'handoff-dry-run', 'integrations-check', 'pick-folder', 'checks', 'revive'];
+  'subagents', 'virtual-sessions', 'worker-run', 'skills-install', 'demo', 'worktree-meta', 'open', 'sdd', 'health', 'folders', 'include-dirs', 'questions', 'permissions', 'activity', 'rework', 'fs-raw', 'tracker-import', 'pr-decline', 'task-suggest', 'recovery', 'acp', 'worktree-lazy', 'cli-history', 'prs-mine', 'git-generate', 'git-via-agent', 'git-stage', 'handoff', 'release-resolve', 'cli-adopt', 'handoff-dry-run', 'integrations-check', 'pick-folder', 'checks', 'revive', 'bind-task'];
 // titles of operations the UI may follow by sending x-job-id (WS { t: 'job' } frames)
 const JOB_TITLES = {
   'POST /api/tasks/sync': 'Синхронизация с трекером',
@@ -214,7 +214,7 @@ export async function startServer(opts = {}) {
   // worktrees an agent creates for a task started in the projects folder are linked to the task (every 30 s while such a
   // session runs; also on every worktree list refresh)
   const linkTimer = setInterval(() => {
-    if (db.sessions.some((s) => s.atRoot && s.status === 'running')) orch.linkAgentWorktrees().catch(() => {});
+    if (db.sessions.some((s) => s.atRoot && s.status === 'running')) orch.linkAgentWorktrees().catch(() => {}); // tasks and chats
   }, 30000);
   linkTimer.unref?.();
 
@@ -1435,6 +1435,18 @@ export async function startServer(opts = {}) {
   route('POST', '/api/sessions/:id/permission', ({ params, body }) => sessions.permission(params.id, check(body, { permissionId: 'string', optionId: 'string', note: 'string?' })));
   route('POST', '/api/sessions/:id/stop', ({ params }) => sessions.stop(params.id));
   route('POST', '/api/sessions/:id/revive', ({ params }) => sessions.revive(params.id)); // «Повторить»: continue a broken chat
+  // «Привязать задачу»: a tracker key or link (imported, else a local task with that key) bound to a chat that worked without one
+  route('POST', '/api/sessions/:id/task', async ({ params, body }) => {
+    check(body, { ref: 'string', rename: 'boolean?' });
+    const s = sessions.get(params.id);
+    if (s.kind !== 'chat' || s.virtual) fail(400, 'задачу можно привязать только к чату');
+    const ref = body.ref.trim();
+    const key = ref.match(/[A-Z][A-Z0-9_]+-\d+/)?.[0] || fail(400, 'нужен ключ задачи (например PROJ-123) или ссылка на неё');
+    let task = db.tasks.find((t) => t.externalId === key) || null;
+    if (!task && config.integrations.tasks?.enabled) task = await importIssue({ config, mcp, tasks, ref }).catch(() => null);
+    task ||= tasks.create({ title: key, externalId: key, ...(/^https?:\/\//.test(ref) ? { externalUrl: ref } : {}) }, 'user');
+    return orch.bindTask(task, s, { rename: body.rename !== false });
+  });
   route('DELETE', '/api/sessions/:id/queue/:qid', ({ params }) => sessions.unqueue(params.id, params.qid));
   route('POST', '/api/sessions/:id/queue/send', ({ params, body }) => sessions.sendQueue(params.id, { interrupt: check(body || {}, { interrupt: 'boolean?' }).interrupt === true }));
   route('POST', '/api/sessions/:id/restart', ({ params }) => sessions.restart(params.id));

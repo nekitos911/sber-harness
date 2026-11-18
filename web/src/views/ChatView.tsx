@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { ArrowDown, Check, Copy, Ellipsis, ExternalLink, FolderPlus, KeyRound, ShieldCheck, Wrench, X, GitCompareArrows, MessageSquare, RotateCcw, ScrollText, Square, Trash2 } from 'lucide-react'
+import { ArrowDown, Check, Copy, Ellipsis, ExternalLink, FolderPlus, KeyRound, Link2, ShieldCheck, Wrench, X, GitCompareArrows, MessageSquare, RotateCcw, ScrollText, Square, Trash2 } from 'lucide-react'
 import { api, errorText, tryApi } from '../api'
 import { getState, openDialog, openScreen, openSession, openTask, setState, showPanel, useFeature, useStore, upsertSession } from '../store'
 import { loadMessages, loadSubagents } from '../ws'
@@ -272,6 +272,7 @@ function ChatHeader({ session, onLog, onReset, onDelete }: { session: Session; o
   const changesOpen = useStore((s) => s.panel && s.panelTab === 'changes')
   const dirsOn = useFeature('include-dirs')
   const reworkOn = useFeature('rework')
+  const bindOn = useFeature('bind-task')
   const [reworkOpen, setReworkOpen] = useState(false)
   const reworkRef = useRef<HTMLButtonElement>(null)
   const task = useStore((s) => (session.taskId ? s.tasks.find((t) => t.id === session.taskId) : undefined))
@@ -334,6 +335,7 @@ function ChatHeader({ session, onLog, onReset, onDelete }: { session: Session; o
         align="right"
         items={[
           ...(session.allowedTools !== undefined ? [{ label: 'Разрешения этого чата…', icon: <ShieldCheck />, onSelect: () => openDialog({ kind: 'session-perms', id: session.id }) }] : []),
+          ...(bindOn && session.kind === 'chat' && !session.taskId && !session.virtual ? [{ label: 'Привязать задачу…', icon: <Link2 />, onSelect: () => openDialog({ kind: 'bind-task', id: session.id }) }] : []),
           { label: 'Лог агента', icon: <ScrollText />, onSelect: onLog },
           { label: 'Сбросить статус', icon: <RotateCcw />, onSelect: onReset },
           { label: 'Удалить сессию', icon: <Trash2 />, onSelect: onDelete },
