@@ -29,6 +29,27 @@ const PAGE = 200
 const PLACEHOLDER = { status: 'idle', phase: null, lastActivityAt: 0 } as Session // hooks run before the session is known
 const EMPTY: Message[] = []
 
+/**
+ * A restart cut this chat's turn: continue it here, or let it go («Не нужно») — either way it leaves «Ждут вас»; the
+ * «Восстановление сессий» window does the same for many at once.
+ */
+function InterruptedBar({ session }: { session: Session }) {
+  const [busy, setBusy] = useState(false)
+  const act = async (what: 'resume' | 'dismiss') => {
+    setBusy(true)
+    await tryApi('POST', `/recovery/${what}`, { sessionIds: [session.id] })
+    setBusy(false)
+  }
+  return (
+    <div className="chat-alert chat-alert-soft" role="status">
+      <span>Ход прервал перезапуск harness{session.interrupted?.lastActivity ? <> — на шаге <span className="mono">{session.interrupted.lastActivity}</span></> : null}. Продолжить с того же места?</span>
+      <span className="grow" />
+      <button type="button" className="btn btn-sm btn-primary" disabled={busy} onClick={() => void act('resume')}>Продолжить</button>
+      <button type="button" className="btn btn-sm" disabled={busy} onClick={() => void act('dismiss')}>Не нужно</button>
+    </div>
+  )
+}
+
 export function ChatView({ id, active }: { id: string; active: boolean }) {
   const session = useStore((s) => s.sessions.find((x) => x.id === id))
   const messages = useStore((s) => s.messages[id])
@@ -216,6 +237,7 @@ export function ChatView({ id, active }: { id: string; active: boolean }) {
           <WorkersPanel sessionId={id} workers={workers} />
           {sessionVisualState(session) === 'stalled' && <StallBanner session={session} />}
           <SlowStartHint session={session} />
+          {session.interrupted && session.status !== 'running' && <InterruptedBar session={session} />}
           {session.status === 'error' && (
             <div className="chat-alert" role="alert">
               {errorLine(session, list)}

@@ -20,6 +20,7 @@ import { createMcpManager, loadSecrets, secretsFile, serverDefs } from './mcp-cl
 import { launchers, gigacodeCommand } from './launchers.js';
 import { isAlive, resolveCommand, spawnOptions } from './runner.js';
 import { createModelCatalog, scanModelRefs } from './models.js';
+import { pickFolder } from './pick-folder.js';
 import { readSdd } from './sdd.js';
 import { generateMessage } from './generate.js';
 import { resolveReleases, releasePlan, listReleases } from './releases.js';
@@ -41,7 +42,7 @@ const NO_BUILD_HTML = '<!doctype html><meta charset="utf-8"><title>Harness</titl
 const GRADES = ['default', 'fast', 'review', 'explore'];
 // optional API groups this server implements (docs/ARCHITECTURE.md "Feature flags"); a flag ships with its route
 export const FEATURES = ['branches', 'fs-search', 'pr-status', 'agent-info', 'models-refresh', 'tracker-links', 'board-columns', 'review-loop',
-  'subagents', 'virtual-sessions', 'worker-run', 'skills-install', 'demo', 'worktree-meta', 'open', 'sdd', 'health', 'folders', 'include-dirs', 'questions', 'permissions', 'activity', 'rework', 'fs-raw', 'tracker-import', 'pr-decline', 'task-suggest', 'recovery', 'acp', 'worktree-lazy', 'cli-history', 'prs-mine', 'git-generate', 'git-via-agent', 'git-stage', 'handoff', 'release-resolve', 'cli-adopt', 'handoff-dry-run', 'integrations-check'];
+  'subagents', 'virtual-sessions', 'worker-run', 'skills-install', 'demo', 'worktree-meta', 'open', 'sdd', 'health', 'folders', 'include-dirs', 'questions', 'permissions', 'activity', 'rework', 'fs-raw', 'tracker-import', 'pr-decline', 'task-suggest', 'recovery', 'acp', 'worktree-lazy', 'cli-history', 'prs-mine', 'git-generate', 'git-via-agent', 'git-stage', 'handoff', 'release-resolve', 'cli-adopt', 'handoff-dry-run', 'integrations-check', 'pick-folder'];
 // titles of operations the UI may follow by sending x-job-id (WS { t: 'job' } frames)
 const JOB_TITLES = {
   'POST /api/tasks/sync': 'Синхронизация с трекером',
@@ -1576,6 +1577,11 @@ export async function startServer(opts = {}) {
   // sessionId: only that session's plans (its task key, or written since it started); without it every plan («показать все»)
   route('GET', '/api/sdd', ({ query }) => readSdd(path.resolve(cwdOf(query)), query.sessionId ? sddScope(sessions.get(query.sessionId)) : null));
   route('GET', '/api/fs/dirs', ({ query }) => wfs.listDirs(query.path || '', { hidden: query.hidden === '1' }));
+  // the system's own folder window on this machine (the browser never gives a folder's path) → { path } | { path: null } cancelled
+  route('POST', '/api/fs/pick-folder', async ({ body }) => {
+    check(body, { title: 'string?', initial: 'string?' });
+    return { path: await pickFolder({ title: body.title || 'Выбор папки', initial: body.initial || null }) };
+  });
   route('GET', '/api/fs/list', ({ query }) => wfs.list(cwdOf(query), query.path || ''));
   route('GET', '/api/fs/search', ({ query }) => wfs.searchFiles(cwdOf(query), query.q || '', query.limit));
   route('GET', '/api/fs/file', ({ query }) => wfs.readFile(cwdOf(query), check(query, { path: 'string' }).path));

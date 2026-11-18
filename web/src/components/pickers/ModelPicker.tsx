@@ -184,8 +184,10 @@ function CatalogRefresh({ agentId }: { agentId: string }) {
   }
   if (error) {
     return (
-      <div className="picker-refresh" data-state="error" role="alert">
-        <span className="picker-refresh-error">Не удалось получить список: {error}</span>
+      // a list from before is still there: not an alarm, just «not refreshed» (the reason on hover)
+      <div className="picker-refresh" data-state={at ? undefined : 'error'} role={at ? 'status' : 'alert'}>
+        {at ? <span className="muted" data-tip={error}>Список не обновился — показан прошлый</span>
+          : <span className="picker-refresh-error">Не удалось получить список: {error}</span>}
         <button type="button" className="btn btn-sm" onClick={() => void refresh()}><RefreshCw />Повторить</button>
       </div>
     )

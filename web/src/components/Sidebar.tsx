@@ -21,7 +21,7 @@ import { Button, Menu, Popover } from './ui'
 import { ideEnabled, isUnread, onWorktreeKey, projectMenu, setUnread, worktreeMenu } from './WorktreeMenu'
 import { useNow } from '../lib/useNow'
 import { useRail } from '../lib/useMedia'
-import { listedChat, pendingCount } from '../lib/pending'
+import { listedChat, pendingCount, unreadCount } from '../lib/pending'
 import { loadPrsMine } from '../lib/prsMine'
 
 const depth = (d: number) => ({ '--depth': d }) as CSSProperties
@@ -36,6 +36,8 @@ export function Sidebar() {
   const workspaces = useStore((s) => s.workspaces)
   const sessions = useStore((s) => s.sessions)
   const pending = useStore((s) => pendingCount(s.sessions, s.tasks, s.notifications)) // «Ждёт меня»
+  const unread = useStore((s) => unreadCount(s.notifications, s.sessions))
+  const now = useNow()
   const scheme = useStore((s) => s.scheme)
   const width = useStore((s) => s.sidebarWidth)
   const [query, setQuery] = useState('')
@@ -49,7 +51,8 @@ export function Sidebar() {
   const prsMineOn = useFeature('prs-mine')
   useEffect(() => { if (prsMineOn) loadPrsMine('mine') }, [prsMineOn])
   const openPrs = minePrs ?? taskPrs
-  const waiting = agents.filter((s) => WAITING_YOU.has(sessionVisualState(s))).length
+  // the same chats as «Ждут вас» below (a question, a permission, a login; failed or cut in the last day)
+  const waiting = agents.filter((s) => needsYou(s, now) && sessionVisualState(s) !== 'stalled').length
   const allWorktrees = useStore((s) => s.worktrees)
   const leaving = useLeaving(sessions)
   const sbp = useSbPrefs() // «Чаты из CLI», «Скрывать чаты старше» in the workspace parameters
@@ -109,7 +112,8 @@ export function Sidebar() {
           )}
         />
         <NavItem screen="prs" icon={<GitPullRequest />} label="Пулл-реквесты" end={openPrs > 0 && <span className="count" data-tip={minePrs !== null ? `Моих открытых PR: ${openPrs}` : `Открытых PR задач: ${openPrs}`}>{openPrs}</span>} />
-        <NavItem screen="inbox" icon={<Inbox />} label="Входящие" end={pending > 0 && <span className="count count-signal" aria-label={`ждёт меня: ${pending}`} data-tip="Ждёт меня: вопросы, разрешения, готовые задачи">{pending}</span>} />
+        <NavItem screen="inbox" icon={<Inbox />} label="Входящие" end={pending > 0 ? <span className="count count-signal" aria-label={`ждёт меня: ${pending}`} data-tip="Ждёт меня: вопросы, разрешения, готовые задачи">{pending}</span>
+          : unread > 0 && <span className="count" aria-label={`непрочитанных: ${unread}`} data-tip="Непрочитанные уведомления">{unread}</span>} />
       </div>
 
       <MixedAgents.Provider value={new Set(tree.all.map((x) => x.agent)).size > 1}>
@@ -277,13 +281,18 @@ function buildTree(sessions: Session[], query: string, worktrees: Record<string,
 
 const WAITS: Partial<Record<string, string>> = { waiting_permission: 'разрешение', waiting_answer: 'вопрос', auth: 'вход', stalled: 'нет вывода', error: 'ошибка', interrupted: 'прервана' }
 const DAY = 24 * 3600_000
+/** «Ждут вас»: waits for the person (or is silent), or failed / was cut in the last day. */
+const needsYou = (s: Session, now: number) => {
+  const v = sessionVisualState(s)
+  return !!WAITS[v] && (!(v === 'error' || v === 'interrupted') || (!s.archived && now - s.lastActivityAt < DAY))
+}
 
 /** «Ждут вас»: every chat waiting for a person (or silent, or failed in the last day), longest waiting first; the tree stays calm. */
 function AttentionSection({ tree }: { tree: Tree }) {
   const workspaces = useStore((s) => s.workspaces)
   const now = useNow()
   const list = tree.all
-    .filter((s) => { const v = sessionVisualState(s); return WAITS[v] && (!(v === 'error' || v === 'interrupted') || (!s.archived && now - s.lastActivityAt < DAY)) })
+    .filter((s) => needsYou(s, now))
     .sort((a, b) => (a.lastEventAt ?? a.lastActivityAt) - (b.lastEventAt ?? b.lastActivityAt))
   if (!list.length) return null
   return (
@@ -345,7 +354,6 @@ function worktreeMatters(wt: Worktree, here: Session[], taskStatus: string | nul
 const WEEK = 7 * 24 * 3600 * 1000
 const DRAG_TYPE = 'text/x-harness-project'
 const ATTENTION = new Set(['waiting_answer', 'waiting_permission', 'stalled', 'auth', 'error'])
-const WAITING_YOU = new Set(['waiting_answer', 'waiting_permission', 'auth'])
 /** The agent's letter on rows only when the tree mixes agents (GigaCode and Claude): one agent needs no badge. */
 const MixedAgents = createContext(false)
 const BUSY = new Set(['running', 'starting'])

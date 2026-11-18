@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { createPortal } from 'react-dom'
-import { ChevronRight, Clock, CornerLeftUp, Folder, HardDrive } from 'lucide-react'
+import { ChevronRight, Clock, CornerLeftUp, Folder, FolderOpen, HardDrive } from 'lucide-react'
 import { api, errorText, qs } from '../api'
-import { useStore } from '../store'
+import { useFeature, useStore } from '../store'
 import { basename } from '../lib/format'
 import { Modal } from './ui/Dialog'
 
@@ -26,9 +26,34 @@ function crumbs(path: string): { name: string; path: string }[] {
  * Pick a folder on the server's machine: roots (drives, / and ~), breadcrumbs, the folders here with a filter and
  * arrow keys, recent folders, and a path field for pasting. Needs the server's `folders` API.
  */
-export function FolderPicker({ title = 'Выбор папки', initial, submitLabel = 'Выбрать эту папку', onPick, onClose }: {
-  title?: string; initial?: string | null; submitLabel?: string; onPick: (path: string) => void; onClose: () => void
-}) {
+type PickerProps = { title?: string; initial?: string | null; submitLabel?: string; onPick: (path: string) => void; onClose: () => void }
+
+/**
+ * Choosing a folder: the system's own window (Windows Explorer's «Выбор папки», opened by the harness on this machine);
+ * where there is none (an older server, no such window) — the harness's own folder browser below.
+ */
+export function FolderPicker(props: PickerProps) {
+  const native = useFeature('pick-folder')
+  const [own, setOwn] = useState(!native)
+  const done = useRef(false) // «Отмена» / «Выбрать здесь» while the window is open: its late answer is ignored
+  useEffect(() => {
+    if (own) return
+    api<{ path: string | null }>('POST', '/fs/pick-folder', { title: props.title ?? 'Выбор папки', initial: props.initial || undefined })
+      .then((r) => { if (done.current) return; done.current = true; if (r?.path) props.onPick(r.path); else props.onClose() })
+      .catch(() => { if (!done.current) setOwn(true) })
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  if (own) return <FolderBrowser {...props} />
+  return (
+    <div className="pick-wait" role="status">
+      <FolderOpen aria-hidden />
+      <span>Выберите папку в открывшемся окне</span>
+      <button type="button" className="btn btn-sm btn-ghost" onClick={() => { done.current = true; setOwn(true) }}>Выбрать здесь</button>
+      <button type="button" className="btn btn-sm btn-ghost" onClick={() => { done.current = true; props.onClose() }}>Отмена</button>
+    </div>
+  )
+}
+
+function FolderBrowser({ title = 'Выбор папки', initial, submitLabel = 'Выбрать эту папку', onPick, onClose }: PickerProps) {
   const recent = useStore((s) => s.recentFolders)
   const [at, setAt] = useState(initial ?? '')
   const [dirs, setDirs] = useState<Dirs | null>(null)

@@ -115,6 +115,7 @@ test('turnClosing never survives a restart; the next turn does not start out "cl
   try {
     const after1 = await h.session(s.id);
     assert.deepEqual([after1.status, after1.turnClosing, after1.pid], ['idle', false, null]);
+    assert.equal(after1.interrupted ?? null, null, 'its answer was in: not «прервана», not in «Ждут вас»');
     await h.api('POST', `/api/sessions/${s.id}/messages`, { text: '#slow' });
     const during = await waitFor(async () => { const x = await h.session(s.id); return x.status === 'running' ? x : null; }, { what: 'running' });
     assert.equal(during.turnClosing, false);

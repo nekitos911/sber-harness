@@ -383,3 +383,19 @@ svg.step-icon.spinner { color: var(--lamp-run); }
 .cq-text { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; white-space: pre-wrap; }
 .cq-actions { display: inline-flex; gap: 2px; }
 .perm-note-open { justify-self: start; font-size: 12px; }
+/* files attached to the message being written: thumbnails for images, chips for the rest; × takes one back */
+.composer-atts { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 10px 0; }
+.att { position: relative; display: inline-flex; align-items: center; gap: 6px; max-width: 220px; height: 30px; padding: 0 26px 0 8px; border: 1px solid var(--rule); border-radius: var(--r-2); background: var(--deck-2); font-size: 12px; }
+.att svg { width: 14px; height: 14px; flex-shrink: 0; color: var(--ink-3); }
+.att[data-img] { width: 56px; height: 56px; padding: 0; overflow: hidden; }
+.att img { width: 100%; height: 100%; object-fit: cover; }
+.att-num { position: absolute; left: 3px; bottom: 3px; padding: 0 4px; border-radius: 4px; background: rgb(0 0 0 / .6); color: #fff; font-size: 10.5px; line-height: 15px; }
+.att-x { position: absolute; top: 3px; right: 3px; display: grid; place-items: center; width: 18px; height: 18px; padding: 0; border: 0; border-radius: 50%; background: rgb(0 0 0 / .55); color: #fff; cursor: pointer; }
+.att:not([data-img]) .att-x { top: 50%; transform: translateY(-50%); background: none; color: var(--ink-3); }
+.att-x svg { width: 12px; height: 12px; color: inherit; }
+.att-x:hover { background: rgb(0 0 0 / .8); }
+.att:not([data-img]) .att-x:hover { background: var(--deck-3, var(--rule)); color: var(--ink); }
+.msg-atts { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+.msg-atts .chip svg { width: 12px; height: 12px; }
+/* a turn cut by a restart: a question, not an error */
+.chat-alert-soft { border-color: var(--rule-strong); background: var(--deck-2); color: var(--ink-2); }

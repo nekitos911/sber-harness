@@ -1,13 +1,17 @@
 import { useLayoutEffect, useRef, useState } from 'react'
-import { ArrowUp, Clock, Pencil, Plus, Square, X } from 'lucide-react'
+import { ArrowUp, Clock, FileText, Pencil, Plus, Square, X } from 'lucide-react'
 import { tryApi } from '../../api'
-import { getState, setDraft, setState, toast, useStore, upsertSession } from '../../store'
+import { getState, setDraft, setState, useStore, upsertSession } from '../../store'
 import type { Session } from '../../types'
 import { IconButton, Select } from '../ui'
 import { MentionMirror, useComposerSuggest } from './Suggest'
 import { ModelPicker } from '../pickers/ModelPicker'
 import { ContextRing } from './ContextRing'
 import { FULL_ACCESS, modeShort, useSettings } from '../../lib/agents'
+import { withAttachments } from '../../lib/attachments'
+
+/** A file attached to the message being written: its copy at the harness, and a preview for an image. */
+interface Att { path: string; name: string; preview: string | null }
 
 export function Composer({ session, active }: { session: Session; active: boolean }) {
   const agent = useStore((s) => s.agents.find((a) => a.id === session.agent))
@@ -17,6 +21,7 @@ export function Composer({ session, active }: { session: Session; active: boolea
   const [caret, setCaret] = useState(0)
   const [scroll, setScroll] = useState(0)
   const fileInput = useRef<HTMLInputElement>(null) // «+»: the system's file dialog
+  const [atts, setAtts] = useState<Att[]>([])
   const ref = useRef<HTMLTextAreaElement>(null)
   const running = session.status === 'running'
 
@@ -39,43 +44,31 @@ export function Composer({ session, active }: { session: Session; active: boolea
     },
   })
 
-  /** Types `value` at the caret (the @ and / triggers, a picked file, a pasted screenshot's path); the draft is read fresh. */
-  const insert = (value: string) => {
-    const el = ref.current
-    const cur = getState().drafts[session.id] ?? ''
-    const at = el ? Math.min(el.selectionStart, cur.length) : cur.length
-    const before = cur.slice(0, at)
-    const lead = before && !/\s$/.test(before) ? ' ' : ''
-    update(`${before}${lead}${value}${cur.slice(at)}`)
-    requestAnimationFrame(() => {
-      el?.focus()
-      const pos = at + lead.length + value.length
-      el?.setSelectionRange(pos, pos)
-    })
-  }
-
   /**
-   * «+» (the system's own file dialog) and Ctrl+V with an image: the browser gives the file's bytes, never its path, so a
-   * copy is saved in the chat's folder at the harness and that path goes into the message (quoted when the name has spaces,
-   * quotes or brackets). Files of the project are mentioned with @ instead.
+   * «+» (the system's own file dialog), Ctrl+V with an image, a file dropped on the input: the browser gives the bytes,
+   * never the path, so a copy is saved in the chat's folder at the harness. It shows as a card above the input (a thumbnail
+   * for an image); the agent gets the paths as a list at the end of the message. Project files are mentioned with @.
    */
   const attach = async (files: File[]) => {
     for (const f of files) {
       const r = await tryApi<{ path: string }>('POST', `/sessions/${session.id}/attachments?name=${encodeURIComponent(f.name || 'file')}`, f)
       if (!r) return
-      insert(/^[\p{L}\p{N}_./\\:@+-]+$/u.test(r.path) ? `${r.path} ` : `"${r.path}" `)
+      setAtts((list) => [...list, { path: r.path, name: f.name || 'файл', preview: f.type.startsWith('image/') ? URL.createObjectURL(f) : null }])
     }
-    if (files.length) toast(files.length === 1 ? `Приложен ${files[0].name || 'файл'} — агент получит путь к нему` : `Приложено файлов: ${files.length}`)
+    ref.current?.focus()
   }
+  const unattach = (a: Att) => { if (a.preview) URL.revokeObjectURL(a.preview); setAtts((list) => list.filter((x) => x !== a)) }
 
   const send = async () => {
-    const body = text.trim()
+    const body = withAttachments(text.trim(), atts.map((a) => a.path))
     if (!body || sending) return
     setSending(true)
     const res = await tryApi<{ queued: boolean }>('POST', `/sessions/${session.id}/messages`, { text: body })
     setSending(false)
     if (!res) return
     update('')
+    for (const a of atts) if (a.preview) URL.revokeObjectURL(a.preview)
+    setAtts([])
     window.dispatchEvent(new CustomEvent('harness:sent', { detail: session.id })) // the chat scrolls to the bottom
     // queued: the list above the input says so (a toast here covered its «×» on a narrow window)
   }
@@ -95,8 +88,21 @@ export function Composer({ session, active }: { session: Session; active: boolea
   const modes = agent?.approvalModes ?? (mode ? [mode] : [])
 
   return (
-    <div className="composer">
+    <div className="composer"
+      onDragOver={(e) => { if (e.dataTransfer.types.includes('Files')) e.preventDefault() }}
+      onDrop={(e) => { if (!e.dataTransfer.files.length) return; e.preventDefault(); void attach([...e.dataTransfer.files]) }}>
       <QueueList session={session} />
+      {atts.length > 0 && (
+        <div className="composer-atts" role="list" aria-label="Вложения">
+          {atts.map((a, i) => (
+            <div key={a.path} className="att" role="listitem" data-tip={a.name} data-img={!!a.preview || undefined}>
+              {a.preview ? <img src={a.preview} alt={a.name} /> : <><FileText aria-hidden /><span className="att-name ellipsis">{a.name}</span></>}
+              {a.preview && <span className="att-num">#{i + 1}</span>}
+              <button type="button" className="att-x" aria-label={`Убрать ${a.name}`} onClick={() => unattach(a)}><X /></button>
+            </div>
+          ))}
+        </div>
+      )}
       <div className="composer-field">
       <MentionMirror text={text} scrollTop={scroll} />
       <textarea
@@ -151,7 +157,7 @@ export function Composer({ session, active }: { session: Session; active: boolea
             <Square />
           </button>
         )}
-        <button type="button" className="composer-send" onClick={() => void send()} disabled={!text.trim() || sending} aria-label={running ? 'Поставить в очередь' : 'Отправить'} data-tip={running ? 'В очередь (Enter)' : 'Отправить (Enter)'}>
+        <button type="button" className="composer-send" onClick={() => void send()} disabled={(!text.trim() && !atts.length) || sending} aria-label={running ? 'Поставить в очередь' : 'Отправить'} data-tip={running ? 'В очередь (Enter)' : 'Отправить (Enter)'}>
           <ArrowUp />
         </button>
       </div>

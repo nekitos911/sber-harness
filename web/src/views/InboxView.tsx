@@ -203,6 +203,7 @@ function Item({ n }: { n: Notification }) {
   const Icon = ICON[n.kind]
   // a question can be answered from here only while its chat still waits for it: never a stale answer
   const live = n.kind === 'question' && !n.read && !n.answered && !!session && session.waitingFor === 'answer'
+  const moot = (n.kind === 'question' || n.kind === 'permission') && !session?.waitingFor // its chat no longer waits for it: no «new» dot
 
   const read = async () => {
     if (n.read) return
@@ -224,7 +225,7 @@ function Item({ n }: { n: Notification }) {
   }
 
   return (
-    <li className="inbox-item" data-unread={!n.read} data-kind={n.kind}>
+    <li className="inbox-item" data-unread={!n.read && !moot} data-kind={n.kind}>
       <Icon className="inbox-icon" aria-hidden />
       <div className="inbox-main">
         <div className="inbox-head">

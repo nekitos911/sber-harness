@@ -1,5 +1,5 @@
 import { memo, useState, type MouseEvent } from 'react'
-import { Check, Copy, ExternalLink, GitCompare, LoaderCircle, TriangleAlert, X } from 'lucide-react'
+import { Check, Copy, ExternalLink, FileText, GitCompare, LoaderCircle, TriangleAlert, X } from 'lucide-react'
 import { tryApi } from '../../api'
 import { openSession, openTab, useStore } from '../../store'
 import { basename, fullTime, normPath } from '../../lib/format'
@@ -10,7 +10,8 @@ import { Markdown } from '../Markdown'
 import { DiffLines } from '../DiffLines'
 import { Disclosure, IconButton } from '../ui'
 import { isSubagentTool, SubagentCard } from './SubagentCard'
-import { ThoughtBlock } from './ToolSteps'
+import { ThoughtBlock, Thumb } from './ToolSteps'
+import { isImagePath, splitAttachments } from '../../lib/attachments'
 import { AskToolCard, isAskTool, MessageQuestion, PermissionCard } from './Attention'
 
 /** `until`: for a thought, when it ended (null = still thinking); the thought shows how long it took. */
@@ -65,6 +66,8 @@ export function ReplyOptions({ options, to, onSent }: { options: string[]; to: s
 function UserMessage({ m }: { m: Message }) {
   const sender = useStore((s) => (m.from && m.from !== 'user' ? s.sessions.find((x) => x.id === m.from) : undefined))
   const fromOther = m.from && m.from !== 'user'
+  const cwd = useStore((s) => s.sessions.find((x) => x.id === m.sessionId)?.cwd ?? '')
+  const { text, paths } = splitAttachments(m.text)
   return (
     <div className="msg msg-user" data-tip={fullTime(m.at)}>
       {fromOther && (
@@ -75,7 +78,14 @@ function UserMessage({ m }: { m: Message }) {
             : <span className="chip chip-mono">{m.from}</span>}
         </div>
       )}
-      <Markdown text={m.text} />
+      {paths.length > 0 && (
+        <div className="msg-atts" aria-label="Вложения">
+          {paths.map((p) => (isImagePath(p) && cwd
+            ? <Thumb key={p} cwd={cwd} path={p} />
+            : <span key={p} className="chip" data-tip={p}><FileText aria-hidden />{basename(p)}</span>))}
+        </div>
+      )}
+      {text && <Markdown text={text} />}
     </div>
   )
 }

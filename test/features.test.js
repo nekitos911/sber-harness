@@ -58,6 +58,7 @@ test('each feature flag has a working route (not 404/405)', async () => {
       'release-resolve': ['GET', '/api/releases/resolve?text=' + encodeURIComponent('релиз 54'), (b) => Array.isArray(b.refs)],
       'cli-adopt': ['POST', '/api/history/adopt', (b) => Number.isInteger(b.adopted)], // 501 here: no sourcecontrol server (enabled auto)
       'handoff-dry-run': ['POST', '/api/handoff', null, { input: 'сделай X', dryRun: true }], // dry run: nothing is created
+      'pick-folder': ['POST', '/api/fs/pick-folder', null, { title: 5 }], // 400: never opens a real window in tests
       'integrations-check': ['GET', '/api/integrations/check', (b) => typeof b.tasks.found === 'boolean' && Array.isArray(b.servers)],
     };
     for (const flag of FEATURES) {

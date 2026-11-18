@@ -110,7 +110,7 @@ export function createModelCatalog({ config, store, getUrl }) {
       }
       // stderr warnings («MCP server(s) failed to start: java-lsp») are not why no model ids came back
       const stderr = res.stderrTail.trim().split('\n').filter((l) => l.trim() && !/^\s*Warning:/i.test(l)).slice(-3).join(' ');
-      const why = res.error || (res.timedOut ? 'нет ответа вовремя' : stderr) || 'в ответе нет id моделей';
+      const why = (res.error && !/^\s*Warning:/i.test(res.error) ? res.error : null) || (res.timedOut ? 'нет ответа вовремя' : stderr) || 'в ответе нет id моделей';
       save(agent, { models: prev?.models || [], at: prev?.at ?? null, error: why.slice(0, 500), errorAt: Date.now() });
     } catch (e) {
       save(agent, { models: prev?.models || [], at: prev?.at ?? null, error: e.message, errorAt: Date.now() });

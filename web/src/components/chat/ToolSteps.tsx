@@ -131,7 +131,7 @@ export function StepList({ msgs, live }: { msgs: Message[]; live: boolean }) {
   )
 }
 
-function Thumb({ cwd, path }: { cwd: string; path: string }) {
+export function Thumb({ cwd, path }: { cwd: string; path: string }) {
   const [url, setUrl] = useState<string | null>(null)
   const [failed, setFailed] = useState(false)
   const box = useRef<HTMLDialogElement>(null)

@@ -344,6 +344,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     s.tokensOut ??= 0;
     s.phase = null;
     if (s.kind === 'chat' && s.everStarted === undefined && (s.externalSessionId || s.tokensIn)) s.everStarted = true; // db from before the flag
+    const closing = s.turnClosing; // the turn's result was in, only its process was still closing
     s.turnClosing = false; // a lingering process is not followed across a restart (re-attach sets it again at result)
     if (s.virtual) continue; // settled below, once we know which parents are re-attached
     if (s.kind === 'chat' && s.status === 'running' && s.pid && latestTurnFile(s.id)) {
@@ -354,7 +355,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     s.pid = null;
     if (s.kind === 'chat' && s.status === 'running') {
       s.status = 'idle';
-      markInterrupted(s);
+      if (!closing) markInterrupted(s); // an answered turn was not cut: no «прервана», nothing to resume
     } else if (s.kind === 'terminal' && s.status !== 'exited') {
       if (config.terminal?.autoRespawn !== false) toRespawn.push(s);
       else {
