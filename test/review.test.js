@@ -225,7 +225,7 @@ test('contract: null switches autoArchiveDays / acpIdleMin off (stored as 0); re
   const st = (await h.api('GET', '/api/settings')).body;
   assert.deepEqual([st.sessions.autoArchiveDays, st.agents.mock.acpIdleMin], [0, 0]);
   assert.equal(st.orchestration.maxSubagentDepth, 1);
-  const full = '/full-task {taskUrl} Задача готова, но нужны правки: {notes}';
-  assert.deepEqual([st.agents.gigacode.reworkPromptTemplate, st.agents.gigacode.reworkPromptPresets[0]], [full, full]);
+  // no one's own command assumed: gigacode too gets the generic template until a local config sets one
+  assert.deepEqual([st.agents.gigacode.reworkPromptTemplate, st.agents.gigacode.reworkPromptPresets[0]], [null, '{key} {title}: нужны правки: {notes}']);
   assert.deepEqual(st.agents.mock.reworkPromptPresets, ['{key} {title}: нужны правки: {notes}'], 'no task command: the generic template');
 });

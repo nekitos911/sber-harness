@@ -432,7 +432,7 @@ test('settings: model catalogue objects, labels, presets, timeouts, flags and tr
   const giga = s.agents.gigacode;
   assert.ok(giga.models.every((m) => typeof m.id === 'string'), 'catalogue entries are objects');
   assert.equal(typeof giga.approvalModeLabels.auto, 'string');
-  assert.ok(giga.taskPromptPresets.length > 0);
+  assert.deepEqual(giga.taskPromptPresets, [], "no one's own commands in the shared defaults");
   assert.deepEqual([giga.firstEventTimeoutMs, giga.inheritUserMcp, giga.enabled], [120000, false, true]);
   assert.deepEqual(Object.keys(s.integrations.tasks).sort(), ['closedStatuses', 'enabled', 'onStartTransition', 'space', 'statusMap', 'urlTemplate']);
   // default "auto": off here (no console MCP server named sourcecontrol)

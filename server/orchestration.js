@@ -157,7 +157,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions }) {
     return render(reworkTemplate(s.agent), promptVars(task, s, notes.trim()));
   }
 
-  /** The agent's effective «Доработка» template: its config, its launcher's default (gigacode: /full-task), generic. */
+  /** The agent's effective «Доработка» template: its config (e.g. a person's /full-task), its launcher's default, generic. */
   function reworkTemplate(agent) {
     const a = config.agents[agent];
     return a?.reworkPromptTemplate || launchers[a?.launcher]?.defaults.reworkPromptTemplate || GENERIC_REWORK;

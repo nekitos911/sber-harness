@@ -75,7 +75,8 @@ data/                          runtime state (gitignored)
       "settingsEnv": "GIGACODE_SYSTEM_SETTINGS_PATH",
       "settings": { "agents": { "modelGrades": {}, "allowedGrades": [] }, "chatRecording": true },
       "inheritUserMcp": false,                           // copy ~/.gigacode/settings.json mcpServers into the run file
-      "taskPromptTemplate": "/full-task {taskUrl}{notes}",
+      // taskPromptTemplate / freePromptTemplate / reworkPromptTemplate: not set — the task goes as its text;
+      // a person's own command (e.g. "/full-task {taskUrl}{notes}") goes into harness.config.local.json (the first-run setup does it)
       "firstEventTimeoutMs": 120000,                     // cold start with ~9 MCP servers takes 30-60 s
       "env": {}
     },
@@ -525,7 +526,7 @@ POST   /api/notifications/read-all
 },
 "tasks": {
   "promptTemplate": "{key}: {title}\n\n{description}\n\nСсылка: {taskUrl}{notes}"
-  // per agent override: agents.<id>.taskPromptTemplate (gigacode: "/full-task {taskUrl}{notes}"); see "Prompt templates"
+  // per agent override: agents.<id>.taskPromptTemplate (e.g. a person's "/full-task {taskUrl}{notes}", set in the local config); see "Prompt templates"
 }
 ```
 - Ключ задачи `{key}` = `externalId` КОРНЕВОЙ задачи (поднимаясь по parentId), если она пришла из трекера (например,
@@ -592,7 +593,9 @@ POST   /api/notifications/read-all
   настройкам и лаунчер (смена лаунчера отвергается).
 - Поток: стиль Qwen-Code / Claude; холодный старт (`system/init`) может занимать 30–60 с → `firstEventTimeoutMs` 120000 и
   `session.phase: 'starting'` для UI. Фатальные ошибки: пустой stdout + код 1 + stderr. Предупреждения: stderr при коде 0.
-- Команда задачи: `taskPromptTemplate: "/full-task {taskUrl}{notes}"` — слэш-команды работают только как первое слово.
+- Команда задачи: по умолчанию не задана (задача уходит текстом, `tasks.promptTemplate`); своя команда, например
+  `taskPromptTemplate: "/full-task {taskUrl}{notes}"`, задаётся в `harness.config.local.json` (это делает мастер первого запуска) —
+  слэш-команды работают только как первое слово.
 
 ### Шаблоны промптов
 Один проход с заменяющей ФУНКЦИЕЙ (текст задачи может содержать `$&`, `$'`, `$$`); подставленный текст больше не раскрывается;
@@ -653,8 +656,8 @@ POST   /api/notifications/read-all
 - `GET /api/tasks/:id/rework-preview?notes=&agent=` → `{ text, agent, sessionId }`: именно то сообщение, которое доработка
   отправила бы сейчас (её исполнителю или исполнителю, которого она запустила бы), так что предпросмотр в UI равен отправленному тексту.
 - Доработка (форма FOLLOW_UP пользователя `/full-task <url> Задача готова, но нужны правки: <text>`):
-  `POST /api/tasks/:id/rework { notes, agent? }` (флаг `rework`). Промпт = `agents.<id>.reworkPromptTemplate` (gigacode
-  `"/full-task {taskUrl} Задача готова, но нужны правки: {notes}"`, общий по умолчанию `"{key} {title}: нужны правки: {notes}"`;
+  `POST /api/tasks/:id/rework { notes, agent? }` (флаг `rework`). Промпт = `agents.<id>.reworkPromptTemplate` (со своей
+  командой — `"/full-task {taskUrl} Задача готова, но нужны правки: {notes}"`, по умолчанию `"{key} {title}: нужны правки: {notes}"`;
   `{notes}` — текст как введён, отрисовка за один проход; задаётся в /api/settings, должен содержать `{notes}`; значение по умолчанию
   лаунчера gigacode — форма /full-task даже без значения в конфиге). `/api/settings` → `agents.<id>.reworkPromptPresets`:
   сначала действующее значение по умолчанию, затем `agents.<id>.reworkPromptPresets` из конфига, затем общий шаблон
@@ -1460,8 +1463,8 @@ true` (UI генерирует автоматически; false = только 
   импортировать/обновить эту задачу (как `/api/tasks/import`), затем запустить её в корне проектов (`location: 'root'`, notes) —
   существующий путь запуска (семантика jumped, когда исполнитель уже работает);
 - иначе (свободный текст или трекер выключен) → чат в корне проектов (роль worker-подобная solo, название из
-  текста), чей первый промпт = `agents.<id>.freePromptTemplate` (по умолчанию для gigacode `"/full-task {text}{notes}"`,
-  общий `"{text}{notes}"`; те же правила шаблонов, слэш первым) + преамбула корня (выбрать репозитории по SDD/задаче или спросить;
+  текста), чей первый промпт = `agents.<id>.freePromptTemplate` (со своей командой — `"/full-task {text}{notes}"`,
+  по умолчанию `"{text}{notes}"`; те же правила шаблонов, слэш первым) + преамбула корня (выбрать репозитории по SDD/задаче или спросить;
   рабочие деревья создавать по своим правилам).
 - Текст рядом с ключом/ссылкой попадает в `notes` («<ссылка> и проверь кеш» → notes «и проверь кеш»). Ключ/ссылка, которую трекер не может
   импортировать (неизвестная, трекер недоступен), возвращается к чату со свободным текстом с `trackerError` в ответе. `approvalMode` /

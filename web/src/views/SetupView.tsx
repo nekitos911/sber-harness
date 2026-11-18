@@ -14,7 +14,7 @@ const SKILL = 'harness-orchestration'
 export function taskTemplates(command: string | null) {
   return command
     ? { taskPromptTemplate: `/${command} {taskUrl}{notes}`, freePromptTemplate: `/${command} {text}{notes}`, reworkPromptTemplate: `/${command} {taskUrl} Задача готова, но нужны правки: {notes}` }
-    : { taskPromptTemplate: '{key}: {title}\n\n{description}\n\n{taskUrl}{notes}', freePromptTemplate: '{text}{notes}', reworkPromptTemplate: 'Задача {key} готова, но нужны правки: {notes}' }
+    : { taskPromptTemplate: null, freePromptTemplate: null, reworkPromptTemplate: null } // the defaults: the task as its text
 }
 
 /** The command the agent's task template starts with (`/full-task {taskUrl}` → full-task), if any. */
@@ -153,7 +153,7 @@ export function SetupView() {
             <span className="muted">Так агент получит задачу PROJ-123:</span>
             <pre className="firstrun-example mono">{mode === 'command' && commandOk
               ? `/${cmd} https://tracker/…/PROJ-123`
-              : 'PROJ-123: Добавить фильтр по дате\n\nОписание задачи из трекера…\n\nhttps://tracker/…/PROJ-123'}</pre>
+              : 'PROJ-123: Добавить фильтр по дате\n\nОписание задачи из трекера…\n\nСсылка: https://tracker/…/PROJ-123'}</pre>
           </div>
         </li>
 
