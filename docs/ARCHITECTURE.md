@@ -1310,6 +1310,23 @@ Durable state (all in `<dataDir>`, atomic writes):
   tool call («name input…») of the transcript, else the start of the last answer. The notification is sent once per
   startup, after the identity checks.
 
+## Commit / PR messages written by the agent
+
+`POST /api/git/generate { cwd, kind: 'commit' | 'pr', base? }` (header `x-job-id` for progress; feature `git-generate`)
+→ `{ title, body, model, ms }`. Context sent to the agent: the task of that cwd (key, title, description excerpt ≤ 1500
+chars, like /api/git/suggest), `git diff --stat` + the diff (staged + unstaged, ≤ 15000 chars, truncated per file with
+a marker) + untracked file names, and the last 10 commit subjects of the repo (its style); for `pr` also
+`git log <base>..HEAD --oneline`. The prompt (Russian) asks for JSON only: commit → `{ title ≤ 72 chars, starts with
+"<KEY> " when a key exists, body: 1–4 lines «что и зачем» }`; pr → `{ title ≤ 100 UTF-8 bytes, body ≤ min(limits.bodyBytes,
+300 chars) }`. One-off headless run of the default agent in the cwd: `agents.<id>.quickArgs` (gigacode default
+`["--safe-mode"]` — no MCP/skills/hooks, fast start; VERIFY on the target) + approval mode `plan` + model = the agent's
+`fast` grade when set; no harness preamble, no session, nothing recorded in the chat list; timeout
+`git.generateTimeoutSec` (default 120). If the quick args make the CLI fail before any event, retry once without them
+(and remember `agentMeta.quickArgsBroken`). The answer's first `{…}` JSON is parsed; limits enforced (truncate on a
+character boundary). Failure → 502 with the reason (the UI keeps the template prefill). Config `git.generateMessages:
+true` (UI auto-generates; false = only the manual button). `/api/git/suggest` without a task key: `commit.title` = ''
+(no branch-name fallback) and `commit.body` = '' (no file list).
+
 ## Feature flags (client/server version skew)
 
 `GET /api/state` returns `features: string[]` — the optional API groups this server implements, e.g. `sdd`, `subagents`,
