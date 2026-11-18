@@ -243,7 +243,8 @@ export function ChatView({ id, active }: { id: string; active: boolean }) {
 }
 
 function ChatHeader({ session, onLog, onReset, onDelete }: { session: Session; onLog: () => void; onReset: () => void; onDelete: () => void }) {
-  const changed = useGit(session.cwd)?.status?.files.length ?? 0
+  const changed = useGit(session.cwd)?.status?.files.filter((f) => !f.service).length ?? 0
+  const changesOpen = useStore((s) => s.panel && s.panelTab === 'changes')
   const dirsOn = useFeature('include-dirs')
   const reworkOn = useFeature('rework')
   const [reworkOpen, setReworkOpen] = useState(false)
@@ -295,11 +296,13 @@ function ChatHeader({ session, onLog, onReset, onDelete }: { session: Session; o
           Стоп
         </button>
       )}
-      <button type="button" className="btn btn-sm" onClick={() => showPanel('changes')} data-tip="Изменения в этом рабочем дереве">
-        <GitCompareArrows />
-        Изменения
-        {changed > 0 && <span className="count count-run">{changed}</span>}
-      </button>
+      {!changesOpen && ( // the panel itself is on screen: no second «Изменения N» beside it
+        <button type="button" className="btn btn-sm" onClick={() => showPanel('changes')} data-tip="Изменения в этом рабочем дереве">
+          <GitCompareArrows />
+          Изменения
+          {changed > 0 && <span className="count count-run">{changed}</span>}
+        </button>
+      )}
       <MenuButton
         label="Ещё"
         icon={<Ellipsis />}
@@ -327,8 +330,8 @@ function McpChip({ sessionId }: { sessionId: string }) {
   const anchor = useRef<HTMLButtonElement>(null)
   // session.mcpStatus from newer servers; older ones only wrote the «MCP: …» line into the chat
   const servers = status?.map((m) => ({ name: m.name, ok: /^connected$/i.test(m.status), reason: m.status })) ?? (line ? mcpServers(line) : [])
-  if (!servers.length) return null
   const ok = servers.filter((x) => x.ok).length
+  if (!servers.length || ok === servers.length) return null // all running: nothing to say (the status bar has the list)
   return (
     <>
       <button ref={anchor} type="button" className="btn btn-sm mcp-chip" data-bad={ok < servers.length || undefined} aria-expanded={open} onClick={() => setOpen(!open)}

@@ -10,7 +10,6 @@ import {
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { CloudOff, Columns3, Eye, EyeOff, ListFilter, Plus, RefreshCw, Search, SquareKanban } from 'lucide-react'
-import { useMedia } from '../lib/useMedia'
 import { api, errorText, tryApi } from '../api'
 import { getState, setState, toast, upsert, useFeature, useStore } from '../store'
 import { COLUMNS, statusLabel } from '../lib/format'
@@ -59,7 +58,6 @@ export function BoardView() {
   const reworkOn = useFeature('rework')
   const importOn = useFeature('tracker-import')
   const [importOpen, setImportOpen] = useState(false)
-  const narrow = useMedia('(max-width: 1439px)')
   const [filtersOpen, setFiltersOpen] = useState(false)
   const filtersRef = useRef<HTMLButtonElement>(null)
   const importRef = useRef<HTMLButtonElement>(null)
@@ -249,8 +247,8 @@ export function BoardView() {
           <Search aria-hidden />
           <input className="input" type="search" placeholder="Поиск задач" aria-label="Поиск задач" value={query} onChange={(e) => setQuery(e.target.value)} />
         </div>
-        {narrow ? (
-          <>
+        {/* filters always in «Фильтры»: inline they pushed «Синхронизировать» onto a second line */}
+        <>
             <button ref={filtersRef} type="button" className="btn btn-ghost" aria-expanded={filtersOpen} onClick={() => setFiltersOpen(!filtersOpen)}>
               <ListFilter />
               Фильтры{activeFilters > 0 && <span className="count">{activeFilters}</span>}
@@ -258,13 +256,12 @@ export function BoardView() {
             <Popover anchor={filtersRef} open={filtersOpen} onClose={() => setFiltersOpen(false)} placement="bottom-end" label="Фильтры" className="filters-pop">
               <div className="filters-body">{filters}</div>
             </Popover>
-          </>
-        ) : filters}
+        </>
         {importOn && (
           <>
             <button ref={importRef} type="button" className="btn" aria-expanded={importOpen} onClick={() => setImportOpen(!importOpen)} data-tip="Добавить задачу из трекера по ключу или ссылке">
               <Plus />
-              По ключу
+              Добавить по ключу
             </button>
             <ImportPopover anchor={importRef} open={importOpen} onClose={() => setImportOpen(false)} onImported={(id) => setOpenId(id)} />
           </>
@@ -305,7 +302,7 @@ export function BoardView() {
             <p>Здесь появятся задачи, назначенные на вас в трекере{syncEnabled ? ' (кнопка «Синхронизировать»)' : ''}, созданные агентами или добавленные по ключу.</p>
             <div className="row">
               {syncEnabled && <Button icon={<RefreshCw />} busy={syncing} onClick={() => void sync()}>Синхронизировать</Button>}
-              {importOn && <Button icon={<Plus />} onClick={() => setImportOpen(true)}>По ключу</Button>}
+              {importOn && <Button icon={<Plus />} onClick={() => setImportOpen(true)}>Добавить по ключу</Button>}
               <Button variant="primary" icon={<Plus />} onClick={() => setCreating(true)}>Новая задача</Button>
             </div>
           </div>

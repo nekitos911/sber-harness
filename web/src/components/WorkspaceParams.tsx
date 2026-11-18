@@ -88,7 +88,7 @@ export function WorkspaceParams({ projects }: { projects: Workspace[] }) {
             <p className="sbp-hint">По последней активности. Открытый чат и те, что работают или ждут вас, видны всегда.</p>
           </Sub>
           {FILTERS.map(([k, label]) => <SwitchRow key={k} label={label} checked={!!p[k]} onChange={toggle(k)} />)}
-          <p className="sbp-hint">Чаты, которые ждут вас, видны всегда — в «Требуют внимания».</p>
+          <p className="sbp-hint">Чаты, которые ждут вас, видны всегда — в «Ждут вас».</p>
           <div className="sbp-foot">
             <Button size="sm" variant="ghost" disabled={isDefault(p)} onClick={() => setSbPrefs({ ...DEFAULT_PREFS, projectOrder: p.projectOrder })}>Сбросить</Button>
           </div>

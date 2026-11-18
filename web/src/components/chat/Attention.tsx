@@ -159,6 +159,7 @@ export function PermissionCard({ m }: { m: Message }) {
   const headless = p.transport !== 'acp'
   const [busy, setBusy] = useState<string | null>(null)
   const [note, setNote] = useState('')
+  const [rejecting, setRejecting] = useState(false) // the note field shows after the first «reject» click
   const rejectRef = useRef<HTMLButtonElement>(null)
   const { icon, text } = actionLine(p.tool, p.input)
   const who = from ? `субагент ${subTitle(from.title)?.[0] ?? from.title}: ` : ''
@@ -203,12 +204,12 @@ export function PermissionCard({ m }: { m: Message }) {
     <section className="perm-card" aria-label="Запрос разрешения" onKeyDown={onKey}>
       <header className="perm-head"><ShieldAlert aria-hidden />
         {who && <span className="perm-from">{who}</span>}
-        {headless ? 'CLI отклонил действие — нужно разрешение' : 'Агент ждёт разрешения'}
+        Агент просит разрешение
       </header>
       <div className="perm-action"><span className="perm-icon" aria-hidden>{icon}</span><span className="mono">{text}</span></div>
       {headless && p.pattern && <p className="perm-reason muted">Будет разрешено: <span className="mono">{p.pattern}</span></p>}
-      {p.reason && <p className="perm-reason muted">{p.reason}</p>}
       <Disclosure className="perm-more" summary={<span>Подробности</span>}>
+        {p.reason && <p className="perm-reason muted">{p.reason}</p>/* the CLI's own words, in English: on demand */}
         <pre>{typeof p.input === 'string' ? p.input : JSON.stringify(p.input, null, 2)}</pre>
       </Disclosure>
       <div className="perm-actions">
@@ -221,14 +222,14 @@ export function PermissionCard({ m }: { m: Message }) {
             className={isReject(o) ? 'btn-outline' : undefined}
             busy={busy === o.id}
             disabled={busy !== null && busy !== o.id}
-            onClick={() => void choose(o)}
+            onClick={() => { if (isReject(o) && !rejecting) { setRejecting(true); return } void choose(o) }} // «why not» first, then it goes
           >
             {headless ? HEADLESS_LABEL(o) : optionLabel(o)}
           </Button>
         ))}
       </div>
-      {options.some(isReject) && (
-        <input className="input perm-note" aria-label="Комментарий к запрету" placeholder="Почему нет или что сделать вместо (необязательно)" value={note} onChange={(e) => setNote(e.target.value)} />
+      {rejecting && (
+        <input autoFocus className="input perm-note" aria-label="Комментарий к запрету" placeholder="Почему нет или что сделать вместо (необязательно)" value={note} onChange={(e) => setNote(e.target.value)} />
       )}
     </section>
   )

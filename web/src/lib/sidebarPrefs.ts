@@ -56,7 +56,7 @@ export function filteredOut(p: SbPrefs, w: WtFacts): boolean {
 
 export type StatusGroup = 'attention' | 'busy' | 'idle' | 'done' | 'error'
 export const STATUS_GROUPS: [StatusGroup, string][] = [
-  ['attention', 'Требуют внимания'], ['busy', 'Работают'], ['idle', 'Свободны'], ['done', 'Готово'], ['error', 'Ошибки'],
+  ['attention', 'Ждут вас'], ['busy', 'Работают'], ['idle', 'Свободны'], ['done', 'Готово'], ['error', 'Ошибки'],
 ]
 const WAITING = new Set(['waiting_answer', 'waiting_permission', 'stalled', 'auth'])
 

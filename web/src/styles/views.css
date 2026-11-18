@@ -590,7 +590,7 @@ button.prs-group[aria-expanded="true"] .chev { transform: rotate(90deg); }
 .now-group h2 { display: flex; align-items: baseline; gap: 6px; margin: 0 0 6px; font-size: 12px; font-weight: 600; color: var(--ink-3); }
 .now-group h2 .num { font-weight: 500; }
 .now-group[data-g="wait"] h2 { color: var(--lamp-ask); }
-.now-row { display: grid; grid-template-columns: 16px minmax(0, 1.4fr) minmax(0, 1fr) auto auto; align-items: center; gap: 10px; height: 34px; padding: 0 8px; border-radius: 8px; color: var(--ink-2); cursor: pointer; }
+.now-row { display: grid; grid-template-columns: 16px minmax(0, 1.4fr) minmax(0, 1fr) 110px 84px; /* fixed ends: states and times line up */ align-items: center; gap: 10px; height: 34px; padding: 0 8px; border-radius: 8px; color: var(--ink-2); cursor: pointer; }
 .now-row:hover { background: var(--deck-2); }
 .now-row:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
 .now-row .st { width: 15px; height: 15px; }
@@ -598,7 +598,7 @@ button.prs-group[aria-expanded="true"] .chev { transform: rotate(90deg); }
 .now-key { flex: none; font-size: 12px; font-weight: 400; color: var(--ink-3); }
 .now-activity { min-width: 0; font-size: 12.5px; color: var(--ink-3); }
 .now-row[data-s="waiting_permission"] .now-activity, .now-row[data-s="waiting_answer"] .now-activity { color: var(--lamp-ask); }
-.now-meta { display: inline-flex; gap: 10px; font-size: 12px; color: var(--ink-3); white-space: nowrap; }
+.now-meta { display: inline-flex; justify-content: flex-end; gap: 10px; font-size: 12px; color: var(--ink-3); white-space: nowrap; }
 .now-changes { color: color-mix(in srgb, var(--lamp-run) 70%, var(--ink-3)); }
 .now-actions { display: inline-flex; gap: 2px; visibility: hidden; }
 .now-row:hover .now-actions, .now-row:focus-within .now-actions { visibility: visible; }
@@ -669,3 +669,4 @@ button.prs-group[aria-expanded="true"] .chev { transform: rotate(90deg); }
 .flow-steps li[data-state="now"] { border-top-color: var(--signal); color: var(--ink); font-weight: 600; }
 .flow-next { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--ink-2); }
 .flow-next > span { flex: 1; min-width: 0; }
+.handoff-add-note { justify-self: start; margin: 0 14px 4px; font-size: 12px; }

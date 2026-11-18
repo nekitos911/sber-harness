@@ -42,8 +42,8 @@ function WaitingForYou() {
   const n = waiting.length + done.length + escalations.length
   if (!n) return null
   return (
-    <section className="inbox-waiting" aria-label="Ждёт меня">
-      <h2>Ждёт меня <span className="count count-signal">{n}</span></h2>
+    <section className="inbox-waiting" aria-label="Ждут вас">
+      <h2>Ждут вас <span className="count count-signal">{n}</span></h2>
       {waiting.map((x) => <WaitingItem key={x.id} s={x} />)}
       {escalations.map((e) => <EscalationItem key={e.id} n={e} />)}
       {done.map((t) => <DoneItem key={t.id} t={t} s={sessions.find((x) => x.id === t.assigneeSessionId)} />)}
@@ -179,7 +179,7 @@ export function InboxView() {
       </header>
       <Interrupted />
       <WaitingForYou />
-      {list.length === 0 ? (
+      {list.length === 0 && pending > 0 ? null : list.length === 0 ? ( // the cards above are the content: no «Пусто» under them
         <div className="empty">
           <Inbox className="empty-icon" aria-hidden />
           <h2>Пусто</h2>

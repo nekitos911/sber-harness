@@ -13,6 +13,7 @@
   border-bottom: 1px solid var(--rule); background: var(--ground);
 }
 .topbar-left { display: flex; align-items: center; gap: 2px; padding: 0 6px 0 12px; flex-shrink: 0; width: max(var(--sb-w), 132px); border-right: 1px solid var(--rule); }
+.app[data-rail] .topbar-left { width: auto; border-right: 0; } /* the 48 px rail: no divider at 132 px that lines up with nothing */
 .topbar-left .brand-mark { width: 16px; height: 16px; margin-right: 8px; color: var(--ink); }
 .topbar-right { display: flex; align-items: center; gap: 2px; padding: 0 6px; flex-shrink: 0; }
 .topbar-right .btn { height: 24px; font-size: 12px; color: var(--ink-3); }
@@ -228,6 +229,7 @@
 .wt-mark[data-mark="busy"] svg { animation: pulse 1.6s ease-in-out infinite; }
 .wt-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--lamp-fail); }
 .wt-house { width: 12px !important; height: 12px !important; margin-left: 5px; vertical-align: -1px; color: var(--ink-3); }
+.label > .wt-house:first-child { margin: 0 5px 0 0; } /* «⌂ develop»: the house leads the main checkout's branch */
 .wt[data-sleeping] > .tree-wt { opacity: 0.55; }
 .wt-error { width: 100%; height: 22px; border: 0; background: none; color: var(--lamp-fail); font: inherit; font-size: 12px; text-align: left; gap: 6px; }
 .wt-error svg { width: 12px !important; height: 12px !important; color: var(--lamp-fail) !important; }

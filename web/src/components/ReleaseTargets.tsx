@@ -135,7 +135,7 @@ export function TargetsLine({ targets, onChange, workspaceId, detectText }: {
   useEffect(() => { if (hint && hasRelease) saveDraft('hint:targets', true) }, [hint, hasRelease])
   return (
     <div className="targets-line">
-      <span className="targets-label">Куда:</span>
+      <span className="targets-label">Влить в:</span>
       {list.map((b) => (
         <span key={b} className="chip chip-mono rel-chip">
           {b}

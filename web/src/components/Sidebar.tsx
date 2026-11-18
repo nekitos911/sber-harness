@@ -277,7 +277,7 @@ function buildTree(sessions: Session[], query: string, worktrees: Record<string,
 
 const WAITS: Partial<Record<string, string>> = { waiting_permission: 'разрешение', waiting_answer: 'вопрос', auth: 'вход', stalled: 'нет вывода' }
 
-/** «Требуют внимания»: every chat waiting for a person (or silent), longest waiting first; the tree stays calm. */
+/** «Ждут вас»: every chat waiting for a person (or silent), longest waiting first; the tree stays calm. */
 function AttentionSection({ tree }: { tree: Tree }) {
   const workspaces = useStore((s) => s.workspaces)
   const now = useNow()
@@ -286,8 +286,8 @@ function AttentionSection({ tree }: { tree: Tree }) {
     .sort((a, b) => (a.lastEventAt ?? a.lastActivityAt) - (b.lastEventAt ?? b.lastActivityAt))
   if (!list.length) return null
   return (
-    <section className="attention" aria-label="Требуют внимания">
-      <div className="attention-head">Требуют внимания <span className="num">· {list.length}</span></div>
+    <section className="attention" aria-label="Ждут вас">
+      <div className="attention-head">Ждут вас <span className="num">· {list.length}</span></div>
       {list.map((s) => {
         const v = sessionVisualState(s)
         const ws = workspaces.find((w) => w.id === tree.owner(s))
@@ -616,9 +616,9 @@ function WorktreeRow({ ws, wt, sessions, terminals, dup, kids, active, fromOf, p
           {mark === 'sleep' ? <Moon aria-hidden /> : mark === 'busy' ? <Activity aria-hidden /> : mark === 'attention' ? <span className="wt-dot" /> : <GitBranch aria-hidden />}
         </span>
         <span className="label">
-          {name}
-          {wt.main && <House className="wt-house" aria-label="основная копия" />}
-          {showBranch && <span className="tree-path"> {wt.branch}</span>}
+          {/* the main checkout is «⌂ develop»: its folder name is the project's, already on the line above */}
+          {wt.main ? <><House className="wt-house" aria-label="основная копия" />{wt.branch ?? name}</> : name}
+          {!wt.main && showBranch && <span className="tree-path"> {wt.branch}</span>}
           {dup && <span className="tree-path"> · {basename(wt.path)}</span>}
           {project && <span className="tree-path"> · {project}</span>}
         </span>
@@ -749,7 +749,7 @@ function SessionRow({ s, nested, level = 0, caret, via, from }: {
   const doing = !cards.showAction ? ''
     : v === 'interrupted' ? `прервана${s.interrupted?.lastActivity ? ` на: ${s.interrupted.lastActivity}` : ''}`
       : v === 'stalled' || v === 'starting' ? line
-        : v === 'running' ? (tool ? `Выполняет: ${tool}` : watching ? 'Наблюдает за исполнителями' : '') : !nested && (v === 'idle' || v === 'done') ? preview : ''
+        : v === 'running' ? (tool ? `Выполняет: ${tool}` : watching ? 'Наблюдает за исполнителями' : '') : !nested && (v === 'idle' || v === 'done') && cards.cards === 'detailed' ? preview : '' // a compact row: the title, not the tail of the last answer
   const detailed = cards.cards === 'detailed' && !!doing
   // the model (as the picker names it); the agent's name only tells something when chats of several agents are listed
   const modelId = s.model ?? s.cliModel

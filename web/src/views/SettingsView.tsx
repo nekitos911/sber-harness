@@ -440,6 +440,8 @@ function AgentStatus({ id }: { id: string }) {
         {r.ok && <Button size="sm" variant="ghost" icon={<RefreshCw className={checking ? 'spinner' : undefined} />} onClick={() => void recheck()} disabled={checking}>Проверить</Button>}
       </div>
       {!r.ok && <CliPathFix id={id} error={r.error ?? ''} onChecked={() => void recheck()} />}
+      {/* not found: the path fix is the whole story — no login, catalogue or MCP rows repeating the same error */}
+      {r.ok && <>
       <dl className="status-grid">
         {r.ok && r.command && <><dt>Команда</dt><dd>{editPath ? <CliPathFix id={id} error="" initial={r.command} onChecked={() => { setEditPath(false); void recheck() }} /> : <AutoValue value={r.command} mono open={false} onToggle={() => setEditPath(true)} />}</dd></>}
         {r.node && <><dt>Node</dt><dd className="mono">{r.node}</dd></>}
@@ -486,6 +488,7 @@ function AgentStatus({ id }: { id: string }) {
         )}
       </dl>
       <p className="set-note">{seen ? `По данным последней сессии, ${ago(seen.at, now)}.` : 'Сессий этого агента ещё не было: MCP и команды появятся после первого запуска.'}</p>
+      </>}
     </div>
   )
 }

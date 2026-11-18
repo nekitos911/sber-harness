@@ -354,10 +354,13 @@
 .task-row-status { justify-self: start; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .task-row-agent { display: inline-flex; align-items: center; gap: 6px; min-width: 0; font-size: 12.5px; color: var(--ink-3); white-space: nowrap; }
 .task-row-agent .st { width: 14px; height: 14px; flex: none; }
-.task-row-actions { display: inline-flex; justify-content: flex-end; gap: 6px; visibility: hidden; }
-.task-row:hover .task-row-actions, .task-row:focus-within .task-row-actions { visibility: visible; }
+/* the row's action is visible at rest (a new user must see «Передать агенту»), full strength on hover */
+.task-row-actions { display: inline-flex; justify-content: flex-end; gap: 6px; opacity: 0.55; transition: opacity var(--t-fast) var(--ease-out); }
+.task-row:hover .task-row-actions, .task-row:focus-within .task-row-actions { opacity: 1; }
+.task-row[data-child] .task-row-main { padding-left: 20px; } /* a subtask sits under its task */
 @media (max-width: 900px) { .task-row { grid-template-columns: minmax(0, 1fr) auto; } .task-row-status, .task-row-agent { display: none; } }
 .drawer-tracker-status { justify-self: start; margin-top: -8px; }
 .drawer-blocked { margin: -6px 0 0; color: var(--lamp-run); font-size: 12.5px; }
 .task-row .task-row-status { justify-self: start; width: max-content; max-width: 150px; }
 .lane-more { align-self: flex-start; margin-top: 4px; }
+.col-head h2 { white-space: nowrap; }

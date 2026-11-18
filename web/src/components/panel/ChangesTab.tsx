@@ -192,14 +192,8 @@ export function ChangesTab({ cwd }: { cwd: string }) {
   return (
     <div className="scm">
       <div className="scm-head">
-        {prInfo ? (
-          <a className="btn btn-sm" href={prInfo.url} target="_blank" rel="noreferrer noopener" data-tip={prInfo.title}><GitPullRequest />Открыть PR #{prInfo.index}</a>
-        ) : (
-          <button type="button" className="btn btn-sm" disabled={!prEnabled || !branch || branch === suggest?.pr.base}
-            data-tip={!prEnabled ? 'PR-интеграция не настроена' : branch === suggest?.pr.base ? 'Ветка совпадает с базовой' : undefined}
-            onClick={createPr}><GitPullRequest />Создать PR</button>
-        )}
-        {!prEnabled && <button type="button" className="link" onClick={openPrSettings}>настроить</button>}
+        {/* «Создать PR» lives in the step strip below (when it is the next step) and the commit menu, never as a dead button */}
+        {prInfo && <a className="btn btn-sm" href={prInfo.url} target="_blank" rel="noreferrer noopener" data-tip={prInfo.title}><GitPullRequest />Открыть PR #{prInfo.index}</a>}
         {taskKey && suggest?.taskId && <button type="button" className="chip chip-mono" data-tip="Открыть задачу" onClick={() => openTask(suggest.taskId!)}>{taskKey}</button>}
         <span className="grow" />
         <button type="button" className="icon-btn icon-btn-sm" aria-label="Искать файл" aria-pressed={query !== null} data-tip="Искать в изменённых файлах" onClick={() => setQuery(query === null ? '' : null)}><Search /></button>
@@ -423,11 +417,12 @@ function FlowStrip({ cwd, changed, ahead, upstream, branch, base, pr, prEnabled,
   if (!branch || !st) return null // the base branch at rest: nothing to walk through
   const cleanup = place && !place.main ? { label: 'Убрать дерево…', run: () => openDialog({ kind: 'wt-delete', workspaceId: place.ws, path: cwd }) } : undefined
   const next: { text: string; action?: { label: string; run: () => void } } = {
-    commit: { text: `закоммитить ${changed} ${plural(changed, 'файл', 'файла', 'файлов')} — кнопка ниже` },
-    push: { text: ahead ? `отправить ${ahead} ${plural(ahead, 'коммит', 'коммита', 'коммитов')} — кнопка ниже` : 'отправить ветку в origin — кнопка ниже' },
+    // review first: the diff is one click away, the commit button right below does the rest
+    commit: { text: `проверить ${changed} ${plural(changed, 'файл', 'файла', 'файлов')} и закоммитить`, action: { label: 'Посмотреть изменения', run: () => openTab({ kind: 'diff', cwd, path: null }) } },
+    push: { text: ahead ? `отправить ${ahead} ${plural(ahead, 'коммит', 'коммита', 'коммитов')} в origin` : 'отправить ветку в origin' },
     pushed: { text: 'всё отправлено' },
     'create-pr': { text: 'открыть пулл-реквест', action: { label: 'Создать PR', run: onCreatePr } },
-    'pr-off': { text: 'открыть PR в сервере кода (интеграция не настроена)' },
+    'pr-off': { text: 'открыть PR — PR-интеграция не настроена', action: { label: 'Настроить', run: openPrSettings } },
     review: { text: (pr?.reviewers?.length ?? 0) > 0 ? 'дождаться ревью и вливания' : 'назначить ревьюеров и дождаться вливания' },
     merged: cleanup ? { text: 'PR влит — рабочее дерево больше не нужно', action: cleanup } : { text: 'PR влит' },
     declined: { text: 'PR отклонён — поправить и создать заново' },

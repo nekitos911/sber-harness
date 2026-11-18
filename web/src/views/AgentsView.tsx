@@ -4,10 +4,10 @@ import { listedChat } from '../lib/pending'
 import { ArchiveRestore, Bot, Ellipsis, ListPlus, MessageSquarePlus, Send } from 'lucide-react'
 import { tryApi } from '../api'
 import { openDialog, openSession, openTask, useStore } from '../store'
-import { ago, ROLE, tokens } from '../lib/format'
+import { ago, ROLE } from '../lib/format'
 import { useNow } from '../lib/useNow'
 import type { Session } from '../types'
-import { Branch, StateLegend, StatusIcon, statusText } from '../components/bits'
+import { Branch, StatusIcon, statusText } from '../components/bits'
 import { useStateLine } from '../lib/live'
 import { sessionVisualState, type VisualState } from '../lib/sessionState'
 import { archiveSession, renameSession, sessionMenu } from '../lib/sessionActions'
@@ -59,7 +59,7 @@ export function AgentsView() {
         <span className="count">{chats.length}</span>
         <Segmented size="sm" label="Какие чаты показывать" value={archive ? 'archive' : 'active'} onChange={(v) => setArchive(v === 'archive')}
           options={[{ value: 'active', label: 'Активные' }, { value: 'archive', label: archivedCount > 0 ? `Архив ${archivedCount}` : 'Архив' }]} />
-        {!archive && <StateLegend />}
+
         <span className="grow" />
         <button type="button" className="btn" onClick={() => openDialog({ kind: 'chat' })}>
           <MessageSquarePlus />
@@ -86,9 +86,9 @@ export function AgentsView() {
               <section key={g.id} className="lane" aria-labelledby={`lane-${g.id}`}>
                 <header className="col-head">
                   <span className="lane-mark" data-g={g.id} aria-hidden />
-                  <h2 id={`lane-${g.id}`}>{g.label}</h2>
+                  <h2 id={`lane-${g.id}`} data-tip={g.hint}>{g.label}</h2>
                   <span className="col-count num">{lane.length}</span>
-                  <span className="lane-hint">{g.hint}</span>
+
                 </header>
                 <div className="col-body">
                   {ordered(list).map(({ s, nested }) => (
@@ -149,9 +149,6 @@ function AgentCard({ s, nested, parent }: { s: Session; nested: boolean; parent?
         {s.model && <span className="mono muted">{s.model}</span>}
         {!['idle', 'done'].includes(sessionVisualState(s)) && <span className="agent-state" data-s={sessionVisualState(s)}>{line || statusText(s)}</span>}
         {s.queued > 0 && <span className="chip chip-run">в очереди {s.queued}</span>}
-        {s.tokensIn + s.tokensOut > 0 && (
-          <span className="muted num" data-tip={`вход ${s.tokensIn}, выход ${s.tokensOut}`}>токены {tokens(s.tokensIn + s.tokensOut)}</span>
-        )}
       </div>
       {task && (
         <button type="button" className="agent-task" onClick={() => openTask(task.id)} data-tip={task.title} data-tip-trunc>
@@ -163,9 +160,9 @@ function AgentCard({ s, nested, parent }: { s: Session; nested: boolean; parent?
         <button type="button" className="agent-parent" onClick={() => openSession(parent.id)}>↳ от {parent.title}</button>
       )}
       {s.branch && <div className="agent-where"><Branch name={s.branch} /></div>}
-      {s.preview && <p className="agent-preview">{s.preview}</p>}
+      {s.preview && !s.waitingFor && <p className="agent-preview">{s.preview}</p>/* waiting: its state says what it needs, not the last «Done.» */}
       <div className="agent-foot" data-open={mode !== null || undefined}>
-        <span className="muted num">активность {ago(s.lastActivityAt, now)}</span>
+        <span className="muted num">{ago(s.lastActivityAt, now)}</span>
         <span className="grow" />
         {!s.virtual && <button type="button" className="icon-btn icon-btn-sm" aria-label="Написать агенту" data-tip="Написать" aria-pressed={mode === 'message'} onClick={() => setMode(mode === 'message' ? null : 'message')}><Send /></button>}
         {s.archived && <button type="button" className="btn btn-sm" onClick={() => void archiveSession(s, false)}><ArchiveRestore />Вернуть</button>}

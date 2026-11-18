@@ -147,8 +147,10 @@ function Handoff() {
       <h1>Передать задачу агенту</h1>
       <div className="handoff-box" data-busy={!!job || undefined}>
         <textarea ref={box} className="handoff-input" rows={2} autoFocus value={input} disabled={!!job}
-          placeholder={`Ссылка или ключ задачи (BPMNT-14932) или что сделать${command ? `, ${command} добавится сам` : ''}`} aria-label="Задача для агента"
-          onChange={(e) => edit(e.target.value)} onKeyDown={onKey} onFocus={() => setNotesOpen(true)} />
+          placeholder={`Ссылка или ключ задачи (PROJ-123) или что сделать${command ? `, ${command} добавится сам` : ''}`} aria-label="Задача для агента"
+          onChange={(e) => edit(e.target.value)} onKeyDown={onKey} />
+        {/* one field on arrival: notes are optional — opened on purpose, or when a saved note exists */}
+        {!showNotes && !job && <button type="button" className="link-btn handoff-add-note" onClick={() => setNotesOpen(true)}>＋ заметка для агента</button>}
         {showNotes && (
           <textarea className="handoff-notes" rows={2} value={notes} disabled={!!job} placeholder="Заметки для агента (необязательно)" aria-label="Заметки"
             onChange={(e) => editNotes(e.target.value)} onKeyDown={onKey} />
@@ -175,7 +177,7 @@ function Handoff() {
         </div>
       </div>
       {root ? (
-        <p className="handoff-note">Агент запустится в {basename(root.path)}{command ? <> с <span className="mono">{command}</span></> : null}: сам выберет проект и создаст рабочие деревья.</p>
+        <p className="handoff-note">Агент запустится в {basename(root.path)}{command ? <> с <span className="mono">{command}</span></> : null}: сам выберет проект и заведёт для задачи свою ветку.</p>
       ) : (
         <p className="handoff-note handoff-warn">
           Укажите папку с проектами: агент начнёт работу в ней.
@@ -227,8 +229,8 @@ function Now() {
         </section>
       )}
       {groups.done.length > 0 && (
-        <section className="now-group" aria-label="Завершены за сутки">
-          <h2>Завершены за сутки <span className="num">{groups.done.length}</span></h2>
+        <section className="now-group" aria-label="Ответили за сутки">
+          <h2>Ответили за сутки <span className="num">{groups.done.length}</span></h2>
           {done.map((s) => <NowRow key={s.id} s={s} task={taskOf(s)} />)}
           {groups.done.length > 5 && (
             <button type="button" className="link now-more" onClick={() => setMoreDone(!moreDone)}>{moreDone ? 'Свернуть' : `Ещё ${groups.done.length - 5}`}</button>
