@@ -59,54 +59,47 @@ what remains open.
 
 ---
 
-## Prompt: drop the local «CLI» screen (CLI chats are now ordinary chats)
+## Prompt for updating the installation (one prompt for everything; use it after every big update)
 
 ```text
-In sber-harness on this machine I added a separate «CLI» screen. It is no longer needed: upstream now pulls CLI chats into
-the sidebar as ordinary chats (feature cli-adopt: under their project/worktree, continued by simply writing a message
-via --resume, not lost after restarts).
-1. git status: save the local CLI screen to a branch (git switch -c local/cli-screen && git add -A && git commit
-   -m "local CLI screen"), then git switch main.
-2. git pull. If main has local commits with the CLI screen, return main to origin/main
-   (git reset --hard origin/main, ONLY after the branch from step 1 is saved). Do not lose other local edits:
-   show them to me before the reset.
-3. npm install && npm test && npm run build, restart the harness.
-4. Check: your recent GigaCode chats from the terminal are visible in the sidebar under their projects (a small
-   terminal icon); open one, write "продолжи": the answer continues the same session with context. Service runs
-   (/models, /context, the harness's own chats) are not in the list. If the CLI chat record format differs and nothing
-   is adopted, fix only server/history.js (the reader and the filters) with a test, then commit and push.
-Report: how many CLI chats were adopted, whether continuation worked, what was fixed.
-```
+In the sber-harness repository on this machine: pull the latest changes from GitHub, clean up local leftovers, and
+check live what can only be checked here (real GigaCode, onework, sourcecontrol). Read docs/HANDOFF.md first.
 
-## Prompt for updating an existing installation (the machine already has the harness)
-
-```text
-In the sber-harness repository on this machine, pull the latest changes from GitHub and check them live.
-
-1. git status: if there are uncommitted local edits, show them to me and commit or stash them
-   (harness.config.local.json and data/ are not in git and do not need touching). Then git pull.
-   On conflicts, keep the upstream version wherever upstream solves the same problem (auto approval,
-   models by baseId, permissions, sidebar); carry your own facts over into docs/GIGACODE-FACTS.md.
-2. npm install, npm test, npm run build. Restart the harness (stop the old node server/index.js process first).
-3. In harness.config.local.json remove the overrides that are no longer needed: a "models" array with a single model
-   (the catalog is now discovered automatically), and hand-written approvalModeMap / auto → auto-edit (the harness now does
-   that itself if the sandbox does not start).
-4. Check live and record the facts in docs/GIGACODE-FACTS.md (section "Confirmed"):
-   a) "Full access" = auto + tools.sandbox=workspace: does the agent run commands and edit files without asking;
-      if the sandbox does not start, does the notification appear and does the turn re-run as "Auto-edit"
-      (exact stderr text);
-   b) --allowed-tools: run "run git status" in "Auto-edit" mode; does the command run without a card
-      (the default allow-list); if not — the real flag name and pattern syntax from gigacode --help, then fix
-      allowedToolsFlag/allowedToolsJoin in server/launchers.js and the test;
-   c) a denied command → the card "the CLI denied" → "Allow and retry": does the command run on the retry;
-   d) the turn ends right after the reply (no hanging "Writing the reply"), and no console windows appear;
-   e) "Take into work" on a test task with "Where" = "All projects": the agent starts in the projects folder with
-      /full-task, creates the worktree itself, and the harness links it to the task;
-   f) sub-agents: the agent starts helpers via mcp__harness__agent (separate chats), they go to the archive when finished;
-      a child orchestrator in another worktree (new-child) stays;
-   g) ACP (Settings → GigaCode → Transport → ACP) on a test chat: MCP starts once, permissions wait for an answer;
-   h) recovery: kill node while an agent is running → after startup the "Session recovery" window.
-   Fix anything that does not match only in server/launchers.js / server/acp.js / server/integrations/ (with a test).
-5. npm test and npm run build are green → a commit with a clear message → git push (if this machine has access).
+1. Local changes and the update.
+   - git status / git log origin/main..HEAD. Save local edits and local commits to a branch:
+     git switch -c local/backup-<date> && git add -A && git commit -m "local backup" && git switch main.
+   - The separate «CLI» screen I had added locally is no longer needed: upstream shows CLI chats in the sidebar as
+     ordinary chats (feature cli-adopt). Do not carry it over.
+   - git fetch && git reset --hard origin/main (ONLY after the backup branch exists; harness.config.local.json and data/
+     are not in git and are not touched). If the backup has other useful changes besides the CLI screen, show them to me
+     and carry them over by hand.
+2. npm install && npm test && npm run build. Stop the old harness process (node server/index.js) and start it again.
+3. harness.config.local.json: remove what is no longer needed — a "models" array with a single model (the catalog
+   comes from /models), hand-written approvalModeMap / auto → auto-edit (now in code), a separate autoSandbox if you
+   set it (the sandbox is off by default because it was slow). Keep: workspaces.root, integrations.tasks (space etc.),
+   secrets in the secrets file.
+4. Check live and record the results in docs/GIGACODE-FACTS.md (section "Confirmed", raw output for anything unexpected):
+   a) «Главная» → paste a task link → under the field «Будет отправлено: /full-task <link>»; «Запустить» → the agent
+      starts in IdeaProjects, picks the project itself, its worktree is linked to the task. Add «и в релиз 54» to the
+      notes → a chip «develop + release/1.54.x» appears, and the agent gets a line about the release.
+   b) No console windows on messages; the turn ends right after the reply; «Новый чат» opens instantly, and a double
+      click does not create two chats.
+   c) Permissions: in «Авто-правки» run "git status" — does it run without a card (default allow-list
+      --allowed-tools)? If not: the exact flag name and pattern syntax from gigacode --help, fix allowedToolsFlag/
+      allowedToolsJoin in server/launchers.js plus the test. A denied command → «Разрешить и повторить» → does it run.
+   d) CLI chats: your recent GigaCode chats from the terminal are in the sidebar under their projects (terminal icon);
+      write «продолжи» in one — it continues with context; check that the turn is not shown twice (the 15 s heuristic
+      in server/history.js); /models, /context and the harness's own chats are not in the list.
+   e) Changes panel: GigaCode writes the commit message itself (✨); does --safe-mode work (if not, the harness falls
+      back by itself — record what happened); «Закоммитить» through the agent → the agent replies with a RESULT: line,
+      the harness shows the commit hash; «Push»; «Создать PR» through the agent.
+   f) «Пулл-реквесты» → «Мои»: are your open PRs visible; what git_get_user returned (if the login came from the OS
+      account name and does not match, set integrations.pr.me in Settings → PR); whether git_list_pull_requests
+      accepts author.
+   g) Context ring next to «Отправить»: numbers look right; «Сжать контекст» (/compress) works in headless mode.
+   h) Tasks: closed tasks (closed) are gone from the board, created ones are in «К работе».
+   Fix anything that does not match only in server/launchers.js, server/history.js, server/integrations/, server/acp.js
+   (with a test); do not change UI and orchestration without need.
+5. npm test and npm run build green → a commit with a clear message → git push.
 Report: what was checked (with evidence), what was fixed, what remains open.
 ```
