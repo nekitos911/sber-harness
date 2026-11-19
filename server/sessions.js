@@ -1704,6 +1704,9 @@ ${note.trim()}` : text });
         delete s.autoTitle;
       }
       if (report) s.queue = s.queue.filter((q) => !(q.report && q.from === from)); // its newer report says it all
+      // work for a hidden chat brings it back: a settled helper its parent re-tasked worked archived, unseen, and its
+      // pending «archive once settled» would have archived it again with this very message still queued (dropped)
+      if (s.archived || s.archiveOnSettle) Object.assign(s, { archived: false, archivedAt: null, archiveOnSettle: false });
       s.queue.push({ id: newId('q'), from, text, at: Date.now(), ...(options ? { options } : {}), ...(report ? { report: true } : {}) });
       if (!r.running) {
         startTurn(s);

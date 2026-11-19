@@ -285,6 +285,8 @@ function ChatHeader({ session, onLog, onReset, onDelete }: { session: Session; o
   const [reworkOpen, setReworkOpen] = useState(false)
   const reworkRef = useRef<HTMLButtonElement>(null)
   const task = useStore((s) => (session.taskId ? s.tasks.find((t) => t.id === session.taskId) : undefined))
+  // who started it: a sub-agent's chat says whose it is (a re-tasked reviewer once read as «исполнитель» from nowhere)
+  const parent = useStore((s) => (session.parentId ? s.sessions.find((x) => x.id === session.parentId) : undefined))
   const [title, setTitle] = useState(session.title)
   useEffect(() => setTitle(session.title), [session.title])
 
@@ -306,7 +308,12 @@ function ChatHeader({ session, onLog, onReset, onDelete }: { session: Session; o
         onBlur={() => void saveTitle()}
         onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') { setTitle(session.title); e.currentTarget.blur() } }}
       />
-      {session.role !== 'solo' && <span className="role" data-role={session.role}>{ROLE[session.role]}</span>}
+      {session.role !== 'solo' && <span className="role" data-role={session.role}>{session.ephemeral ? 'субагент' : ROLE[session.role]}</span>}
+      {parent && (
+        <button type="button" className="chip chat-parent" data-tip={`Его запустил чат «${parent.title || parent.id}»: туда приходят его результаты. Открыть`} onClick={() => openSession(parent.id)}>
+          <MessageSquare aria-hidden /><span className="ellipsis">{parent.title || parent.id}</span>
+        </button>
+      )}
       <span className="muted nowrap">{statusText(session)}</span>
       {task && (
         <button type="button" className="chip chip-mono" onClick={() => openTask(task.id)} data-tip={task.title}>

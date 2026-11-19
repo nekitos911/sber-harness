@@ -1379,9 +1379,12 @@ export function createOrchestration({ config, store, bus, tasks, sessions, addWo
       inputSchema: obj({ to: str('session id | "parent" | "user" | "@all" | "@idle" | "@worktree:<path>"'), body: str('message text') }, ['to', 'body']),
       run: (a, c) => {
         if (c) sessions.flag(c.id, 'communicated');
+        // more work for its own settled helper: the next result goes to the parent as a message, as the first one did
+        // (it had no caller left to hear it: a re-tasked reviewer's answer reached nobody)
+        const retask = (t) => { if (c && t.parentId === c.id && t.ephemeral && t.report) sessions.update(t.id, { report: null, askedParent: true, awaitedBy: null }); };
         if (String(a.to).startsWith('@')) {
           const targets = groupTargets(a.to, c);
-          for (const t of targets) sessions.deliver(t.id, { from: c?.id ?? 'user', text: c ? fromSession(c, a.body) : a.body });
+          for (const t of targets) { retask(t); sessions.deliver(t.id, { from: c?.id ?? 'user', text: c ? fromSession(c, a.body) : a.body }); }
           return { delivered: targets.map((t) => t.id) };
         }
         const parent = a.to === 'parent' && c?.parentId ? sessions.find(c.parentId) : null;
@@ -1390,7 +1393,8 @@ export function createOrchestration({ config, store, bus, tasks, sessions, addWo
           return { delivered: 'user' };
         }
         const target = parent || sessions.find(a.to) || fail(404, `сессия ${a.to} не найдена`);
-        const r = sessions.deliver(target.id, { from: c?.id ?? 'user', text: c ? fromSession(c, a.body) : a.body });
+        retask(target);
+        const r = sessions.deliver(target.id,{ from: c?.id ?? 'user', text: c ? fromSession(c, a.body) : a.body });
         return { delivered: target.id, queued: r.queued };
       },
     },

@@ -154,8 +154,16 @@ test('a same-worktree helper is archived once its result is in; a helper may not
   assert.match(said, /worker_run failed: Субагенты не запускают своих субагентов/);
   assert.ok(!(await state()).sessions.some((s) => s.parentId === child.id && !s.virtual), 'no grandchild session');
   await waitFor(async () => (await state()).sessions.find((s) => s.id === child.id).archived, { what: 'child archived' });
+  // its parent gives it more work: it comes back (it once worked archived, unseen) and the new result reaches the parent
+  await waitFor(async () => !(await state()).sessions.find((s) => s.id === caller.id).pid, { what: 'caller settled' });
+  const sent = (await h.api('POST', '/api/agent/send_message', { to: child.id, body: 'Допзадача по ПР #done второе готово' }, { 'x-harness-session': caller.id })).body;
+  assert.equal(sent.delivered, child.id);
+  assert.ok(!(await state()).sessions.find((s) => s.id === child.id).archived, 're-tasked: shown again');
+  // its answer (here a turn without worker_done) comes to the parent as a message; then it is archived again
+  await waitFor(async () => (await messages(caller.id)).some((m) => m.kind === 'user' && m.from === child.id && /второе готово/.test(m.text)), { timeout: 20000, what: 'the second result' });
+  await waitFor(async () => (await state()).sessions.find((s) => s.id === child.id).archived, { what: 'archived again once settled' });
 
-  const toolsOf = async (sid) => (await h.api('GET', '/api/agent/tools', undefined, { 'x-harness-session': sid })).body.map((x) => x.name);
+  const toolsOf =async (sid) => (await h.api('GET', '/api/agent/tools', undefined, { 'x-harness-session': sid })).body.map((x) => x.name);
   assert.ok((await toolsOf(caller.id)).includes('agent'));
   assert.ok(!(await toolsOf(child.id)).includes('agent'), 'a helper at the depth limit has no agent tool');
 });

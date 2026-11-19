@@ -7,6 +7,8 @@
   border-bottom: 1px solid var(--rule-soft); font-size: 12px; min-width: 0;
 }
 .chat-head .count { margin-left: 2px; }
+.chat-parent { display: inline-flex; align-items: center; gap: 4px; max-width: 240px; min-width: 0; }
+.chat-parent svg { width: 12px; height: 12px; flex: none; }
 .chat-title {
   field-sizing: content; min-width: 80px; max-width: 50%; height: 28px; padding: 0 6px;
   border: 1px solid transparent; border-radius: var(--r-1); background: transparent; color: var(--ink);
