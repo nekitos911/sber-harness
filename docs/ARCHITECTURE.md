@@ -695,7 +695,9 @@ title: '<subagent_type> · <model|grade>', status: running|done|failed, model, c
 - КАЖДАЯ сессия gigacode/qwen/gemini в harness (одиночная, координатор, исполнитель, ревьюер) получает короткий контекстный блок в
   первом промпте (после ведущей слэш-команды, иначе в начале): «Ты работаешь внутри harness. Субагентов запускай
   инструментом mcp__harness__agent с теми же аргументами, что у встроенного agent (subagent_type, prompt, model) —
-  встроенный agent не используй: harness откроет каждого субагента отдельным чатом и вернёт тебе его результат так же.»
+  harness откроет каждого субагента отдельным чатом и вернёт тебе его результат так же.» И запасной путь: если
+  `mcp__harness__agent` не находится (`tool_search` по «harness» пуст), агент запускает встроенный `agent` и пишет об этом
+  одной строкой, а не отказывается от субагентов и ревьюеров (так было: агент сделал всё сам и пропустил ревью).
 - Навык `skills/harness-orchestration/SKILL.md` написан так, что работает и как навык GigaCode (frontmatter
   `name`/`description` с триггером "starting a sub-agent inside the harness"); `POST /api/agents/:id/skills/install`
   копирует его в `~/.gigacode/skills/harness-orchestration/SKILL.md` только по явному запросу; `/api/agents/:id/info` сообщает

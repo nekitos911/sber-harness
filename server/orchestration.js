@@ -61,7 +61,8 @@ export function parseProfile(text) {
 }
 
 export const NO_SUBAGENTS = 'Субагенты не запускают своих субагентов: выполни это сам или верни запрос оркестратору';
-export const SUBAGENT_CONTEXT = 'Ты работаешь внутри harness. Субагентов запускай инструментом mcp__harness__agent с теми же аргументами, что у встроенного agent (subagent_type, prompt, model) — встроенный agent не используй: harness откроет каждого субагента отдельным чатом и вернёт тебе его результат так же. Вопросы человеку — через mcp__harness__ask (варианты в options): вызов ждёт ответа и возвращает его; если вернулся без ответа — заверши ход.';
+// the fallback matters: told only «не используй встроенный agent», an agent without the harness tool skipped its reviewers
+export const SUBAGENT_CONTEXT = 'Ты работаешь внутри harness. Субагентов запускай инструментом mcp__harness__agent с теми же аргументами, что у встроенного agent (subagent_type, prompt, model) — harness откроет каждого субагента отдельным чатом и вернёт тебе его результат так же. Только если mcp__harness__agent не находится (tool_search по слову «harness» пуст) — запускай встроенным agent, как обычно, и напиши об этом одной строкой в отчёте; не отказывайся из-за этого от субагентов и ревьюеров. Вопросы человеку — через mcp__harness__ask (варианты в options): вызов ждёт ответа и возвращает его; если вернулся без ответа — заверши ход.';
 const CONTEXT_LAUNCHERS = new Set(['gigacode', 'qwen', 'gemini', 'mock']);
 
 export const render = (tpl, vars) => String(tpl).replace(/\{(\w+)\}/g, (m, k) => (Object.hasOwn(vars, k) ? String(vars[k] ?? '') : m));
