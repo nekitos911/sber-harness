@@ -78,10 +78,17 @@
 .commit-box .input { font-weight: 500; }
 .commit-box .actions .btn:not(.btn-primary) { flex: 1; }
 
-.commit-row { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 0 8px; padding: 4px 6px; font-size: 12.5px; }
+/* a commit: a button that opens into its files */
+.commit-row { display: grid; grid-template-columns: auto auto minmax(0, 1fr); gap: 0 6px; width: 100%; padding: 4px 6px; border: 0; border-radius: var(--r-1); background: none; color: var(--ink); font: inherit; font-size: 12.5px; text-align: left; cursor: pointer; }
+.commit-row:hover { background: var(--deck-2); }
+.commit-row .chev { width: 12px; height: 12px; margin-top: 3px; color: var(--ink-4); transition: transform 120ms var(--ease-out); }
+.commit-row[aria-expanded="true"] .chev { transform: rotate(90deg); }
 .commit-row .mono { color: var(--ink-3); font-size: 11px; line-height: 19px; }
 .commit-row .subject { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.commit-row .by { grid-column: 2; color: var(--ink-4); font-size: 11px; }
+.commit-row .by { grid-column: 3; color: var(--ink-4); font-size: 11px; }
+.commit-files { margin: 0 0 6px 18px; padding-left: 6px; border-left: 1px solid var(--rule); }
+.commit-all { display: inline-flex; align-items: center; gap: 4px; margin: 2px 0 0 6px; font-size: 12px; }
+.commit-all svg { width: 12px; height: 12px; }
 
 /* ---------- terminal ---------- */
 

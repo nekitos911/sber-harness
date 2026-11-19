@@ -12,7 +12,7 @@ export type Screen = 'home' | 'board' | 'agents' | 'prs' | 'inbox' | 'settings' 
 export type Tab =
   | { kind: 'session'; id: string }
   | { kind: 'file'; cwd: string; path: string }
-  | { kind: 'diff'; cwd: string; path: string | null }
+  | { kind: 'diff'; cwd: string; path: string | null; rev?: string } // rev: a commit's changes (the commits list)
   | { kind: 'history'; cwd: string; agent: string; id: string; title: string } // a CLI-recorded chat, read-only
 
 /** Main area: a full-screen global view, or one worktree with its own tab strip. */
@@ -106,7 +106,7 @@ export const tabKey = (t: Tab): string => {
   switch (t.kind) {
     case 'session': return `s:${t.id}`
     case 'file': return `f:${t.path}`
-    case 'diff': return `d:${t.path ?? ''}`
+    case 'diff': return `d:${t.rev ? `${t.rev}:` : ''}${t.path ?? ''}`
     case 'history': return `h:${t.agent}:${t.id}`
   }
 }

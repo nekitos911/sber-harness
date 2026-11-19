@@ -1540,7 +1540,12 @@ export async function startServer(opts = {}) {
     });
     return { ok: true };
   });
-  route('GET', '/api/git/diff', ({ query }) => git.diff(cwdOf(query), query.path || undefined));
+  // ?rev=<hash>: that commit's changes (the commits list of the changes panel); only a hash, never an option for git
+  route('GET', '/api/git/diff', ({ query }) => {
+    if (query.rev === undefined) return git.diff(cwdOf(query), query.path || undefined);
+    if (!/^[0-9a-f]{7,40}$/i.test(String(query.rev))) fail(400, 'rev: хеш коммита');
+    return git.commitDiff(cwdOf(query), query.rev, query.path || undefined);
+  });
   route('GET', '/api/git/log', ({ query }) => git.log(cwdOf(query), Math.min(Math.max(Number(query.n) || 50, 1), 1000)));
   route('GET', '/api/git/suggest', ({ query }) => orch.gitSuggest(cwdOf(query)));
   route('GET', '/api/git/branches', ({ query }) => git.branches(cwdOf(query)));

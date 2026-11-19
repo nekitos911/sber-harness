@@ -5,6 +5,7 @@ import { getState, openDialog, openTab, openTask, openWorktree, setState, showPa
 import { basename, normPath, plural, relTime, shortHash } from '../../lib/format'
 import { loadDraft, saveDraft } from '../../lib/draft'
 import { gsLetter, refreshGit, splitPath, useGit, useGitWatch } from '../../lib/git'
+import { parseDiff, type DiffFile } from '../../lib/diff'
 import { useNow } from '../../lib/useNow'
 import type { GitCommit, GitFile, GitSuggest, Settings } from '../../types'
 import { Disclosure, Menu, type MenuItem } from '../ui'
@@ -276,16 +277,57 @@ export function ChangesTab({ cwd, inline = false, agentBusy = false }: { cwd: st
         </button>
         {commitsOpen && (log === null ? <Skeleton rows={3} /> : log.length === 0 ? <p className="muted">Коммитов пока нет.</p> : (
           <div>
-            {log.map((c) => (
-              <div key={c.hash} className="commit-row" data-tip={c.subject}>
-                <span className="mono">{shortHash(c.hash)}</span>
-                <span className="subject">{c.subject}</span>
-                <span className="by">{c.author} · {relTime(c.at, now)}</span>
-              </div>
-            ))}
+            {log.map((c) => <CommitRow key={c.hash} cwd={cwd} c={c} now={now} />)}
           </div>
         ))}
       </section>
+    </div>
+  )
+}
+
+const DIFF_LETTER: Record<DiffFile['status'], GitFile['status']> = { modified: 'M', added: 'A', deleted: 'D', renamed: 'R', binary: 'M' }
+
+/** A commit of the list: a click shows its files (as in the changes above), each opens its diff in that commit. */
+function CommitRow({ cwd, c, now }: { cwd: string; c: GitCommit; now: number }) {
+  const [open, setOpen] = useState(false)
+  const [files, setFiles] = useState<DiffFile[] | null | 'error'>(null)
+  const toggle = () => {
+    setOpen(!open)
+    if (!open && files === null) api<{ diff: string }>('GET', `/git/diff${qs({ cwd, rev: c.hash })}`).then((r) => setFiles(parseDiff(r.diff)), () => setFiles('error'))
+  }
+  return (
+    <div className="commit" data-open={open || undefined}>
+      <button type="button" className="commit-row" aria-expanded={open} data-tip={c.subject} onClick={toggle}>
+        <ChevronRight className="chev" aria-hidden />
+        <span className="mono">{shortHash(c.hash)}</span>
+        <span className="subject">{c.subject}</span>
+        <span className="by">{c.author} · {relTime(c.at, now)}</span>
+      </button>
+      {open && (files === null ? <Skeleton rows={2} /> : files === 'error' ? <p className="muted commit-files">Не удалось получить изменения коммита.</p> : (
+        <div className="commit-files">
+          <ul className="change-list">
+            {files.map((f) => {
+              const { dir, name } = splitPath(f.path)
+              const Icon = iconOf(f.path)
+              const s = DIFF_LETTER[f.status]
+              return (
+                <li key={f.path} className="change">
+                  <div className="change-row" role="button" tabIndex={0} data-tip={`${f.path}: ${STATUS_LABEL[s]}`} data-tip-trunc
+                    onClick={() => openTab({ kind: 'diff', cwd, path: f.path, rev: c.hash })}
+                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openTab({ kind: 'diff', cwd, path: f.path, rev: c.hash }) } }}>
+                    <Icon className="change-icon" aria-hidden />
+                    <span className="change-name">{name}</span>
+                    {dir && <span className="change-dir"><bdi>{dir}</bdi></span>}
+                    <span className="diff-stat num"><span className="add">+{f.added}</span> <span className="del">−{f.removed}</span></span>
+                    <span className="gs" data-s={s} aria-label={STATUS_LABEL[s]}>{gsLetter(s)}</span>
+                  </div>
+                </li>
+              )
+            })}
+          </ul>
+          <button type="button" className="link commit-all" onClick={() => openTab({ kind: 'diff', cwd, path: null, rev: c.hash })}><ExternalLink aria-hidden />Открыть все изменения вместе</button>
+        </div>
+      ))}
     </div>
   )
 }

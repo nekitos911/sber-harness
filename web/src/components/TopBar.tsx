@@ -195,7 +195,9 @@ function describeTab(t: Tab, sessions: Session[], status: GitStatus | null) {
       const badge = status?.files.find((f) => f.path.replace(/\\/g, '/') === p)?.status
       return { icon: <FileText />, title: basename(t.path), hint: t.path, badge, file: true }
     }
-    case 'diff': return { icon: <GitCompare />, title: t.path ? basename(t.path) : 'Все изменения', hint: `Изменения: ${t.path ?? 'все файлы'}` }
+    case 'diff': return t.rev
+      ? { icon: <GitCompare />, title: `${t.rev.slice(0, 7)} ${t.path ? basename(t.path) : 'коммит'}`, hint: `Коммит ${t.rev.slice(0, 7)}: ${t.path ?? 'все файлы'}` }
+      : { icon: <GitCompare />, title: t.path ? basename(t.path) : 'Все изменения', hint: `Изменения: ${t.path ?? 'все файлы'}` }
     case 'history': return { icon: <History />, title: `История: ${t.title || t.id}`, hint: `Сессия из CLI (только чтение)\n${t.title}` }
   }
 }

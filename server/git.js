@@ -192,6 +192,13 @@ export async function discard(cwd, paths, files, remove) {
   if (tracked.length) await git(cwd, ['restore', '--source=HEAD', '--staged', '--worktree', '--', ...tracked]);
 }
 
+/** A commit's own changes (its first parent's view for a merge), as the diff of a working tree: { diff }. */
+export async function commitDiff(cwd, rev, file) {
+  const r = await git(cwd, ['show', '--format=', '--no-color', '--first-parent', '-m', rev, ...(file ? ['--', file] : [])], { ok: [0, 128] });
+  if (r.code) throw Object.assign(new Error(`нет такого коммита: ${rev}`), { status: 404 });
+  return { diff: r.stdout };
+}
+
 export async function diff(cwd, file) {
   const spec = file ? ['--', file] : [];
   let text = (await hasHead(cwd))

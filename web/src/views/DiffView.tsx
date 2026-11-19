@@ -15,7 +15,8 @@ const OPEN_FILES = 25 // further files start collapsed
 
 const STATUS: Record<DiffFile['status'], string> = { modified: 'изменён', added: 'новый', deleted: 'удалён', renamed: 'переименован', binary: 'двоичный' }
 
-export function DiffView({ cwd, path }: { cwd: string; path: string | null }) {
+/** The working tree's changes, or with `rev` one commit's (opened from the commits list). */
+export function DiffView({ cwd, path, rev }: { cwd: string; path: string | null; rev?: string }) {
   const [diff, setDiff] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [tick, setTick] = useState(0)
@@ -25,12 +26,12 @@ export function DiffView({ cwd, path }: { cwd: string; path: string | null }) {
   useEffect(() => {
     let live = true
     setError(null)
-    api<{ diff: string }>('GET', `/git/diff${qs({ cwd, path })}`).then(
+    api<{ diff: string }>('GET', `/git/diff${qs({ cwd, path, rev })}`).then(
       (r) => { if (live) setDiff(r.diff) },
       (e) => { if (live) setError(errorText(e)) },
     )
     return () => { live = false }
-  }, [cwd, path, tick, git])
+  }, [cwd, path, rev, tick, rev ? null : git]) // a commit does not change with the working tree
 
   const files = useMemo(() => (diff === null ? [] : parseDiff(diff)), [diff])
   const added = files.reduce((n, f) => n + f.added, 0)
@@ -39,7 +40,7 @@ export function DiffView({ cwd, path }: { cwd: string; path: string | null }) {
   return (
     <div className="diff-view">
       <div className="file-bar">
-        <span className="mono ellipsis" data-tip={cwd}>{path ?? 'Все изменения'}</span>
+        <span className="mono ellipsis" data-tip={cwd}>{rev && <span className="muted">коммит {rev.slice(0, 7)} · </span>}{path ?? (rev ? 'все его изменения' : 'Все изменения')}</span>
         {diff !== null && (
           <span className="diff-stat num">
             {!path && `${files.length} ${plural(files.length, 'файл', 'файла', 'файлов')} `}<span className="add">+{added}</span> <span className="del">−{removed}</span>

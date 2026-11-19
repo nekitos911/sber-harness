@@ -159,7 +159,7 @@ function TabContent({ tab, active }: { tab: Tab; active: boolean }) {
   switch (tab.kind) {
     case 'session': return <SessionTab id={tab.id} active={active} />
     case 'file': return <Suspense fallback={<Loading />}><FileView cwd={tab.cwd} path={tab.path} /></Suspense>
-    case 'diff': return <DiffView cwd={tab.cwd} path={tab.path} />
+    case 'diff': return <DiffView cwd={tab.cwd} path={tab.path} rev={tab.rev} />
     case 'history': return <HistoryView tab={tab} />
   }
 }

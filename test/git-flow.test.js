@@ -63,6 +63,11 @@ test('fs guard, git status/diff/commit/log', async () => {
   const { hash } = (await h.api('POST', '/api/git/commit', { cwd: plain, message: 'add new\n\nbody' })).body;
   assert.match(hash, /^[0-9a-f]{40}$/);
   assert.equal((await h.api('GET', `/api/git/log?${q(plain, '&n=1')}`)).body[0].subject, 'add new');
+  // a commit's own changes (the commits list): all of them or one file; only a hash goes to git
+  assert.match((await h.api('GET', `/api/git/diff?${q(plain, `&rev=${hash}`)}`)).body.diff, /^diff --git a\/src\/new\.txt[\s\S]*\+hi/m);
+  assert.match((await h.api('GET', `/api/git/diff?${q(plain, `&rev=${hash.slice(0, 7)}&path=src/new.txt`)}`)).body.diff, /\+hi/);
+  assert.equal((await h.api('GET', `/api/git/diff?${q(plain, '&rev=--output=x')}`)).status, 400);
+  assert.equal((await h.api('GET', `/api/git/diff?${q(plain, '&rev=deadbeef')}`)).status, 404);
   assert.equal((await h.api('GET', `/api/git/status?${q(plain)}`)).body.files.length, 0);
   assert.equal((await h.api('POST', '/api/git/pr', { cwd: plain, title: 't' })).status, 501);
 });
