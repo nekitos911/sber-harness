@@ -4,6 +4,7 @@ import { openSession } from '../../store'
 import type { ToolCall } from '../../types'
 import { Markdown } from '../Markdown'
 import { Disclosure } from '../ui'
+import { backgroundRun } from '../../lib/toolRun'
 
 type Obj = Record<string, unknown>
 const str = (v: unknown) => (typeof v === 'string' ? v : '')
@@ -24,6 +25,9 @@ export function SubagentCard({ tool }: { tool: ToolCall }) {
   const type = str(input.subagent_type) || str(input.description) || 'агент'
   const model = str(input.model) || str(input.grade)
   const ask = str(input.prompt) || str(input.description)
+  // run_in_background: the call returns at once, the sub-agent works outside this stream — nothing of it reaches the harness
+  const bg = backgroundRun(tool.output)
+  const background = input.run_in_background === true || !!bg
   const running = tool.status === 'running'
   const [open, setOpen] = useState(running)
   const feed = useRef<HTMLPreElement>(null)
@@ -49,14 +53,16 @@ export function SubagentCard({ tool }: { tool: ToolCall }) {
       summary={<>
         {running ? <LoaderCircle className="tool-st spinner" data-s="running" aria-label="работает" />
           : tool.status === 'error' ? <X className="tool-st" data-s="error" aria-label="ошибка" />
-            : <Check className="tool-st" data-s="ok" aria-label="готово" />}
+            : background ? <Bot className="tool-st" data-s="running" aria-label="в фоне" />
+              : <Check className="tool-st" data-s="ok" aria-label="готово" />}
         <Bot className="agent-ico" aria-hidden />
-        <span className="agent-kind">Субагент <strong>{type}</strong></span>
+        <span className="agent-kind">Субагент <strong>{type}</strong>{background && <span className="muted"> · в фоне</span>}</span>
         {model && <span className="mono muted">{model}</span>}
         <span className="tool-sum ellipsis">{ask.split('\n').find((l) => l.trim()) ?? ''}</span>
       </>}
     >
       <div className="agent-body">
+        {background && <p className="muted agent-bg-note">Запущен в фоне встроенным инструментом GigaCode: его ход идёт вне этого чата, харнес его не видит и отдельного чата у него нет. Результат агент прочитает сам; если ход агента закончится раньше, работа субагента может пропасть.{bg?.outputFile && <> Его вывод пишется в <span className="mono">{bg.outputFile}</span>.</>}</p>}
         {progress.length > 0 && (
           <pre ref={feed} className="agent-feed" aria-live={running ? 'polite' : undefined}>{progress.join('\n')}</pre>
         )}

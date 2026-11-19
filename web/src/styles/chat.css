@@ -240,6 +240,7 @@
 .agent-kind strong { color: var(--ink); font-weight: 600; }
 .tool-agent .tool-sum { font-family: var(--font-ui); }
 .agent-body { display: grid; gap: 8px; padding: 8px 10px 10px; }
+.agent-bg-note { margin: 0; font-size: 12.5px; overflow-wrap: anywhere; } /* a background run: why nothing of it shows here */
 .agent-feed {
   margin: 0; max-height: 220px; overflow: auto; padding: 6px 8px; border-radius: var(--r-1); background: var(--well);
   font-size: 11.5px; line-height: 1.55; color: var(--ink-3); white-space: pre-wrap; overflow-wrap: anywhere;

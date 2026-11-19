@@ -129,3 +129,16 @@ export function touchedRoots(msgs: Message[], roots: Root[]): { edited: Root[]; 
   for (const k of edited.keys()) seen.delete(k)
   return { edited: [...edited.values()], seen: [...seen.values()], outside }
 }
+
+/**
+ * GigaCode's built-in agent with run_in_background answers at once: «Background agent launched successfully. task_id: X
+ * … output_file: <path>.jsonl …» — the run itself goes on outside this stream. → { taskId, outputFile } or null.
+ */
+export function backgroundRun(output: string | null | undefined): { taskId: string | null; outputFile: string | null } | null {
+  const text = String(output ?? '')
+  if (!/^\s*Background agent launched successfully/i.test(text)) return null
+  return {
+    taskId: /task_id:\s*([\w.-]+)/.exec(text)?.[1] ?? null,
+    outputFile: /output_file:\s*(\S+?\.jsonl)/i.exec(text)?.[1] ?? null,
+  }
+}

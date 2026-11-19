@@ -109,6 +109,12 @@
   `agents.allowedGrades: []`, `agents.maxParallelAgents`, `agents.maxParallelAgentsByModel` или запретом `permissions` на `agent`
   (permissions мы никогда не пишем). `/full-task` опирается на них для ревью, поэтому харнес допускает их как внутренних помощников и показывает
   только для чтения (реестр / `parent_tool_use_id`); исполнители (workers) харнеса (свои чаты) запускаются только через `worker_start`.
+- Встроенный `agent` с `run_in_background: true` (подтверждено вживую, 2026-11-19) сразу отвечает текстом «Background agent
+  launched successfully. task_id: Explore-1e07b28f (internal ID …) The agent is working in the background. You will be notified
+  automatically when it completes. … output_file: C:\Users\<user>\.gigacode\projects\<project-slug>\subagents\<session-uuid>\agent-<task_id>.jsonl
+  If asked, you can check progress … tail on the output file.» Сам ход субагента идёт вне потока родителя: харнес его не видит
+  (карточка помечается «в фоне», `backgroundRun` в `web/src/lib/toolRun.ts`). Харнес просит агентов так не запускать. Открыто:
+  формат `agent-<id>.jsonl` и чем приходит «notified when it completes» (событием потока или сообщением следующего хода).
 - Реестр, который пишет оркестрирующий агент: `<registryDir>/<agentId>/agent.json` с временными метками ISO-8601
   (`startedAt`, `lastActivity`, `settledAt`, `activity.since`), например
   `{"id":"java-reviewer-1","name":"java-reviewer","role":"review","model":"…","parentId":null,"worktree":"…","state":"working","startedAt":"2026-11-17T16:02:11.000Z","lastActivity":"2026-11-17T16:07:43.000Z","settledAt":null,"activity":{"tool":"grep_search","since":"…"},"tokensIn":184320,"tokensOut":2411}`;
