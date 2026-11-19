@@ -2,6 +2,8 @@
 // attempts with pauses, then a notification with «Повторить».
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
 import { startTestServer, tmpDir, rmrf, waitFor } from './helpers.js';
 
 const root = tmpDir();
@@ -70,6 +72,20 @@ test('«Extension store is busy» at start: the same message again a few seconds
   const ms = await messages(s.id);
   assert.ok(ms.some((m) => m.kind === 'system' && /занят другим запуском \(ExtensionStoreBusyError\) — повторяю через \d+ с \(попытка 1 из 4\)/.test(m.text)));
   assert.ok(!ms.some((m) => m.kind === 'error'), 'no error card for a collision that cleared');
+});
+
+test('«Повторить» on a chat that cannot start: one «продолжи» stays in its queue, not one more per click', async () => {
+  const dir = path.join(root, 'исчезнет');
+  fs.mkdirSync(dir);
+  const s = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', cwd: dir, prompt: 'привет' })).body;
+  await waitFor(async () => (await session(s.id)).status === 'idle', { what: 'first turn' });
+  rmrf(dir); // the next turns cannot start: their messages go back to the queue
+  for (let i = 0; i < 3; i++) {
+    assert.equal((await h.api('POST', `/api/sessions/${s.id}/revive`)).status, 200);
+    await settled(s.id);
+  }
+  const q = (await session(s.id)).queue;
+  assert.equal(q.filter((x) => /Предыдущий ход оборвался/.test(x.text)).length, 1, JSON.stringify(q.map((x) => x.text.slice(0, 40))));
 });
 
 test('a helper that never starts ends its caller\'s wait with «failed» — the orchestrator does not hang', async () => {

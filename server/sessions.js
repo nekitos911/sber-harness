@@ -1269,6 +1269,14 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
   // with «Повторить». session.revive = { count, reason, due } | { …, gaveUp } until a turn goes well.
   const reviveCfg = () => ({ attempts: 3, delaysSec: [30, 120, 300], stallWakeMin: 15, ...config.session?.revive });
   const CONTINUE = (reason) => `[harness] Предыдущий ход оборвался (${reason}). Продолжи с того места, где остановился: проверь, что уже сделано в рабочем дереве, и доведи задачу до конца.`;
+  const isContinue = (q) => q.from === 'harness' && q.text.startsWith('[harness] Предыдущий ход оборвался');
+  /** «Продолжи» once: a turn that did not even start puts its messages back, and a second «Повторить» must not add another. */
+  function continueTurn(s, reason) {
+    if (!(s.queue || []).some(isContinue)) return api.deliver(s.id, { from: 'harness', text: CONTINUE(reason) });
+    s.interrupted = null; // continued, as a delivered message would say
+    if (!runtime(s.id).running) startTurn(s);
+    return { queued: false };
+  }
   const delayText = (sec) => (sec < 60 ? `${sec} с` : `${Math.round(sec / 60)} мин`);
   /** Worth continuing by itself: a chat of the person or a worker, not one that waits for someone or cannot start at all. */
   const revivable = (s) => s.kind === 'chat' && !s.virtual && !s.archived && !s.waitingFor && s.phase !== 'auth' && !!s.everStarted && reviveCfg().attempts > 0;
@@ -1289,7 +1297,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
       const x = find(s.id);
       // the person (or the agent) moved on meanwhile: a new message, a stop, an archive — nothing to continue
       if (!x || x.archived || x.revive?.due !== due || runtime(s.id).running || x.status === 'running' || x.status === 'stopped' || x.waitingFor) return;
-      api.deliver(s.id, { from: 'harness', text: CONTINUE(reason) });
+      continueTurn(x, reason);
     }, sec * 1000);
     t.unref?.();
     return true;
@@ -1580,7 +1588,7 @@ ${note.trim()}` : text });
       if (runtime(sid).running) fail(409, 'агент уже работает');
       const reason = s.revive?.reason || 'повтор вручную';
       s.revive = null;
-      return api.deliver(sid, { from: 'harness', text: CONTINUE(reason) });
+      return continueTurn(s, reason);
     },
 
     deliver(sid, { from = 'user', text, options, report = false }) {

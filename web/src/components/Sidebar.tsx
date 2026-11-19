@@ -529,7 +529,8 @@ function ProjectNode({ ws, tree, filtering, drag }: {
         <span className="label">{name}{isRoot && <span className="tree-path"> {basename(ws.path)}</span>}</span>
         {!expanded && <RowSummary sessions={withKids(mine, tree.kids)} />}
         {plain && myTerminals.length > 0 && <TerminalCount terminals={myTerminals} />}
-        {plain && <RowAction label={`Новый чат: ${name}`} icon={<MessageSquarePlus />} onClick={() => void newChat({ workspaceId: ws.id, cwd: ws.path })} />}
+        {/* a project too: a chat in its main folder (on its current branch); the agent makes worktrees itself when it needs them */}
+        <RowAction label={plain ? `Новый чат: ${name}` : `Новый чат в ${name} (основная папка)`} icon={<MessageSquarePlus />} onClick={() => void newChat({ workspaceId: ws.id, cwd: ws.path })} />
         <span className="actions">
           {ws.isGit && <RowAction label="Новое рабочее дерево" icon={<GitBranchPlus />} onClick={() => openDialog({ kind: 'worktree', workspaceId: ws.id })} />}
           <RowAction label="Действия с проектом" icon={<Ellipsis />} onClick={() => setMenu(true)} />
