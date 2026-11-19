@@ -1,6 +1,6 @@
-import { Archive, ArchiveRestore, Pencil, Square, Trash2 } from 'lucide-react'
+import { Archive, ArchiveRestore, Pencil, Pin, PinOff, Square, Trash2 } from 'lucide-react'
 import { api, ApiError, errorText, tryApi } from '../api'
-import { closeSessionTab, getState, openDialog, setState, toast, upsertSession, without } from '../store'
+import { closeSessionTab, getState, hasFeature, openDialog, setState, toast, upsertSession, without } from '../store'
 import type { MenuItem } from '../components/ui'
 import type { Session } from '../types'
 
@@ -56,11 +56,20 @@ export function sessionMenu(s: Session, rename?: () => void): MenuItem[] {
   return [
     ...(rename ? [{ label: 'Переименовать', icon: <Pencil />, onSelect: rename }] : []),
     ...(s.status === 'running' ? [{ label: 'Остановить', icon: <Square />, onSelect: () => stopSession(s) }] : []),
+    ...(hasFeature('pin') && !s.archived && !s.virtual
+      ? [s.pinnedAt ? { label: 'Открепить', icon: <PinOff />, onSelect: () => void pinSession(s, false) } : { label: 'Закрепить вверху', icon: <Pin />, onSelect: () => void pinSession(s, true) }]
+      : []),
     s.archived
       ? { label: 'Вернуть из архива', icon: <ArchiveRestore />, onSelect: () => void archiveSession(s, false) }
       : { label: 'В архив', icon: <Archive />, onSelect: () => void archiveSession(s) },
     { label: 'Удалить…', icon: <Trash2 />, danger: true, divider: true, onSelect: () => openDialog({ kind: 'session-delete', id: s.id }) },
   ]
+}
+
+/** «Закрепить вверху» / «Открепить»: the sidebar's «Закреплённые». */
+export async function pinSession(s: Session, pinned: boolean) {
+  const saved = await tryApi<Session>('PATCH', `/sessions/${encodeURIComponent(s.id)}`, { pinned })
+  if (saved) setState((st) => ({ sessions: upsertSession(st.sessions, saved) }))
 }
 
 /** Rename via PATCH; the WS echo (or the answer) updates the store. */

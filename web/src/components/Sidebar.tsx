@@ -119,6 +119,7 @@ export function Sidebar() {
 
       <MixedAgents.Provider value={new Set(tree.all.map((x) => x.agent)).size > 1}>
       <div className="tree" aria-label="Проекты и сессии">
+        {!filtering && <PinnedSection tree={tree} />}
         {!filtering && <AttentionSection tree={tree} />}
         {!filtering && <WorkingSection tree={tree} />}
         <div className="sb-head">
@@ -334,6 +335,18 @@ function AttentionSection({ tree }: { tree: Tree }) {
           </div>
         )
       })}
+    </section>
+  )
+}
+
+/** «Закреплённые»: the chats the person pinned (chat menu → «Закрепить вверху»), in the order they were pinned. */
+function PinnedSection({ tree }: { tree: Tree }) {
+  const list = tree.all.filter((s) => s.pinnedAt && !s.archived).sort((a, b) => (a.pinnedAt ?? 0) - (b.pinnedAt ?? 0))
+  if (!list.length) return null
+  return (
+    <section className="attention attention-pin" aria-label="Закреплённые">
+      <div className="attention-head"><Pin aria-hidden />Закреплённые <span className="num">· {list.length}</span></div>
+      {list.map((s) => <SessionRow key={s.id} s={s} nested={false} level={0} />)}
     </section>
   )
 }

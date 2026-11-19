@@ -37,6 +37,7 @@ test('each feature flag has a working route (not 404/405)', async () => {
       health: ['GET', '/api/health', (b) => b.ok === true && b.pid === process.pid],
       folders: ['GET', `/api/fs/dirs?path=${q}`, (b) => Array.isArray(b.entries) && Array.isArray(b.roots)],
       'include-dirs': ['PATCH', `/api/sessions/${chat.id}`, (b) => Array.isArray(b.includeDirs), { includeDirs: [] }],
+      pin: ['PATCH', `/api/sessions/${chat.id}`, (b) => b.pinnedAt > 0, { pinned: true }],
       questions: ['GET', `/api/sessions/${chat.id}/messages`],
       permissions: ['POST', `/api/sessions/${chat.id}/permission`, null, {}],
       activity: ['GET', '/api/settings', (b) => Number.isInteger(b.session?.stallSec)],

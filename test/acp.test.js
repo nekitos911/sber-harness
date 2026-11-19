@@ -227,6 +227,8 @@ test('a session that will not load: a few tries, then a new one that gets the ha
   assert.ok((await messages(s.id)).some((m) => /не удалось загрузить сессию агента .* харнесс передал ей правила и краткую запись/.test(m.text)));
   assert.notEqual((await session(s.id)).externalSessionId, ext, 'a new CLI session');
   await idle(s.id);
+  // the lost session's record is still this chat: never adopted as a «CLI chat» of its own
+  await waitFor(() => (JSON.parse(fs.readFileSync(path.join(dataDir, 'db.json'), 'utf8')).cliIgnored || []).includes(ext), { what: 'the old record ignored' });
 });
 
 test('an idle ACP process is unloaded (warm false) and reloaded with session/load on the next message', async () => {

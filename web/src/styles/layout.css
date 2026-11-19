@@ -131,6 +131,8 @@
 .sub-glyph { color: var(--ink-4); }
 .attention { margin: 2px 0 8px; padding-bottom: 6px; border-bottom: 1px solid var(--rule-soft); }
 .attention-head { padding: 4px 8px; font-size: 11.5px; font-weight: 600; color: var(--ink-3); }
+.attention-pin .attention-head { display: flex; align-items: center; gap: 4px; }
+.attention-pin .attention-head svg { width: 11px; height: 11px; }
 .attention-row .label strong { font-weight: 600; }
 /* «×» on a failed / cut chat: shown on hover or focus, the chat itself stays */
 .attention-row .attention-x { flex-shrink: 0; margin-left: 2px; opacity: 0; }

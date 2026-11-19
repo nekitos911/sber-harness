@@ -701,6 +701,9 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
         break;
       case 'session':
         if (s.externalSessionId !== ev.id) {
+          // a new CLI session in place of one that would not load: the old one's record is still this chat, never a «CLI
+          // chat» of its own (one came back as a duplicate that ended at its first tool call)
+          if (s.externalSessionId) ignoreCli(s);
           s.externalSessionId = ev.id;
           emit(s);
         }
@@ -1875,9 +1878,11 @@ ${note.trim()}` : text });
     patch(sid, p, { strict = true } = {}) {
       const s = get(sid);
       for (const k of ['title', 'approvalMode', 'model']) if (k in p && p[k] !== null && typeof p[k] !== 'string') fail(400, `${k}: нужна строка`);
-      for (const k of ['autoReport', 'archived', 'stop', 'dismissed']) if (k in p && typeof p[k] !== 'boolean') fail(400, `${k}: нужно true или false`);
+      for (const k of ['autoReport', 'archived', 'stop', 'dismissed', 'pinned']) if (k in p && typeof p[k] !== 'boolean') fail(400, `${k}: нужно true или false`);
       // «Убрать из «Ждут вас»»: its error / cut turn is seen; a newer one brings it back (lastActivityAt moves past it)
       if ('dismissed' in p) s.dismissedAt = p.dismissed ? Date.now() : null;
+      // «Закрепить вверху»: the sidebar's «Закреплённые», in the order they were pinned
+      if ('pinned' in p) s.pinnedAt = p.pinned ? Date.now() : null;
       if ('archived' in p) api.archive(sid, p.archived, { stop: p.stop === true });
       if (p.approvalMode && config.agents[s.agent]) checkMode(config.agents[s.agent], p.approvalMode);
       if (p.title?.trim()) {
