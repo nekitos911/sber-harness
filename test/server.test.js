@@ -274,6 +274,15 @@ test('the person writes while the agent waits for its sub-agent: the wait ends, 
   await waitFor(async () => (await state()).sessions.find((s) => s.id === main.id && !s.pid && s.status !== 'running'), { what: 'main settled' });
 });
 
+test('the CLI cuts a call that waits for a sub-agent («Request timed out»): the sub-agent goes on, its result still comes as a message', async () => {
+  const main = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', cwd: repo, prompt: '#cutagent Explore разведка #slow #done нашёл 5 мест' })).body;
+  const helper = await waitFor(async () => (await state()).sessions.find((s) => s.parentId === main.id && !s.virtual), { what: 'the sub-agent' });
+  await waitFor(async () => { const x = (await state()).sessions.find((s) => s.id === helper.id); return x.askedParent && !x.awaitedBy; }, { what: 'released when the call was cut' });
+  const result = await waitFor(async () => (await messages(main.id)).find((m) => m.kind === 'user' && m.from === helper.id && /Result \(done\)/.test(m.text)), { timeout: 30000, what: 'the result as a message' });
+  assert.match(result.text, /нашёл 5 мест/);
+  await waitFor(async () => (await state()).sessions.find((s) => s.id === main.id && !s.pid && s.status !== 'running'), { what: 'main settled' });
+});
+
 test('a queued slash command goes first in the prompt (behind a helper\'s report it was plain text)', async () => {
   const { promptOf } = await import('../server/sessions.js');
   const report = { text: '[harness] Message from s_1 (backend-engineer): Result (done): готово' };

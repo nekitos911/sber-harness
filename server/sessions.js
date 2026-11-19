@@ -527,6 +527,9 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     if (!v?.virtual) return;
     addMessage(v, { kind: ev.isError ? 'error' : 'assistant', text: ev.output || '(no output)' });
     Object.assign(v, { status: ev.isError ? 'failed' : 'done', preview: (ev.output || '').slice(-200), lastActivityAt: Date.now() });
+    // a call the CLI refused before it ran (a deferred harness tool called without tool_search: «not found in registry»)
+    // was no sub-agent: no row of its own beside the parent; the parent's step says it
+    if (ev.isError && /not found in registry/i.test(ev.output || '')) v.archived = true;
     emit(v); // stays beside its parent until the parent's turn ends (settleVirtuals), like Orca
   }
 
@@ -773,6 +776,10 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
         const denied = denialOf(config.agents[s.agent], ev, m?.tool?.name);
         // headless -p cannot wait for a confirmation, so the CLI denied: ask the user instead
         if (denied) permissionCard(s, { toolId: ev.id, tool: denied.tool, input: m?.tool?.input ?? null, reason: denied.reason });
+        // a harness sub-agent call that the CLI cut (its MCP timeout, «Request timed out»): the sub-agent goes on, and its
+        // result must reach this agent as a message — the call that would have returned it is gone
+        // (GigaCode reports the harness's agent tool under the bare name «agent», like its built-in one)
+        if (ev.isError && /^(agent|worker_run)$|harness(\.|__)(agent|worker_run)$/.test(m?.tool?.name ?? '')) hooks.waitAbandoned?.(s);
         if (m) {
           m.tool = { ...m.tool, output: ev.output, status };
           updateMessage(s, m);

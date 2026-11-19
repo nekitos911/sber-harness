@@ -64,6 +64,9 @@ export async function api(method, route, body, { idempotent = false, until = Dat
 
 const SYNC_RUN_TOOLS = new Set(['worker_run', 'agent']);
 const WAIT_SLICE_MS = 25000;
+// a CLI gives up on a tool call after its own timeout (GigaCode over ACP: «Request timed out», the configured one not
+// applied): past this the sub-agent goes to the background and its result comes as a message, never to a dead call
+const SYNC_WAIT_MS = (Number(process.env.HARNESS_SYNC_WAIT_MIN) || 5) * 60000;
 
 /**
  * worker_run / agent: the server answers { sessionId } at once; we wait here (long-poll) until the sub-agent reports,
@@ -76,10 +79,14 @@ export async function runAndWait(name, args, progressToken, notify = () => {}) {
   if (args.run_in_background === true || args.background === true) {
     return { status: 'started', sessionId, note: 'The sub-agent works in the background in its own chat; its result will come to you as a message. Go on with your work or end your turn.' };
   }
-  const deadline = Date.now() + Math.max(Number(args.timeoutMin) || 60, 0) * 60000;
+  const deadline = Date.now() + Math.min(Math.max(Number(args.timeoutMin) || 60, 0) * 60000, SYNC_WAIT_MS);
   for (let tick = 1; ; tick++) {
     const left = deadline - Date.now();
-    if (left <= 0) return { status: 'timeout', sessionId };
+    if (left <= 0) {
+      // not «timeout» and a lost result: the harness hands it over (or returns it, if it just finished)
+      const r = await api('GET', `/api/agent/worker_wait?sessionId=${encodeURIComponent(sessionId)}&timeoutMs=0&release=1`, undefined, { idempotent: true });
+      return { status: r.status, summary: r.summary, sessionId };
+    }
     // stateless on the server: after a harness restart the same poll simply continues
     const r = await api('GET', `/api/agent/worker_wait?sessionId=${encodeURIComponent(sessionId)}&timeoutMs=${Math.min(WAIT_SLICE_MS, left)}`, undefined, { idempotent: true, until: deadline });
     if (r.done) return { status: r.status, summary: r.summary, sessionId };

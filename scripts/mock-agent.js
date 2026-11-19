@@ -288,6 +288,16 @@ async function runSubagent(profile, spec, extra = {}) {
   }
 }
 
+/** #cutagent <type> <prompt>: the same call, cut by the CLI before the sub-agent ends («Request timed out», as seen live). */
+async function cutAgentTool(type, prompt) {
+  const id = `agent_${++toolSeq}`;
+  const args = { subagent_type: type, description: 'probe', prompt };
+  emit({ type: 'tool_use', tool_name: 'agent', tool_id: id, parameters: args });
+  await api('POST', '/api/agent/agent', args); // started and waited for (awaitedBy) — then the CLI gives up on the call
+  emit({ type: 'tool_result', tool_id: id, status: 'error', output: 'Request timed out' });
+  return say(' agent call timed out');
+}
+
 /** #agentmcp <type> <prompt>: the harness's `agent` MCP tool, its call reaching the stream under the bare name «agent». */
 async function runAgentTool(type, prompt) {
   const id = `agent_${++toolSeq}`;
@@ -306,6 +316,8 @@ async function runAgentTool(type, prompt) {
 for (const l of lines) {
   const am = l.match(/#agentmcp\s+(\S+)\s+(.+)/);
   if (am) { await runAgentTool(am[1], am[2].trim()); continue; }
+  const cut = l.match(/#cutagent\s+(\S+)\s+(.+)/);
+  if (cut) { await cutAgentTool(cut[1], cut[2].trim()); continue; }
   const m = l.match(/#spawn\s+(.+)/);
   const run = l.match(/#run\s+(\S+)\s+(.+)/);
   const runwt = l.match(/#runwt\s+(\S+)\s+(.+)/); // a sub-agent in a new worktree (persistent)

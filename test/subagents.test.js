@@ -94,7 +94,7 @@ test('harness `agent` alias: listed only in harness mode; builtin mode drops it 
   assert.equal(run2.argv[run2.argv.indexOf('-p') + 1], `${SUBAGENT_CONTEXT}\n\nс блоком`);
 });
 
-test('worker_run over MCP: progress notifications while waiting, timeout returns the session id', async () => {
+test('worker_run over MCP: progress notifications while waiting; past its wait the sub-agent goes to the background, its result to come as a message', async () => {
   const caller = await chat('caller');
   await waitFor(async () => (await state()).sessions.find((s) => s.id === caller.id).status === 'idle');
   const mcp = spawn(process.execPath, [path.join(CODE_ROOT, 'mcp', 'harness-mcp.js')], {
@@ -115,10 +115,13 @@ test('worker_run over MCP: progress notifications while waiting, timeout returns
     mcp.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'worker_run', arguments: { spec: '#silent', timeoutMin: 0.02 }, _meta: { progressToken: 'p1' } } })}\n`);
     const reply = await waitFor(() => lines.find((l) => l.id === 1), { timeout: 15000, what: 'tool reply' });
     const result = JSON.parse(reply.result.content[0].text);
-    assert.equal(result.status, 'timeout');
+    assert.equal(result.status, 'background', 'not «timeout» and a result nobody receives');
+    assert.match(result.summary, /итог придёт тебе отдельным сообщением/);
     assert.ok(result.sessionId);
     assert.ok(lines.some((l) => l.method === 'notifications/progress' && l.params.progressToken === 'p1'));
-    assert.equal((await state()).sessions.find((s) => s.id === result.sessionId).status, 'running', 'the sub-agent keeps running');
+    const sub = (await state()).sessions.find((s) => s.id === result.sessionId);
+    assert.equal(sub.status, 'running', 'the sub-agent keeps running');
+    assert.deepEqual([sub.awaitedBy ?? null, sub.askedParent], [null, true], 'its result will reach the caller as a message');
     await h.api('POST', `/api/sessions/${result.sessionId}/stop`);
   } finally {
     mcp.kill();

@@ -62,7 +62,9 @@ export function parseProfile(text) {
 
 export const NO_SUBAGENTS = 'Субагенты не запускают своих субагентов: выполни это сам или верни запрос оркестратору';
 // the fallback matters: told only «не используй встроенный agent», an agent without the harness tool skipped its reviewers
-export const SUBAGENT_CONTEXT = 'Ты работаешь внутри harness. Субагентов запускай инструментом mcp__harness__agent с теми же аргументами, что у встроенного agent (subagent_type, prompt, model) — harness откроет каждого субагента отдельным чатом и вернёт тебе его результат так же. Несколько субагентов параллельно — несколько вызовов mcp__harness__agent в одном ходе. Нужен субагент в фоне (ты продолжаешь, человек может тебе писать) — mcp__harness__agent с run_in_background: true: он работает своим чатом, его результат придёт тебе сообщением. Встроенный agent в фоне не запускай: ни harness, ни человек такого субагента не видят, а с концом хода его работа может пропасть. Только если mcp__harness__agent не находится (tool_search по слову «harness» пуст) — запускай встроенным agent (не в фоне) и напиши об этом одной строкой в отчёте; не отказывайся из-за этого от субагентов и ревьюеров. Вопросы человеку — через mcp__harness__ask (варианты в options): вызов ждёт ответа и возвращает его; если вернулся без ответа — заверши ход.';
+// «not found in registry» spelled out: GigaCode's MCP tools are deferred, and an agent that called mcp__harness__agent
+// without tool_search took that answer for «there is none» and fell back to unseen built-in background sub-agents
+export const SUBAGENT_CONTEXT = 'Ты работаешь внутри harness. Его инструменты (mcp__harness__agent, mcp__harness__ask, mcp__harness__worker_done, mcp__harness__send_message) отложенные: перед первым вызовом загрузи их через tool_search по слову «harness». Ответ «Tool ... not found in registry» значит «ещё не загружен» — сделай tool_search «harness» и повтори вызов. Субагентов запускай инструментом mcp__harness__agent с теми же аргументами, что у встроенного agent (subagent_type, prompt, model) — harness откроет каждого субагента отдельным чатом и вернёт тебе его результат так же. Несколько субагентов параллельно — несколько вызовов mcp__harness__agent в одном ходе. Нужен субагент в фоне (ты продолжаешь, человек может тебе писать) — mcp__harness__agent с run_in_background: true: он работает своим чатом, его результат придёт тебе сообщением. Встроенный agent в фоне не запускай: ни harness, ни человек такого субагента не видят, а с концом хода его работа может пропасть. Только если и после tool_search «harness» инструмента нет — запускай встроенным agent (не в фоне) и напиши об этом одной строкой в отчёте; не отказывайся из-за этого от субагентов и ревьюеров. Вопросы человеку — через mcp__harness__ask (варианты в options): вызов ждёт ответа и возвращает его; если вернулся без ответа — заверши ход.';
 const CONTEXT_LAUNCHERS = new Set(['gigacode', 'qwen', 'gemini', 'mock']);
 
 export const render = (tpl, vars) => String(tpl).replace(/\{(\w+)\}/g, (m, k) => (Object.hasOwn(vars, k) ? String(vars[k] ?? '') : m));
@@ -611,7 +613,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions, addWo
     return { sessionId: s.id, placement: a.worktree ? worktree : `${worktree} (auto)`, ...(a.background === true || a.run_in_background === true ? { background: true } : {}) };
   }
 
-  async function waitRun(sessionId, timeoutMs = 25000) {
+  async function waitRun(sessionId, timeoutMs = 25000, { release = false } = {}) {
     // stateless: the answer comes from the persisted report, so a caller that keeps polling survives a restart
     const s = sessions.get(sessionId);
     if (!s.report) {
@@ -631,6 +633,14 @@ export function createOrchestration({ config, store, bus, tasks, sessions, addWo
       return {
         done: true, sessionId, status: 'asked',
         summary: `Субагент спрашивает: ${q.text}${choices}\nОтветь ему: send_message to "${sessionId}". Он продолжит работу, а его итог придёт тебе отдельным сообщением.`,
+      };
+    }
+    if (release && now && !now.report && now.awaitedBy) {
+      // the bridge waited as long as a CLI's tool call may last: the sub-agent goes on, its result comes as a message
+      sessions.update(sessionId, { awaitedBy: null, askedParent: true });
+      return {
+        done: true, sessionId, status: 'background',
+        summary: 'Субагент работает дольше, чем может длиться вызов инструмента: он продолжает в фоне, его итог придёт тебе отдельным сообщением. Продолжай свою работу или заверши ход.',
       };
     }
     if (now?.released) {
@@ -1149,13 +1159,16 @@ export function createOrchestration({ config, store, bus, tasks, sessions, addWo
   // the person writes while the agent only waits inside agent/worker_run: its sub-agents go on in the background (their
   // results come as messages) and the waiting calls end at once — the message (queued, persisted) is read next turn,
   // not after the sub-agent's whole run
-  sessions.hooks.personWrote = (s) => {
+  /** Its sub-agents now report as messages; a poll still waiting for them returns «background» at once. */
+  function releaseAwaited(s) {
     for (const k of db.sessions.filter((x) => x.awaitedBy === s.id && !x.report)) {
       sessions.update(k.id, { awaitedBy: null, askedParent: true, released: true });
       for (const resolve of runWaiters.get(k.id) || []) resolve();
       runWaiters.delete(k.id);
     }
-  };
+  }
+  sessions.hooks.personWrote = releaseAwaited;
+  sessions.hooks.waitAbandoned = releaseAwaited;
 
   sessions.hooks.notify = notify;
   sessions.hooks.sessionChanged = syncAgentState;

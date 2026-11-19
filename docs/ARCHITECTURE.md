@@ -736,6 +736,11 @@ model/approvalMode по умолчанию берутся из frontmatter (яв
 (сохраняется), а каждый такой субагент получает `awaitedBy: null, askedParent: true, released: true`. Ожидающий `worker_wait` сразу
 возвращает `{ done: true, status: 'background' }` с текстом «Человек написал тебе… Заверши ход: сообщение придёт следующим». Субагент
 продолжает работу, его итог придёт сообщением через `reportToAsker`. Ответ человека на `ask` самого агента этого не делает.
+Синхронное ожидание ограничено: `harness-mcp` ждёт не дольше `HARNESS_SYNC_WAIT_MIN` (по умолчанию 5 мин, меньше таймаута вызова
+у CLI), затем `worker_wait?release=1` переводит субагента в фон (`status: 'background'`, итог придёт сообщением). Если CLI всё же
+оборвал вызов раньше (`tool_result` с ошибкой у `agent` / `worker_run`, например «Request timed out»; GigaCode пишет вызов
+`mcp__harness__agent` в поток как `agent`), его ожидаемые субагенты переводятся в фон так же (`waitAbandoned`). Без этого итог
+субагента уходил в оборванный вызов и до агента не доходил.
 Транспорт: `POST /api/agent/worker_run` сразу возвращает `{ sessionId }`; затем `mcp/harness-mcp.js` длинным опросом вызывает
 `GET /api/agent/worker_wait?sessionId=&timeoutMs=25000`, пока исполнитель не завершится, и на каждом опросе отправляет MCP `notifications/progress` (когда
 клиент передал progressToken), чтобы вызов инструмента не истёк по таймауту; settings.json сессии задаёт
