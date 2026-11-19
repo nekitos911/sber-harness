@@ -3,7 +3,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { SUBAGENT_CONTEXT } from '../server/orchestration.js';
+import { SUBAGENT_CONTEXT, TEMP_FILES } from '../server/orchestration.js';
 import { launchers } from '../server/launchers.js';
 import { startTestServer, makeRepo, tmpDir, rmrf, gitIn, waitFor } from './helpers.js';
 
@@ -194,7 +194,7 @@ test('concurrent starts give one worker; a live task jumps to it; port needs com
   // preamble after them (its «find the harness tools first» once took the command's place)
   const hint = launchers.mock.defaults.commandHint('full-task');
   assert.match(hint, /первый шаг — загрузить её инструментом skill \(\{"skill":"full-task"\}\)/);
-  assert.ok(prompt.startsWith(`/full-task ${t.id} on feature/${t.id} -> develop, release-1\n\n${hint}\n\n${SUBAGENT_CONTEXT}\n\n[harness] You are a WORKER`), prompt.slice(0, 120));
+  assert.ok(prompt.startsWith(`/full-task ${t.id} on feature/${t.id} -> develop, release-1\n\n${hint}\n\n${SUBAGENT_CONTEXT}\n\n${TEMP_FILES}\n\n[harness] You are a WORKER`), prompt.slice(0, 120));
   assert.match(prompt, /Do NOT commit, push, merge/);
   assert.match(prompt, /commit message format: "T-\d+ <summary>"/);
   assert.match(prompt, /Registry dir: .*registry/);

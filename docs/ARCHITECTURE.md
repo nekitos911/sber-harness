@@ -664,7 +664,8 @@ POST   /api/notifications/read-all
   число выполненных элементов, либо null, если ни у одного элемента нет маркера (`total` = число элементов; тогда UI не показывает дробь).
   Пока сессия работает, сервер опрашивает (раз в 3 с) и при изменении рассылает `{ t: 'sdd', cwd, sessionId, plans }` (планы
   этой сессии).
-- `git.excludeFromCommit` (по умолчанию `[".superpowers/", ".gigacode/tmp/"]`): `GET /api/git/status` помечает подходящие файлы `service: true`;
+- `git.excludeFromCommit` (по умолчанию `[".superpowers/", ".gigacode/tmp/", "*.class", "*.log"]`; `dir/` — папка от корня репозитория,
+  `*.ext` — такие файлы в любой папке: сборка и логи агента в рабочем дереве): `GET /api/git/status` помечает подходящие файлы `service: true`;
   commit-all и предлагаемый список файлов их пропускают (pathspec `:(top,exclude)<pattern>`, поэтому ранее добавленные в индекс файлы тоже
   пропускаются); явные `paths` их отбрасывают (400, если остались только служебные файлы); harness их никогда не отправляет.
 - Проверка ссылок на модели: `GET /api/agents/:id/info` добавляет `modelRefs: [{ file, model, available }]` из

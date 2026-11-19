@@ -9,7 +9,7 @@ import { pathToFileURL } from 'node:url';
 import { CODE_ROOT } from '../server/config.js';
 import { shimIdentity, resolveGigacode, parseShim, parseShShim, gigacodeCommand, launchers, sessionSettings } from '../server/launchers.js';
 import { resolveShell } from '../server/config.js';
-import { SUBAGENT_CONTEXT } from '../server/orchestration.js';
+import { SUBAGENT_CONTEXT, TEMP_FILES } from '../server/orchestration.js';
 import { startTestServer, makeRepo, tmpDir, rmrf, gitIn, waitFor, waitPidGone } from './helpers.js';
 
 const IDENTITY = 'ab'.repeat(32);
@@ -112,7 +112,7 @@ test('exact argv on new and resumed turns; settings.json without permissions; id
   const [first, second] = runs().filter((r) => r.env.HARNESS_SESSION_ID === s.id);
   const tail = ['--approval-mode', 'auto', '--output-format', 'stream-json']; // auto runs under the workspace sandbox; no partial messages by default
   // orchestration.subagents "harness" (default): the sub-agent context block leads the first prompt of a CLI session
-  assert.deepEqual(first.argv, ['--max-old-space-size=6144', entry, '-p', `${SUBAGENT_CONTEXT}\n\nhello`, ...tail]);
+  assert.deepEqual(first.argv, ['--max-old-space-size=6144', entry, '-p', `${SUBAGENT_CONTEXT}\n\n${TEMP_FILES}\n\nhello`, ...tail]);
   assert.deepEqual(second.argv, ['--max-old-space-size=6144', entry, '--resume', ext, '-p', 'again', ...tail]);
   assert.deepEqual(first.env, {
     GIGACODE_PACKAGE_IDENTITY: IDENTITY,

@@ -266,7 +266,7 @@ export function ChangesTab({ cwd, inline = false, agentBusy = false }: { cwd: st
           onAll={() => void stage('all', true)} onStage={(f) => void stage([f.path], true)} onDiscard={discard} />
       )}
       {service.length > 0 && (
-        <Disclosure className="service-files" summary={<span className="muted">Служебные, не коммитятся · {service.length}</span>}>
+        <Disclosure className="service-files" summary={<span className="muted" data-tip="Служебные папки, скомпилированные классы и логи (git.excludeFromCommit): в коммит не попадают">Не коммитятся · {service.length}</span>}>
           <ul className="change-list">{service.map((f) => <ChangeRow key={f.path} cwd={cwd} f={f} git={git} />)}</ul>
         </Disclosure>
       )}

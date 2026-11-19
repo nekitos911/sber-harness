@@ -78,4 +78,11 @@ test('excludeFromCommit: nested service folders (.gigacode/tmp/) are service fil
   assert.ok(isService('.gigacode/tmp/oldwt/.gitattributes', pats));
   assert.ok(!isService('.gigacode/commands/full-task.md', pats));
   assert.ok(!isService('server/index.js', pats));
+  // an agent's build output and logs, anywhere in the tree
+  const junk = [...pats, '*.class', '*.log'];
+  assert.ok(isService('AgentClient.class', junk));
+  assert.ok(isService('target/x/a/b/Dto$Attribute.class', junk));
+  assert.ok(isService('.bpmnt-14822-r3-targeted.log', junk));
+  assert.ok(!isService('src/main/java/a/Client.java', junk));
+  assert.ok(!isService('docs/class-diagram.md', junk));
 });
