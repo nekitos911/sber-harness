@@ -181,6 +181,13 @@ export async function loadSubagents(sessionId: string) {
 }
 
 /** A project's worktrees; `enrich` adds dirty/ahead (a git call per worktree, cached on the server) — only for open projects. */
+/** Several repositories' worktree lists in one state change (each change redraws the sidebar). */
+export async function loadWorktreesOf(workspaceIds: string[]) {
+  if (!workspaceIds.length) return
+  const lists = await Promise.all(workspaceIds.map((id) => api<Worktree[]>('GET', `/workspaces/${encodeURIComponent(id)}/worktrees`).then(arr, () => [] as Worktree[])))
+  setState((s) => ({ worktrees: { ...s.worktrees, ...Object.fromEntries(workspaceIds.map((id, i) => [id, lists[i]])) } }))
+}
+
 export async function loadWorktrees(workspaceId: string, enrich = false) {
   let list: Worktree[] = []
   try {

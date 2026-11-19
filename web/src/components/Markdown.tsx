@@ -1,4 +1,4 @@
-import { memo, useRef, useState, type ComponentPropsWithoutRef } from 'react'
+import { memo, useEffect, useRef, useState, type ComponentPropsWithoutRef } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Check, Copy } from 'lucide-react'
@@ -29,7 +29,23 @@ const components: Components = {
 }
 
 /** GFM markdown without raw HTML (react-markdown escapes it by default). */
-export const Markdown = memo(function Markdown({ text }: { text: string }) {
+/**
+ * A text that keeps changing (an answer being written) is shown at most every `ms`; the last version always shows.
+ * The whole markdown is parsed again for every version: ~12 a second for a long streamed report was a real cost.
+ */
+function useSettled(value: string, ms: number): string {
+  const [shown, setShown] = useState(value)
+  const last = useRef(0)
+  useEffect(() => {
+    if (value === shown) return
+    const t = window.setTimeout(() => { last.current = Date.now(); setShown(value) }, Math.max(0, ms - (Date.now() - last.current)))
+    return () => window.clearTimeout(t)
+  }, [value, shown, ms])
+  return shown
+}
+
+export const Markdown = memo(function Markdown({ text: live }: { text: string }) {
+  const text = useSettled(live, 300)
   return (
     <div className="md">
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>{text}</ReactMarkdown>

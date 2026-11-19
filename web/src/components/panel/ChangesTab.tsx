@@ -18,7 +18,7 @@ import { BranchPicker } from '../pickers/BranchPicker'
 import { openFolder } from '../WorktreeMenu'
 import { flowState } from '../../lib/flow'
 import { touchedRoots, type Root } from '../../lib/toolRun'
-import { loadMessages, loadWorktrees } from '../../ws'
+import { loadWorktreesOf } from '../../ws'
 
 // what the agent wrote per change set: a remount (tab switch, panel toggle) shows it again without a new run
 const generatedCache = new Map<string, Generated>()
@@ -379,15 +379,12 @@ function LinkedWorktrees({ cwd, error }: { cwd: string; error: string }) {
   const here = focus && inFolder.some((x) => x.id === focus) ? sessions.filter((x) => x.id === focus || x.parentId === focus) : inFolder
   // a new message of these chats (not of every chat, not a streamed word): the panel looks again
   const msgSig = useStore((s) => here.map((x) => `${x.id}:${s.messages[x.id]?.length ?? -1}`).join())
-  const allMsgs = getState().messages
-  const helpersToLoad = focus ? here.filter((x) => x.id !== focus && !allMsgs[x.id]).map((x) => x.id).join() : ''
-  useEffect(() => { for (const id of helpersToLoad.split(',').filter(Boolean)) void loadMessages(id) }, [helpersToLoad])
   const ids = new Set(here.map((x) => x.id))
   const running = here.some((x) => x.status === 'running')
   // every project's worktrees (an agent makes its own, e.g. <repo>-worktrees\KEY): which of them its edits are in
   const gitIds = workspaces.filter((w) => w.isGit && !w.kind).map((w) => w.id)
   const missing = gitIds.filter((id) => !lists[id]).join()
-  useEffect(() => { for (const id of missing.split(',').filter(Boolean)) void loadWorktrees(id) }, [missing])
+  useEffect(() => { void loadWorktreesOf(missing.split(',').filter(Boolean)) }, [missing])
   const rows = new Map<string, { path: string; branch: string | null; repo?: string; dirty?: number | null; edited?: boolean }>()
   for (const t of tasks.filter((t) => here.some((x) => x.taskId === t.id))) {
     for (const w of t.worktrees ?? []) rows.set(normPath(w.path), { path: w.path, branch: w.branch, repo: workspaces.find((x) => x.id === w.workspaceId)?.name, dirty: w.dirty })
@@ -411,7 +408,7 @@ function LinkedWorktrees({ cwd, error }: { cwd: string; error: string }) {
     rows.set(normPath(r.path), known ? { ...known, edited: true } : { path: r.path, branch: r.branch ?? w?.branch ?? null, repo: r.name, dirty: w?.dirty, edited: true })
   }
   // a fresh worktree of the agent is not in the lists yet: reload them when its edits land outside every known project
-  useEffect(() => { if (touched.outside) for (const id of gitIds) void loadWorktrees(id) }, [touched.outside]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (touched.outside) void loadWorktreesOf(gitIds) }, [touched.outside]) // eslint-disable-line react-hooks/exhaustive-deps
   const list = [...rows.values()]
   const current = list.find((w) => normPath(w.path) === normPath(pick ?? '')) ?? list.find((w) => (w.dirty ?? 0) > 0) ?? list[0]
   const twins = (w: { repo?: string }) => list.filter((x) => x.repo === w.repo).length > 1 // the same project twice: tell them apart by folder
