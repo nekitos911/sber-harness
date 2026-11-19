@@ -484,12 +484,17 @@ const claude = {
   parse: (o, state = {}) => normalize(o, Object.assign(state, { usageStyle: 'anthropic' })),
 };
 
+// A custom command reaches the model as text and the model loads it with the skill tool, first
+// (test/fixtures/gigacode.slash.ndjson). The harness preamble behind it («find the harness tools first») once took that
+// first step's place and the command never ran: this line goes between the command and the preamble.
+const commandHint = (name) => `[harness] Это сообщение — команда /${name}. Если её инструкций ещё нет выше в твоём контексте, твой первый шаг — загрузить её инструментом skill ({"skill":"${name}"}) и дальше работать по ней. Справка харнеса ниже её не заменяет: инструменты harness ищи, когда они понадобятся.`;
+
 export const launchers = {
   // cold start (hundreds of tools, ~9 MCP servers) can take 30-60 s before system/init
   // quickArgs: one-off helper runs (commit/PR messages) start without MCP/skills/hooks (VERIFY --safe-mode on the target)
   gigacode: geminiFamily('gigacode', { quickArgs: ['--safe-mode'], compressCommand: '/compress', contextCommand: '/context', command: 'gigacode', settingsEnv: 'GIGACODE_SYSTEM_SETTINGS_PATH', firstEventTimeoutMs: 120000, continueArgs: ['-c'], approvalModeMap: { auto: 'auto-edit' }, allowedToolsFlag: '--allowed-tools', allowedTools: DEFAULT_ALLOWED_TOOLS, autoSandbox: null, partialMessagesFlag: null /* opt-in: on the target 2 of 3 tool calls then came without arguments (VERIFY) */, stripModelSuffix: true,
     // its MCP tools are deferred: a call by a guessed name («harness_worker_done») is refused until tool_search registers them
-    toolsHint: 'Инструменты harness здесь отложенные: перед первым вызовом найди их через tool_search по слову «harness»; точные имена — mcp__harness__worker_done, mcp__harness__ask, mcp__harness__agent, mcp__harness__send_message.' }, (cfg) => resolveGigacode(cfg)),
+    toolsHint: 'Инструменты harness здесь отложенные: перед первым вызовом найди их через tool_search по слову «harness»; точные имена — mcp__harness__worker_done, mcp__harness__ask, mcp__harness__agent, mcp__harness__send_message.', commandHint }, (cfg) => resolveGigacode(cfg)),
   qwen: geminiFamily('qwen', { command: 'qwen', settingsEnv: 'QWEN_CODE_SYSTEM_SETTINGS_PATH', firstEventTimeoutMs: 30000, approvalModeMap: { auto: 'auto-edit' }, allowedToolsFlag: '--allowed-tools', allowedTools: DEFAULT_ALLOWED_TOOLS }),
   gemini: geminiFamily('gemini', { command: 'gemini', settingsEnv: 'GEMINI_CLI_SYSTEM_SETTINGS_PATH', firstEventTimeoutMs: 30000 }),
   claude,
@@ -498,5 +503,6 @@ export const launchers = {
     settingsEnv: 'MOCK_AGENT_SETTINGS_PATH',
     firstEventTimeoutMs: 15000,
     allowedToolsFlag: '--allowed-tools', // the mock behaves like GigaCode
+    commandHint,
   }),
 };

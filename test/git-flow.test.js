@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { SUBAGENT_CONTEXT } from '../server/orchestration.js';
+import { launchers } from '../server/launchers.js';
 import { startTestServer, makeRepo, tmpDir, rmrf, gitIn, waitFor } from './helpers.js';
 
 let h;
@@ -189,8 +190,11 @@ test('concurrent starts give one worker; a live task jumps to it; port needs com
     }
   }, { what: 'worker argv' });
   const prompt = run.argv[run.argv.indexOf('-p') + 1];
-  // a slash command must be the first word: the rendered task prompt goes first, the preamble after it
-  assert.ok(prompt.startsWith(`/full-task ${t.id} on feature/${t.id} -> develop, release-1\n\n${SUBAGENT_CONTEXT}\n\n[harness] You are a WORKER`), prompt.slice(0, 120));
+  // a slash command must be the first word: the rendered task prompt goes first, then «load the command first», the
+  // preamble after them (its «find the harness tools first» once took the command's place)
+  const hint = launchers.mock.defaults.commandHint('full-task');
+  assert.match(hint, /первый шаг — загрузить её инструментом skill \(\{"skill":"full-task"\}\)/);
+  assert.ok(prompt.startsWith(`/full-task ${t.id} on feature/${t.id} -> develop, release-1\n\n${hint}\n\n${SUBAGENT_CONTEXT}\n\n[harness] You are a WORKER`), prompt.slice(0, 120));
   assert.match(prompt, /Do NOT commit, push, merge/);
   assert.match(prompt, /commit message format: "T-\d+ <summary>"/);
   assert.match(prompt, /Registry dir: .*registry/);

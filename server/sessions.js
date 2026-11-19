@@ -962,7 +962,10 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
       if (!s.externalSessionId) {
         const pre = hooks.preamble(s);
         // a slash command only works as the first word of the prompt; the rest becomes its $ARGUMENTS
-        if (pre) prompt = prompt.startsWith('/') ? `${prompt}\n\n${pre}` : `${pre}\n\n${prompt}`;
+        // ...and the CLI's own word on loading that command comes before the preamble, or the preamble's steps go first
+        const command = prompt.match(/^\/([\w.:-]+)/)?.[1];
+        const hint = command && launcher.defaults.commandHint?.(command);
+        if (pre) prompt = prompt.startsWith('/') ? [prompt, hint, pre].filter(Boolean).join('\n\n') : `${pre}\n\n${prompt}`;
       }
       // the project's allow rules (allow_project) join the session's own on every turn
       const projectTools = (s.workspaceId && db.prefs?.allowedToolsByWorkspace?.[s.workspaceId]) || [];
