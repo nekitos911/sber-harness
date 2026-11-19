@@ -22,20 +22,39 @@ const terms = new Map<string, TermListener>()
 // Server events come in bursts (several agents streaming at once): all that came within ~80 ms are applied together —
 // one render instead of one per event.
 let pending: ServerEvent[] = []
-let scheduled = false
+let timer: number | null = null
+let due = 0
 function flush() {
-  scheduled = false
+  if (timer !== null) window.clearTimeout(timer)
+  timer = null
   const evs = pending
   pending = []
   batch(() => { for (const ev of evs) apply(ev) })
 }
+
+/** The chat on screen (its tab is active), or null. */
+function visibleSession(): string | null {
+  const st = getState()
+  if (st.view.kind !== 'wt') return null
+  const active = st.wt[wtKey(st.view.cwd)]?.active
+  return active?.startsWith('s:') ? active.slice(2) : null
+}
+/** What the person watches or waits for right now: the open chat's stream, a terminal, a job, a notification. */
+function urgent(ev: ServerEvent): boolean {
+  if (ev.t === 'term' || ev.t === 'term.replay' || ev.t === 'job' || ev.t === 'notify') return true
+  const open = visibleSession()
+  return !!open && ((ev.t === 'msg' && ev.sessionId === open) || (ev.t === 'session' && ev.session.id === open))
+}
 function queue(ev: ServerEvent) {
   pending.push(ev)
-  if (scheduled) return
-  scheduled = true
-  // ~12 renders a second while agents stream: text still flows, the page keeps time to answer typing and clicks;
-  // a hidden tab renders for nobody: every 2 s, and at once when it is shown again
-  setTimeout(flush, document.visibilityState === 'visible' ? 80 : 2000)
+  // the open chat streams at ~12 renders a second; other agents' events (the sidebar, the panels) twice a second — with
+  // five agents writing, the page used to redraw for all of them every 80 ms; a hidden tab every 2 s
+  const wait = document.visibilityState !== 'visible' ? 2000 : urgent(ev) ? 80 : 500
+  const at = Date.now() + wait
+  if (timer !== null && due <= at) return
+  if (timer !== null) window.clearTimeout(timer)
+  due = at
+  timer = window.setTimeout(flush, wait)
 }
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && pending.length) flush() })
 
