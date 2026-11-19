@@ -18,7 +18,7 @@ import { BranchPicker } from '../pickers/BranchPicker'
 import { openFolder } from '../WorktreeMenu'
 import { flowState } from '../../lib/flow'
 import { touchedRoots, type Root } from '../../lib/toolRun'
-import { loadWorktrees } from '../../ws'
+import { loadMessages, loadWorktrees } from '../../ws'
 
 // what the agent wrote per change set: a remount (tab switch, panel toggle) shows it again without a new run
 const generatedCache = new Map<string, Generated>()
@@ -371,7 +371,10 @@ function LinkedWorktrees({ cwd, error }: { cwd: string; error: string }) {
   const activeTab = useStore((s) => s.wt[normPath(cwd)]?.active ?? null)
   const inFolder = sessions.filter((x) => normPath(x.cwd) === normPath(cwd))
   const focus = activeTab?.startsWith('s:') ? activeTab.slice(2) : null
-  const here = focus && inFolder.some((x) => x.id === focus) ? inFolder.filter((x) => x.id === focus || x.parentId === focus) : inFolder
+  // its helpers wherever they work (a helper is often in its worktree, not in the folder): their edits are this work too
+  const here = focus && inFolder.some((x) => x.id === focus) ? sessions.filter((x) => x.id === focus || x.parentId === focus) : inFolder
+  const helpersToLoad = focus ? here.filter((x) => x.id !== focus && !allMsgs[x.id]).map((x) => x.id).join() : ''
+  useEffect(() => { for (const id of helpersToLoad.split(',').filter(Boolean)) void loadMessages(id) }, [helpersToLoad])
   const ids = new Set(here.map((x) => x.id))
   const running = here.some((x) => x.status === 'running')
   // every project's worktrees (an agent makes its own, e.g. <repo>-worktrees\KEY): which of them its edits are in
