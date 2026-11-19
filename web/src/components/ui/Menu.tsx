@@ -38,6 +38,8 @@ export function Menu({ anchor, open, onClose, items, label, placement = 'bottom-
   }
   const nav = useListNav(items.map((i) => i.label), (i) => !!items[i]?.disabled, pick)
   const subAnchor = { current: sub === null ? null : rows.current[sub] } as RefObject<HTMLElement | null>
+  // closed: nothing to build (Popover draws nothing then) — every row of the sidebar has a menu, and they re-render often
+  if (!open) return null
   return (
     <Popover anchor={anchor} open={open} onClose={() => { setSub(null); onClose() }} placement={placement} role="presentation" initialFocus={list}>
       <div

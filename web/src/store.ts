@@ -1,4 +1,4 @@
-import { useSyncExternalStore } from 'react'
+import { useEffect, useState, useSyncExternalStore } from 'react'
 import type { PrListState, PrScope } from './lib/prsMine'
 import type { AgentGitJob } from './lib/agentGit'
 import type { AgentInfo, AgentMeta, HistoryItem, RecoveryState, GitStatus, SddPlan, Settings, Integrations, Message, Notification, Session, SubAgent, Task, Workspace, Worktree } from './types'
@@ -194,6 +194,23 @@ const subscribe = (l: () => void) => { listeners.add(l); return () => { listener
 /** Selector must return a stored reference (or a primitive), never a fresh object. */
 export function useStore<T>(selector: (s: State) => T): T {
   return useSyncExternalStore(subscribe, () => selector(state))
+}
+
+/**
+ * A slice that changes all the time, read at most every `ms`: the sidebar rebuilt its whole tree on every event of every
+ * agent (~10 times a second with a few streaming). After a quiet spell the first change shows at once.
+ */
+export function useThrottledStore<T>(selector: (s: State) => T, ms: number): T {
+  const [value, setValue] = useState(() => selector(state))
+  useEffect(() => {
+    let timer: number | null = null
+    let last = 0
+    const run = () => { timer = null; last = Date.now(); setValue(() => selector(state)) }
+    run() // what changed between the first render and this effect
+    const off = subscribe(() => { if (timer === null) timer = window.setTimeout(run, Math.max(0, ms - (Date.now() - last))) })
+    return () => { off(); if (timer !== null) window.clearTimeout(timer) }
+  }, [ms]) // eslint-disable-line react-hooks/exhaustive-deps
+  return value
 }
 
 document.documentElement.dataset.theme = state.scheme

@@ -44,7 +44,8 @@ export function WorkspaceParams({ projects }: { projects: Workspace[] }) {
         aria-expanded={open} data-dot={hidesSomething(p) || undefined} onClick={() => (open ? close() : setOpen(true))}>
         <SlidersHorizontal />
       </button>
-      <Popover anchor={btn} open={open} onClose={close} placement="right-start" label="Параметры рабочих пространств" className="sbp">
+      {/* closed: nothing built (the sidebar re-renders on every agent event) */}
+      {open && <Popover anchor={btn} open={open} onClose={close} placement="right-start" label="Параметры рабочих пространств" className="sbp">
         {/* a press elsewhere in the panel closes an open submenu (the submenus are portaled, but React events bubble here) */}
         <div onPointerDown={(e) => { if (!(e.target as Element).closest('.sbp-sub, .sbp-row[aria-expanded="true"]')) setSub(null) }}>
           <div className="sbp-title">Параметры рабочих пространств</div>
@@ -93,7 +94,7 @@ export function WorkspaceParams({ projects }: { projects: Workspace[] }) {
             <Button size="sm" variant="ghost" disabled={isDefault(p)} onClick={() => setSbPrefs({ ...DEFAULT_PREFS, projectOrder: p.projectOrder })}>Сбросить</Button>
           </div>
         </div>
-      </Popover>
+      </Popover>}
     </>
   )
 }

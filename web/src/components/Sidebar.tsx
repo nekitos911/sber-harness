@@ -1,6 +1,6 @@
-import { createContext, useContext, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react'
+import { createContext, memo, useContext, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react'
 import { Activity, ArrowUp, Bot, ChevronDown, Ellipsis, Folder, FolderTree, TriangleAlert, GitPullRequest, Pin, ChevronRight, FolderGit2, FolderPlus, GitBranch, GitBranchPlus, House, Inbox, MessageSquarePlus, Moon, Search, Settings, SquareKanban, SquareTerminal, Sun, X } from 'lucide-react'
-import { getState, useFeature, openDialog, openScreen, openSession, openWorktree, setState, showPanel, upsertSession, useActiveCwd, useStore, wtKey, type Screen } from '../store'
+import { getState, useFeature, openDialog, openScreen, openSession, openWorktree, setState, showPanel, upsertSession, useActiveCwd, useStore, useThrottledStore, wtKey, type Screen } from '../store'
 import { archiveSession, renameSession, sessionMenu } from '../lib/sessionActions'
 import { loadWorktrees } from '../ws'
 import { api, tryApi } from '../api'
@@ -34,7 +34,7 @@ const activate = (fn: () => void) => (e: KeyboardEvent) => {
 
 export function Sidebar() {
   const workspaces = useStore((s) => s.workspaces)
-  const sessions = useStore((s) => s.sessions)
+  const sessions = useThrottledStore((s) => s.sessions, 500) // twice a second is enough for a list; not every streamed event
   const pending = useStore((s) => pendingCount(s.sessions, s.tasks, s.notifications)) // «Ждёт меня»
   const unread = useStore((s) => unreadCount(s.notifications, s.sessions))
   const now = useNow()
@@ -547,7 +547,7 @@ function ProjectNode({ ws, tree, filtering, drag }: {
           <RowAction label="Действия с проектом" icon={<Ellipsis />} onClick={() => setMenu(true)} />
         </span>
       </div>
-      <Menu anchor={projRow} open={menu} onClose={() => setMenu(false)} items={projectMenu(ws)} label={`Проект ${ws.name}`} placement="bottom-end" />
+      <Menu anchor={projRow} open={menu} onClose={() => setMenu(false)} items={menu ? projectMenu(ws) : []} label={`Проект ${ws.name}`} placement="bottom-end" />
       {expanded && (
         <div className="tree-children">
           {plain ? mine.map((s) => <SessionNode key={s.id} s={s} kids={tree.kids} base={1} />)
@@ -756,7 +756,10 @@ function SessionNode({ s, kids, level = 0, base = 2, via, from }: { s: Session; 
   )
 }
 
-function SessionRow({ s, nested, level = 0, caret, via, from }: {
+// a row re-renders when its own chat (or its place in the tree) changes, not on every event of every agent
+const SessionRow = memo(SessionRowView, (p, n) => p.s === n.s && p.nested === n.nested && p.level === n.level && p.via === n.via && p.from === n.from && p.caret?.open === n.caret?.open)
+
+function SessionRowView({ s, nested, level = 0, caret, via, from }: {
   s: Session; nested: boolean; level?: number; caret?: { open: boolean; toggle: () => void }; via?: string; from?: Session
 }) {
   const mixed = useContext(MixedAgents)
@@ -764,7 +767,8 @@ function SessionRow({ s, nested, level = 0, caret, via, from }: {
   const [editing, setEditing] = useState(false)
   const [leaving, setLeaving] = useState(false)
   const row = useRef<HTMLDivElement>(null)
-  const items = sessionMenu(s, () => setEditing(true)).map((it) =>
+  // built only when the menu opens
+  const items = !menu ? [] : sessionMenu(s, () => setEditing(true)).map((it) =>
     // «В архив» from the sidebar: the row slides out first, then goes.
     it.label === 'В архив' ? { ...it, onSelect: () => { setLeaving(true); window.setTimeout(() => void archiveSession(s).then((ok) => { if (!ok) setLeaving(false) }), 160) } } : it)
   const current = useStore((st) => st.view.kind === 'wt' && st.wt[normPath(st.view.cwd)]?.active === `s:${s.id}`)
