@@ -1,9 +1,9 @@
 import { createContext, memo, useContext, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react'
 import { Activity, ArrowUp, Bot, ChevronDown, Ellipsis, Folder, FolderTree, TriangleAlert, GitPullRequest, Pin, ChevronRight, FolderGit2, FolderPlus, GitBranch, GitBranchPlus, House, Inbox, MessageSquarePlus, Moon, Search, Settings, SquareKanban, SquareTerminal, Sun, X } from 'lucide-react'
-import { getState, useFeature, openDialog, openScreen, openSession, openWorktree, setState, showPanel, upsertSession, useActiveCwd, useStore, useThrottledStore, wtKey, type Screen } from '../store'
-import { archiveSession, renameSession, sessionMenu } from '../lib/sessionActions'
+import { getState, useFeature, openDialog, openScreen, openSession, openWorktree, setState, showPanel, useActiveCwd, useStore, useThrottledStore, wtKey, type Screen } from '../store'
+import { archiveSession, dismissSession, renameSession, sessionMenu, unseenReply } from '../lib/sessionActions'
 import { loadWorktrees } from '../ws'
-import { api, tryApi } from '../api'
+import { api } from '../api'
 import { runJob } from '../lib/jobs'
 import { useCurrentTool, useStateLine } from '../lib/live'
 import { dur, sessionVisualState } from '../lib/sessionState'
@@ -290,6 +290,7 @@ const needsYou = (s: Session, now: number, review?: Set<string>) => {
   const seen = (s.dismissedAt ?? 0) >= s.lastActivityAt
   // its work is over and waits for a look: an unread «готово» / «не выполнена» / «закончил ход без отчёта» in the Inbox
   if (review?.has(s.id) && !s.archived && !seen && !['running', 'starting', 'stalled'].includes(v)) return true
+  if (unseenReply(s)) return true // answered while the person was elsewhere: here until opened
   const settled = v === 'error' || v === 'interrupted' // nothing to answer: seen («×») or older than a day, it goes
   return !!WAITS[v] && (!settled || (!s.archived && now - s.lastActivityAt < DAY && !seen))
 }
@@ -300,11 +301,8 @@ function useReviewIds(): Set<string> {
   return useMemo(() => new Set(notifications.filter((n) => !n.read && n.sessionId && ['done', 'failed', 'escalation'].includes(n.kind)).map((n) => n.sessionId!)), [notifications])
 }
 
-/** «×» on a failed / cut chat in «Ждут вас»: seen, the chat itself stays. */
-const dismiss = async (s: Session) => {
-  const r = await tryApi<Session>('PATCH', `/sessions/${encodeURIComponent(s.id)}`, { dismissed: true })
-  if (r) setState((st) => ({ sessions: upsertSession(st.sessions, r) }))
-}
+/** «×» in «Ждут вас»: seen, the chat itself stays. */
+const dismiss = dismissSession
 
 /** «Ждут вас»: every chat waiting for a person (or silent, or failed in the last day), longest waiting first; the tree stays calm. */
 function AttentionSection({ tree }: { tree: Tree }) {
@@ -324,11 +322,11 @@ function AttentionSection({ tree }: { tree: Tree }) {
         const where = [ws?.kind === 'root' ? 'Все проекты' : ws?.name, s.branch ?? (ws && normPath(ws.path) !== normPath(s.cwd) ? basename(s.cwd) : null)].filter(Boolean).join(' · ')
         const since = s.lastEventAt ?? s.lastActivityAt
         return (
-          <div key={s.id} className="tree-row tree-sess attention-row" role="button" tabIndex={0} style={depth(0)} data-s={v}
+          <div key={s.id} className="tree-row tree-sess attention-row" role="button" tabIndex={0} style={depth(0)} data-s={v} data-unseen={unseenReply(s) || undefined}
             data-tip={s.title} data-tip-trunc onClick={() => openSession(s.id)} onKeyDown={activate(() => openSession(s.id))}>
             <StatusIcon session={s} />
             <span className="label"><strong>{s.title || s.id}</strong>{where && <span className="sess-doing"> · {where}</span>}</span>
-            <span className="sess-state">{v === 'stalled' ? `нет вывода ${dur(now - since)}` : v === 'error' ? WAITS[v] : WAITS[v] ?? 'проверить'}</span>
+            <span className="sess-state">{v === 'stalled' ? `нет вывода ${dur(now - since)}` : v === 'error' ? WAITS[v] : WAITS[v] ?? (review.has(s.id) ? 'проверить' : 'ответил')}</span>
             {(v === 'error' || v === 'interrupted' || !WAITS[v]) && (
               <button type="button" className="icon-btn icon-btn-sm attention-x" aria-label={`Убрать «${s.title || s.id}» из «Ждут вас»`} data-tip="Убрать из «Ждут вас» (чат останется)"
                 onClick={(e) => { e.stopPropagation(); void dismiss(s) }} onKeyDown={(e) => e.stopPropagation()}><X /></button>
@@ -801,6 +799,7 @@ function SessionRowView({ s, nested, level = 0, caret, via, from }: {
       className="tree-row tree-sess"
       role="button"
       data-s={v}
+      data-unseen={unseenReply(s) || undefined}
       data-nested={nested || undefined}
       data-detail={detailed || undefined}
       data-enter={s.createdAt > APP_START || undefined}

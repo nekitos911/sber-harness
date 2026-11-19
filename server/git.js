@@ -193,7 +193,8 @@ export async function discard(cwd, paths, files, remove) {
       remove(p);
     } else tracked.push(p);
   }
-  if (tracked.length) await git(cwd, ['restore', '--source=HEAD', '--staged', '--worktree', '--', ...tracked]);
+  // «Отменить все»: hundreds of paths would pass Windows' 32K command line, so in batches
+  for (let i = 0; i < tracked.length; i += 100) await git(cwd, ['restore', '--source=HEAD', '--staged', '--worktree', '--', ...tracked.slice(i, i + 100)]);
 }
 
 /** A commit's own changes (its first parent's view for a merge), as the diff of a working tree: { diff }. */

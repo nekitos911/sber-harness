@@ -166,6 +166,15 @@ export function ChangesTab({ cwd, inline = false, agentBusy = false }: { cwd: st
     // confirm: true only after this dialog — the server refuses a discard without it
     onConfirm: () => void tryApi('POST', '/git/discard', { cwd, paths: [f.path], confirm: true }).then((r) => { if (r !== undefined) refreshGit(cwd) }),
   })
+  // a group's «↶» (as in Orca): new files are deleted, changed ones go back to the last commit
+  const discardAll = (list: GitFile[]) => {
+    const fresh = list.filter((f) => f.status === '?' || f.status === 'A').length
+    openDialog({
+      kind: 'confirm', title: `Отменить все изменения (${list.length})?`, danger: true, ok: 'Отменить все',
+      text: [fresh && `Новые файлы будут удалены: ${fresh}.`, list.length - fresh && `Изменённые файлы вернутся к последнему коммиту: ${list.length - fresh}.`].filter(Boolean).join(' '),
+      onConfirm: () => void tryApi('POST', '/git/discard', { cwd, paths: list.map((f) => f.path), confirm: true }).then((r) => { if (r !== undefined) refreshGit(cwd) }),
+    })
+  }
   const createPr = () => openDialog({ kind: 'pr', cwd, base: suggest?.pr.base ?? undefined })
 
   // the primary action follows the state: commit the selection, everything, or push what is ahead
@@ -263,11 +272,12 @@ export function ChangesTab({ cwd, inline = false, agentBusy = false }: { cwd: st
       )}
       {unstaged.length > 0 && (
         <FileGroup label="Изменения" files={unstaged.filter(match)} total={unstaged.length} cwd={cwd} git={git} stageOn={stageOn}
-          onAll={() => void stage('all', true)} onStage={(f) => void stage([f.path], true)} onDiscard={discard} />
+          onAll={() => void stage('all', true)} onStage={(f) => void stage([f.path], true)} onDiscard={discard} onDiscardAll={() => discardAll(unstaged)} />
       )}
       {service.length > 0 && (
         <Disclosure className="service-files" summary={<span className="muted" data-tip="Служебные папки, скомпилированные классы и логи (git.excludeFromCommit): в коммит не попадают">Не коммитятся · {service.length}</span>}>
-          <ul className="change-list">{service.map((f) => <ChangeRow key={f.path} cwd={cwd} f={f} git={git} />)}</ul>
+          {stageOn && <button type="button" className="link service-clear" onClick={() => discardAll(service)}><RotateCcw aria-hidden />Отменить все ({service.length})</button>}
+          <ul className="change-list">{service.map((f) => <ChangeRow key={f.path} cwd={cwd} f={f} git={git} stageOn={stageOn} onDiscard={() => discard(f)} />)}</ul>
         </Disclosure>
       )}
 
@@ -348,9 +358,9 @@ async function saveVia(v: GitVia) {
 type GitData = ReturnType<typeof useGit>
 
 /** «ПРОИНДЕКСИРОВАНО n» / «ИЗМЕНЕНИЯ n»: collapsible, «＋/− всё» and «Просмотреть всё» in the header. */
-function FileGroup({ label, files, total, cwd, git, staged = false, stageOn, onAll, onStage, onDiscard }: {
+function FileGroup({ label, files, total, cwd, git, staged = false, stageOn, onAll, onStage, onDiscard, onDiscardAll }: {
   label: string; files: GitFile[]; total: number; cwd: string; git: GitData; staged?: boolean; stageOn: boolean
-  onAll: () => void; onStage: (f: GitFile) => void; onDiscard: (f: GitFile) => void
+  onAll: () => void; onStage: (f: GitFile) => void; onDiscard: (f: GitFile) => void; onDiscardAll?: () => void
 }) {
   const [open, setOpen] = useState(true)
   return (
@@ -360,6 +370,7 @@ function FileGroup({ label, files, total, cwd, git, staged = false, stageOn, onA
           <ChevronRight className="chev" aria-hidden />{label}<span className="num muted">{total}</span>
         </button>
         <span className="scm-group-actions">
+          {stageOn && onDiscardAll && <button type="button" className="icon-btn icon-btn-sm" aria-label="Отменить все изменения" data-tip="Отменить все изменения" onClick={onDiscardAll}><RotateCcw /></button>}
           {stageOn && <button type="button" className="icon-btn icon-btn-sm" aria-label={staged ? 'Убрать всё из индекса' : 'Добавить всё в индекс'} data-tip={staged ? 'Убрать всё из индекса' : 'Добавить всё в индекс'} onClick={onAll}>{staged ? <Minus /> : <Plus />}</button>}
           <button type="button" className="link" onClick={() => openTab({ kind: 'diff', cwd, path: null })}>Просмотреть всё</button>
         </span>

@@ -145,6 +145,9 @@
 .state-summary { display: block; padding: 0 8px 2px 44px; font-size: 11px; color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .state-summary [data-s] { color: var(--state-ink, var(--ink-3)); }
 .tree-sess[aria-current="true"] { background: var(--deck-3); }
+/* answered while the person was elsewhere (until opened): a green mark and a bold title, not one more grey circle */
+.tree-sess[data-unseen] .st { color: var(--lamp-done); fill: currentColor; }
+.tree-sess[data-unseen] .label strong, .tree-sess[data-unseen] .sess-title { font-weight: 600; }
 .tree-sub { cursor: default; opacity: 0.72; }
 .tree-sub:hover { background: transparent; }
 .tree-sess[data-enter] { animation: slide-in 200ms var(--ease-out); }

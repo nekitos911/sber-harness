@@ -889,7 +889,8 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     r.closedEarly = true;
     r.resultAt = Date.now();
     const status = r.flags.reported && (s.status === 'done' || s.status === 'failed') ? s.status : 'idle';
-    Object.assign(s, { status, phase: null, lastActivityAt: Date.now(), stalled: false, turnClosing: true });
+    // finishedAt: the turn is over; the person has not looked while finishedAt > dismissedAt («Ждут вас»: готово)
+    Object.assign(s, { status, phase: null, lastActivityAt: Date.now(), finishedAt: Date.now(), stalled: false, turnClosing: true });
     if (s.revive) s.revive = null; // a turn that reached its result went well: the automatic attempts start over
     if (s.waitingFor === 'auth') s.waitingFor = null;
     settleVirtuals(s);
@@ -1200,7 +1201,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     }
     // errorKind: 'not_started' = no turn of this session ever produced output (check the command); 'turn' = this turn failed
     const errorKind = status === 'error' ? (s.everStarted ? 'turn' : 'not_started') : null;
-    Object.assign(s, { status, errorKind, pid: null, pidStartedAt: null, phase: null, turnOffset: null, lastActivityAt: Date.now(), stalled: false, turnClosing: false });
+    Object.assign(s, { status, errorKind, pid: null, pidStartedAt: null, phase: null, turnOffset: null, lastActivityAt: Date.now(), finishedAt: Date.now(), stalled: false, turnClosing: false });
     if (s.waitingFor === 'auth') s.waitingFor = null;
     settleVirtuals(s);
     // broke (not the person's stop, not a login, not a missing executable or model) or woken: continue by itself

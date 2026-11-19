@@ -22,9 +22,12 @@ test('archive: refused while working unless stop; virtual sub-agents follow; una
     assert.ok(archived.archived && archived.archivedAt > 0);
     assert.ok((await state()).sessions.filter((s) => s.parentId === sub.id && s.virtual).every((s) => s.archived), 'virtual children archived too');
     assert.equal((await h.api('PATCH', `/api/sessions/${sub.id}`, { archived: false })).body.archived, false);
+    // a finished turn: its answer waits for a look (finishedAt later than dismissedAt) until the chat is opened or «×»
+    const answered = (await state()).sessions.find((s) => s.id === sub.id);
+    assert.ok(answered.finishedAt > 0 && answered.finishedAt > (answered.dismissedAt ?? 0), 'a finished turn is stamped, not yet seen');
     // «Убрать из «Ждут вас»»: seen at, the chat stays; a non-boolean is refused
     const seen = (await h.api('PATCH', `/api/sessions/${sub.id}`, { dismissed: true })).body;
-    assert.ok(seen.dismissedAt >= seen.lastActivityAt && !seen.archived);
+    assert.ok(seen.dismissedAt >= seen.lastActivityAt && seen.dismissedAt >= seen.finishedAt && !seen.archived);
     assert.equal((await h.api('PATCH', `/api/sessions/${sub.id}`, { dismissed: 'да' })).status, 400);
 
     const busy = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', cwd: root, prompt: '#silent' })).body;

@@ -21,7 +21,7 @@ import { ActivityLine, buildItems, StallBanner, ToolRun, TurnFiles, TurnHead } f
 import { isMcpStatus, mcpServers } from '../lib/toolRun'
 import { sessionVisualState } from '../lib/sessionState'
 import { ownerWorkspace } from '../lib/actions'
-import { archiveSession } from '../lib/sessionActions'
+import { archiveSession, dismissSession, unseenReply } from '../lib/sessionActions'
 import { Composer } from '../components/chat/Composer'
 import { WorkersPanel } from '../components/chat/WorkersPanel'
 
@@ -125,6 +125,15 @@ export function ChatView({ id, active }: { id: string; active: boolean }) {
   const newSince = mark.since !== null && visible.some((m) => m.kind !== 'user' && m.at > mark.since! && m.at <= mark.at) ? mark.since : null
   const items = useMemo(() => buildItems(visible, runningTurn, newSince, session?.lastActivityAt), [visible, runningTurn, newSince, session?.lastActivityAt])
 
+  // its answer is seen once the chat is on screen: out of «Ждут вас» (now, or when the browser tab comes back)
+  const unseen = !!session && unseenReply(session)
+  useEffect(() => {
+    if (!active || !unseen) return
+    const look = () => { if (document.visibilityState === 'visible') { const s = getState().sessions.find((x) => x.id === id); if (s) void dismissSession(s) } }
+    look()
+    document.addEventListener('visibilitychange', look)
+    return () => document.removeEventListener('visibilitychange', look)
+  }, [active, unseen, id])
   // Read up to here: remembered for the next «НОВОЕ» mark.
   useEffect(() => { if (active && atBottom && stick.current && lastAt) saveDraft(seenKey, lastAt) }, [active, atBottom, lastAt, seenKey])
   // «Показать ранее» adds messages on top: keep what the user was looking at in place.
