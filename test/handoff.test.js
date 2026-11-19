@@ -8,7 +8,11 @@ import { startTestServer, tmpDir, rmrf, waitFor, makeRepo, gitIn } from './helpe
 
 const root = tmpDir();
 const projects = path.join(root, 'проекты');
-const stub = (server) => ({ transport: 'stdio', command: process.execPath, args: [path.join(CODE_ROOT, 'scripts', 'mock-mcp.js'), '--fixtures', path.join(CODE_ROOT, 'test', 'fixtures'), '--server', server] });
+// the tracker's fixtures, and PROJ-99001 that it does not have (its real «not found» answer)
+const fixtures = path.join(root, 'fixtures');
+fs.cpSync(path.join(CODE_ROOT, 'test', 'fixtures'), fixtures, { recursive: true });
+fs.copyFileSync(path.join(fixtures, 'onework.tool-error.json'), path.join(fixtures, 'onework.sbertrack_getIssue.PROJ-99001.json'));
+const stub = (server) => ({ transport: 'stdio', command: process.execPath, args: [path.join(CODE_ROOT, 'scripts', 'mock-mcp.js'), '--fixtures', fixtures, '--server', server] });
 let h;
 
 before(async () => {
@@ -40,6 +44,21 @@ test('a tracker link: the task is imported and its worker starts at the projects
   const again = (await h.api('POST', '/api/handoff', { input: 'PROJ-14904' })).body;
   assert.deepEqual([again.session.id, again.session.jumped], [session.id, true]);
   await settle(session.id);
+});
+
+test('the tracker does not give the task: still a task (by its key) and its worker — never a chat titled with the link', async () => {
+  const link = 'https://tracker.example/swtr/units/all/unit/PROJ-99001'; // not in the tracker fixture: the import fails
+  const r = await h.api('POST', '/api/handoff', { input: link });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  const { session, task, trackerError } = r.body;
+  assert.ok(trackerError, 'the person hears that the tracker failed');
+  assert.deepEqual([task.externalId, task.externalUrl, session.taskId, session.role], ['PROJ-99001', link, task.id, 'worker']);
+  assert.match(session.title, /PROJ-99001/);
+  assert.doesNotMatch(session.title, /https?:/);
+  await settle(session.id);
+  // again (the board's «Передать агенту» sends the link): the same task, its chat
+  const again = (await h.api('POST', '/api/handoff', { input: link })).body;
+  assert.deepEqual([again.task.id, again.session.id], [task.id, session.id]);
 });
 
 test('free text: a chat at the projects root named after the text, its prompt from freePromptTemplate', async () => {

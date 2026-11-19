@@ -52,7 +52,8 @@ export function Sidebar() {
   useEffect(() => { if (prsMineOn) loadPrsMine('mine') }, [prsMineOn])
   const openPrs = minePrs ?? taskPrs
   // the same chats as «Ждут вас» below (a question, a permission, a login; failed or cut in the last day)
-  const waiting = agents.filter((s) => needsYou(s, now) && sessionVisualState(s) !== 'stalled').length
+  const review = useReviewIds()
+  const waiting = agents.filter((s) => needsYou(s, now, review) && sessionVisualState(s) !== 'stalled').length
   const allWorktrees = useStore((s) => s.worktrees)
   const leaving = useLeaving(sessions)
   const sbp = useSbPrefs() // «Чаты из CLI», «Скрывать чаты старше» in the workspace parameters
@@ -284,10 +285,19 @@ function buildTree(sessions: Session[], query: string, worktrees: Record<string,
 const WAITS: Partial<Record<string, string>> = { waiting_permission: 'разрешение', waiting_answer: 'вопрос', auth: 'вход', stalled: 'нет вывода', error: 'ошибка', interrupted: 'прервана' }
 const DAY = 24 * 3600_000
 /** «Ждут вас»: waits for the person (or is silent), or failed / was cut in the last day. */
-const needsYou = (s: Session, now: number) => {
+const needsYou = (s: Session, now: number, review?: Set<string>) => {
   const v = sessionVisualState(s)
+  const seen = (s.dismissedAt ?? 0) >= s.lastActivityAt
+  // its work is over and waits for a look: an unread «готово» / «не выполнена» / «закончил ход без отчёта» in the Inbox
+  if (review?.has(s.id) && !s.archived && !seen && !['running', 'starting', 'stalled'].includes(v)) return true
   const settled = v === 'error' || v === 'interrupted' // nothing to answer: seen («×») or older than a day, it goes
-  return !!WAITS[v] && (!settled || (!s.archived && now - s.lastActivityAt < DAY && !((s.dismissedAt ?? 0) >= s.lastActivityAt)))
+  return !!WAITS[v] && (!settled || (!s.archived && now - s.lastActivityAt < DAY && !seen))
+}
+
+/** Chats whose finished work waits for the person: unread done / failed / escalation notifications. */
+function useReviewIds(): Set<string> {
+  const notifications = useStore((s) => s.notifications)
+  return useMemo(() => new Set(notifications.filter((n) => !n.read && n.sessionId && ['done', 'failed', 'escalation'].includes(n.kind)).map((n) => n.sessionId!)), [notifications])
 }
 
 /** «×» on a failed / cut chat in «Ждут вас»: seen, the chat itself stays. */
@@ -300,8 +310,9 @@ const dismiss = async (s: Session) => {
 function AttentionSection({ tree }: { tree: Tree }) {
   const workspaces = useStore((s) => s.workspaces)
   const now = useNow()
+  const review = useReviewIds()
   const list = tree.all
-    .filter((s) => needsYou(s, now))
+    .filter((s) => needsYou(s, now, review))
     .sort((a, b) => (a.lastEventAt ?? a.lastActivityAt) - (b.lastEventAt ?? b.lastActivityAt))
   if (!list.length) return null
   return (
@@ -317,8 +328,8 @@ function AttentionSection({ tree }: { tree: Tree }) {
             data-tip={s.title} data-tip-trunc onClick={() => openSession(s.id)} onKeyDown={activate(() => openSession(s.id))}>
             <StatusIcon session={s} />
             <span className="label"><strong>{s.title || s.id}</strong>{where && <span className="sess-doing"> · {where}</span>}</span>
-            <span className="sess-state">{v === 'stalled' ? `нет вывода ${dur(now - since)}` : WAITS[v]}</span>
-            {(v === 'error' || v === 'interrupted') && (
+            <span className="sess-state">{v === 'stalled' ? `нет вывода ${dur(now - since)}` : v === 'error' ? WAITS[v] : WAITS[v] ?? 'проверить'}</span>
+            {(v === 'error' || v === 'interrupted' || !WAITS[v]) && (
               <button type="button" className="icon-btn icon-btn-sm attention-x" aria-label={`Убрать «${s.title || s.id}» из «Ждут вас»`} data-tip="Убрать из «Ждут вас» (чат останется)"
                 onClick={(e) => { e.stopPropagation(); void dismiss(s) }} onKeyDown={(e) => e.stopPropagation()}><X /></button>
             )}

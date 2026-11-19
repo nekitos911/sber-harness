@@ -1386,12 +1386,19 @@ export async function startServer(opts = {}) {
       // its fields and links (a specification in «Внешние ссылки») reach the agent's task — details are lazy otherwise
       if (task && !task.externalLinks) task = (await getExternal({ config, mcp, tasks, task }).then(() => tasks.get(task.id)).catch(() => task));
     }
+    // the tracker did not answer (or is off): the task already on the board by that key is this task; with the tracker on,
+    // a local one keeps the key. Without a task the chat had a link for a title, no report, no notification — it got lost.
+    const key = ref?.match(/[A-Z][A-Z0-9_]+-\d+/)?.[0] || null;
+    if (!task && key) {
+      task = db.tasks.find((t) => t.externalId === key)
+        || (config.integrations.tasks?.enabled ? tasks.create({ title: key, externalId: key, ...(/^https?:\/\//.test(ref) ? { externalUrl: ref } : {}) }, 'user') : null);
+    }
     jobStep('Запускаю агента');
     if (task) {
       const rel = await withReleases(relText, notes, task, explicit);
       const s = await orch.start(task.id, { agent, notes: rel.notes, ...(atRoot ? { location: 'root' } : { workspaceId: root.id }), approvalMode: body.approvalMode, model: body.model });
       if (!s.jumped) await trackerOnStart(tasks.get(task.id));
-      return { session: s, task: tasks.get(task.id), ...(rel.releaseWarning ? { releaseWarning: rel.releaseWarning } : {}) };
+      return { session: s, task: tasks.get(task.id), ...(trackerError ? { trackerError } : {}), ...(rel.releaseWarning ? { releaseWarning: rel.releaseWarning } : {}) };
     }
     const rel = await withReleases(relText, body.notes?.trim() || '', null, explicit);
     const prompt = freePrompt(rel.notes);
