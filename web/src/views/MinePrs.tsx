@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type MouseEvent } from 'react'
-import { Bot, Check, ChevronRight, Clock, GitPullRequest, RefreshCw, TriangleAlert, X } from 'lucide-react'
-import { openSession, openTask, useStore } from '../store'
+import { Bot, Check, ChevronRight, Clock, ExternalLink, GitMerge, GitPullRequest, RefreshCw, TriangleAlert, X, XCircle } from 'lucide-react'
+import { tryApi } from '../api'
+import { openDialog, openSession, openTask, toast, useFeature, useStore } from '../store'
 import { loadPrsMine, type PrItem, type PrScope } from '../lib/prsMine'
 import { openPrSettings } from '../lib/pr'
 import { ago, plural, reviewKind } from '../lib/format'
@@ -99,17 +100,47 @@ function RepoGroup({ repo, items, now }: { repo: string; items: PrItem[]; now: n
 const REVIEW_ICON = { approved: Check, changes: X, pending: Clock }
 const REVIEW_TIP = { approved: 'одобрил', changes: 'просит изменения', pending: 'ещё не ответил' }
 
+/** Where the PR stands, in one word: what to do next is seen without reading every reviewer chip. */
+function prStanding(it: PrItem): { k: 'conflict' | 'changes' | 'approved' | 'review' | 'none'; label: string } {
+  const kinds = it.reviewers.map((r) => reviewKind(r.status))
+  const ok = kinds.filter((k) => k === 'approved').length
+  if (it.mergeable === false) return { k: 'conflict', label: 'Конфликт' }
+  if (kinds.includes('changes')) return { k: 'changes', label: 'Просят изменения' }
+  if (!kinds.length) return { k: 'none', label: 'Без ревьюеров' }
+  if (ok === kinds.length) return { k: 'approved', label: 'Одобрен' }
+  return { k: 'review', label: ok ? `Одобрен ${ok} из ${kinds.length}` : `Ждёт ревью · 0 из ${kinds.length}` }
+}
+
+/** Merge / close from the list (confirmed: on the code host it cannot be taken back here); the lists re-read after. */
+function prAction(it: PrItem, action: 'merge' | 'decline') {
+  const merge = action === 'merge'
+  openDialog({
+    kind: 'confirm', danger: !merge,
+    title: merge ? `Влить PR #${it.index}?` : `Закрыть PR #${it.index} без вливания?`,
+    text: `${it.title}\n${it.head} → ${it.base} (${it.repo})${merge ? '' : '\nВетка останется, PR можно будет создать заново.'}`,
+    ok: merge ? 'Влить' : 'Закрыть PR',
+    onConfirm: () => void tryApi('POST', `/prs/${action}`, { workspaceId: it.workspaceId, index: it.index }).then((r) => {
+      if (r === undefined) return
+      toast(merge ? `PR #${it.index} влит` : `PR #${it.index} закрыт`, 'ok')
+      loadPrsMine('mine', true)
+      loadPrsMine('tracked', true)
+    }),
+  })
+}
+
 function PrRow({ it, now }: { it: PrItem; now: number }) {
   const session = useStore((s) => (it.sessionId ? s.sessions.find((x) => x.id === it.sessionId) : undefined))
+  const actionsOn = useFeature('pr-actions') && !!it.workspaceId
+  const st = prStanding(it)
   const open = () => window.open(it.url, '_blank', 'noopener,noreferrer')
   return (
     <div className="pr-row pr-row-link" role="link" tabIndex={0} data-tip="Открыть PR в новой вкладке" onClick={open}
       onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); open() } }}>
+      <span className="pr-standing" data-k={st.k}>{st.label}</span>
       <span className="pr-row-main">
         <span className="pr-row-title"><span className="mono muted">#{it.index}</span> <strong>{it.title}</strong></span>
         <span className="pr-row-meta">
           <span className="mono">{it.head} → {it.base}</span>
-          {it.mergeable === false && <span className="pr-warn"><TriangleAlert aria-hidden />конфликт</span>}
           <span>обновлён {ago(it.updatedAt, now)}</span>
         </span>
       </span>
@@ -129,6 +160,15 @@ function PrRow({ it, now }: { it: PrItem; now: number }) {
         <button type="button" className="chip pr-agent" onClick={(e) => { stop(e); openSession(it.sessionId!) }} data-tip={session ? `${session.title}: открыть чат` : 'Открыть чат агента'}>
           <Bot aria-hidden />агент
         </button>
+      )}
+      {actionsOn && (
+        <span className="pr-actions" onClick={stop} onKeyDown={(e) => e.stopPropagation()}>
+          <Button size="sm" variant={st.k === 'approved' ? 'primary' : undefined} icon={<GitMerge />} disabled={it.mergeable === false}
+            tip={it.mergeable === false ? 'Конфликт с базовой веткой: сначала разрешите его' : st.k === 'approved' ? 'Влить в ' + it.base : 'Влить в ' + it.base + ' (ревью ещё не завершено — сервис может не дать)'}
+            onClick={() => prAction(it, 'merge')}>Влить</Button>
+          <Button size="sm" variant="ghost" icon={<XCircle />} tip="Закрыть без вливания" onClick={() => prAction(it, 'decline')}>Закрыть</Button>
+          <button type="button" className="icon-btn icon-btn-sm" aria-label="Открыть PR в браузере" data-tip="Открыть PR в браузере" onClick={open}><ExternalLink /></button>
+        </span>
       )}
     </div>
   )

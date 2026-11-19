@@ -3,6 +3,7 @@ import { useCompact, useRail } from '../lib/useMedia'
 import { Archive, ArrowLeft, ArrowRight, ClipboardCopy, Command, FileText, FolderOpen, History, GitCompare, MessageSquare, MessageSquarePlus, PanelLeft, PanelRight, Plus, SquareTerminal, X } from 'lucide-react'
 import { activateTab, closeTab, dirtyKey, hasFeature, navigate, openDialog, setState, tabKey, toast, useStore, wtKey, type Tab } from '../store'
 import { loadDraft, saveDraft } from '../lib/draft'
+import { tryApi } from '../api'
 import { archiveSession } from '../lib/sessionActions'
 import { basename } from '../lib/format'
 import { useGit } from '../lib/git'
@@ -85,6 +86,20 @@ function TabBar({ cwd }: { cwd: string }) {
   useLayoutEffect(() => { for (const t of tabs) seen.current!.add(`${k}|${tabKey(t)}`) })
 
   const close = (key: string, animate: boolean) => {
+    // a terminal tab: closing it ends the terminal (asked first — a dev server or a build may run there); before, the tab
+    // went and the shell stayed in the background with nothing but «⌨1» in the sidebar to tell
+    const t = tabs.find((x) => tabKey(x) === key)
+    const term = t?.kind === 'session' ? sessions.find((x) => x.id === t.id && x.kind === 'terminal') : undefined
+    if (term) {
+      const end = () => { closeTab(cwd, key); void tryApi('DELETE', `/sessions/${encodeURIComponent(term.id)}?force=1`) }
+      if (term.status === 'exited') { end(); return } // its shell is gone already: nothing to ask
+      openDialog({
+        kind: 'confirm', danger: true, title: 'Закрыть терминал?', ok: 'Закрыть терминал',
+        text: 'Оболочка и всё, что в ней запущено, завершатся. Чтобы оставить терминал работать, просто переключитесь на другую вкладку.',
+        onConfirm: end,
+      })
+      return
+    }
     hintRunning(key)
     if (!animate || dirty[dirtyKey(cwd, key)] || reduceMotion()) { closeTab(cwd, key); return }
     setClosing(key)

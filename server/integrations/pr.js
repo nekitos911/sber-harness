@@ -193,3 +193,19 @@ export async function declinePullRequest({ config, mcp, cwd, index }) {
   const value = toolResultValue(await mcp.callTool(cfg.server, cfg.declineTool || 'git_decline_pull_request', fillTemplate(cfg.declineArgs || DECLINE_ARGS, { project, repository, index })));
   return { ok: true, index, result: typeof value === 'string' ? value : JSON.stringify(value) };
 }
+
+/**
+ * Merges pull request `index` of the repository at cwd: integrations.pr.mergeTool (git_merge_pull_request), its args
+ * integrations.pr.mergeArgs — by default those of decline (VERIFY: the tool's own schema). The host refuses an unapproved
+ * or conflicting one itself; its words come back as the error.
+ */
+export async function mergePullRequest({ config, mcp, cwd, index }) {
+  const cfg = config.integrations?.pr;
+  if (!prEnabled(config, mcp)) throw Object.assign(new Error('интеграция PR выключена (integrations.pr.enabled)'), { status: 501 });
+  if (!Number.isInteger(index) || index <= 0) throw Object.assign(new Error('index: нужно целое положительное число'), { status: 400 });
+  const { project, repository } = await remoteInfo(cwd);
+  if (!project || !repository) throw Object.assign(new Error(`не удалось определить проект/репозиторий по origin в ${cwd}`), { status: 400 });
+  jobStep('Вливание PR');
+  const value = toolResultValue(await mcp.callTool(cfg.server, cfg.mergeTool || 'git_merge_pull_request', fillTemplate(cfg.mergeArgs || cfg.declineArgs || DECLINE_ARGS, { project, repository, index })));
+  return { ok: true, index, result: typeof value === 'string' ? value : JSON.stringify(value) };
+}

@@ -10,7 +10,7 @@ import { createStore } from '../server/store.js';
 import { createBus } from '../server/bus.js';
 import { createTasks } from '../server/tasks.js';
 import { importTasks, importIssue, getExternal, getTransitions, transitionTask, importChildren, parseFindIssues, parseIssueMeta } from '../server/integrations/tasks.js';
-import { createPullRequest, prStatus, refreshTaskPr, declinePullRequest } from '../server/integrations/pr.js';
+import { createPullRequest, prStatus, refreshTaskPr, declinePullRequest, mergePullRequest } from '../server/integrations/pr.js';
 import { sessionSettings } from '../server/launchers.js';
 import * as git from '../server/git.js';
 import { tmpDir, rmrf, makeRepo, gitIn, startTestServer } from './helpers.js';
@@ -351,4 +351,17 @@ test('decline a pull request through sourcecontrol (declineTool, {project, repos
   const call = calls().find((c) => c.tool === 'git_decline_pull_request' || c.name === 'git_decline_pull_request');
   assert.deepEqual(call.args, { project: 'PROJ', repository: 'demo-service', pullRequestIndex: 562 });
   await assert.rejects(declinePullRequest({ config: cfg, mcp: createMcpManager(cfg), cwd: repo, index: 0 }), (e) => e.status === 400);
+});
+
+test('merge a pull request through sourcecontrol (mergeTool, by default the decline args)', async () => {
+  const repo = makeRepo(path.join(dir, 'merge repo'));
+  gitIn(repo, 'remote', 'add', 'origin', 'https://code.example/PROJ/demo-service.git');
+  fs.writeFileSync(path.join(fixtures, 'sourcecontrol.git_merge_pull_request.json'), text('Pull request 561 merged'));
+  fs.rmSync(log, { force: true });
+  const cfg = config();
+  const r = await mergePullRequest({ config: cfg, mcp: createMcpManager(cfg), cwd: repo, index: 561 });
+  assert.deepEqual([r.ok, r.index, r.result], [true, 561, 'Pull request 561 merged']);
+  const call = calls().find((c) => c.tool === 'git_merge_pull_request' || c.name === 'git_merge_pull_request');
+  assert.deepEqual(call.args, { project: 'PROJ', repository: 'demo-service', pullRequestIndex: 561 });
+  await assert.rejects(mergePullRequest({ config: cfg, mcp: createMcpManager(cfg), cwd: repo, index: -1 }), (e) => e.status === 400);
 });

@@ -518,6 +518,12 @@ button.prs-group .chev { width: 12px; height: 12px; color: var(--ink-3); transit
 button.prs-group[aria-expanded="true"] .chev { transform: rotate(90deg); }
 .pr-row-link { cursor: pointer; border-radius: var(--r-1); }
 .pr-row-link:hover { background: var(--deck-2); }
+/* where a PR stands, at the start of its row */
+.pr-standing { flex-shrink: 0; min-width: 96px; padding: 2px 8px; border-radius: 999px; background: var(--deck-2); color: var(--ink-3); font-size: 11.5px; font-weight: 600; text-align: center; white-space: nowrap; }
+.pr-standing[data-k="approved"] { background: color-mix(in srgb, var(--lamp-done) 18%, transparent); color: var(--lamp-done); }
+.pr-standing[data-k="changes"] { background: color-mix(in srgb, var(--lamp-run) 18%, transparent); color: var(--lamp-run); }
+.pr-standing[data-k="conflict"] { background: color-mix(in srgb, var(--lamp-fail) 18%, transparent); color: var(--lamp-fail); }
+.pr-actions { display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0; }
 .pr-row-link:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
 .pr-reviewers { display: flex; flex-wrap: wrap; gap: 4px; justify-content: flex-end; max-width: 40%; }
 .pr-reviewer svg { width: 11px; height: 11px; }

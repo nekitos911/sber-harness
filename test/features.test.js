@@ -58,6 +58,7 @@ test('each feature flag has a working route (not 404/405)', async () => {
       'release-resolve': ['GET', '/api/releases/resolve?text=' + encodeURIComponent('релиз 54'), (b) => Array.isArray(b.refs)],
       'cli-adopt': ['POST', '/api/history/adopt', (b) => Number.isInteger(b.adopted)], // 501 here: no sourcecontrol server (enabled auto)
       'handoff-dry-run': ['POST', '/api/handoff', null, { input: 'сделай X', dryRun: true }], // dry run: nothing is created
+      'pr-actions': ['POST', '/api/prs/merge', null, { workspaceId: 5 }], // 400: never merges anything in this probe
       'open-file': ['POST', '/api/open', null, { target: 'reveal', path: path.join(repo, '..', 'нет.txt') }], // 400: outside, nothing opens
       'bind-task': ['POST', `/api/sessions/${chat.id}/task`, null, { ref: 'нет ключа' }], // 400: no key
       revive: ['POST', `/api/sessions/${chat.id}/revive`, null, {}], // the chat runs or not: 200/409, never 404

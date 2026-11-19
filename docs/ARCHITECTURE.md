@@ -436,6 +436,10 @@ GET    /api/git/pr-status?cwd=  -> { pr: { index, title, state: 'open'|'merged'|
                                      reviewers: [{ status }], base, updatedAt } | null, error?: string }
                                  (observe-only, via integrations.pr.listTool for the current branch: OPEN first, else the
                                   most recent MERGED/DECLINED with that head; 501 when integrations.pr is disabled)
+POST   /api/prs/merge|decline { workspaceId, index } -> { ok, index, result }   (feature `pr-actions`: влить / закрыть PR
+                                 зарегистрированного репозитория; merge — integrations.pr.mergeTool (git_merge_pull_request), аргументы
+                                 mergeArgs, по умолчанию как у decline {project, repository, pullRequestIndex} — VERIFY; кэш списка
+                                 сбрасывается, PR задач перечитываются)
 GET    /api/prs?scope=mine|tracked&refresh=1 -> { me, items: [{ workspaceId, repo, project, index, title, state, url,
                                      head, base, author, reviewers: [{ name, status }], mergeable, updatedAt, createdAt,
                                      taskId, taskKey, sessionId, byAgent }], errors: [{ repo, error }], at }
