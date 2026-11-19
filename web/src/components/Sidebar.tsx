@@ -1,9 +1,9 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react'
-import { Activity, ArrowUp, Bot, ChevronDown, Ellipsis, Folder, FolderTree, TriangleAlert, GitPullRequest, Pin, ChevronRight, FolderGit2, FolderPlus, GitBranch, GitBranchPlus, House, Inbox, MessageSquarePlus, Moon, Search, Settings, SquareKanban, SquareTerminal, Sun } from 'lucide-react'
-import { getState, useFeature, openDialog, openScreen, openSession, openWorktree, setState, showPanel, useActiveCwd, useStore, wtKey, type Screen } from '../store'
+import { Activity, ArrowUp, Bot, ChevronDown, Ellipsis, Folder, FolderTree, TriangleAlert, GitPullRequest, Pin, ChevronRight, FolderGit2, FolderPlus, GitBranch, GitBranchPlus, House, Inbox, MessageSquarePlus, Moon, Search, Settings, SquareKanban, SquareTerminal, Sun, X } from 'lucide-react'
+import { getState, useFeature, openDialog, openScreen, openSession, openWorktree, setState, showPanel, upsertSession, useActiveCwd, useStore, wtKey, type Screen } from '../store'
 import { archiveSession, renameSession, sessionMenu } from '../lib/sessionActions'
 import { loadWorktrees } from '../ws'
-import { api } from '../api'
+import { api, tryApi } from '../api'
 import { runJob } from '../lib/jobs'
 import { useCurrentTool, useStateLine } from '../lib/live'
 import { dur, sessionVisualState } from '../lib/sessionState'
@@ -286,7 +286,14 @@ const DAY = 24 * 3600_000
 /** «Ждут вас»: waits for the person (or is silent), or failed / was cut in the last day. */
 const needsYou = (s: Session, now: number) => {
   const v = sessionVisualState(s)
-  return !!WAITS[v] && (!(v === 'error' || v === 'interrupted') || (!s.archived && now - s.lastActivityAt < DAY))
+  const settled = v === 'error' || v === 'interrupted' // nothing to answer: seen («×») or older than a day, it goes
+  return !!WAITS[v] && (!settled || (!s.archived && now - s.lastActivityAt < DAY && !((s.dismissedAt ?? 0) >= s.lastActivityAt)))
+}
+
+/** «×» on a failed / cut chat in «Ждут вас»: seen, the chat itself stays. */
+const dismiss = async (s: Session) => {
+  const r = await tryApi<Session>('PATCH', `/sessions/${encodeURIComponent(s.id)}`, { dismissed: true })
+  if (r) setState((st) => ({ sessions: upsertSession(st.sessions, r) }))
 }
 
 /** «Ждут вас»: every chat waiting for a person (or silent, or failed in the last day), longest waiting first; the tree stays calm. */
@@ -311,6 +318,10 @@ function AttentionSection({ tree }: { tree: Tree }) {
             <StatusIcon session={s} />
             <span className="label"><strong>{s.title || s.id}</strong>{where && <span className="sess-doing"> · {where}</span>}</span>
             <span className="sess-state">{v === 'stalled' ? `нет вывода ${dur(now - since)}` : WAITS[v]}</span>
+            {(v === 'error' || v === 'interrupted') && (
+              <button type="button" className="icon-btn icon-btn-sm attention-x" aria-label={`Убрать «${s.title || s.id}» из «Ждут вас»`} data-tip="Убрать из «Ждут вас» (чат останется)"
+                onClick={(e) => { e.stopPropagation(); void dismiss(s) }} onKeyDown={(e) => e.stopPropagation()}><X /></button>
+            )}
           </div>
         )
       })}

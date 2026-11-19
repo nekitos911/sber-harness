@@ -1785,7 +1785,9 @@ ${note.trim()}` : text });
     patch(sid, p, { strict = true } = {}) {
       const s = get(sid);
       for (const k of ['title', 'approvalMode', 'model']) if (k in p && p[k] !== null && typeof p[k] !== 'string') fail(400, `${k}: нужна строка`);
-      for (const k of ['autoReport', 'archived', 'stop']) if (k in p && typeof p[k] !== 'boolean') fail(400, `${k}: нужно true или false`);
+      for (const k of ['autoReport', 'archived', 'stop', 'dismissed']) if (k in p && typeof p[k] !== 'boolean') fail(400, `${k}: нужно true или false`);
+      // «Убрать из «Ждут вас»»: its error / cut turn is seen; a newer one brings it back (lastActivityAt moves past it)
+      if ('dismissed' in p) s.dismissedAt = p.dismissed ? Date.now() : null;
       if ('archived' in p) api.archive(sid, p.archived, { stop: p.stop === true });
       if (p.approvalMode && config.agents[s.agent]) checkMode(config.agents[s.agent], p.approvalMode);
       if (p.title?.trim()) {

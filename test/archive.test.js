@@ -22,6 +22,10 @@ test('archive: refused while working unless stop; virtual sub-agents follow; una
     assert.ok(archived.archived && archived.archivedAt > 0);
     assert.ok((await state()).sessions.filter((s) => s.parentId === sub.id && s.virtual).every((s) => s.archived), 'virtual children archived too');
     assert.equal((await h.api('PATCH', `/api/sessions/${sub.id}`, { archived: false })).body.archived, false);
+    // «Убрать из «Ждут вас»»: seen at, the chat stays; a non-boolean is refused
+    const seen = (await h.api('PATCH', `/api/sessions/${sub.id}`, { dismissed: true })).body;
+    assert.ok(seen.dismissedAt >= seen.lastActivityAt && !seen.archived);
+    assert.equal((await h.api('PATCH', `/api/sessions/${sub.id}`, { dismissed: 'да' })).status, 400);
 
     const busy = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', cwd: root, prompt: '#silent' })).body;
     await waitFor(async () => (await state()).sessions.find((s) => s.id === busy.id).status === 'running', { what: 'running' });

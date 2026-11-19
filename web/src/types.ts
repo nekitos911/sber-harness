@@ -144,6 +144,7 @@ export interface Session {
   includeDirs?: string[] // extra directories the CLI may use (--include-directories), feature include-dirs
   interrupted?: { at: number; reason: 'harness_restart' | 'reboot' | 'crash'; lastActivity: string | null } | null // a restart cut its turn
   archived?: boolean // its worktree was removed: hidden from the sidebar, transcript kept
+  dismissedAt?: number | null // «Убрать из «Ждут вас»»: its error / cut turn seen at
   virtual?: boolean // a built-in sub-agent of the parent's stream: read-only chat // newer servers: 'starting' = process up, no event yet (cold start)
   externalSessionId: string | null
   settingsPath: string | null
