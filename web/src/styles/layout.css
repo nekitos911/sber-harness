@@ -230,7 +230,7 @@
 .wt-mark { display: inline-grid; place-items: center; width: 14px; height: 14px; flex-shrink: 0; color: var(--ink-3); }
 .wt-mark svg { width: 13px; height: 13px; }
 .wt-mark[data-mark="busy"] { color: var(--lamp-run); }
-.wt-mark[data-mark="busy"] svg { animation: pulse 1.6s ease-in-out infinite; }
+.wt-mark[data-mark="busy"] svg { animation: pulse 1.6s steps(4) infinite; }
 .wt-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--lamp-fail); }
 .wt-house { width: 12px !important; height: 12px !important; margin-left: 5px; vertical-align: -1px; color: var(--ink-3); }
 .label > .wt-house:first-child { margin: 0 5px 0 0; } /* «⌂ develop»: the house leads the main checkout's branch */

@@ -283,7 +283,10 @@ export function StallBanner({ session }: { session: Session }) {
   )
 }
 
-// memo: a chat re-renders on every event of every agent; a block of finished steps has nothing new to draw
+// memo: a chat re-renders on every event of every agent; a block of finished steps has nothing new to draw.
+// Its `msgs` is a new array on every buildItems: compared by its messages (a changed message is a new object), else
+// every block of the chat re-rendered ~12 times a second while one agent streamed
+const sameMsgs = (a: Message[], b: Message[]) => a === b || (a.length === b.length && a.every((m, i) => m === b[i]))
 export const TurnHead = memo(TurnHeadView)
-export const ToolRun = memo(ToolRunView)
-export const TurnFiles = memo(TurnFilesView)
+export const ToolRun = memo(ToolRunView, (p, n) => p.cwd === n.cwd && p.live === n.live && sameMsgs(p.msgs, n.msgs))
+export const TurnFiles = memo(TurnFilesView, (p, n) => p.cwd === n.cwd && sameMsgs(p.msgs, n.msgs))

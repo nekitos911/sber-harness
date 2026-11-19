@@ -20,6 +20,8 @@
 
 .chat-scroll { flex: 1; min-height: 0; overflow-y: auto; }
 .chat-col { display: flex; flex-direction: column; gap: 10px; width: 100%; max-width: 720px; margin: 0 auto; padding: 24px 20px; }
+/* a long chat: what is off screen is neither styled nor laid out on every streamed word (the live end always is) */
+.chat-col > :not(:nth-last-child(-n+4)) { content-visibility: auto; contain-intrinsic-size: auto 120px; }
 .msg-wrap { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .msg-wrap[data-kind="tool"] + .msg-wrap[data-kind="tool"] { margin-top: -8px; } /* consecutive tool lines read as one block */
 .msg-wrap[data-enter] { animation: rise-in 200ms var(--ease-out); }
