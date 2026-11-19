@@ -243,6 +243,14 @@ test('ask with options reaches the parent as a user message with options', async
   assert.deepEqual(m.options, ['8080', '9090']);
 });
 
+test('a queued slash command goes first in the prompt (behind a helper\'s report it was plain text)', async () => {
+  const { promptOf } = await import('../server/sessions.js');
+  const report = { text: '[harness] Message from s_1 (backend-engineer): Result (done): готово' };
+  assert.equal(promptOf([report, { text: '  /full-task новая вводная' }]), `/full-task новая вводная\n\n${report.text}`);
+  assert.equal(promptOf([{ text: 'привет' }, report]), `привет\n\n${report.text}`, 'no command: the order stays');
+  assert.equal(promptOf([{ text: '/a x' }, { text: '/b y' }]), '/a x\n\n/b y', 'only the first can be the command');
+});
+
 test('the record of a chat for an agent that lost its session: the task, the latest exchanges, the edited files; only past turns', async () => {
   const { recapText } = await import('../server/sessions.js');
   const msgs = [

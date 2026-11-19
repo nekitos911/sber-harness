@@ -88,6 +88,16 @@ export const contextSize = (v) => {
 /** A tool call whose turn ended without its result (stopped, crashed, the harness restarted): never «running» again. */
 export const UNFINISHED_TOOL = 'Ход закончился без результата этого вызова.';
 
+/**
+ * The queued messages as one prompt. A slash command («/full-task …») works only as the prompt's first word: queued
+ * behind a helper's report it went in as plain text and the command never ran. It goes first, the rest after it.
+ */
+export function promptOf(items) {
+  const at = items.findIndex((i) => i.text.trimStart().startsWith('/'));
+  const ordered = at > 0 ? [items[at], ...items.filter((_, n) => n !== at)] : items;
+  return ordered.map((i, n) => (n === 0 && at >= 0 ? i.text.trimStart() : i.text)).join('\n\n');
+}
+
 const EDIT_TOOL = /^(edit|replace|write_file|writefile|write|multiedit|apply_patch|create_file|str_replace\w*)$/i;
 /**
  * What this chat was about, from the harness's own transcript, for an agent whose CLI session could not be loaded (a new
@@ -937,7 +947,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
       const dropped = droppedGrades(s);
       const note = dropped.length && `⚠ Недоступные модели убраны из грейдов, CLI возьмёт модель по умолчанию: ${dropped.map(([g, id]) => `${g} → ${id}`).join(', ')}`;
       if (note && !store.messages(s.id).some((m) => m.text === note)) addMessage(s, { kind: 'system', text: note });
-      let prompt = items.map((i) => i.text).join('\n\n');
+      let prompt = promptOf(items);
       if (!s.externalSessionId) {
         const pre = hooks.preamble(s);
         // a slash command only works as the first word of the prompt; the rest becomes its $ARGUMENTS
