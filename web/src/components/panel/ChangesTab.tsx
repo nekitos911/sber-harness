@@ -17,6 +17,8 @@ import { useSettings } from '../../lib/agents'
 import { BranchPicker } from '../pickers/BranchPicker'
 import { openFolder } from '../WorktreeMenu'
 import { flowState } from '../../lib/flow'
+import { touchedRoots, type Root } from '../../lib/toolRun'
+import { loadWorktrees } from '../../ws'
 
 // what the agent wrote per change set: a remount (tab switch, panel toggle) shows it again without a new run
 const generatedCache = new Map<string, Generated>()
@@ -362,9 +364,15 @@ function LinkedWorktrees({ cwd, error }: { cwd: string; error: string }) {
   const tasks = useStore((s) => s.tasks)
   const workspaces = useStore((s) => s.workspaces)
   const lists = useStore((s) => s.worktrees)
+  const allMsgs = useStore((s) => s.messages)
   const here = sessions.filter((x) => normPath(x.cwd) === normPath(cwd))
   const ids = new Set(here.map((x) => x.id))
-  const rows = new Map<string, { path: string; branch: string | null; repo?: string; dirty?: number | null }>()
+  const running = here.some((x) => x.status === 'running')
+  // every project's worktrees (an agent makes its own, e.g. <repo>-worktrees\KEY): which of them its edits are in
+  const gitIds = workspaces.filter((w) => w.isGit && !w.kind).map((w) => w.id)
+  const missing = gitIds.filter((id) => !lists[id]).join()
+  useEffect(() => { for (const id of missing.split(',').filter(Boolean)) void loadWorktrees(id) }, [missing])
+  const rows = new Map<string, { path: string; branch: string | null; repo?: string; dirty?: number | null; edited?: boolean }>()
   for (const t of tasks.filter((t) => here.some((x) => x.taskId === t.id))) {
     for (const w of t.worktrees ?? []) rows.set(normPath(w.path), { path: w.path, branch: w.branch, repo: workspaces.find((x) => x.id === w.workspaceId)?.name, dirty: w.dirty })
   }
@@ -374,11 +382,31 @@ function LinkedWorktrees({ cwd, error }: { cwd: string; error: string }) {
       rows.set(normPath(w.path), { path: w.path, branch: w.branch, repo: workspaces.find((x) => x.id === wsId)?.name, dirty: w.dirty })
     }
   }
+  // what the agents here edit (also right in a project, without a worktree) and only read, from their steps
+  const roots: Root[] = [
+    ...workspaces.filter((w) => !w.kind).map((w) => ({ path: w.path, name: w.name })),
+    ...Object.entries(lists).flatMap(([wsId, list]) => list.map((w) => ({ path: w.path, name: workspaces.find((x) => x.id === wsId)?.name ?? basename(w.path), branch: w.branch }))),
+  ]
+  const touched = touchedRoots(here.flatMap((x) => allMsgs[x.id] ?? []), roots)
+  for (const r of touched.edited) {
+    const known = rows.get(normPath(r.path))
+    const w = Object.values(lists).flat().find((x) => normPath(x.path) === normPath(r.path))
+    rows.set(normPath(r.path), known ? { ...known, edited: true } : { path: r.path, branch: r.branch ?? w?.branch ?? null, repo: r.name, dirty: w?.dirty, edited: true })
+  }
+  // a fresh worktree of the agent is not in the lists yet: reload them when its edits land outside every known project
+  useEffect(() => { if (touched.outside) for (const id of gitIds) void loadWorktrees(id) }, [touched.outside]) // eslint-disable-line react-hooks/exhaustive-deps
   const list = [...rows.values()]
+  const seen = touched.seen.filter((r) => !rows.has(normPath(r.path)))
+  const seenLine = seen.length > 0 && (
+    <p className="muted linked-seen" data-tip={seen.map((r) => r.path).join('\n')}>Смотрит: {[...new Set(seen.map((r) => r.name))].join(', ')}</p>
+  )
   if (!list.length) {
     return (
       <div className="empty">
-        <p>Это папка с проектами, а не сам проект. Изменения появятся здесь, когда агент этого чата начнёт работу в одном из проектов.</p>
+        {running
+          ? <p>Агент работает в папке с проектами и пока ничего не менял: изучает задачу и код. Рабочее дерево он создаст сам в нужном проекте — оно и его изменения появятся здесь.</p>
+          : <p>Это папка с проектами, а не сам проект. Изменения появятся здесь, когда агент этого чата начнёт работу в одном из проектов.</p>}
+        {seenLine}
         <button type="button" className="btn btn-sm" onClick={() => openDialog({ kind: 'workspace', from: cwd })}>Открыть проект…</button>
         <Disclosure summary="Подробности"><p className="mono" style={{ fontSize: 11 }}>{error}</p></Disclosure>
       </div>
@@ -386,7 +414,7 @@ function LinkedWorktrees({ cwd, error }: { cwd: string; error: string }) {
   }
   return (
     <div className="wpanel-section">
-      <h3>Рабочие деревья этой работы</h3>
+      <h3>Где идёт работа</h3>
       <ul className="linked-wts">
         {list.map((w) => (
           <li key={w.path}>
@@ -394,11 +422,12 @@ function LinkedWorktrees({ cwd, error }: { cwd: string; error: string }) {
               <span className="ellipsis"><strong>{w.repo ?? basename(w.path)}</strong>{w.branch && <span className="mono muted"> {w.branch}</span>}</span>
               {(w.dirty ?? 0) > 0
                 ? <span className="num" data-tip={`${w.dirty} ${plural(w.dirty!, 'изменённый файл', 'изменённых файла', 'изменённых файлов')}`}>±{w.dirty}</span>
-                : <span className="muted">без изменений</span>}
+                : w.edited ? <span className="muted">правит</span> : <span className="muted">без изменений</span>}
             </button>
           </li>
         ))}
       </ul>
+      {seenLine}
     </div>
   )
 }

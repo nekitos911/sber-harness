@@ -90,3 +90,42 @@ export function mcpServers(text: string): { name: string; ok: boolean; reason: s
     return { name: x.replace(/\s*\(.+\)\s*$/, '').replace(/\s*[✓✔✗×]\s*$/, '').trim(), ok: !bad, reason }
   })
 }
+
+
+// A chat in the projects folder works in several repositories at once and makes its worktrees itself (often only after
+// the analysis): which of them it edits and which it only reads, from its tool calls — for the changes panel.
+export interface Root { path: string; name: string; branch?: string | null }
+
+// absolute paths in a shell command: `git -C C:\…\repo show …`, `cd /home/…/repo && …`
+const SHELL_PATHS = /(?:^|[\s"'=])([A-Za-z]:[\\/][^\s"'`&|;<>]*|\/[^\s"'`&|;<>]+)/g
+
+const normPath = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase() // as lib/format (no imports here)
+
+/** The projects among `roots` (worktrees and repositories; the deepest one wins) that the calls touched: edited and only seen. */
+export function touchedRoots(msgs: Message[], roots: Root[]): { edited: Root[]; seen: Root[]; outside: number } {
+  const sorted = roots.map((r) => ({ r, n: normPath(r.path) })).sort((a, b) => b.n.length - a.n.length)
+  const rootOf = (p: string) => {
+    const n = normPath(p)
+    return sorted.find((x) => n === x.n || n.startsWith(`${x.n}/`))?.r
+  }
+  const edited = new Map<string, Root>()
+  const seen = new Map<string, Root>()
+  let outside = 0 // edits in no known project (a worktree made a moment ago)
+  for (const m of msgs) {
+    const t = m.tool
+    if (m.kind !== 'tool' || !t) continue
+    const kind = toolKind(t.name)
+    const input = obj(t.input)
+    const paths = kind === 'shell'
+      ? [...String(input.command ?? '').matchAll(SHELL_PATHS)].map((x) => x[1])
+      : [pathOf(t.input), typeof input.dir_path === 'string' ? input.dir_path : null].filter((p): p is string => !!p)
+    const into = kind === 'edit' && t.status !== 'error' ? edited : seen // a refused edit changed nothing
+    for (const p of paths) {
+      const r = rootOf(p)
+      if (r) into.set(r.path, r)
+      else if (into === edited) outside++
+    }
+  }
+  for (const k of edited.keys()) seen.delete(k)
+  return { edited: [...edited.values()], seen: [...seen.values()], outside }
+}
