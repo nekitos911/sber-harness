@@ -1,10 +1,10 @@
-import { useEffect, useRef, useState, type MouseEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
 import { ArrowRight, ChevronDown, ChevronRight, Ellipsis, ExternalLink, File, FileCode, FileJson, FileText, GitBranch, GitPullRequest, Minus, Plus, RotateCcw, Search, Sparkles } from 'lucide-react'
 import { api, qs, tryApi } from '../../api'
 import { getState, openDialog, openTab, openTask, openWorktree, setState, showPanel, toast, useFeature, useStore } from '../../store'
 import { basename, normPath, plural, relTime, shortHash } from '../../lib/format'
 import { loadDraft, saveDraft } from '../../lib/draft'
-import { gsLetter, refreshGit, splitPath, useGit } from '../../lib/git'
+import { gsLetter, refreshGit, splitPath, useGit, useGitWatch } from '../../lib/git'
 import { useNow } from '../../lib/useNow'
 import type { GitCommit, GitFile, GitSuggest, Settings } from '../../types'
 import { Disclosure, Menu, type MenuItem } from '../ui'
@@ -40,6 +40,7 @@ export function ChangesTab({ cwd, inline = false }: { cwd: string; inline?: bool
   const prSupported = useFeature('pr-status')
   const stageOn = useFeature('git-stage')
   const git = useGit(cwd)
+  useGitWatch(inline ? cwd : null) // a worktree shown inside a folder chat: App watches only the view's own folder
   const now = useNow()
   const pr = usePr(prEnabled && prSupported ? cwd : null)
   const [suggest, setSuggest] = useState<GitSuggest | null>(null)
@@ -365,7 +366,6 @@ function LinkedWorktrees({ cwd, error }: { cwd: string; error: string }) {
   const tasks = useStore((s) => s.tasks)
   const workspaces = useStore((s) => s.workspaces)
   const lists = useStore((s) => s.worktrees)
-  const allMsgs = useStore((s) => s.messages)
   const [pick, setPick] = useState<string | null>(null)
   // the chat on screen (and its helpers): the folder holds every chat's work, the panel shows this one's
   const activeTab = useStore((s) => s.wt[normPath(cwd)]?.active ?? null)
@@ -373,6 +373,9 @@ function LinkedWorktrees({ cwd, error }: { cwd: string; error: string }) {
   const focus = activeTab?.startsWith('s:') ? activeTab.slice(2) : null
   // its helpers wherever they work (a helper is often in its worktree, not in the folder): their edits are this work too
   const here = focus && inFolder.some((x) => x.id === focus) ? sessions.filter((x) => x.id === focus || x.parentId === focus) : inFolder
+  // a new message of these chats (not of every chat, not a streamed word): the panel looks again
+  const msgSig = useStore((s) => here.map((x) => `${x.id}:${s.messages[x.id]?.length ?? -1}`).join())
+  const allMsgs = getState().messages
   const helpersToLoad = focus ? here.filter((x) => x.id !== focus && !allMsgs[x.id]).map((x) => x.id).join() : ''
   useEffect(() => { for (const id of helpersToLoad.split(',').filter(Boolean)) void loadMessages(id) }, [helpersToLoad])
   const ids = new Set(here.map((x) => x.id))
@@ -396,7 +399,8 @@ function LinkedWorktrees({ cwd, error }: { cwd: string; error: string }) {
     ...workspaces.filter((w) => !w.kind).map((w) => ({ path: w.path, name: w.name })),
     ...Object.entries(lists).flatMap(([wsId, list]) => list.map((w) => ({ path: w.path, name: workspaces.find((x) => x.id === wsId)?.name ?? basename(w.path), branch: w.branch }))),
   ]
-  const touched = touchedRoots(here.flatMap((x) => allMsgs[x.id] ?? []), roots)
+  const rootsKey = roots.map((r) => r.path).join('|')
+  const touched = useMemo(() => touchedRoots(here.flatMap((x) => getState().messages[x.id] ?? []), roots), [msgSig, rootsKey]) // eslint-disable-line react-hooks/exhaustive-deps
   for (const r of touched.edited) {
     const known = rows.get(normPath(r.path))
     const w = Object.values(lists).flat().find((x) => normPath(x.path) === normPath(r.path))

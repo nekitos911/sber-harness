@@ -33,9 +33,11 @@ function queue(ev: ServerEvent) {
   pending.push(ev)
   if (scheduled) return
   scheduled = true
-  // ~12 renders a second while agents stream: text still flows, the page keeps time to answer typing and clicks
-  setTimeout(flush, document.visibilityState === 'visible' ? 80 : 250)
+  // ~12 renders a second while agents stream: text still flows, the page keeps time to answer typing and clicks;
+  // a hidden tab renders for nobody: every 2 s, and at once when it is shown again
+  setTimeout(flush, document.visibilityState === 'visible' ? 80 : 2000)
 }
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && pending.length) flush() })
 
 export function connect() {
   window.clearTimeout(retryTimer)
