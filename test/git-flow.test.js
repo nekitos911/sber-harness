@@ -189,7 +189,7 @@ test('concurrent starts give one worker; a live task jumps to it; port needs com
   assert.match(prompt, /Do NOT commit, push, merge/);
   assert.match(prompt, /commit message format: "T-\d+ <summary>"/);
   assert.match(prompt, /Registry dir: .*registry/);
-  assert.match(prompt, /built-in agent tool is fine for internal helpers/);
+  assert.match(prompt, /Helpers \(implementers, reviewers, exploration\) go through mcp__harness__agent/, 'harness mode: helpers in their own chats, never «the built-in agent is fine»');
   assert.match(prompt, /Base branch \(primary target\): develop/);
   // /full-task makes its own worktree unless told it is already in one
   assert.match(prompt, new RegExp(`Ты уже в рабочем дереве задачи \`[^\`]+\` \\(ветка \`feature/${t.id}\`\\) — это и есть worktree задачи; не создавай другой\\. Коммиты/пуш/PR/трекер — только пользователь из UI\\. После финального сообщения твоей команды вызови worker_done с тем же текстом\\.`));

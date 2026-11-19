@@ -566,7 +566,21 @@ export function createOrchestration({ config, store, bus, tasks, sessions, addWo
     const base = other && elsewhere ? other.path : caller.worktreePath || caller.cwd;
     let cwd = a.workspace || worktree === 'new' ? base : caller.cwd;
     let branch = a.workspace ? await git.currentBranch(base) : caller.branch;
-    if (worktree === 'new') {
+    let madeWorktree = worktree === 'new';
+    const callerTask = caller.taskId && tasks.find(caller.taskId);
+    if (worktree === 'new' && elsewhere && callerTask) {
+      // the task's own worktree in that repository (<repo>-worktrees\KEY, the task branch from targets[0]): the developer
+      // works there, its reviewer lands in the same one; linked to the task like any of its worktrees
+      const { wt, created } = await taskWorktree(callerTask, base, null, a.name || null);
+      cwd = wt.path;
+      branch = wt.branch;
+      madeWorktree = created;
+      if (created) markWorktree(cwd, { ...madeBy(caller), label: tasks.key(callerTask) });
+      const linked = callerTask.worktrees || [];
+      if (!linked.some((w) => samePath(w.path, cwd))) {
+        tasks.update(callerTask.id, { worktrees: [...linked, { workspaceId: other.id, path: cwd, branch }], ...(callerTask.branch ? {} : { branch }) }, 'harness');
+      }
+    } else if (worktree === 'new') {
       const name = a.name ? git.sanitizeBranch(a.name).replace(/\//g, '-') : null;
       const wantBranch = name || git.sanitizeBranch(`sub/${a.profile || 'agent'}-${newId('x').slice(2)}`);
       const wt = await git.addWorktree(base, { branch: await git.uniqueBranch(base, wantBranch), worktreeRoot: config.worktreeRoot, dirName: name });
@@ -588,10 +602,10 @@ export function createOrchestration({ config, store, bus, tasks, sessions, addWo
     } catch (e) {
       // never an orphan: no sub-agent chat or worktree stays behind a failed start
       if (s) sessions.remove(s.id, { force: true });
-      if (worktree === 'new') await git.removeWorktree(base, cwd).catch(() => {});
+      if (madeWorktree) await git.removeWorktree(base, cwd).catch(() => {}); // never the task's worktree it found there
       throw e;
     }
-    if (worktree === 'new') sessions.patch(caller.id, { includeDirs: [...(caller.includeDirs || []), cwd] }, { strict: false });
+    if (worktree === 'new' && !(caller.includeDirs || []).some((d) => samePath(d, cwd))) sessions.patch(caller.id, { includeDirs: [...(caller.includeDirs || []), cwd] }, { strict: false });
     return { sessionId: s.id, placement: a.worktree ? worktree : `${worktree} (auto)` };
   }
 
@@ -812,7 +826,10 @@ export function createOrchestration({ config, store, bus, tasks, sessions, addWo
   function rolePreamble(s) {
     const tools = [`Harness tools are in the MCP server "harness" (fallback from a shell: node "${HARNESS_CLI}" call <tool> '<json>').`, launchers[s.launcherId]?.defaults.toolsHint].filter(Boolean).join(' ');
     const registry = `Registry dir: ${sessions.registryDir(s.id)} - if you start built-in helper sub-agents (agent tool), record them there per your orchestration skill (<id>/agent.json + log.jsonl).`;
-    const helpers = '- The built-in agent tool is fine for internal helpers (review, exploration); parallel task work the user should see goes through worker_start (each worker gets its own chat).';
+    // in harness mode the helpers go through the harness (their own chats): «the built-in agent is fine» contradicted that
+    const helpers = config.orchestration?.subagents === 'builtin'
+      ? '- The built-in agent tool is fine for internal helpers (review, exploration); parallel task work the user should see goes through worker_start (each worker gets its own chat).'
+      : '- Helpers (implementers, reviewers, exploration) go through mcp__harness__agent — each its own chat the user sees; worker_start for long parallel work you do not wait for.';
     if (s.role === 'coordinator') {
       const parentTask = s.taskId && tasks.find(s.taskId);
       return [
@@ -884,7 +901,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions, addWo
       `Working directory: ${s.cwd}. Branch: ${s.branch || task.branch || '(current)'}. Base branch (primary target): ${task.targets[0]}.`,
       // started in the projects folder: the agent (/full-task) picks the repositories and makes the worktrees itself
       ...(s.atRoot
-        ? [`Ты в папке со всеми проектами (${s.cwd}). Определи затронутые репозитории по SDD/описанию задачи (или спроси через ask); рабочие деревья создавай по правилам своей команды (<repo>-worktrees\\${key}, ветка ${git.sanitizeBranch(render(gitCfg().branchTemplate, { key, id: task.id }))} от ${task.targets[0]}); после финального сообщения — worker_done.`]
+        ? [`Ты — главный агент задачи в папке со всеми проектами (${s.cwd}). Определи затронутые репозитории по SDD/описанию задачи (или спроси через ask). Код правят разработчики, не ты: для каждого репозитория вызови mcp__harness__agent({ subagent_type: <агент-разработчик>, workspace: "<имя репозитория>", prompt: <самодостаточное задание> }) — harness создаст (или возьмёт готовое) рабочее дерево задачи в этом репозитории (<repo>-worktrees\\${key}, ветка ${git.sanitizeBranch(render(gitCfg().branchTemplate, { key, id: task.id }))} от ${task.targets[0]}), откроет там чат разработчика и вернёт его отчёт. Ревьюера запускай так же, с тем же workspace: он попадёт в то же дерево. Сам рабочие деревья не создавай и файлы в папке проектов не правь.${task.targets.length > 1 ? ` Другие целевые ветки (${task.targets.slice(1).join(', ')}) — task_port({ task_id: "${task.id}", target }) после того, как основная готова; не делай их отдельной разработкой.` : ''} После финального сообщения — worker_done.`]
         : []),
       // for task commands that make their own worktree (/full-task): this one is it
       ...(s.inWorktree
@@ -1303,7 +1320,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions, addWo
       inputSchema: obj({
         subagent_type: str('agent type / profile name'), prompt: str('the task for the sub-agent'), model: str('model id or grade name'),
         description: str('short description'), approvalMode: str('approval mode'),
-        worktree: str('current or new; omit it for the automatic choice (new when workspace is another repository, else current)', { enum: ['current', 'new'] }), workspace: str('another repository (workspace name): a persistent child there'),
+        worktree: str('current or new; omit it for the automatic choice (new when workspace is another repository, else current)', { enum: ['current', 'new'] }), workspace: str('another repository (workspace name): the sub-agent works there — for a task, in the task\'s worktree of that repository (made once, then shared: its reviewer lands in the same one)'),
         timeoutMin: { type: 'number', description: 'minutes to wait (default 60)' },
       }, ['prompt']),
       run: async (a, c) => {

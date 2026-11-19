@@ -59,7 +59,8 @@ test('no sure repository: the projects folder, no worktree; worktrees the agent 
     }
   }, { what: 'root turn' });
   const prompt = run.argv[run.argv.indexOf('-p') + 1];
-  assert.match(prompt, new RegExp(`Ты в папке со всеми проектами \\(${root.replace(/[\\.()]/g, '\\$&')}\\)`));
+  assert.match(prompt, new RegExp(`главный агент задачи в папке со всеми проектами \\(${root.replace(/[\\.()]/g, '\\$&')}\\)`));
+  assert.match(prompt, /Код правят разработчики, не ты: для каждого репозитория вызови mcp__harness__agent/, 'the main agent hands each repository to a developer');
   assert.match(prompt, new RegExp(`<repo>-worktrees.${t.id}, ветка feature/${t.id} от develop`));
   assert.ok(!prompt.includes('Stay on your branch'), 'the agent creates branches itself here');
   await stopAll();

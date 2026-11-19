@@ -46,6 +46,22 @@ test('a tracker link: the task is imported and its worker starts at the projects
   await settle(session.id);
 });
 
+test('the task\'s main agent hands a repository to a developer: the task\'s worktree there, the reviewer in the same one, linked to the task', async () => {
+  const { session, task } = (await h.api('POST', '/api/handoff', { input: 'PROJ-14904' })).body; // the worker of the first test
+  const call = (args) => h.api('POST', '/api/agent/agent', args, { 'x-harness-session': session.id });
+  const dev = await call({ subagent_type: 'backend-engineer', workspace: 'сервис', prompt: 'сделай правку #done ок' });
+  assert.equal(dev.status, 200, JSON.stringify(dev.body));
+  const state = async () => (await h.api('GET', '/api/state')).body;
+  const devS = (await state()).sessions.find((s) => s.id === dev.body.sessionId);
+  assert.equal(path.resolve(devS.cwd), path.resolve(projects, 'сервис-worktrees', 'PROJ-14904'), 'the task\'s worktree, named by its key');
+  assert.match(devS.branch, /PROJ-14904/);
+  const rev = (await call({ subagent_type: 'java-reviewer', workspace: 'сервис', prompt: 'проверь #done ок' })).body;
+  assert.equal(path.resolve((await state()).sessions.find((s) => s.id === rev.sessionId).cwd), path.resolve(devS.cwd), 'the reviewer reads the same worktree');
+  const linked = (await state()).tasks.find((t) => t.id === task.id).worktrees;
+  assert.deepEqual(linked.map((w) => path.resolve(w.path)), [path.resolve(devS.cwd)], 'the task knows its worktree once');
+  for (const id of [dev.body.sessionId, rev.sessionId, session.id]) await settle(id);
+});
+
 test('the tracker does not give the task: still a task (by its key) and its worker — never a chat titled with the link', async () => {
   const link = 'https://tracker.example/swtr/units/all/unit/PROJ-99001'; // not in the tracker fixture: the import fails
   const r = await h.api('POST', '/api/handoff', { input: link });
