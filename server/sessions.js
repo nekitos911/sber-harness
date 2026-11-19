@@ -1680,6 +1680,7 @@ ${note.trim()}` : text });
         if (held.reject) acp.answer(sid, held.id, held.reject);
         r.handle?.stop();
       }
+      if (r.running && from === 'user' && !asked) hooks.personWrote?.(s); // it waits for sub-agents: they go on, it reads this next
       if (r.running && !held && hooks.takeAnswer?.(s, { from, text })) {
         // its `ask` call waits for exactly this: the agent gets it as that call's result, in the same turn
         addMessage(s, { kind: 'user', text, from });

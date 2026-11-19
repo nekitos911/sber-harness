@@ -633,6 +633,14 @@ export function createOrchestration({ config, store, bus, tasks, sessions, addWo
         summary: `Субагент спрашивает: ${q.text}${choices}\nОтветь ему: send_message to "${sessionId}". Он продолжит работу, а его итог придёт тебе отдельным сообщением.`,
       };
     }
+    if (now?.released) {
+      // the person wrote to the waiting caller: the call ends now, the sub-agent goes on, its result comes as a message
+      sessions.update(sessionId, { released: null });
+      return {
+        done: true, sessionId, status: 'background',
+        summary: 'Человек написал тебе, пока ты ждал этого субагента. Субагент продолжает работу в фоне, его итог придёт тебе отдельным сообщением. Заверши ход сейчас: сообщение человека придёт следующим.',
+      };
+    }
     return { done: false, sessionId, status: now?.status ?? null };
   }
 
@@ -1136,6 +1144,17 @@ export function createOrchestration({ config, store, bus, tasks, sessions, addWo
     a.answer = text;
     for (const w of [...a.waiters]) w();
     return true;
+  };
+
+  // the person writes while the agent only waits inside agent/worker_run: its sub-agents go on in the background (their
+  // results come as messages) and the waiting calls end at once — the message (queued, persisted) is read next turn,
+  // not after the sub-agent's whole run
+  sessions.hooks.personWrote = (s) => {
+    for (const k of db.sessions.filter((x) => x.awaitedBy === s.id && !x.report)) {
+      sessions.update(k.id, { awaitedBy: null, askedParent: true, released: true });
+      for (const resolve of runWaiters.get(k.id) || []) resolve();
+      runWaiters.delete(k.id);
+    }
   };
 
   sessions.hooks.notify = notify;

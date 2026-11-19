@@ -256,6 +256,24 @@ test('a sub-agent in the background: the call returns at once, its own chat work
   await waitFor(async () => (await state()).sessions.find((s) => s.id === main.id && !s.pid && s.status !== 'running'), { what: 'main settled' });
 });
 
+test('the person writes while the agent waits for its sub-agent: the wait ends, the sub-agent goes on, nothing is lost', async () => {
+  const main = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', cwd: repo, prompt: '#silent' })).body; // a turn that runs
+  await waitFor(async () => (await state()).sessions.find((s) => s.id === main.id && s.status === 'running' && s.pid), { what: 'main running' });
+  const run = (await h.api('POST', '/api/agent/agent', { subagent_type: 'Explore', prompt: 'разведка #slow #done нашёл' }, { 'x-harness-session': main.id })).body;
+  assert.equal((await state()).sessions.find((s) => s.id === run.sessionId).awaitedBy, main.id, 'a call waits for it');
+  const waiting = h.api('GET', `/api/agent/worker_wait?sessionId=${run.sessionId}&timeoutMs=20000`); // harness-mcp's poll
+  assert.deepEqual((await h.api('POST', `/api/sessions/${main.id}/messages`, { text: 'и ещё sowa поправь' })).body, { queued: true }, 'the message itself waits in the persisted queue');
+  const r = (await waiting).body;
+  assert.equal(r.status, 'background');
+  assert.match(r.summary, /Человек написал тебе.*Заверши ход/s);
+  const helper = (await state()).sessions.find((s) => s.id === run.sessionId);
+  assert.deepEqual([helper.awaitedBy ?? null, helper.askedParent, helper.released ?? null], [null, true, null]);
+  // its result still reaches the caller, as a message
+  await waitFor(async () => (await messages(main.id)).some((m) => m.kind === 'user' && m.from === run.sessionId && /Result \(done\)/.test(m.text)) || (await state()).sessions.find((s) => s.id === main.id).queue?.some((q) => q.from === run.sessionId), { timeout: 30000, what: 'the result as a message' });
+  await h.api('POST', `/api/sessions/${main.id}/stop`);
+  await waitFor(async () => (await state()).sessions.find((s) => s.id === main.id && !s.pid && s.status !== 'running'), { what: 'main settled' });
+});
+
 test('a queued slash command goes first in the prompt (behind a helper\'s report it was plain text)', async () => {
   const { promptOf } = await import('../server/sessions.js');
   const report = { text: '[harness] Message from s_1 (backend-engineer): Result (done): готово' };
