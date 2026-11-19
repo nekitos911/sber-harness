@@ -13,6 +13,7 @@ import { Disclosure, IconButton } from '../ui'
 import { isSubagentTool, SubagentCard } from './SubagentCard'
 import { ThoughtBlock, Thumb } from './ToolSteps'
 import { isImagePath, splitAttachments } from '../../lib/attachments'
+import { toolKind } from '../../lib/toolRun'
 import { AskToolCard, isAskCard, MessageQuestion, PermissionCard } from './Attention'
 
 /** `until`: for a thought, when it ended (null = still thinking); the thought shows how long it took. */
@@ -137,9 +138,13 @@ function SystemNote({ text, count }: { text: string; count?: number }) {
 
 const OUTPUT_LIMIT = 20_000
 
-/** A unified diff printed by the tool itself (e.g. an apply_patch result). */
+/**
+ * A unified diff printed by an edit tool itself (e.g. an apply_patch result). Never a command's output: `git show` /
+ * `git diff` of an old commit (the agent reading history) drawn as «Создан …» looked like the agent changing files.
+ */
 function outputDiff(tool: ToolCall): DiffFile | null {
   const out = tool.output
+  if (toolKind(tool.name) !== 'edit') return null
   if (!out || !/^@@ -\d/m.test(out) || !/^(\+\+\+|---) /m.test(out)) return null
   const [f] = parseDiff(out)
   return f && f.lines.length ? f : null

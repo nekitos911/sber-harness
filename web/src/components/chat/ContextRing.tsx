@@ -19,8 +19,9 @@ export function ContextRing({ session, running }: { session: Session; running: b
   const btn = useRef<HTMLButtonElement>(null)
   const used = session.context?.tokens
   const limit = session.contextLimit
-  if (!used || !limit) return null
-  const share = Math.min(1, used / limit)
+  if (!used) return null
+  // a model whose window is unknown (not in its name, not in the catalogue): the tokens still show, without a share
+  const share = limit ? Math.min(1, used / limit) : 0
   const pct = Math.round(share * 100)
   const level = share > 0.85 ? 'high' : share >= 0.6 ? 'mid' : 'low'
   const ctx = session.context!
@@ -38,18 +39,18 @@ export function ContextRing({ session, running }: { session: Session; running: b
   }
   return (
     <>
-      <button ref={btn} type="button" className="ctx-ring" data-level={level} aria-label={`Контекст: ${pct}%`} aria-expanded={open}
-        data-tip={open ? undefined : `Контекст: ${pct}% (${tokens(used)} из ${tokens(limit)})`} onClick={() => setOpen(!open)}>
+      <button ref={btn} type="button" className="ctx-ring" data-level={level} aria-label={limit ? `Контекст: ${pct}%` : `Контекст: ${tokens(used)}`} aria-expanded={open}
+        data-tip={open ? undefined : limit ? `Контекст: ${pct}% (${tokens(used)} из ${tokens(limit)})` : `Контекст: ${tokens(used)} (размер окна модели неизвестен)`} onClick={() => setOpen(!open)}>
         <svg viewBox="0 0 18 18" width="18" height="18" aria-hidden>
           <circle cx="9" cy="9" r={R} className="ctx-track" />
           <circle cx="9" cy="9" r={R} className="ctx-fill" strokeDasharray={C} strokeDashoffset={C * (1 - share)} transform="rotate(-90 9 9)" />
         </svg>
       </button>
       <Popover anchor={btn} open={open} onClose={() => setOpen(false)} placement="top-end" label="Контекст" className="ctx-pop">
-        <div className="ctx-head"><strong>Контекст</strong><span className="num">{tokens(used)} / {tokens(limit)}</span></div>
-        <div className="ctx-bar" data-level={level} role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct} aria-label="Заполнение контекста">
+        <div className="ctx-head"><strong>Контекст</strong><span className="num">{limit ? `${tokens(used)} / ${tokens(limit)}` : tokens(used)}</span></div>
+        {limit && <div className="ctx-bar" data-level={level} role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct} aria-label="Заполнение контекста">
           <span style={{ width: `${pct}%` }} />
-        </div>
+        </div>}
         <dl className="ctx-rows">
           {(turn.input !== undefined || turn.output !== undefined) && (
             <><dt>Последний ход</dt><dd className="num">
@@ -57,7 +58,7 @@ export function ContextRing({ session, running }: { session: Session; running: b
             </dd></>
           )}
           {session.tokensIn + session.tokensOut > 0 && <><dt>Всего в сессии</dt><dd className="num">вход {tokens(session.tokensIn)}, выход {tokens(session.tokensOut)}</dd></>}
-          <dt>Модель</dt><dd>{model?.label ?? modelId ?? 'по умолчанию CLI'} · окно {tokens(limit)}</dd>
+          <dt>Модель</dt><dd>{model?.label ?? modelId ?? 'по умолчанию CLI'} · {limit ? `окно ${tokens(limit)}` : 'размер окна неизвестен'}</dd>
         </dl>
         {share > 0.5 && compress && (
           <Button size="sm" busy={busy} disabled={running || busy} onClick={() => void sendCompress()} tip={running ? 'Дождитесь конца хода' : `Отправить агенту ${compress}`}>Сжать контекст</Button>
