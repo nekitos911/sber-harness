@@ -137,6 +137,8 @@ export interface Session {
   effectiveApprovalMode?: string | null // what the CLI really runs with (e.g. auto → auto-edit)
   system?: boolean // harness-internal (login terminal, discovery…): shown only under «Служебное»
   persistent?: boolean // a child that is a full participant (e.g. an orchestrator in another worktree): never folded or auto-archived
+  ephemeral?: boolean // a helper run by mcp__harness__agent / worker_run: its result goes back to the agent that called it
+  report?: { status: string; summary?: string; at: number } | null // a helper's result: done | failed | no_report (its turn ended without worker_done) | stopped | timeout
   worktreePath?: string | null // the worktree root the session runs in (its cwd may be a subfolder)
   allowedTools?: string[] // tool patterns allowed for this chat (e.g. run_shell_command(git))
   waitingFor?: 'answer' | 'auth' | 'permission' | null // called `ask` and no reply yet, or needs a login (newer servers)

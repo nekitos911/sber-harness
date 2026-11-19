@@ -24,7 +24,9 @@ export function WorkersPanel({ sessionId, workers }: { sessionId: string; worker
   // Children in another worktree (or persistent ones) are their own orchestrators: a separate group.
   // its own orchestrator: a persistent child in ANOTHER worktree (one in the same worktree is an ordinary worker)
   const place = (x: Session) => normPath(x.worktreePath ?? x.cwd)
-  const elsewhere = workers.filter((w) => !w.virtual && !!w.persistent && !!parent && place(w) !== place(parent))
+  // a helper (ephemeral: its result returns to the caller) is a helper wherever it works — sent to another repository it
+  // works in that repository's worktree, not as an orchestrator
+  const elsewhere = workers.filter((w) => !w.virtual && !w.ephemeral && !!w.persistent && !!parent && place(w) !== place(parent))
   const own = workers.filter((w) => !w.virtual && !elsewhere.includes(w))
   const inner = workers.filter((w) => w.virtual)
   const [open, setOpen] = useState(true)
@@ -96,9 +98,13 @@ function WorkerRow({ w, now, nested }: { w: Session; now: number; nested?: boole
   const cut = lines.length === 1 && w.preview.length >= 200
   const last = cut ? `…${lines[0].replace(/^\S*\s+/, '')}` : lines.pop()
   const doing = starting || tool || (w.status === 'running' ? 'работает' : last)
+  // a helper whose turn ended without worker_done still answered: its last text went back to the agent as the result
+  const answered = !!w.ephemeral && w.status !== 'running' && w.report?.status === 'no_report'
   return (
     <div className="worker-row" data-nested={nested || undefined} data-enter={w.createdAt > Date.now() - 3000 || undefined}>
-      <StatusIcon session={w} />
+      {answered
+        ? <span data-tip="Ответил: ход закончен без отчёта worker_done, его последний ответ передан главному агенту как результат"><StatusIcon session={{ ...w, status: 'done' }} /></span>
+        : <StatusIcon session={w} />}
       <button type="button" className="worker-title ellipsis" onClick={() => openSession(w.id)} data-tip={w.title} data-tip-trunc>
         {(w.role === 'reviewer' || w.role === 'subagent') && <span className="role-tag">{w.role === 'reviewer' ? 'ревью' : 'субагент'}</span>}
         {w.title}
