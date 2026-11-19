@@ -392,7 +392,16 @@ export async function transitionTask({ config, mcp, tasks, task, transition, sta
   const cfg = settings(config);
   const key = trackerKey(task);
   if (markdown(cfg)) {
-    if (!transition) throw Object.assign(new Error('нужен переход (id из GET /api/tasks/:id/transitions)'), { status: 400 });
+    if (!transition) {
+      // a status typed as text (the form when the list did not load): the transition into it, by its name or target
+      const want = String(status ?? '').trim().toLowerCase();
+      if (!want) throw Object.assign(new Error('Выберите переход'), { status: 400 });
+      const { transitions } = await getTransitions({ config, mcp, tasks, task });
+      const hit = transitions.find((t) => [t.label, t.target, t.id].some((x) => String(x ?? '').trim().toLowerCase() === want));
+      if (!hit) throw Object.assign(new Error(`В трекере нет перехода в «${status}»${transitions.length ? `. Доступно: ${transitions.map((t) => t.label).join(', ')}` : ' (из текущего статуса переходов нет)'}`), { status: 400 });
+      transition = hit.id;
+      status = hit.target || hit.label;
+    }
     await callText(mcp, cfg, toolOf(cfg, 'transition'), { key, transition, ...(comment ? { comment } : {}) });
     tasks.addLog(task.id, 'user', `Статус в трекере: ${status || transition}${comment ? ` (${comment})` : ''}`, 'tracker_transition', { transition, status: status ?? null });
     await getTransitions({ config, mcp, tasks, task }); // refresh externalStatus from the tracker

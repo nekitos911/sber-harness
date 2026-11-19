@@ -6,7 +6,7 @@ import { openSession, useStore } from '../../store'
 import { loadDraft, saveDraft } from '../../lib/draft'
 import { mcpParts, obj, pathOf, toolKind } from '../../lib/toolRun'
 import { summarizeInput } from '../../lib/toolcall'
-import type { Message, PermissionOption } from '../../types'
+import type { Message, PermissionOption, ToolCall } from '../../types'
 import { Markdown } from '../Markdown'
 import { Button, Checkbox, Disclosure } from '../ui'
 
@@ -142,6 +142,8 @@ function QuestionsCard({ id, parts, answered, closed, send }: {
 
 /** The harness `ask` MCP tool (harness.ask / mcp__harness__ask): its question waits in the asking chat. */
 export const isAskTool = (name: string) => /^(mcp__)?harness(\.|__)ask$/.test(name)
+/** A question card only for a call that carries a question: a refused or malformed call (the agent retries) is a plain step. */
+export const isAskCard = (t: ToolCall) => isAskTool(t.name) && t.status !== 'error' && String(obj(t.input).question ?? '').trim() !== ''
 
 /** That call as a question card; answered once a later message reached this chat (the reply is delivered there). */
 export function AskToolCard({ m }: { m: Message }) {

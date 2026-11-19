@@ -17,7 +17,8 @@ server `harness` with the tools below (`mcp__harness__<tool>`). Without MCP: `no
 <tool> '<json-args>'`.
 
 If your prompt names a Task / Session / Parent, you are a **worker**: follow "If you are a worker". To ask your
-coordinator, call `ask`, then end your turn; the harness wakes you with the answer.
+coordinator, call `ask`: the call waits for the answer and returns it. If it returns without one, end your turn; the
+harness wakes you with the answer.
 
 ## Recipe (coordinator / orchestrator)
 
@@ -81,7 +82,8 @@ worktrees. **Several repositories:** one subtask per repo (`task_create(parent_i
 ## If you are a worker (or a helper started with `agent`)
 
 - Do only your task, only inside your working directory (and the folders you were given).
-- Need a decision? `ask(question, options?)`, then end your turn. The answer arrives as your next message.
+- Need a decision? `ask(question, options?)`: it waits and returns the answer (`{ answer }`). Do not go on before it
+  returns; if it returns without an answer, end your turn — the answer arrives as your next message.
 - Do not commit, push, open PRs or change the tracker unless the task says so (the user commits from the harness UI);
   when you must commit, the message is `<KEY> <summary>`.
 - Finish with exactly one `worker_done(summary, status: "done" | "failed")`: what changed, the evidence (commands and

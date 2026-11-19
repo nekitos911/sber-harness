@@ -243,6 +243,25 @@ test('ask with options reaches the parent as a user message with options', async
   assert.deepEqual(m.options, ['8080', '9090']);
 });
 
+test('ask waits for the answer: a reply in the chat goes into the call, the agent goes on in the same turn', async () => {
+  const t = await startTestServer({ orchestration: { askWaitMin: 1 } });
+  try {
+    const s = (await t.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', prompt: '#ask Какой порт? | 8080 | 9090' })).body;
+    await waitFor(async () => (await t.api('GET', '/api/state')).body.sessions.find((x) => x.id === s.id && x.waitingFor === 'answer' && x.status === 'running'), { what: 'asking' });
+    assert.deepEqual((await t.api('POST', `/api/sessions/${s.id}/messages`, { text: '9090' })).body, { queued: false, answered: true });
+    await waitFor(async () => (await t.api('GET', '/api/state')).body.sessions.find((x) => x.id === s.id && x.status === 'idle'), { what: 'turn end' });
+    const msgs = (await t.api('GET', `/api/sessions/${s.id}/messages`)).body;
+    const call = msgs.find((m) => m.kind === 'tool' && /ask$/.test(m.tool.name));
+    assert.match(call.tool.output, /"answer":"9090"/, 'the answer is the result of the call');
+    assert.ok(msgs.some((m) => m.kind === 'user' && m.text === '9090'), 'the reply shows in the chat');
+    assert.deepEqual([...new Set(msgs.map((m) => m.turn).filter(Boolean))], [1], 'no second turn: the agent went on with the answer');
+    assert.equal((await t.api('GET', '/api/state')).body.sessions.find((x) => x.id === s.id).queued, 0);
+    assert.equal((await t.api('POST', '/api/agent/ask', { question: ' ' }, { 'x-harness-session': s.id })).status, 400, 'a call without a question');
+  } finally {
+    await t.close();
+  }
+});
+
 test('websocket: frames after a client vanished do not break the server', async () => {
   const ws = new WebSocket(`${h.srv.url.replace('http', 'ws')}/ws?token=${h.srv.token}`);
   await new Promise((r) => ws.on('open', r));

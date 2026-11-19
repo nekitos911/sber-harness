@@ -415,12 +415,13 @@ function TrackerStatus({ task }: { task: Task }) {
   const [status, setStatus] = useState('')
   const [comment, setComment] = useState('')
   const [busy, setBusy] = useState(false)
+  const [why, setWhy] = useState<string | null>(null) // the tracker did not give the list (not: an older server)
 
   useEffect(() => {
     let live = true
     api<Transitions>('GET', `/tasks/${encodeURIComponent(task.id)}/transitions`).then(
-      (r) => { if (live) setList(r?.transitions ? r : null) },
-      () => { if (live) setList(null) }, // not supported here: free-text status below
+      (r) => { if (live) { setList(r?.transitions ? r : null); setWhy(null) } },
+      (e) => { if (live) { setList(null); setWhy(e instanceof ApiError && e.status !== 404 && e.status !== 501 ? e.message : null) } }, // free-text status below
     )
     return () => { live = false }
   }, [task.id, task.externalStatus])
@@ -453,6 +454,7 @@ function TrackerStatus({ task }: { task: Task }) {
         ) : (
           <>
             <SuggestInput label="Новый статус в трекере" placeholder="Новый статус" value={status} onChange={setStatus} suggestions={known} />
+            {why && <p className="field-hint">Список переходов из трекера не загрузился ({why}). Напишите статус, как он называется в трекере: переход в него найдётся по названию.</p>}
           </>
         )}
         <button type="button" className="btn" disabled={!status.trim() || busy} onClick={() => void submit()}>{busy ? 'Меняем…' : 'Изменить в трекере'}</button>

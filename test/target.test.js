@@ -148,6 +148,11 @@ test('onework details, transitions, status change; tool errors become errors', a
   await transitionTask({ config: cfg, mcp, tasks, task, transition: 'to_code_review', comment: 'готово' });
   assert.deepEqual(calls()[0], { tool: 'sbertrack_updateIssueStatus', args: { key: 'PROJ-14904', transition: 'to_code_review', comment: 'готово' } });
   await assert.rejects(transitionTask({ config: cfg, mcp, tasks, task }), (e) => e.status === 400);
+  // a status typed as text (the list did not load in the form): the transition into it, found by name
+  fs.rmSync(log, { force: true });
+  await transitionTask({ config: cfg, mcp, tasks, task, status: 'QA' });
+  assert.equal(calls().find((c) => c.tool === 'sbertrack_updateIssueStatus').args.transition, 'qa');
+  await assert.rejects(transitionTask({ config: cfg, mcp, tasks, task, status: 'на луну' }), (e) => e.status === 400 && /нет перехода в «на луну»\. Доступно: /.test(e.message));
 
   const missing = tasks.create({ title: 'ghost', externalId: 'PROJ-99001', source: 'onework' });
   await assert.rejects(getExternal({ config: cfg, mcp, tasks, task: missing }), (e) => e.status === 502 && /Issue PROJ-99001 not found \(404\)/.test(e.message));

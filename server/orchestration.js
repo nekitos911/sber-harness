@@ -61,7 +61,7 @@ export function parseProfile(text) {
 }
 
 export const NO_SUBAGENTS = 'Субагенты не запускают своих субагентов: выполни это сам или верни запрос оркестратору';
-export const SUBAGENT_CONTEXT = 'Ты работаешь внутри harness. Субагентов запускай инструментом mcp__harness__agent с теми же аргументами, что у встроенного agent (subagent_type, prompt, model) — встроенный agent не используй: harness откроет каждого субагента отдельным чатом и вернёт тебе его результат так же. Вопросы человеку — через mcp__harness__ask (варианты в options), затем заверши ход.';
+export const SUBAGENT_CONTEXT = 'Ты работаешь внутри harness. Субагентов запускай инструментом mcp__harness__agent с теми же аргументами, что у встроенного agent (subagent_type, prompt, model) — встроенный agent не используй: harness откроет каждого субагента отдельным чатом и вернёт тебе его результат так же. Вопросы человеку — через mcp__harness__ask (варианты в options): вызов ждёт ответа и возвращает его; если вернулся без ответа — заверши ход.';
 const CONTEXT_LAUNCHERS = new Set(['gigacode', 'qwen', 'gemini', 'mock']);
 
 export const render = (tpl, vars) => String(tpl).replace(/\{(\w+)\}/g, (m, k) => (Object.hasOwn(vars, k) ? String(vars[k] ?? '') : m));
@@ -853,7 +853,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions, addWo
     const parent = s.parentId && sessions.find(s.parentId);
     const who = `Session: ${s.id}; parent: ${parent ? label(parent) : 'none (your reports go to the user)'}.`;
     const common = [
-      '- Need a decision? Call ask(question, options?), then END YOUR TURN; the answer arrives as your next message.',
+      '- Need a decision? Call ask(question, options?): it waits for the answer and returns it. Do not go on before it returns; if it returns without an answer, END YOUR TURN — the answer arrives as your next message.',
       helpers,
       '- Finish with exactly one worker_done(summary, status: "done" | "failed"): what changed, evidence (commands and results), open blockers — short (about 20 lines): the coordinator\'s context carries every report.',
       tools,
@@ -1008,6 +1008,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions, addWo
   // ---- post-turn: escalation and error notifications ----
 
   function turnEnded(s, { reported, communicated, stopped, reviving, queueEmpty, userFollowUp }) {
+    dropAsk(s.id); // the turn is over: a later answer starts the next one (the queue)
     settleGitRequests(s, stopped);
     if (reviving) return; // the harness continues it by itself in a moment (sessions: revive)
     if (s.ephemeral && !reported && s.status === 'error') {
@@ -1080,6 +1081,43 @@ export function createOrchestration({ config, store, bus, tasks, sessions, addWo
     }
     store.save();
   };
+  // ---- ask: the call itself waits for the answer (harness-mcp polls askWait), so the agent cannot go on without it ----
+  const asking = new Map(); // session id -> { until, answer: string | null, waiters: Set<fn> }
+  const askWaitMs = () => Math.max(Number(config.orchestration?.askWaitMin ?? 30), 0) * 60000;
+  function dropAsk(sid) {
+    const a = asking.get(sid);
+    if (!a) return;
+    asking.delete(sid);
+    for (const w of [...a.waiters]) w();
+  }
+  /** → { done, answer } within timeoutMs; done without an answer: nothing waits any more (turn over, timed out, restart). */
+  function askWait(sid, timeoutMs = 25000) {
+    const a = asking.get(sid);
+    if (!a || Date.now() > a.until) return { done: true, answer: null };
+    if (a.answer !== null) {
+      asking.delete(sid);
+      return { done: true, answer: a.answer };
+    }
+    return new Promise((resolve) => {
+      const finish = () => {
+        clearTimeout(timer);
+        a.waiters.delete(finish);
+        if (a.answer !== null) asking.delete(sid);
+        resolve(a.answer !== null ? { done: true, answer: a.answer } : { done: !asking.has(sid), answer: null });
+      };
+      const timer = setTimeout(finish, Math.min(Math.max(Number(timeoutMs) || 0, 0), 60000));
+      a.waiters.add(finish);
+    });
+  }
+  // a reply to the chat while its `ask` call waits goes into that call, not to the queue
+  sessions.hooks.takeAnswer = (s, { text }) => {
+    const a = asking.get(s.id);
+    if (!a || a.answer !== null || Date.now() > a.until) return false;
+    a.answer = text;
+    for (const w of [...a.waiters]) w();
+    return true;
+  };
+
   sessions.hooks.notify = notify;
   sessions.hooks.sessionChanged = syncAgentState;
   sessions.hooks.turnEnded = turnEnded;
@@ -1325,12 +1363,16 @@ export function createOrchestration({ config, store, bus, tasks, sessions, addWo
     },
     {
       name: 'ask',
-      description: 'Ask your coordinator (or the user) a question, optionally with answer options. Then END YOUR TURN: the answer arrives as your next message.',
+      description: 'Ask your coordinator (or the user) a question, optionally with answer options. The call waits for the answer and returns it ({ answer }): continue with it. Only if it returns without an answer, END YOUR TURN: the answer arrives as your next message.',
       inputSchema: obj({ question: str('the question'), options: strArr('suggested answers (rendered as buttons)') }, ['question']),
       run: (a, c) => {
+        if (typeof a.question !== 'string' || !a.question.trim()) fail(400, 'question: the question text is required');
         const note = 'End your turn now; the answer will arrive as your next message.';
         const options = a.options?.length ? a.options : undefined;
         if (c) sessions.flag(c.id, 'communicated');
+        // the bridge (harness-mcp) keeps this call open until the answer comes (askWait): the agent gets it as the result
+        if (c && askWaitMs()) asking.set(c.id, { until: Date.now() + askWaitMs(), answer: null, waiters: new Set() });
+        const waitMs = c && askWaitMs() ? askWaitMs() : undefined;
         const parent = c?.parentId && sessions.find(c.parentId);
         const choices = options ? `\nOptions: ${options.map((o) => `"${o}"`).join(', ')}` : '';
         const toParent = () => sessions.deliver(parent.id, { from: c.id, options, text: fromSession(c, `Question: ${a.question}${choices}\n(Answer with send_message to "${c.id}".)`) });
@@ -1347,16 +1389,16 @@ export function createOrchestration({ config, store, bus, tasks, sessions, addWo
             sessions.update(c.id, { pendingQuestion: null, awaitedBy: null });
             toParent();
           }, QUESTION_PICKUP_MS).unref?.();
-          return { delivered: parent.id, note };
+          return { delivered: parent.id, note, waitMs };
         }
         if (parent) {
           toParent();
           sessions.update(c.id, { waitingFor: 'answer' }); // until a reply is delivered to it
-          return { delivered: parent.id, note };
+          return { delivered: parent.id, note, waitMs };
         }
         notify({ kind: 'question', sessionId: c?.id ?? null, taskId: c?.taskId ?? null, text: a.question, options });
         if (c) sessions.update(c.id, { waitingFor: 'answer' });
-        return { delivered: 'user', note };
+        return { delivered: 'user', note, waitMs };
       },
     },
     {
@@ -1488,6 +1530,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions, addWo
     previewTaskPrompt: (task, { agent, cwd, notes = '' }) => taskPrompt(task, { id: '', agent, cwd, branch: '', workspaceId: task.workspaceId ?? null, settingsPath: '', approvalMode: null }, { notes }),
     port: (taskId, target, o) => port(tasks.get(taskId), target, o, null),
     waitRun,
+    askWait,
     /** MCP tool list; the built-in-compatible `agent` alias only in orchestration.subagents "harness" mode */
     get tools() {
       return this.toolsFor(null);

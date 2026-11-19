@@ -83,6 +83,24 @@ export async function runAndWait(name, args, progressToken, notify = () => {}) {
   }
 }
 
+/**
+ * ask: the question goes out at once; then this call waits (long-poll, progress so it does not time out) for the
+ * answer, which the agent gets as the result. Models do not reliably «end the turn» after a question — they went on
+ * without the answer. No answer within waitMs (or the turn ended): the old way, the answer comes as the next message.
+ */
+export async function askAndWait(args, progressToken, notify = () => {}) {
+  const sent = await api('POST', '/api/agent/ask', args);
+  if (!sent.waitMs) return sent;
+  const deadline = Date.now() + sent.waitMs;
+  for (let tick = 1; Date.now() < deadline; tick++) {
+    const r = await api('GET', `/api/agent/ask_wait?timeoutMs=${Math.min(WAIT_SLICE_MS, deadline - Date.now())}`, undefined, { idempotent: true, until: deadline }).catch(() => ({ done: true }));
+    if (r.answer != null) return { answer: r.answer, note: 'This is the answer to your question. Continue the task with it.' };
+    if (r.done) break;
+    if (progressToken !== undefined) notify({ method: 'notifications/progress', params: { progressToken, progress: tick, message: 'waiting for the answer' } });
+  }
+  return { delivered: sent.delivered, note: sent.note };
+}
+
 async function handle(msg, notify = () => {}) {
   switch (msg.method) {
     case 'initialize':
@@ -97,7 +115,9 @@ async function handle(msg, notify = () => {}) {
         const args = msg.params?.arguments ?? {};
         const result = SYNC_RUN_TOOLS.has(name)
           ? await runAndWait(name, args, msg.params?._meta?.progressToken, notify)
-          : await api('POST', `/api/agent/${encodeURIComponent(name)}`, args);
+          : name === 'ask'
+            ? await askAndWait(args, msg.params?._meta?.progressToken, notify)
+            : await api('POST', `/api/agent/${encodeURIComponent(name)}`, args);
         return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }], isError: false };
       } catch (e) {
         return { content: [{ type: 'text', text: JSON.stringify({ error: e.message }) }], isError: true };
@@ -136,7 +156,7 @@ if (!isMain) {
   try {
     if (!tool) throw new Error("usage: harness-mcp.js call <tool> '<json-args>'");
     const args = json ? JSON.parse(json) : {};
-    const result = SYNC_RUN_TOOLS.has(tool) ? await runAndWait(tool, args, undefined, () => {}) : await api('POST', `/api/agent/${encodeURIComponent(tool)}`, args);
+    const result = SYNC_RUN_TOOLS.has(tool) ? await runAndWait(tool, args, undefined, () => {}) : tool === 'ask' ? await askAndWait(args) : await api('POST', `/api/agent/${encodeURIComponent(tool)}`, args);
     console.log(JSON.stringify(result, null, 2));
   } catch (e) {
     console.error(`error: ${e.message}`);

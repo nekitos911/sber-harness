@@ -1300,7 +1300,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     const limit = (Number(config.session?.stallSec) || 300) * 1000;
     for (const s of db.sessions) {
       if (s.kind !== 'chat' || s.virtual) continue;
-      const stalled = s.status === 'running' && s.phase !== 'auth' && !!s.pid && Date.now() - (s.lastEventAt || s.lastActivityAt) > limit && isAlive(s.pid);
+      const stalled = s.status === 'running' && s.phase !== 'auth' && !s.waitingFor && !!s.pid && Date.now() - (s.lastEventAt || s.lastActivityAt) > limit && isAlive(s.pid);
       if (!!s.stalled !== stalled) {
         s.stalled = stalled;
         emit(s);
@@ -1610,6 +1610,12 @@ ${note.trim()}` : text });
         r.pausedForAnswer = true;
         if (held.reject) acp.answer(sid, held.id, held.reject);
         r.handle?.stop();
+      }
+      if (r.running && !held && hooks.takeAnswer?.(s, { from, text })) {
+        // its `ask` call waits for exactly this: the agent gets it as that call's result, in the same turn
+        addMessage(s, { kind: 'user', text, from });
+        emit(s);
+        return { queued: false, answered: true };
       }
       if (s.interrupted) s.interrupted = null; // continued
       if (s.autoTitle && from === 'user') {

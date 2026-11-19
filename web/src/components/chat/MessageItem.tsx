@@ -13,7 +13,7 @@ import { Disclosure, IconButton } from '../ui'
 import { isSubagentTool, SubagentCard } from './SubagentCard'
 import { ThoughtBlock, Thumb } from './ToolSteps'
 import { isImagePath, splitAttachments } from '../../lib/attachments'
-import { AskToolCard, isAskTool, MessageQuestion, PermissionCard } from './Attention'
+import { AskToolCard, isAskCard, MessageQuestion, PermissionCard } from './Attention'
 
 /** `until`: for a thought, when it ended (null = still thinking); the thought shows how long it took. */
 export const MessageItem = memo(function MessageItem({ m, fresh = false, until, count }: { m: Message; fresh?: boolean; until?: number | null; count?: number }) {
@@ -150,7 +150,7 @@ const editLines = (e: FileEdit): DiffLine[] =>
 
 function ToolCard({ tool, sessionId, m }: { tool: ToolCall; sessionId: string; m?: Message }) {
   if (isSubagentTool(tool)) return <SubagentCard tool={tool} />
-  if (isAskTool(tool.name) && m) return <AskToolCard m={m} />
+  if (isAskCard(tool) && m) return <AskToolCard m={m} />
   const edit = fileEdit(tool.input)
   if (edit) return <EditBlock tool={tool} sessionId={sessionId} file={edit.file} created={edit.created} added={edit.added} removed={edit.removed} lines={editLines(edit)} />
   const out = outputDiff(tool)

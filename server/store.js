@@ -5,7 +5,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 
-const DEBOUNCE_MS = 200; // contract: <= 250 ms
+const DEBOUNCE_MS = 200; // contract: <= 250 ms (a journal append; whole files at the turn end)
+const DB_EVERY_MS = 1000; // db.json changes with every agent event: rewritten at most once a second
+const JOURNAL_MAX = 4 * 1024 * 1024; // a journal bigger than this is folded into its transcript
 const RETRY_MS = 1000; // a failed write (file held by another process) is retried
 const MAX_LOADED = 50; // transcripts kept in memory (LRU); one with a running turn always stays
 export const TERM_LOG_MAX = 2 * 1024 * 1024;
@@ -90,28 +92,66 @@ export function createStore(dataDir) {
     return [path.join(dataDir, 'terms', `${sid}.log`), () => termLogs.get(sid) || ''];
   };
 
-  function flush() {
+  // While agents stream, a whole 8 MB transcript rewritten 5 times a second (× every running chat, each a new file the
+  // antivirus scans) loaded the CPU to 100%: between full writes, only what changed is appended to a journal.
+  const journalOf = (sid) => path.join(dataDir, 'transcripts', `${sid}.jsonl`); // changed messages, one per line
+  const changed = new Map(); // sid -> Map(message id -> message) since the last write
+  const journalSize = new Map(); // sid -> bytes in its journal
+  const termTail = new Map(); // sid -> output since the last write of its log
+  const termSize = new Map(); // sid -> chars in the log file
+  let dbAt = 0;
+
+  /** Cheap writes (timer): journals and appends; `full` (turn end, exit, signals): every file whole, journals folded in. */
+  function flush(full = true) {
     clearTimeout(timer);
     timer = null;
     let failed = false;
-    for (const key of [...dirty]) {
+    let later = false;
+    const keys = new Set(dirty);
+    if (full) for (const sid of journalSize.keys()) if (transcripts.has(sid)) keys.add(`t:${sid}`); // an evicted one stays journaled
+    for (const key of keys) {
       const [file, data] = fileFor(key);
+      const [kind, sid] = key.split(':');
       try {
-        writeAtomic(file, data(), !key.startsWith('term:'));
+        if (key === 'db' && !full && Date.now() - dbAt < DB_EVERY_MS) {
+          later = true;
+          continue;
+        }
+        if (kind === 't' && !full && fs.existsSync(file) && (journalSize.get(sid) || 0) < JOURNAL_MAX) {
+          const lines = [...(changed.get(sid)?.values() ?? [])].map((m) => `${msgJson.get(m) ?? JSON.stringify(m)}\n`).join('');
+          fs.appendFileSync(journalOf(sid), lines);
+          journalSize.set(sid, (journalSize.get(sid) || 0) + Buffer.byteLength(lines));
+        } else if (kind === 'term' && !full && fs.existsSync(file) && (termSize.get(sid) || 0) + (termTail.get(sid) || '').length < TERM_LOG_MAX * 2) {
+          fs.appendFileSync(file, termTail.get(sid) || '');
+          termSize.set(sid, (termSize.get(sid) || 0) + (termTail.get(sid) || '').length);
+        } else {
+          const text = data();
+          writeAtomic(file, text, kind !== 'term');
+          if (kind === 't') {
+            // shortcut: a crash between these two lines replays older versions over the new file (a message shows older
+            // streamed text); a sequence number per line would close it if it ever matters
+            fs.rmSync(journalOf(sid), { force: true });
+            journalSize.delete(sid);
+          }
+          if (kind === 'term') termSize.set(sid, text.length);
+          if (key === 'db') dbAt = Date.now();
+        }
+        if (kind === 't') changed.delete(sid);
+        if (kind === 'term') termTail.delete(sid);
         dirty.delete(key);
       } catch (e) {
         failed = true; // stays dirty (e.g. an antivirus holds the file): written on the retry
         console.error(`[store] write ${file} failed: ${e.message}`);
       }
     }
-    if (failed && !closed) timer = setTimeout(flush, RETRY_MS);
+    if ((failed || later) && !closed) timer = setTimeout(() => flush(false), failed ? RETRY_MS : DB_EVERY_MS);
     evict();
   }
 
   function mark(key) {
     if (closed) return;
     dirty.add(key);
-    timer ||= setTimeout(flush, DEBOUNCE_MS);
+    timer ||= setTimeout(() => flush(false), DEBOUNCE_MS);
   }
 
   let keepLoaded = () => false; // sessions.js: a transcript with a running turn is never evicted
@@ -121,6 +161,17 @@ export function createStore(dataDir) {
       transcripts.delete(sid); // Map order = least recently used first
     } else {
       list = readJson(path.join(dataDir, 'transcripts', `${sid}.json`), [], restoredNotice);
+      // the journal's messages, newest version last (a line cut off by a crash is skipped)
+      let journal = '';
+      try { journal = fs.readFileSync(journalOf(sid), 'utf8'); } catch {}
+      for (const line of journal.split('\n')) {
+        let m;
+        try { m = JSON.parse(line); } catch { continue; }
+        const i = list.findLastIndex((x) => x.id === m.id);
+        if (i >= 0) list[i] = m;
+        else list.push(m);
+      }
+      if (journal) journalSize.set(sid, Buffer.byteLength(journal));
       setTimeout(evict, 0).unref?.(); // not now: the caller holds this list
     }
     transcripts.set(sid, list);
@@ -138,7 +189,7 @@ export function createStore(dataDir) {
     }
   }
 
-  const onExit = () => flush();
+  const onExit = () => flush(true);
   process.on('exit', onExit);
   for (const f of restored) restoredNotice(f);
 
@@ -150,7 +201,7 @@ export function createStore(dataDir) {
     set onNotice(fn) { onNotice = fn; },
     set keepLoaded(fn) { keepLoaded = fn; },
     loadedTranscripts: () => transcripts.size,
-    flush,
+    flush: () => flush(true),
     messages,
     putMessage(sid, msg) {
       const list = messages(sid);
@@ -159,6 +210,8 @@ export function createStore(dataDir) {
       while (i >= 0 && list[i].id !== msg.id) i--;
       if (i >= 0) list[i] = msg;
       else list.push(msg);
+      if (!changed.has(sid)) changed.set(sid, new Map());
+      changed.get(sid).set(msg.id, msg);
       mark(`t:${sid}`);
       return msg;
     },
@@ -166,7 +219,8 @@ export function createStore(dataDir) {
       if (!termLogs.has(sid)) {
         let text = '';
         try { text = fs.readFileSync(path.join(dataDir, 'terms', `${sid}.log`), 'utf8'); } catch {}
-        termLogs.set(sid, text);
+        termSize.set(sid, text.length);
+        termLogs.set(sid, text.length > TERM_LOG_MAX ? text.slice(text.length - TERM_LOG_MAX) : text); // appended past the ring
       }
       return termLogs.get(sid);
     },
@@ -174,6 +228,7 @@ export function createStore(dataDir) {
       let text = this.termLog(sid) + data;
       if (text.length > TERM_LOG_MAX) text = text.slice(text.length - TERM_LOG_MAX);
       termLogs.set(sid, text);
+      termTail.set(sid, (termTail.get(sid) || '') + data);
       mark(`term:${sid}`);
     },
     runDir(sid) {
@@ -186,6 +241,11 @@ export function createStore(dataDir) {
       termLogs.delete(sid);
       dirty.delete(`t:${sid}`);
       dirty.delete(`term:${sid}`);
+      changed.delete(sid);
+      journalSize.delete(sid);
+      termTail.delete(sid);
+      termSize.delete(sid);
+      fs.rmSync(journalOf(sid), { force: true });
       fs.rmSync(path.join(dataDir, 'transcripts', `${sid}.json`), { force: true });
       fs.rmSync(path.join(dataDir, 'transcripts', `${sid}.json.bak`), { force: true });
       fs.rmSync(path.join(dataDir, 'terms', `${sid}.log`), { force: true });

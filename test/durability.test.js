@@ -171,3 +171,32 @@ test('a corrupt db.json and transcript are restored from their .bak with a notif
     rmrf(dir);
   }
 });
+
+test('streaming appends only what changed to a journal: a crash keeps it, the turn end folds it into the transcript', async () => {
+  const dir = path.join(root, 'журнал');
+  let st = createStore(dir);
+  const t = path.join(dir, 'transcripts', 's1.json');
+  const j = path.join(dir, 'transcripts', 's1.jsonl');
+  st.putMessage('s1', { id: 'm1', kind: 'user', text: 'привет' });
+  st.flush(); // the first write is whole
+  st.putMessage('s1', { id: 'm2', kind: 'assistant', text: 'пишу' });
+  st.putMessage('s1', { id: 'm2', kind: 'assistant', text: 'пишу дальше' });
+  st.appendTermLog('t1', 'строка 1\n');
+  await new Promise((r) => setTimeout(r, 400)); // the timer: a journal line, not the whole file again
+  assert.equal(JSON.parse(fs.readFileSync(t, 'utf8')).length, 1);
+  assert.equal(fs.readFileSync(j, 'utf8').trim().split('\n').length, 1, 'the newest version of a message once');
+  st.appendTermLog('t1', 'строка 2\n');
+  await new Promise((r) => setTimeout(r, 400));
+  assert.equal(fs.readFileSync(path.join(dir, 'terms', 't1.log'), 'utf8'), 'строка 1\nстрока 2\n', 'terminal output appended');
+  fs.appendFileSync(j, '{"id":"m3","kind":"assist'); // a crash in the middle of a line
+  const crashed = path.join(root, 'журнал после сбоя');
+  fs.cpSync(dir, crashed, { recursive: true }); // the files as a crash leaves them (close() would fold the journal)
+  st.close();
+  st = createStore(crashed);
+  assert.deepEqual(st.messages('s1').map((m) => m.text), ['привет', 'пишу дальше'], 'restored from the journal, the cut line skipped');
+  st.putMessage('s1', { id: 'm3', kind: 'assistant', text: 'готово' });
+  st.flush(); // turn end
+  assert.equal(fs.existsSync(path.join(crashed, 'transcripts', 's1.jsonl')), false, 'folded into the transcript');
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(crashed, 'transcripts', 's1.json'), 'utf8')).map((m) => m.text), ['привет', 'пишу дальше', 'готово']);
+  st.close();
+});

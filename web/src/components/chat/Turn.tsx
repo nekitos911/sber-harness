@@ -11,7 +11,7 @@ import type { Message, Session } from '../../types'
 import { DiffLines } from '../DiffLines'
 import { Disclosure, IconButton } from '../ui'
 import { isSubagentTool } from './SubagentCard'
-import { isAskTool } from './Attention'
+import { isAskCard } from './Attention'
 import { longDur, RunImages, StepList } from './ToolSteps'
 import { isMcpStatus, toolRunSummary } from '../../lib/toolRun'
 
@@ -23,7 +23,7 @@ export type Item =
   | { kind: 'files'; key: string; msgs: Message[] }
   | { kind: 'new'; key: string }
 
-const isGroupable = (m: Message) => m.kind === 'tool' && !!m.tool && !isSubagentTool(m.tool) && !isAskTool(m.tool.name)
+const isGroupable = (m: Message) => m.kind === 'tool' && !!m.tool && !isSubagentTool(m.tool) && !isAskCard(m.tool)
 
 /**
  * Turns a page of the transcript into items. `runningTurn` is the turn still in progress (or null);
@@ -38,7 +38,7 @@ export function buildItems(list: Message[], runningTurn: number | null, newSince
   for (let i = 0; i < list.length; i++) {
     const m = list[i]
     if (m.kind === 'system' && isMcpStatus(m.text)) continue // the header chip «MCP 4/5» shows it
-    if (m.kind === 'tool' && m.tool && isAskTool(m.tool.name)) asked = true
+    if (m.kind === 'tool' && m.tool && isAskCard(m.tool)) asked = true
     if (m.kind === 'question') questions = true
     // The answer given in a question card is shown there («Вы ответили: …»), not again as a bubble.
     if (m.kind === 'user' && (!m.from || m.from === 'user')) {

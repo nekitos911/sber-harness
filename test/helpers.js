@@ -65,7 +65,8 @@ export async function startTestServer(configOverrides = {}, serverOpts = {}) {
     port: 0,
     // mock model discovery is off unless a test turns it on (it would spawn a /models run per server)
     // git writes go straight through git in tests unless a test asks for via "agent"
-    configOverrides: deepMerge({ defaultAgent: 'mock', worktreeRoot: null, mcpServersFrom: null, git: { via: 'harness' }, history: { adopt: false }, agents: { mock: { modelsDiscovery: null } } }, configOverrides),
+    // ask returns at once (the answer comes as the next message) unless a test turns the wait on
+    configOverrides: deepMerge({ defaultAgent: 'mock', worktreeRoot: null, mcpServersFrom: null, git: { via: 'harness' }, history: { adopt: false }, orchestration: { askWaitMin: 0 }, agents: { mock: { modelsDiscovery: null } } }, configOverrides),
   });
   async function api(method, p, body, headers = {}) {
     const res = await fetch(srv.url + p, {

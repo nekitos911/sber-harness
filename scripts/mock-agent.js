@@ -19,7 +19,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { api, runAndWait } from '../mcp/harness-mcp.js';
+import { api, askAndWait, runAndWait } from '../mcp/harness-mcp.js';
 
 const argv = process.argv.slice(2);
 const opt = (...names) => {
@@ -218,7 +218,7 @@ async function harness(tool, args) {
   const id = `call_${++toolSeq}`;
   emit({ type: 'tool_use', tool_name: `harness.${tool}`, tool_id: id, parameters: args });
   try {
-    const data = await api('POST', `/api/agent/${tool}`, args);
+    const data = tool === 'ask' ? await askAndWait(args) : await api('POST', `/api/agent/${tool}`, args); // ask waits for the answer, as through MCP
     emit({ type: 'tool_result', tool_id: id, status: 'success', output: JSON.stringify(data) });
     return true;
   } catch (e) {
