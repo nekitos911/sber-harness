@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type CSSProperties } from 'react'
 import { ownerWorkspace } from '../lib/actions'
 import { HistoryList } from './HistoryList'
 import { Files, FolderOpen, GitCompareArrows, History, RefreshCw, ShieldCheck, X } from 'lucide-react'
@@ -14,9 +14,12 @@ import { BranchPicker } from './pickers/BranchPicker'
 import { FilesTab } from './panel/FilesTab'
 import { ChangesTab } from './panel/ChangesTab'
 
+const clampPanel = (w: number) => Math.round(Math.min(Math.max(window.innerWidth * 0.6, 280), Math.max(260, w)))
+
 export function WorkspacePanel() {
   const cwd = useActiveCwd()
   const tab = useStore((s) => s.panelTab)
+  const panelWidth = useStore((s) => s.panelWidth)
   const workspaces = useStore((s) => s.workspaces)
   const wtOwner = useStore((s) => (cwd ? Object.entries(s.worktrees).find(([, list]) => list.some((w) => normPath(w.path) === normPath(cwd)))?.[0] : undefined))
   const project = cwd ? workspaces.find((w) => w.id === wtOwner) ?? ownerWorkspace(workspaces, cwd) : undefined
@@ -40,7 +43,21 @@ export function WorkspacePanel() {
   const name = project && normPath(project.path) !== normPath(cwd) ? `${project.name} / ${basename(cwd)}` : project?.name ?? basename(cwd)
 
   return (
-    <aside className="wpanel" aria-label="Файлы и изменения">
+    <aside className="wpanel" aria-label="Файлы и изменения" style={{ '--panel-w': `${panelWidth}px` } as CSSProperties}>
+      <button type="button" className="wpanel-resize" aria-label="Ширина правой панели" data-tip="Потяните, чтобы изменить ширину"
+        onPointerDown={(e) => {
+          const startX = e.clientX
+          const el = e.currentTarget
+          el.setPointerCapture(e.pointerId)
+          const move = (ev: PointerEvent) => setState({ panelWidth: clampPanel(panelWidth - (ev.clientX - startX)) })
+          const up = () => { el.removeEventListener('pointermove', move); el.removeEventListener('pointerup', up) }
+          el.addEventListener('pointermove', move)
+          el.addEventListener('pointerup', up)
+        }}
+        onKeyDown={(e) => {
+          if (e.key === 'ArrowLeft') setState({ panelWidth: clampPanel(panelWidth + 16) })
+          if (e.key === 'ArrowRight') setState({ panelWidth: clampPanel(panelWidth - 16) })
+        }} />
       <div className="wpanel-head" role="tablist" aria-label="Раздел панели">
         <button type="button" role="tab" className="wpanel-tab" aria-selected={tab === 'files'} onClick={() => setState({ panelTab: 'files' })} data-tip="Файлы" data-tip-trunc>
           <Files aria-hidden />

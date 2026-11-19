@@ -34,6 +34,14 @@ export function WorktreeHome({ cwd }: { cwd: string }) {
     return tasks.filter((t) => (t.assigneeSessionId && ids.has(t.assigneeSessionId)) || (!!branch && t.branch === branch && (!wsId || t.workspaceId === wsId)))
   }, [tasks, here, branch, wsId])
 
+  // chats that work in this worktree from elsewhere (a task started in the projects folder makes its worktree itself)
+  const elsewhere = useMemo(() => {
+    const ids = new Set(here.map((s) => s.id))
+    const mine = tasks.filter((t) => (t.worktrees ?? []).some((w) => normPath(w.path) === p))
+    const by = new Set([...mine.map((t) => t.assigneeSessionId), wt?.meta?.createdBySession].filter((x): x is string => !!x))
+    return sessions.filter((s) => !ids.has(s.id) && !s.archived && s.kind === 'chat' && (by.has(s.id) || mine.some((t) => t.id === s.taskId)))
+  }, [sessions, tasks, here, p, wt])
+
   const where = { cwd, workspaceId: wsId }
 
   return (
@@ -73,6 +81,24 @@ export function WorktreeHome({ cwd }: { cwd: string }) {
           </button>
         )}
       </div>
+
+      {elsewhere.length > 0 && (
+        <section className="wt-home-section">
+          <h2>Работу здесь ведёт</h2>
+          <ul>
+            {elsewhere.map((s) => (
+              <li key={s.id}>
+                <button type="button" className="wt-home-row" onClick={() => openSession(s.id)} data-tip={`Чат в ${s.cwd}: он создал это дерево и правит в нём`}>
+                  <StatusIcon session={s} />
+                  <span className="ellipsis grow">{s.title || s.id}</span>
+                  <span className="muted">чат в {basename(s.cwd)}</span>
+                  <span className="muted num">{relTime(s.lastActivityAt, now)}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       {here.length > 0 && (
         <section className="wt-home-section">
@@ -116,7 +142,7 @@ export function WorktreeHome({ cwd }: { cwd: string }) {
         </section>
       )}
 
-      {here.length === 0 && linked.length === 0 && (
+      {here.length === 0 && linked.length === 0 && elsewhere.length === 0 && (
         <p className="muted wt-home-note">Здесь пока нет ни чатов, ни задач. Новый чат начнёт работу агента прямо в этой папке.</p>
       )}
     </div>

@@ -402,7 +402,10 @@ button.chip.chip-mono[aria-pressed="true"] { background: var(--signal-soft); col
 
 /* ---------- right panel at its width: nothing runs past the edge ---------- */
 
-.wpanel { width: 280px; }
+.wpanel { width: var(--panel-w, 280px); position: relative; } /* panelWidth, dragged by .wpanel-resize (the compact overlay keeps its own width) */
+.wpanel-resize { position: absolute; top: 0; bottom: 0; left: -3px; width: 6px; cursor: col-resize; z-index: 2; border: 0; padding: 0; background: transparent; }
+.wpanel-resize:hover, .wpanel-resize:focus-visible { background: var(--rule-strong); outline: none; }
+.app[data-compact] .wpanel-resize { display: none; }
 .wpanel-body, .wpanel-section { min-width: 0; }
 .wpanel-where { min-width: 0; }
 .wpanel-where .branch-btn { max-width: 100%; }
@@ -476,10 +479,13 @@ button.chip.chip-mono[aria-pressed="true"] { background: var(--signal-soft); col
   .set-row, .set-row[data-wide] { grid-template-columns: minmax(0, 1fr); gap: 6px; }
   .set-label { padding-top: 0; }
 }
-.linked-wts { display: grid; gap: 2px; margin: 6px 0 0; padding: 0; list-style: none; }
+.linked-wts { display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px; margin: 6px 0 0; padding: 0; list-style: none; } /* a long branch shrinks, the count stays in view */
 .linked-seen { margin: 8px 0 0; font-size: 12px; overflow-wrap: anywhere; } /* the projects a chat in the projects folder only reads */
 .linked-wt { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 30px; padding: 0 8px; border: 0; border-radius: var(--r-1); background: none; color: var(--ink-2); text-align: left; }
 .linked-wt:hover { background: var(--deck-2); color: var(--ink); }
+.linked-wt[aria-pressed="true"] { background: var(--signal-soft); color: var(--ink); } /* the worktree shown below */
+.linked-wt-li { display: flex; align-items: center; gap: 2px; min-width: 0; }
+.linked-wt-li .linked-wt { flex: 1; min-width: 0; width: auto; }
 .linked-wt .ellipsis { flex: 1; min-width: 0; }
 .inbox-wait-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
 .inbox-actions { display: flex; flex-wrap: wrap; gap: 4px; }

@@ -56,6 +56,7 @@ interface Prefs {
   wt: Record<string, WtTabs> // key = normPath(cwd): every worktree remembers its tabs and active tab
   sidebar: boolean
   sidebarWidth: number
+  panelWidth: number // the right panel, dragged by its left edge
   panel: boolean
   panelTab: 'files' | 'changes' | 'verdicts' | 'history'
   theme: Theme | null // null = default (dark)
@@ -114,7 +115,7 @@ export const wtKey = (cwd: string) => normPath(cwd)
 
 const PREFS_KEY = 'harness.ui.v2'
 const defaultPrefs: Prefs = {
-  view: { kind: 'screen', screen: 'home' }, wt: {}, sidebar: true, sidebarWidth: 288, panel: true, panelTab: 'changes', theme: null, drafts: {},
+  view: { kind: 'screen', screen: 'home' }, wt: {}, sidebar: true, sidebarWidth: 288, panelWidth: 300, panel: true, panelTab: 'changes', theme: null, drafts: {},
 }
 
 const SCREENS = new Set<Screen>(['home', 'board', 'agents', 'prs', 'inbox', 'settings', 'setup'])

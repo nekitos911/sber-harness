@@ -34,7 +34,8 @@ const join = (g: { title: string; body: string }) => (g.body ? `${g.title}\n\n${
  * «Изменения» (like Orca's source control): PR button, file search and «⋯»; the branch with the change totals and its
  * upstream; one message box (✨ writes it); a split «Закоммитить» button; staged and unstaged files; commits folded below.
  */
-export function ChangesTab({ cwd }: { cwd: string }) {
+/** `inline`: a worktree of a chat in the projects folder, shown inside that chat's panel (never the folder list again). */
+export function ChangesTab({ cwd, inline = false }: { cwd: string; inline?: boolean }) {
   const prEnabled = useStore((s) => s.integrations.pr)
   const prSupported = useFeature('pr-status')
   const stageOn = useFeature('git-stage')
@@ -103,7 +104,7 @@ export function ChangesTab({ cwd }: { cwd: string }) {
     return () => window.clearTimeout(t)
   }, [autoGen, hasChanges, changeSig]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  if (git?.error) return <LinkedWorktrees cwd={cwd} error={git.error} />
+  if (git?.error) return inline ? <p className="muted wpanel-section">{git.error}</p> : <LinkedWorktrees cwd={cwd} error={git.error} />
   if (!status) return <div className="wpanel-section"><Skeleton rows={4} /></div>
 
   const edit = (v: string) => {
@@ -365,6 +366,7 @@ function LinkedWorktrees({ cwd, error }: { cwd: string; error: string }) {
   const workspaces = useStore((s) => s.workspaces)
   const lists = useStore((s) => s.worktrees)
   const allMsgs = useStore((s) => s.messages)
+  const [pick, setPick] = useState<string | null>(null)
   const here = sessions.filter((x) => normPath(x.cwd) === normPath(cwd))
   const ids = new Set(here.map((x) => x.id))
   const running = here.some((x) => x.status === 'running')
@@ -396,6 +398,8 @@ function LinkedWorktrees({ cwd, error }: { cwd: string; error: string }) {
   // a fresh worktree of the agent is not in the lists yet: reload them when its edits land outside every known project
   useEffect(() => { if (touched.outside) for (const id of gitIds) void loadWorktrees(id) }, [touched.outside]) // eslint-disable-line react-hooks/exhaustive-deps
   const list = [...rows.values()]
+  const current = list.find((w) => normPath(w.path) === normPath(pick ?? '')) ?? list.find((w) => (w.dirty ?? 0) > 0) ?? list[0]
+  const twins = (w: { repo?: string }) => list.filter((x) => x.repo === w.repo).length > 1 // the same project twice: tell them apart by folder
   const seen = touched.seen.filter((r) => !rows.has(normPath(r.path)))
   const seenLine = seen.length > 0 && (
     <p className="muted linked-seen" data-tip={seen.map((r) => r.path).join('\n')}>Смотрит: {[...new Set(seen.map((r) => r.name))].join(', ')}</p>
@@ -413,22 +417,27 @@ function LinkedWorktrees({ cwd, error }: { cwd: string; error: string }) {
     )
   }
   return (
+    <>
     <div className="wpanel-section">
       <h3>Где идёт работа</h3>
       <ul className="linked-wts">
         {list.map((w) => (
-          <li key={w.path}>
-            <button type="button" className="linked-wt" data-tip={w.path} onClick={() => { openWorktree(w.path); showPanel('changes') }}>
-              <span className="ellipsis"><strong>{w.repo ?? basename(w.path)}</strong>{w.branch && <span className="mono muted"> {w.branch}</span>}</span>
+          <li key={w.path} className="linked-wt-li">
+            <button type="button" className="linked-wt" data-tip={w.path} aria-pressed={w === current} onClick={() => setPick(w.path)}>
+              <span className="ellipsis"><strong>{w.repo ?? basename(w.path)}</strong>{twins(w) && <span className="muted"> {basename(w.path)}</span>}{w.branch && <span className="mono muted"> {w.branch}</span>}</span>
               {(w.dirty ?? 0) > 0
                 ? <span className="num" data-tip={`${w.dirty} ${plural(w.dirty!, 'изменённый файл', 'изменённых файла', 'изменённых файлов')}`}>±{w.dirty}</span>
                 : w.edited ? <span className="muted">правит</span> : <span className="muted">без изменений</span>}
             </button>
+            <button type="button" className="icon-btn icon-btn-sm" aria-label={`Открыть рабочее дерево ${w.path}`} data-tip="Открыть рабочее дерево (терминал, файлы, новый чат)" onClick={() => { openWorktree(w.path); showPanel('changes') }}><ArrowRight /></button>
           </li>
         ))}
       </ul>
       {seenLine}
     </div>
+    {/* its changes, commit and push right in the chat: no leaving the work to look at them */}
+    <ChangesTab key={current.path} cwd={current.path} inline />
+    </>
   )
 }
 
