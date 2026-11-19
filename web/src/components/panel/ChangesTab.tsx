@@ -367,7 +367,11 @@ function LinkedWorktrees({ cwd, error }: { cwd: string; error: string }) {
   const lists = useStore((s) => s.worktrees)
   const allMsgs = useStore((s) => s.messages)
   const [pick, setPick] = useState<string | null>(null)
-  const here = sessions.filter((x) => normPath(x.cwd) === normPath(cwd))
+  // the chat on screen (and its helpers): the folder holds every chat's work, the panel shows this one's
+  const activeTab = useStore((s) => s.wt[normPath(cwd)]?.active ?? null)
+  const inFolder = sessions.filter((x) => normPath(x.cwd) === normPath(cwd))
+  const focus = activeTab?.startsWith('s:') ? activeTab.slice(2) : null
+  const here = focus && inFolder.some((x) => x.id === focus) ? inFolder.filter((x) => x.id === focus || x.parentId === focus) : inFolder
   const ids = new Set(here.map((x) => x.id))
   const running = here.some((x) => x.status === 'running')
   // every project's worktrees (an agent makes its own, e.g. <repo>-worktrees\KEY): which of them its edits are in
@@ -424,7 +428,8 @@ function LinkedWorktrees({ cwd, error }: { cwd: string; error: string }) {
         {list.map((w) => (
           <li key={w.path} className="linked-wt-li">
             <button type="button" className="linked-wt" data-tip={w.path} aria-pressed={w === current} onClick={() => setPick(w.path)}>
-              <span className="ellipsis"><strong>{w.repo ?? basename(w.path)}</strong>{twins(w) && <span className="muted"> {basename(w.path)}</span>}{w.branch && <span className="mono muted"> {w.branch}</span>}</span>
+              {/* two lines: the project, then which of its worktrees (a task for develop and a release has two) */}
+              <span className="linked-wt-name"><strong className="ellipsis">{w.repo ?? basename(w.path)}</strong><span className="mono muted ellipsis">{twins(w) ? basename(w.path) : w.branch ?? basename(w.path)}</span></span>
               {(w.dirty ?? 0) > 0
                 ? <span className="num" data-tip={`${w.dirty} ${plural(w.dirty!, 'изменённый файл', 'изменённых файла', 'изменённых файлов')}`}>±{w.dirty}</span>
                 : w.edited ? <span className="muted">правит</span> : <span className="muted">без изменений</span>}
