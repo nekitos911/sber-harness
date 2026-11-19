@@ -243,6 +243,24 @@ test('ask with options reaches the parent as a user message with options', async
   assert.deepEqual(m.options, ['8080', '9090']);
 });
 
+test('the record of a chat for an agent that lost its session: the task, the latest exchanges, the edited files; only past turns', async () => {
+  const { recapText } = await import('../server/sessions.js');
+  const msgs = [
+    { kind: 'user', turn: 1, text: '/full-task PROJ-1 поправь кеш' },
+    { kind: 'tool', turn: 1, tool: { name: 'replace', status: 'ok', input: { file_path: 'C:/svc/Cache.java' } } },
+    { kind: 'tool', turn: 1, tool: { name: 'write_file', status: 'error', input: { file_path: 'C:/svc/No.java' } } },
+    { kind: 'assistant', turn: 1, text: 'Поправил Cache.java, жду ревью.' },
+    { kind: 'user', turn: 2, text: 'Есть новости?' },
+  ];
+  const r = recapText(msgs, 2);
+  assert.match(r, /^\[harness\] Твоя прежняя сессия не загрузилась/);
+  assert.match(r, /Первое сообщение \(задача\):\n\/full-task PROJ-1 поправь кеш/);
+  assert.match(r, /Файлы, которые ты уже менял: C:\/svc\/Cache\.java$/m);
+  assert.match(r, /Ты: Поправил Cache\.java/);
+  assert.doesNotMatch(r, /No\.java|Есть новости/, 'a refused edit and the current turn stay out');
+  assert.equal(recapText(msgs, 1), '', 'nothing before the first turn');
+});
+
 test('ask waits for the answer: a reply in the chat goes into the call, the agent goes on in the same turn', async () => {
   const t = await startTestServer({ orchestration: { askWaitMin: 1 } });
   try {

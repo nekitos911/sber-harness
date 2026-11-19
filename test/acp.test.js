@@ -203,6 +203,20 @@ test('a dead agent process restarts on the next message with session/load; so do
   assert.equal(records().length, before + 2, 'session/load after the harness restart');
 });
 
+test('a session that will not load: a few tries, then a new one that gets the harness\'s record of the chat', async () => {
+  const s = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'acpmock', cwd, prompt: 'задача: поправь кеш' })).body;
+  await idle(s.id);
+  const ext = (await session(s.id)).externalSessionId;
+  await send(s.id, '#die');
+  await waitFor(async () => (await session(s.id)).status === 'error', { what: 'process death' });
+  fs.rmSync(path.join(root, 'mock-state', `acp-${ext.replace(/[^\w-]/g, '_')}.json`)); // the CLI lost it: its load fails
+  await send(s.id, 'что дальше?');
+  await waitFor(async () => (await said(s.id)).some((t) => t.includes('(запись чата: задача: поправь кеш)')), { timeout: 30000, what: 'the recap reached the new session' });
+  assert.ok((await messages(s.id)).some((m) => /не удалось загрузить сессию агента .* харнесс передал ей правила и краткую запись/.test(m.text)));
+  assert.notEqual((await session(s.id)).externalSessionId, ext, 'a new CLI session');
+  await idle(s.id);
+});
+
 test('an idle ACP process is unloaded (warm false) and reloaded with session/load on the next message', async () => {
   const s = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'acpidle', cwd, prompt: 'привет' })).body;
   await idle(s.id);

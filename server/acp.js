@@ -10,6 +10,8 @@ import { resolveInside } from './fs.js';
 
 const PROTOCOL_VERSION = 1;
 const ACP_INIT_TIMEOUT_MS = 120000;
+const LOAD_ATTEMPTS = 3; // session/load: tries before a new session
+const LOAD_RETRY_MS = 3000;
 
 /** JSON-RPC 2.0 over a child's stdio (newline-delimited JSON). */
 function connect(child, { onRequest, onNotify, log }) {
@@ -236,15 +238,26 @@ export function createAcp({ onWarm = () => {} } = {}) {
       if (o.externalSessionId && init?.agentCapabilities?.loadSession) {
         c.loading = true;
         try {
-          await c.rpc.request('session/load', { sessionId: o.externalSessionId, cwd: o.cwd, mcpServers });
-          c.sessionId = o.externalSessionId;
+          // a load right after «extension store busy» failed with «Internal error» once and worked a moment later
+          for (let n = 1; ; n++) {
+            try {
+              await c.rpc.request('session/load', { sessionId: o.externalSessionId, cwd: o.cwd, mcpServers });
+              c.sessionId = o.externalSessionId;
+              break;
+            } catch (e) {
+              if (n >= LOAD_ATTEMPTS) throw e;
+              await new Promise((r) => setTimeout(r, LOAD_RETRY_MS));
+            }
+          }
         } catch (e) {
-          c.note = `ACP: не удалось загрузить сессию агента (${e.message}) — начата новая, прежний контекст агенту недоступен.`;
+          c.note = `ACP: не удалось загрузить сессию агента (${e.message}) — начата новая; харнесс передал ей правила и краткую запись этого чата.`;
+          c.lostContext = true;
         } finally {
           c.loading = false;
         }
       } else if (o.externalSessionId) {
-        c.note = 'ACP: агент не умеет загружать сессии — начата новая, прежний контекст агенту недоступен.';
+        c.note = 'ACP: агент не умеет загружать сессии — начата новая; харнесс передал ей правила и краткую запись этого чата.';
+        c.lostContext = true;
       }
       if (!c.sessionId) c.sessionId = (await c.rpc.request('session/new', { cwd: o.cwd, mcpServers })).sessionId;
       onWarm(o.sid, true);
@@ -282,7 +295,12 @@ export function createAcp({ onWarm = () => {} } = {}) {
           c.note = null;
         }
         if (stop) throw Object.assign(new Error('stopped'), { stopped: true });
-        const r = await c.rpc.request('session/prompt', { sessionId: c.sessionId, prompt: [{ type: 'text', text: o.prompt }] });
+        // a new session in place of one that would not load: the recap goes with this prompt (a slash command stays first)
+        let text = o.prompt;
+        const recap = c.lostContext && o.recap ? o.recap() : '';
+        c.lostContext = false;
+        if (recap) text = text.startsWith('/') ? `${text}\n\n${recap}` : `${recap}\n\n${text}`;
+        const r = await c.rpc.request('session/prompt', { sessionId: c.sessionId, prompt: [{ type: 'text', text }] });
         res.code = 0;
         res.sawResult = true;
         // before the result event: the turn closes at result, an error stop reason must already be known then

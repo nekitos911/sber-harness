@@ -33,6 +33,8 @@ const record = (params) => {
 
 async function prompt({ sessionId, prompt: parts }) {
   const text = parts.map((p) => p.text || '').join('\n');
+  // the harness's recap for a session that would not load: say it arrived (and what the chat was about)
+  if (text.includes('[harness] Твоя прежняя сессия не загрузилась')) say(sessionId, `(запись чата: ${/Первое сообщение \(задача\):\n([^\n]*)/.exec(text)?.[1] ?? '?'}) `);
   if (text.trim() === '/models') {
     // like the headless mock: the catalogue from the fixture, in a (hidden) helper session
     say(sessionId, fs.readFileSync(new URL('../test/fixtures/gigacode.models.txt', import.meta.url), 'utf8'));
@@ -46,7 +48,8 @@ async function prompt({ sessionId, prompt: parts }) {
   update(sessionId, { sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'думаю' } });
   say(sessionId, `${loadedHere.has(sessionId) ? 'loaded, ' : ''}ACP mock, turn ${st.turns}.`);
   update(sessionId, { sessionUpdate: 'plan', entries: [{ content: 'ответить', status: 'in_progress', priority: 'high' }] });
-  if (/#die\b/.test(text)) process.exit(3);
+  // the message itself, not the harness's record of the chat before it (that one repeats old directives)
+  if (/#die\b/.test(text.split('\n\n').at(-1))) process.exit(3);
   if (/#slow\b/.test(text)) {
     for (let i = 0; i < 20; i++) {
       if (cancelled.has(sessionId)) return { stopReason: 'cancelled' };

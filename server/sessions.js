@@ -87,6 +87,38 @@ export const contextSize = (v) => {
 /** Exit codes as signed numbers: Windows reports a forced end as 4294967295 (= -1). */
 /** A tool call whose turn ended without its result (stopped, crashed, the harness restarted): never «running» again. */
 export const UNFINISHED_TOOL = 'Ход закончился без результата этого вызова.';
+
+const EDIT_TOOL = /^(edit|replace|write_file|writefile|write|multiedit|apply_patch|create_file|str_replace\w*)$/i;
+/**
+ * What this chat was about, from the harness's own transcript, for an agent whose CLI session could not be loaded (a new
+ * one has none of it): the task, the person's messages, the agent's latest answers, the files it changed. Turns before
+ * `beforeTurn` only (the current turn's message goes as itself). '' when there is nothing before.
+ */
+export function recapText(messages, beforeTurn, max = 9000) {
+  const past = messages.filter((m) => (m.turn ?? 0) < beforeTurn);
+  if (!past.some((m) => m.kind === 'user' || m.kind === 'assistant')) return '';
+  const cut = (t, n) => (t.length > n ? `${t.slice(0, n)}…` : t);
+  const first = past.find((m) => m.kind === 'user');
+  const edited = [...new Set(past.filter((m) => m.kind === 'tool' && m.tool && EDIT_TOOL.test(m.tool.name) && m.tool.status !== 'error')
+    .map((m) => m.tool.input?.file_path ?? m.tool.input?.absolute_path ?? m.tool.input?.path).filter((p) => typeof p === 'string'))];
+  const lines = past.filter((m) => m !== first && (m.kind === 'user' || m.kind === 'assistant') && m.text?.trim())
+    .map((m) => `${m.kind === 'user' ? 'Человек' : 'Ты'}: ${cut(m.text.trim(), m.kind === 'user' ? 800 : 600)}`);
+  const head = [
+    '[harness] Твоя прежняя сессия не загрузилась (ошибка CLI), это новая — без прежнего контекста. Ниже — запись этого чата в харнессе:',
+    'продолжай с того места, где остановился; не начинай заново и не переделывай сделанное (проверь по файлам и git).',
+    first ? `\nПервое сообщение (задача):\n${cut(first.text.trim(), 1500)}` : '',
+    edited.length ? `\nФайлы, которые ты уже менял: ${edited.slice(0, 40).join(', ')}` : '',
+  ].filter(Boolean).join('\n');
+  // the latest exchanges matter most: keep from the end while it fits
+  const tail = [];
+  let size = head.length;
+  for (const l of lines.reverse()) {
+    if (size + l.length > max) break;
+    tail.unshift(l);
+    size += l.length + 1;
+  }
+  return [head, tail.length ? `\nПоследнее в чате:\n${tail.join('\n')}` : ''].filter(Boolean).join('\n');
+}
 export const settledTool = (tool) => ({ ...tool, status: 'error', output: tool.output ?? UNFINISHED_TOOL });
 
 export const signedCode = (code) => (Number.isInteger(code) && code > 0x7fffffff ? code - 0x100000000 : code);
@@ -950,6 +982,8 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
           sid: s.id, agent: s.agent, launcher, ctx, command: exe, cwd: s.cwd, env, logFile: turnFiles(s, r.turn).logFile, roots: [s.cwd, ...(s.includeDirs || []), attachmentsDir(s.id)],
           idleMs: (agentCfg.acpIdleMin ?? agentCfg.acpIdleTimeoutMin ?? 30) * 60000,
           externalSessionId: s.externalSessionId, prompt, initTimeoutMs: firstEventTimeoutMs, onEvent: (ev) => applyEvent(s, ev), clientFs: !!agentCfg.acpClientFs,
+          // its CLI session would not load: the new one gets the harness's rules and what this chat was about
+          recap: () => [hooks.preamble(s), recapText(store.messages(s.id), r.turn)].filter(Boolean).join('\n\n'),
         });
       } else {
         handle = runTurn({
