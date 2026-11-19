@@ -24,7 +24,8 @@ async function harness() {
   const srv = await startServer({
     dataDir, configFile, port: 0,
     configOverrides: {
-      defaultAgent: 'mock', mcpServersFrom: null, history: { adopt: false }, agents: {
+      // the mock connects no MCP: a turn past 3 s says so (the «#slow» ones)
+      defaultAgent: 'mock', mcpServersFrom: null, history: { adopt: false }, session: { mcpGraceSec: 3 }, agents: {
         mock: { modelsDiscovery: null },
         acpmock: { launcher: 'mock', label: 'ACP mock', transport: 'acp', acpClientFs: true, command: [process.execPath, path.join(CODE_ROOT, 'scripts', 'mock-acp-agent.js')], approvalMode: 'auto', approvalModes: ['default', 'auto'], modelsDiscovery: { prompt: '/models', maxAgeHours: 24 } },
         // the same mock, unloaded after 0.4 s idle
@@ -32,8 +33,8 @@ async function harness() {
       },
     },
   });
-  const api = async (method, p, body) => {
-    const res = await fetch(srv.url + p, { method, headers: { 'x-harness-token': srv.token, 'content-type': 'application/json' }, body: body && JSON.stringify(body) });
+  const api = async (method, p, body, headers = {}) => {
+    const res = await fetch(srv.url + p, { method, headers: { 'x-harness-token': srv.token, 'content-type': 'application/json', ...headers }, body: body && JSON.stringify(body) });
     return { status: res.status, body: await res.json() };
   };
   return { srv, api };
@@ -201,6 +202,17 @@ test('a dead agent process restarts on the next message with session/load; so do
   await idle(chat.id);
   assert.match((await said(chat.id)).at(-1), /^loaded, ACP mock, turn \d+\. Done\.$/);
   assert.equal(records().length, before + 2, 'session/load after the harness restart');
+});
+
+test('an ACP process whose MCP servers never connected is named in the chat; one that asked for the harness tools is not', async () => {
+  const lone = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'acpmock', cwd, prompt: '#slow' })).body; // the mock connects no MCP
+  await idle(lone.id);
+  assert.ok((await messages(lone.id)).some((m) => m.kind === 'system' && /не подключились MCP-серверы/.test(m.text)));
+  const ok = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'acpmock', cwd, prompt: '#slow' })).body;
+  await waitFor(async () => (await session(ok.id)).warm, { what: 'process up' });
+  await h.api('GET', '/api/agent/tools', undefined, { 'x-harness-session': ok.id }); // what harness-mcp does when GigaCode connects it
+  await idle(ok.id);
+  assert.ok(!(await messages(ok.id)).some((m) => /не подключились MCP-серверы/.test(m.text)));
 });
 
 test('a session that will not load: a few tries, then a new one that gets the harness\'s record of the chat', async () => {

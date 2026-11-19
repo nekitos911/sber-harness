@@ -87,6 +87,8 @@ export const contextSize = (v) => {
 /** Exit codes as signed numbers: Windows reports a forced end as 4294967295 (= -1). */
 /** A tool call whose turn ended without its result (stopped, crashed, the harness restarted): never «running» again. */
 export const UNFINISHED_TOOL = 'Ход закончился без результата этого вызова.';
+const MCP_GRACE_MS = 60000; // GigaCode connects its MCP servers at start: a minute with no word from them is none
+export const MCP_MISSING = '⚠ Похоже, агенту не подключились MCP-серверы: за этот запуск GigaCode ни разу не обратился к инструментам harness (вероятно, onework и sourcecontrol тоже недоступны — агент их не найдёт). Частая причина — параллельно работающий GigaCode в терминале держит хранилище расширений (ExtensionStoreBusy). Меню чата «Ещё» → «Сбросить статус» перезапустит процесс агента, контекст сохранится.';
 
 /**
  * The queued messages as one prompt. A slash command («/full-task …») works only as the prompt's first word: queued
@@ -209,6 +211,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
   // agents.<id>.transport "acp": long-lived agent processes; session.warm = its process is loaded
   const acp = createAcp({
     onWarm(sid, warm) {
+      if (warm && rt.has(sid) && !find(sid)?.warm) rt.get(sid).procAt = Date.now(); // a new process: its MCP servers start anew
       const s = find(sid);
       if (s && !!s.warm !== warm) {
         s.warm = warm;
@@ -883,6 +886,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     if (s.revive) s.revive = null; // a turn that reached its result went well: the automatic attempts start over
     if (s.waitingFor === 'auth') s.waitingFor = null;
     settleVirtuals(s);
+    mcpCheck(s, r);
     emit(s);
     runTurnEnded(s, r, false);
     store.flush();
@@ -1116,6 +1120,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
 
   function finishTurn(s, res) {
     const r = runtime(s.id);
+    mcpCheck(s, r);
     if (r.closedEarly) return finishLingered(s, r, res);
     clearInterval(r.registryTimer);
     r.running = false;
@@ -1368,6 +1373,18 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     }
   }, (Number(config.session?.stallCheckSec) || 15) * 1000);
   stallTimer.unref?.();
+
+  /**
+   * ACP tells nothing about the agent's MCP servers (headless says it in its init event). The harness's own bridge asks
+   * for the tool list when GigaCode connects it: an ACP process that worked a minute without that has no MCP at all —
+   * the agent searched for harness/onework tools in vain. Said once per process.
+   */
+  function mcpCheck(s, r) {
+    if (s.virtual || config.agents[s.agent]?.transport !== 'acp' || !r.procAt || r.mcpWarnedFor === r.procAt) return;
+    if ((r.mcpAt ?? 0) >= r.procAt || Date.now() - r.procAt < (Number(config.session?.mcpGraceSec) || MCP_GRACE_MS / 1000) * 1000) return;
+    r.mcpWarnedFor = r.procAt;
+    addMessage(s, { kind: 'system', text: MCP_MISSING });
+  }
 
   /** One approval mode more permissive than the session's (approvalModes order), or the last one. */
   function nextMode(s) {
@@ -1738,6 +1755,11 @@ ${note.trim()}` : text });
       return emit(s);
     },
 
+    /** harness-mcp of this session asked for its tools: GigaCode connected the harness's MCP server. */
+    mcpSeen(sid) {
+      if (sid && find(sid)) runtime(sid).mcpAt = Date.now();
+    },
+
     async restart(sid) {
       const s = get(sid);
       const r = runtime(sid);
@@ -1749,6 +1771,7 @@ ${note.trim()}` : text });
         spawnPty(s, pty);
       } else if (!r.running) {
         s.status = 'idle';
+        acp.drop(sid); // a new process on the next message: its MCP servers start again, the context loads (session/load)
         emit(s);
       }
       return s;

@@ -1720,7 +1720,10 @@ export async function startServer(opts = {}) {
   });
 
   // agent-facing orchestration API
-  route('GET', '/api/agent/tools', ({ req }) => orch.toolsFor(req.headers['x-harness-session'])); // per caller: a depth-limited sub-agent has no `agent`
+  route('GET', '/api/agent/tools', ({ req }) => {
+    sessions.mcpSeen(req.headers['x-harness-session']); // GigaCode connected the harness's MCP server for this session
+    return orch.toolsFor(req.headers['x-harness-session']); // per caller: a depth-limited sub-agent has no `agent`
+  });
   route('GET', '/api/agent/worker_wait', ({ query }) => orch.waitRun(check(query, { sessionId: 'string' }).sessionId, query.timeoutMs));
   // the asking session's own `ask` call waits here for the answer (harness-mcp polls it; stateless across restarts)
   route('GET', '/api/agent/ask_wait', ({ query, req }) => orch.askWait(req.headers['x-harness-session'] || fail(400, 'нужен заголовок x-harness-session'), query.timeoutMs));
