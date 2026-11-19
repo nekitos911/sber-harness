@@ -35,7 +35,7 @@ const join = (g: { title: string; body: string }) => (g.body ? `${g.title}\n\n${
  * upstream; one message box (✨ writes it); a split «Закоммитить» button; staged and unstaged files; commits folded below.
  */
 /** `inline`: a worktree of a chat in the projects folder, shown inside that chat's panel (never the folder list again). */
-export function ChangesTab({ cwd, inline = false }: { cwd: string; inline?: boolean }) {
+export function ChangesTab({ cwd, inline = false, agentBusy = false }: { cwd: string; inline?: boolean; agentBusy?: boolean }) {
   const prEnabled = useStore((s) => s.integrations.pr)
   const prSupported = useFeature('pr-status')
   const stageOn = useFeature('git-stage')
@@ -53,6 +53,10 @@ export function ChangesTab({ cwd, inline = false }: { cwd: string; inline?: bool
   const gen = useGenerate(cwd, 'commit')
   const settings = useSettings()
   const autoGen = gen.on && settings?.git.generateMessages !== false
+  // an agent at work here (or the folder chat that edits this worktree: `agentBusy`): the change set moves all the time — its
+  // build logs grow every second — and every move started a new GigaCode run for the message. Once it stops: one run.
+  const agentHere = useStore((s) => s.sessions.some((x) => x.status === 'running' && normPath(x.worktreePath ?? x.cwd) === normPath(cwd)))
+  const quiet = !agentBusy && !agentHere
   const [busy, setBusy] = useState<'commit' | 'push' | null>(null)
   const [query, setQuery] = useState<string | null>(null) // null = the search field is closed
   const [menu, setMenu] = useState<'more' | 'split' | null>(null)
@@ -94,7 +98,7 @@ export function ChangesTab({ cwd, inline = false }: { cwd: string; inline?: bool
   // Auto: once per change set, 800 ms after it settles, while the box is untouched and the panel is on screen.
   const askedFor = useRef<string | null>(null)
   useEffect(() => {
-    if (!autoGen || !hasChanges || touched.current || askedFor.current === changeSig) return
+    if (!autoGen || !quiet || !hasChanges || touched.current || askedFor.current === changeSig) return
     const cached = generatedCache.get(changeSig)
     if (cached) { askedFor.current = changeSig; generated.current = true; setMsg(join(cached)); return }
     const t = window.setTimeout(() => {
@@ -103,7 +107,7 @@ export function ChangesTab({ cwd, inline = false }: { cwd: string; inline?: bool
       void generate(changeSig)
     }, 800)
     return () => window.clearTimeout(t)
-  }, [autoGen, hasChanges, changeSig]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [autoGen, quiet, hasChanges, changeSig]) // eslint-disable-line react-hooks/exhaustive-deps
 
   if (git?.error) return inline ? <p className="muted wpanel-section">{git.error}</p> : <LinkedWorktrees cwd={cwd} error={git.error} />
   if (!status) return <div className="wpanel-section"><Skeleton rows={4} /></div>
@@ -430,7 +434,8 @@ function LinkedWorktrees({ cwd, error }: { cwd: string; error: string }) {
   return (
     <>
     <div className="wpanel-section">
-      <h3>Где идёт работа</h3>
+      <h3>{list.length > 1 ? 'Репозитории этой работы' : 'Репозиторий этой работы'}</h3>
+      {list.length > 1 && <p className="muted linked-hint">Ниже — изменения выбранного; нажмите другой, чтобы переключиться.</p>}
       <ul className="linked-wts">
         {list.map((w) => (
           <li key={w.path} className="linked-wt-li">
@@ -448,7 +453,8 @@ function LinkedWorktrees({ cwd, error }: { cwd: string; error: string }) {
       {seenLine}
     </div>
     {/* its changes, commit and push right in the chat: no leaving the work to look at them */}
-    <ChangesTab key={current.path} cwd={current.path} inline />
+    <div className="linked-current" data-tip={current.path}>Изменения в <strong>{current.repo ?? basename(current.path)}</strong> <span className="mono muted">{basename(current.path)}</span></div>
+    <ChangesTab key={current.path} cwd={current.path} inline agentBusy={running} />
     </>
   )
 }
