@@ -72,6 +72,10 @@ const WAIT_SLICE_MS = 25000;
  */
 export async function runAndWait(name, args, progressToken, notify = () => {}) {
   const { sessionId } = await api('POST', `/api/agent/${encodeURIComponent(name)}`, args);
+  // in the background: nothing to wait for here — the harness brings the result to the caller as a message
+  if (args.run_in_background === true || args.background === true) {
+    return { status: 'started', sessionId, note: 'The sub-agent works in the background in its own chat; its result will come to you as a message. Go on with your work or end your turn.' };
+  }
   const deadline = Date.now() + Math.max(Number(args.timeoutMin) || 60, 0) * 60000;
   for (let tick = 1; ; tick++) {
     const left = deadline - Date.now();

@@ -62,7 +62,7 @@ export function parseProfile(text) {
 
 export const NO_SUBAGENTS = 'Субагенты не запускают своих субагентов: выполни это сам или верни запрос оркестратору';
 // the fallback matters: told only «не используй встроенный agent», an agent without the harness tool skipped its reviewers
-export const SUBAGENT_CONTEXT = 'Ты работаешь внутри harness. Субагентов запускай инструментом mcp__harness__agent с теми же аргументами, что у встроенного agent (subagent_type, prompt, model) — harness откроет каждого субагента отдельным чатом и вернёт тебе его результат так же. Несколько субагентов параллельно — несколько вызовов mcp__harness__agent в одном ходе. Встроенный agent в фоне (run_in_background) не запускай: ни harness, ни человек не видят такого субагента, а с концом хода его работа может пропасть. Только если mcp__harness__agent не находится (tool_search по слову «harness» пуст) — запускай встроенным agent (не в фоне) и напиши об этом одной строкой в отчёте; не отказывайся из-за этого от субагентов и ревьюеров. Вопросы человеку — через mcp__harness__ask (варианты в options): вызов ждёт ответа и возвращает его; если вернулся без ответа — заверши ход.';
+export const SUBAGENT_CONTEXT = 'Ты работаешь внутри harness. Субагентов запускай инструментом mcp__harness__agent с теми же аргументами, что у встроенного agent (subagent_type, prompt, model) — harness откроет каждого субагента отдельным чатом и вернёт тебе его результат так же. Несколько субагентов параллельно — несколько вызовов mcp__harness__agent в одном ходе. Нужен субагент в фоне (ты продолжаешь, человек может тебе писать) — mcp__harness__agent с run_in_background: true: он работает своим чатом, его результат придёт тебе сообщением. Встроенный agent в фоне не запускай: ни harness, ни человек такого субагента не видят, а с концом хода его работа может пропасть. Только если mcp__harness__agent не находится (tool_search по слову «harness» пуст) — запускай встроенным agent (не в фоне) и напиши об этом одной строкой в отчёте; не отказывайся из-за этого от субагентов и ревьюеров. Вопросы человеку — через mcp__harness__ask (варианты в options): вызов ждёт ответа и возвращает его; если вернулся без ответа — заверши ход.';
 const CONTEXT_LAUNCHERS = new Set(['gigacode', 'qwen', 'gemini', 'mock']);
 
 export const render = (tpl, vars) => String(tpl).replace(/\{(\w+)\}/g, (m, k) => (Object.hasOwn(vars, k) ? String(vars[k] ?? '') : m));
@@ -596,7 +596,9 @@ export function createOrchestration({ config, store, bus, tasks, sessions, addWo
       });
       if (!persistent && (s.worktreePath ?? s.cwd) !== (caller.worktreePath ?? caller.cwd)) sessions.update(s.id, { persistent: true });
       // awaitedBy: the caller waits inside worker_run/agent — a question of this child must reach it there (ask, waitRun)
-      sessions.update(s.id, { awaitedBy: caller.id, ...(readOnly ? { readOnly: true } : {}) });
+      // background: nobody waits inside a call — its result comes to the caller as a message (reportToAsker)
+      const background = a.background === true || a.run_in_background === true;
+      sessions.update(s.id, { ...(background ? { awaitedBy: null, askedParent: true } : { awaitedBy: caller.id }), ...(readOnly ? { readOnly: true } : {}) });
       const readOnlyNote = callerFull && readOnlyWanted ? 'Работай только на чтение: ничего не создавай и не меняй (кроме отчёта через worker_done).' : null;
       sessions.deliver(s.id, { from: caller.id, text: [profile?.body, readOnlyNote, `## Задание\n${a.spec}`].filter(Boolean).join('\n\n') });
     } catch (e) {
@@ -606,7 +608,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions, addWo
       throw e;
     }
     if (worktree === 'new' && !(caller.includeDirs || []).some((d) => samePath(d, cwd))) sessions.patch(caller.id, { includeDirs: [...(caller.includeDirs || []), cwd] }, { strict: false });
-    return { sessionId: s.id, placement: a.worktree ? worktree : `${worktree} (auto)` };
+    return { sessionId: s.id, placement: a.worktree ? worktree : `${worktree} (auto)`, ...(a.background === true || a.run_in_background === true ? { background: true } : {}) };
   }
 
   async function waitRun(sessionId, timeoutMs = 25000) {
@@ -1311,6 +1313,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions, addWo
         approvalMode: str('approval mode'), title: str('chat title'),
         worktree: str('current or new; omit it for the automatic choice (new when workspace is another repository, else current)', { enum: ['current', 'new'] }), workspace: str('another repository (workspace name): a persistent child there'),
         name: str('short worktree name for worktree new'), timeoutMin: { type: 'number', description: 'minutes to wait (default 60)' },
+        background: { type: 'boolean', description: 'true: return at once; the sub-agent works in its own chat and its result comes to you as a message' },
       }, ['spec']),
       run: (a, c) => workerRun(a, c),
     },
@@ -1322,6 +1325,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions, addWo
         description: str('short description'), approvalMode: str('approval mode'),
         worktree: str('current or new; omit it for the automatic choice (new when workspace is another repository, else current)', { enum: ['current', 'new'] }), workspace: str('another repository (workspace name): the sub-agent works there — for a task, in the task\'s worktree of that repository (made once, then shared: its reviewer lands in the same one)'),
         timeoutMin: { type: 'number', description: 'minutes to wait (default 60)' },
+        run_in_background: { type: 'boolean', description: 'true: return at once — the sub-agent works in its own chat the user sees, its result comes to you as a message; meanwhile go on or end your turn (the user can write to you)' },
       }, ['prompt']),
       run: async (a, c) => {
         const r = await workerRun({ ...a, profile: a.subagent_type, spec: a.prompt }, c);

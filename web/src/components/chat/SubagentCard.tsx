@@ -62,7 +62,8 @@ export function SubagentCard({ tool }: { tool: ToolCall }) {
       </>}
     >
       <div className="agent-body">
-        {background && <p className="muted agent-bg-note">Запущен в фоне встроенным инструментом GigaCode: его ход идёт вне этого чата, харнес его не видит и отдельного чата у него нет. Результат агент прочитает сам; если ход агента закончится раньше, работа субагента может пропасть.{bg?.outputFile && <> Его вывод пишется в <span className="mono">{bg.outputFile}</span>.</>}</p>}
+        {background && /harness/.test(tool.name) && <p className="muted agent-bg-note">Работает в фоне отдельным чатом («Открыть чат субагента»). Его результат придёт главному агенту сообщением, а пока главному агенту можно писать.</p>}
+        {background && !/harness/.test(tool.name) && <p className="muted agent-bg-note">Запущен в фоне встроенным инструментом GigaCode: его ход идёт вне этого чата, харнес его не видит и отдельного чата у него нет. Результат агент прочитает сам; если ход агента закончится раньше, работа субагента может пропасть.{bg?.outputFile && <> Его вывод пишется в <span className="mono">{bg.outputFile}</span>.</>}</p>}
         {progress.length > 0 && (
           <pre ref={feed} className="agent-feed" aria-live={running ? 'polite' : undefined}>{progress.join('\n')}</pre>
         )}

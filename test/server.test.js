@@ -243,6 +243,19 @@ test('ask with options reaches the parent as a user message with options', async
   assert.deepEqual(m.options, ['8080', '9090']);
 });
 
+test('a sub-agent in the background: the call returns at once, its own chat works, its result comes to the caller as a message', async () => {
+  const main = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', cwd: repo, prompt: 'главный' })).body;
+  await waitFor(async () => (await state()).sessions.find((s) => s.id === main.id && s.status === 'idle' && !s.pid), { what: 'main idle' });
+  const r = await h.api('POST', '/api/agent/agent', { subagent_type: 'Explore', prompt: 'разведка #done нашёл 3 места', run_in_background: true }, { 'x-harness-session': main.id });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(r.body.background, true);
+  const helper = (await state()).sessions.find((s) => s.id === r.body.sessionId);
+  assert.deepEqual([helper.parentId, helper.awaitedBy ?? null, helper.askedParent], [main.id, null, true], 'nobody waits inside a call');
+  const result = await waitFor(async () => (await messages(main.id)).find((m) => m.kind === 'user' && m.from === helper.id && /Result \(done\)/.test(m.text)), { what: 'the result as a message' });
+  assert.match(result.text, /нашёл 3 места/);
+  await waitFor(async () => (await state()).sessions.find((s) => s.id === main.id && !s.pid && s.status !== 'running'), { what: 'main settled' });
+});
+
 test('a queued slash command goes first in the prompt (behind a helper\'s report it was plain text)', async () => {
   const { promptOf } = await import('../server/sessions.js');
   const report = { text: '[harness] Message from s_1 (backend-engineer): Result (done): готово' };
