@@ -45,6 +45,18 @@ test('a projects-folder chat without a task: the worktree its agent made is its 
   await waitFor(async () => { const s = (await state()).sessions.find((x) => x.id === chat.id); return !s.pid && s.status !== 'running'; }, { what: 'settled' });
 });
 
+test('binding a chat that lost its task: the worktrees named after the key (made long before, a release one too) are the task\'s', async () => {
+  const chat = (await h.api('POST', '/api/handoff', { input: 'просто чат' })).body.session;
+  await waitFor(async () => { const s = (await state()).sessions.find((x) => x.id === chat.id); return !s.pid && s.status !== 'running'; }, { what: 'settled' });
+  const a = path.join(projects, 'svc-worktrees', 'PROJ-88');
+  const b = path.join(projects, 'svc-worktrees', 'PROJ-88-rel154');
+  gitIn(svc, 'worktree', 'add', '-q', '-b', 'feature/PROJ-88', a);
+  gitIn(svc, 'worktree', 'add', '-q', '-b', 'release-fix', b); // the key only in the folder name
+  gitIn(svc, 'worktree', 'add', '-q', '-b', 'feature/PROJ-880', path.join(projects, 'svc-worktrees', 'PROJ-880')); // another task
+  const { task } = (await h.api('POST', `/api/sessions/${chat.id}/task`, { ref: 'PROJ-88', rename: false })).body;
+  assert.deepEqual(task.worktrees.map((w) => path.resolve(w.path)).sort(), [path.resolve(a), path.resolve(b)].sort());
+});
+
 test('binding needs a key; a pushed branch keeps its name', async () => {
   const chat = (await h.api('POST', '/api/handoff', { input: 'ещё одна правка' })).body.session;
   assert.equal((await h.api('POST', `/api/sessions/${chat.id}/task`, { ref: 'без ключа' })).status, 400);

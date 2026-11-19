@@ -153,6 +153,7 @@ export function TaskDrawer({ task, ctx, onClose }: { task: Task; ctx: BoardCtx; 
           {!session && <HandoffPopover task={task} anchor={primaryRef} open={pop === 'handoff'} onClose={() => setPop(null)} />}
           {reworkable && <ReworkPopover task={task} anchor={primaryRef} open={pop === 'rework'} onClose={() => setPop(null)} />}
         </div>
+        {!session && <UnboundChat task={task} taskKey={key} />}
         {blocked.length > 0 && <p className="drawer-blocked">Ждёт задач: {blocked.join(', ')}</p>}
         {confirmDelete && (
           <div className="drawer-note drawer-confirm">
@@ -777,6 +778,28 @@ function PrRow({ target, cwd, branch, known }: { target: string; cwd: string | n
       ) : (
         <button type="button" className="btn btn-sm" onClick={() => openDialog({ kind: 'pr', cwd, base: target })}>Создать PR в {target}</button>
       )}
+    </div>
+  )
+}
+
+/** A chat that names this task (its key or link) but is not bound to it: «Привязать» gives the task its agent. */
+function UnboundChat({ task, taskKey: key }: { task: Task; taskKey: string }) {
+  const bindOn = useFeature('bind-task')
+  const chat = useStore((s) => s.sessions.find((x) => x.kind === 'chat' && !x.virtual && !x.archived && !x.taskId
+    && (x.title.includes(key) || (!!task.externalUrl && x.title.includes(task.externalUrl)))))
+  const [busy, setBusy] = useState(false)
+  if (!bindOn || !chat) return null
+  const bind = async () => {
+    setBusy(true)
+    const r = await tryApi<{ task: Task; session: Session }>('POST', `/sessions/${encodeURIComponent(chat.id)}/task`, { ref: key })
+    setBusy(false)
+    if (r) setState((s) => ({ tasks: upsert(s.tasks, r.task), sessions: upsertSession(s.sessions, r.session) }))
+  }
+  return (
+    <div className="drawer-note">
+      <span>Над задачей, похоже, работает чат «{chat.title}», но он к ней не привязан.</span>
+      <button type="button" className="btn btn-sm" onClick={() => openSession(chat.id)}>Открыть</button>
+      <button type="button" className="btn btn-sm" disabled={busy} onClick={() => void bind()}>{busy ? 'Привязываю…' : 'Привязать'}</button>
     </div>
   )
 }

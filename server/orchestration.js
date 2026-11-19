@@ -1693,11 +1693,12 @@ export function createOrchestration({ config, store, bus, tasks, sessions, addWo
       const key = tasks.key(task);
       // the meta is keyed by a normalized path: the real one (its case) comes from the repositories' worktree lists
       const keys = new Set(Object.entries(db.worktreeMeta || {}).filter(([, m]) => m.createdBySession === s.id).map(([k]) => k));
-      const all = (await Promise.all(db.workspaces.filter((w) => w.isGit).map((w) => git.worktrees(w.path).catch(() => [])))).flat();
-      const mine = keys.size ? all.filter((w) => keys.has(wtKey(w.path))).map((w) => w.path) : [];
-      const paths = [...new Set([...mine, ...(!s.atRoot && (await git.isRepo(s.cwd)) ? [s.worktreePath || s.cwd] : [])])].filter((p) => fs.existsSync(p));
       const esc = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       const hasKey = (b) => new RegExp(`(^|[^A-Za-z0-9])${esc}($|[^A-Za-z0-9])`, 'i').test(b || '');
+      const lists = await Promise.all(db.workspaces.filter((w) => w.isGit).map((w) => git.worktrees(w.path).catch(() => [])));
+      // the agent's own worktrees, and (not a main checkout) the ones named after the task: «<repo>-worktrees\KEY», «feature/KEY»
+      const mine = lists.flatMap((list) => list.filter((w, i) => keys.has(wtKey(w.path)) || (i > 0 && (hasKey(w.branch) || hasKey(path.basename(w.path)))))).map((w) => w.path);
+      const paths = [...new Set([...mine, ...(!s.atRoot && (await git.isRepo(s.cwd)) ? [s.worktreePath || s.cwd] : [])])].filter((p) => fs.existsSync(p));
       const worktrees = [...(task.worktrees || [])];
       const renamed = [];
       for (const p of paths) {
