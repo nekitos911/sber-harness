@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useState, type MouseEvent } from 'react'
 import { Bot, Check, ChevronRight, Clock, ExternalLink, GitMerge, GitPullRequest, RefreshCw, TriangleAlert, X, XCircle } from 'lucide-react'
-import { tryApi } from '../api'
+import { api, errorText, qs, tryApi } from '../api'
+import { parseDiff, type DiffFile } from '../lib/diff'
+import { FileDiff } from './DiffView'
+import { Markdown } from '../components/Markdown'
 import { openDialog, openSession, openTask, toast, useFeature, useStore } from '../store'
 import { loadPrsMine, type PrItem, type PrScope } from '../lib/prsMine'
 import { openPrSettings } from '../lib/pr'
@@ -25,6 +28,7 @@ export function MinePrs() {
   useEffect(() => { loadPrsMine(scope) }, [scope])
   useEffect(() => { if (refreshing && data && typeof data === 'object' && !('error' in data)) setRefreshing(false) }, [data, refreshing])
   const refresh = () => { setRefreshing(true); loadPrsMine(scope, true) }
+  const [sel, setSel] = useState<PrItem | null>(null) // the PR open in the drawer
 
   const list = data && typeof data === 'object' && 'items' in data ? data : null
   const repoErrors = (list?.errors ?? []).filter((e): e is { repo: string; error: string } => !!e.repo)
@@ -71,7 +75,7 @@ export function MinePrs() {
               <p>{scope === 'mine' ? 'Ваши открытые PR во всех репозиториях появятся здесь.' : 'PR веток задач появятся здесь, когда их создадут.'}</p>
             </div>
           )}
-          {repos.map(({ repo, items }) => <RepoGroup key={repo} repo={repo} items={items} now={now} />)}
+          {repos.map(({ repo, items }) => <RepoGroup key={repo} repo={repo} items={items} now={now} onPick={setSel} />)}
           {repoErrors.length > 0 && (
             <Disclosure className="prs-errors" summary={<span className="muted">Не ответили {repoErrors.length} {plural(repoErrors.length, 'репозиторий', 'репозитория', 'репозиториев')}</span>}>
               <ul>{repoErrors.map((e) => <li key={e.repo}><strong>{e.repo}</strong> <span className="muted mono">{e.error}</span></li>)}</ul>
@@ -79,11 +83,12 @@ export function MinePrs() {
           )}
         </div>
       )}
+      {sel && <PrDrawer key={`${sel.repo}#${sel.index}`} it={sel} now={now} onClose={() => setSel(null)} />}
     </div>
   )
 }
 
-function RepoGroup({ repo, items, now }: { repo: string; items: PrItem[]; now: number }) {
+function RepoGroup({ repo, items, now, onPick }: { repo: string; items: PrItem[]; now: number; onPick: (it: PrItem) => void }) {
   const [open, setOpenState] = useState(() => loadDraft<boolean>(`prs:open:${repo}`) ?? true)
   const toggle = () => { setOpenState(!open); saveDraft(`prs:open:${repo}`, open ? false : null) }
   return (
@@ -92,7 +97,7 @@ function RepoGroup({ repo, items, now }: { repo: string; items: PrItem[]; now: n
         <ChevronRight className="chev" aria-hidden />
         {repo} <span className="count">{items.length}</span>
       </button>
-      {open && items.map((it) => <PrRow key={it.url} it={it} now={now} />)}
+      {open && items.map((it) => <PrRow key={it.url} it={it} now={now} onPick={onPick} />)}
     </section>
   )
 }
@@ -128,14 +133,17 @@ function prAction(it: PrItem, action: 'merge' | 'decline') {
   })
 }
 
-function PrRow({ it, now }: { it: PrItem; now: number }) {
+function PrRow({ it, now, onPick }: { it: PrItem; now: number; onPick: (it: PrItem) => void }) {
   const session = useStore((s) => (it.sessionId ? s.sessions.find((x) => x.id === it.sessionId) : undefined))
   const actionsOn = useFeature('pr-actions') && !!it.workspaceId
   const st = prStanding(it)
   const open = () => window.open(it.url, '_blank', 'noopener,noreferrer')
+  // newer servers: the row opens the PR here (its diff, comments); the icon opens it in the browser
+  const detail = useFeature('pr-detail') && !!it.workspaceId
+  const pick = () => (detail ? onPick(it) : open())
   return (
-    <div className="pr-row pr-row-link" role="link" tabIndex={0} data-tip="Открыть PR в новой вкладке" onClick={open}
-      onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); open() } }}>
+    <div className="pr-row pr-row-link" role="link" tabIndex={0} data-tip={detail ? 'Открыть PR: изменения и комментарии' : 'Открыть PR в новой вкладке'} onClick={pick}
+      onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); pick() } }}>
       <span className="pr-standing" data-k={st.k}>{st.label}</span>
       <span className="pr-row-main">
         <span className="pr-row-title"><span className="mono muted">#{it.index}</span> <strong>{it.title}</strong></span>
@@ -171,5 +179,82 @@ function PrRow({ it, now }: { it: PrItem; now: number }) {
         </span>
       )}
     </div>
+  )
+}
+
+interface PrDetail { diff: { text?: string; error?: string; local?: boolean; hostError?: string | null }; comments: { items?: { author: string | null; text: string; at: number | null; path: string | null; line: number | null }[]; error?: string } }
+
+/** One PR in detail beside the list: where it stands, its reviewers, its changes file by file and its comments. */
+function PrDrawer({ it, now, onClose }: { it: PrItem; now: number; onClose: () => void }) {
+  const [d, setD] = useState<PrDetail | { error: string } | null>(null)
+  const [tab, setTab] = useState<'files' | 'comments'>('files')
+  const cwd = useStore((s) => s.workspaces.find((w) => w.id === it.workspaceId)?.path ?? '')
+  const actionsOn = useFeature('pr-actions') && !!it.workspaceId
+  useEffect(() => {
+    let live = true
+    api<PrDetail>('GET', `/prs/detail${qs({ workspaceId: it.workspaceId ?? '', index: String(it.index), head: it.head, base: it.base })}`)
+      .then((r) => { if (live) setD(r) }, (e) => { if (live) setD({ error: errorText(e) }) })
+    return () => { live = false }
+  }, [it])
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && !document.querySelector('dialog[open]')) onClose() }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [onClose])
+  const st = prStanding(it)
+  const files: DiffFile[] = d && !('error' in d) && d.diff.text ? parseDiff(d.diff.text) : []
+  const comments = d && !('error' in d) ? d.comments.items ?? [] : []
+  return (
+    <aside className="pr-drawer" aria-label={`PR #${it.index}`}>
+      <header className="pr-drawer-head">
+        <span className="pr-standing" data-k={st.k}>{st.label}</span>
+        <h2 className="ellipsis" data-tip={it.title}><span className="mono muted">#{it.index}</span> {it.title}</h2>
+        <button type="button" className="icon-btn" aria-label="Закрыть" data-tip="Закрыть (Esc)" onClick={onClose}><X /></button>
+      </header>
+      <div className="pr-drawer-meta">
+        <span className="mono">{it.head} → {it.base}</span>
+        <span className="muted">{it.repo}</span>
+        <span className="muted">обновлён {ago(it.updatedAt, now)}</span>
+        {it.taskId && <button type="button" className="chip chip-mono" onClick={() => openTask(it.taskId!)}>{it.taskKey ?? it.taskId}</button>}
+        {it.sessionId && <button type="button" className="chip pr-agent" onClick={() => openSession(it.sessionId!)}><Bot aria-hidden />агент</button>}
+      </div>
+      {it.reviewers.length > 0 && (
+        <ul className="pr-drawer-reviewers">
+          {it.reviewers.map((r) => { const k = reviewKind(r.status); const Icon = REVIEW_ICON[k]; return <li key={r.name} data-k={k}><Icon aria-hidden /><span className="mono">{r.name}</span> <span className="muted">{REVIEW_TIP[k]}</span></li> })}
+        </ul>
+      )}
+      <div className="pr-drawer-actions">
+        {actionsOn && <Button size="sm" variant={st.k === 'approved' ? 'primary' : undefined} icon={<GitMerge />} disabled={it.mergeable === false} onClick={() => prAction(it, 'merge')}>Влить</Button>}
+        {actionsOn && <Button size="sm" variant="ghost" icon={<XCircle />} onClick={() => prAction(it, 'decline')}>Закрыть</Button>}
+        <Button size="sm" variant="ghost" icon={<ExternalLink />} onClick={() => window.open(it.url, '_blank', 'noopener,noreferrer')}>Открыть в браузере</Button>
+      </div>
+      <Segmented size="sm" label="Что показать" value={tab} onChange={setTab}
+        options={[{ value: 'files', label: d && !('error' in d) ? `Изменения · ${files.length}` : 'Изменения' }, { value: 'comments', label: d && !('error' in d) ? `Комментарии · ${comments.length}` : 'Комментарии' }]} />
+      <div className="pr-drawer-body">
+        {d === null ? <Skeleton rows={6} label="Загрузка PR…" />
+          : 'error' in d ? <div className="empty"><p>Не удалось получить PR: <span className="mono">{d.error}</span></p></div>
+          : tab === 'files' ? (
+            <>
+              {d.diff.local && <p className="muted pr-drawer-note">Сервис кода не отдал дифф{d.diff.hostError ? ` (${d.diff.hostError})` : ''} — показан по локальным веткам {it.base}...{it.head}.</p>}
+              {!d.diff.text && d.diff.error && <p className="muted pr-drawer-note">Дифф недоступен: {d.diff.error}</p>}
+              {files.map((f, i) => <FileDiff key={`${f.path}:${i}`} cwd={cwd} f={f} open={i < 10} />)}
+              {d.diff.text && files.length === 0 && <p className="muted pr-drawer-note">Изменений нет.</p>}
+            </>
+          ) : (
+            <>
+              {d.comments.error && <p className="muted pr-drawer-note">Комментарии недоступны: {d.comments.error}</p>}
+              {!d.comments.error && comments.length === 0 && <p className="muted pr-drawer-note">Комментариев нет.</p>}
+              <ul className="pr-comments">
+                {comments.map((c, i) => (
+                  <li key={i}>
+                    <div className="pr-comment-head"><strong>{c.author ?? 'кто-то'}</strong>{c.at && <span className="muted"> · {ago(c.at, now)}</span>}{c.path && <span className="mono muted"> · {c.path}{c.line ? `:${c.line}` : ''}</span>}</div>
+                    <div className="md-preview"><Markdown text={c.text} /></div>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+      </div>
+    </aside>
   )
 }

@@ -440,6 +440,13 @@ POST   /api/prs/merge|decline { workspaceId, index } -> { ok, index, result }   
                                  зарегистрированного репозитория; merge — integrations.pr.mergeTool (git_merge_pull_request), аргументы
                                  mergeArgs, по умолчанию как у decline {project, repository, pullRequestIndex} — VERIFY; кэш списка
                                  сбрасывается, PR задач перечитываются)
+GET    /api/prs/detail?workspaceId&index&head&base -> { diff: { text?, error?, local?, hostError? },
+                                     comments: { items?: [{ author, text, at, path, line }], error? } }
+                                 (feature `pr-detail`: панель PR на экране «Пулл-реквесты». diff — integrations.pr.diffTool
+                                  (git_get_pull_request_diff), comments — commentsTool (git_list_pull_request_comments), аргументы
+                                  detailArgs, по умолчанию как у decline — VERIFY. Каждая часть сообщает свою ошибку. Если сервис
+                                  не отдал дифф, а head/base известны — локальный `git diff base...head` (сначала origin/<ветка>,
+                                  без fetch), `local: true`; head/base, начинающиеся с «-», отклоняются)
 GET    /api/prs?scope=mine|tracked&refresh=1 -> { me, items: [{ workspaceId, repo, project, index, title, state, url,
                                      head, base, author, reviewers: [{ name, status }], mergeable, updatedAt, createdAt,
                                      taskId, taskKey, sessionId, byAgent }], errors: [{ repo, error }], at }

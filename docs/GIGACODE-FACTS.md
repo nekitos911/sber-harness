@@ -173,6 +173,12 @@
 - `project/repository` из `git remote get-url origin`: последние два сегмента пути без `.git`
   (`ssh://host:7998/PROJ/repo.git`, `https://host/PROJ/repo.git`, `git@host:PROJ/repo.git` → `PROJ`, `repo`).
 - Инструмента статуса CI нет (CI — отдельная система).
+- **НЕ ПРОВЕРЕНО (VERIFY):** аргументы и форма ответа `git_merge_pull_request`, `git_get_pull_request_diff`,
+  `git_list_pull_request_comments`. Харнес по умолчанию шлёт им те же аргументы, что и decline
+  (`{project, repository, pullRequestIndex}`), дифф ждёт строкой (или `{diff|content}`), комментарии — списком или
+  `{comments|items|values|data}` с полями author/text|body/created_at/path/line. Проверить:
+  `node scripts/mcp-call.js sourcecontrol --list`, затем по одному вызову на реальном PR, ответы — в `test/fixtures/`;
+  если аргументы другие — `integrations.pr.mergeArgs` / `detailArgs` в локальном конфиге.
 
 ## 7. Файл секретов (`CONSOLE_MCP_SECRETS`)
 

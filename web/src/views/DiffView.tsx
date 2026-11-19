@@ -76,7 +76,7 @@ export function DiffView({ cwd, path, rev }: { cwd: string; path: string | null;
   )
 }
 
-function FileDiff({ cwd, f, open }: { cwd: string; f: DiffFile; open: boolean }) {
+export function FileDiff({ cwd, f, open }: { cwd: string; f: DiffFile; open: boolean }) {
   const { dir, name } = splitPath(f.path)
   return (
     <Disclosure

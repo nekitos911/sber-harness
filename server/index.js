@@ -31,7 +31,7 @@ import { createHistory, historyMessages } from './history.js';
 import { runJob, jobStep, JOB_ID_RE, holdJob } from './jobs.js';
 import { DEMO_PORT, demoOverrides, seedDemoRepos, seedDemoTasks } from './demo.js';
 import { importTasks, importIssue, transitionTask, getExternal, getTransitions, importChildren, syncColumn, getPath, settleClosedTasks } from './integrations/tasks.js';
-import { fillTemplate, createPullRequest, prStatus, refreshTaskPr, declinePullRequest, mergePullRequest, prEnabled, prMe, repoPulls, prAuthor } from './integrations/pr.js';
+import { fillTemplate, createPullRequest, prStatus, refreshTaskPr, declinePullRequest, mergePullRequest, pullRequestDetail, prEnabled, prMe, repoPulls, prAuthor } from './integrations/pr.js';
 
 const MAX_BODY = 1024 * 1024;
 const MIME = {
@@ -44,7 +44,7 @@ const NO_BUILD_HTML = '<!doctype html><meta charset="utf-8"><title>Harness</titl
 const GRADES = ['default', 'fast', 'review', 'explore'];
 // optional API groups this server implements (docs/ARCHITECTURE.md "Feature flags"); a flag ships with its route
 export const FEATURES = ['branches', 'fs-search', 'pr-status', 'agent-info', 'models-refresh', 'tracker-links', 'board-columns', 'review-loop',
-  'subagents', 'virtual-sessions', 'worker-run', 'skills-install', 'demo', 'worktree-meta', 'open', 'sdd', 'health', 'folders', 'include-dirs', 'questions', 'permissions', 'activity', 'rework', 'fs-raw', 'tracker-import', 'pr-decline', 'task-suggest', 'recovery', 'acp', 'worktree-lazy', 'cli-history', 'prs-mine', 'git-generate', 'git-via-agent', 'git-stage', 'handoff', 'release-resolve', 'cli-adopt', 'handoff-dry-run', 'integrations-check', 'pick-folder', 'checks', 'revive', 'bind-task', 'open-file', 'pr-actions'];
+  'subagents', 'virtual-sessions', 'worker-run', 'skills-install', 'demo', 'worktree-meta', 'open', 'sdd', 'health', 'folders', 'include-dirs', 'questions', 'permissions', 'activity', 'rework', 'fs-raw', 'tracker-import', 'pr-decline', 'task-suggest', 'recovery', 'acp', 'worktree-lazy', 'cli-history', 'prs-mine', 'git-generate', 'git-via-agent', 'git-stage', 'handoff', 'release-resolve', 'cli-adopt', 'handoff-dry-run', 'integrations-check', 'pick-folder', 'checks', 'revive', 'bind-task', 'open-file', 'pr-actions', 'pr-detail'];
 // titles of operations the UI may follow by sending x-job-id (WS { t: 'job' } frames)
 const JOB_TITLES = {
   'POST /api/tasks/sync': 'Синхронизация с трекером',
@@ -1626,6 +1626,23 @@ export async function startServer(opts = {}) {
   });
   // the PR list's own actions: a PR of a registered repository by its number — merged or closed, the list and the
   // tasks' PR state re-read after
+  // one PR in detail (the PR list's drawer): the host's diff — else the local branches' (base...head, no fetch) — and
+  // its comments
+  route('GET', '/api/prs/detail', async ({ query }) => {
+    check(query, { workspaceId: 'string', index: 'string' });
+    if ([query.head, query.base].some((b) => typeof b === 'string' && b.startsWith('-'))) fail(400, 'head/base: имя ветки');
+    const ws = db.workspaces.find((w) => w.id === query.workspaceId && w.isGit) || fail(404, `репозиторий ${query.workspaceId} не найден`);
+    const d = await pullRequestDetail({ config, mcp, cwd: ws.path, index: Number(query.index) });
+    if ((d.diff.error || !d.diff.text?.trim()) && query.head && query.base) {
+      const ref = async (b) => ((await git.refExists(ws.path, `origin/${b}`)) ? `origin/${b}` : (await git.refExists(ws.path, b)) ? b : null);
+      const [h, b] = await Promise.all([ref(query.head), ref(query.base)]);
+      if (h && b) {
+        const local = (await git.git(ws.path, ['diff', '--no-color', `${b}...${h}`], { ok: [0, 1, 128] })).stdout;
+        if (local.trim()) d.diff = { text: local, local: true, hostError: d.diff.error ?? null };
+      }
+    }
+    return d;
+  });
   route('POST', '/api/prs/:action', async ({ params, body }) => {
     if (!['merge', 'decline'].includes(params.action)) fail(404, 'действие: merge или decline');
     check(body, { workspaceId: 'string' });

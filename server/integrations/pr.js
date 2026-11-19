@@ -194,6 +194,38 @@ export async function declinePullRequest({ config, mcp, cwd, index }) {
   return { ok: true, index, result: typeof value === 'string' ? value : JSON.stringify(value) };
 }
 
+/** Comments in whatever shape the host gives them: [{ author, text, at, path, line }] (a list, or { comments | items | values }). */
+export function prComments(value) {
+  const list = Array.isArray(value) ? value : value?.comments ?? value?.items ?? value?.values ?? value?.data ?? [];
+  return (Array.isArray(list) ? list : []).map((c) => ({
+    author: c?.author?.display_name ?? c?.author?.name ?? c?.author?.username ?? c?.user?.username ?? c?.user?.name ?? (typeof c?.author === 'string' ? c.author : null) ?? c?.username ?? null,
+    text: String(c?.text ?? c?.body ?? c?.comment ?? c?.content ?? ''),
+    at: Date.parse(c?.created_at ?? c?.createdAt ?? c?.created ?? c?.date ?? '') || null,
+    path: c?.path ?? c?.file?.path ?? c?.anchor?.path ?? null,
+    line: c?.line ?? c?.anchor?.line ?? null,
+  })).filter((c) => c.text.trim());
+}
+
+/**
+ * A pull request in detail: its diff and its comments from the host — integrations.pr.diffTool
+ * (git_get_pull_request_diff) and commentsTool (git_list_pull_request_comments), args detailArgs, by default those of
+ * decline (VERIFY: the tools' own schemas). Each part says its own error; the caller may diff locally instead.
+ */
+export async function pullRequestDetail({ config, mcp, cwd, index }) {
+  const cfg = config.integrations?.pr;
+  if (!prEnabled(config, mcp)) throw Object.assign(new Error('интеграция PR выключена (integrations.pr.enabled)'), { status: 501 });
+  if (!Number.isInteger(index) || index <= 0) throw Object.assign(new Error('index: нужно целое положительное число'), { status: 400 });
+  const { project, repository } = await remoteInfo(cwd);
+  if (!project || !repository) throw Object.assign(new Error(`не удалось определить проект/репозиторий по origin в ${cwd}`), { status: 400 });
+  const args = fillTemplate(cfg.detailArgs || cfg.declineArgs || DECLINE_ARGS, { project, repository, index });
+  const call = (tool) => mcp.callTool(cfg.server, tool, args).then(toolResultValue);
+  const [diff, comments] = await Promise.all([
+    call(cfg.diffTool || 'git_get_pull_request_diff').then((v) => ({ text: typeof v === 'string' ? v : String(v?.diff ?? v?.content ?? '') }), (e) => ({ error: e.message })),
+    call(cfg.commentsTool || 'git_list_pull_request_comments').then((v) => ({ items: prComments(v) }), (e) => ({ error: e.message })),
+  ]);
+  return { diff, comments };
+}
+
 /**
  * Merges pull request `index` of the repository at cwd: integrations.pr.mergeTool (git_merge_pull_request), its args
  * integrations.pr.mergeArgs — by default those of decline (VERIFY: the tool's own schema). The host refuses an unapproved
