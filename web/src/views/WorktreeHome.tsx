@@ -8,6 +8,7 @@ import { useGit } from '../lib/git'
 import { useNow } from '../lib/useNow'
 import { StatusIcon } from '../components/bits'
 import { openFolder } from '../components/WorktreeMenu'
+import { Disclosure } from '../components/ui'
 
 /** A worktree with no open tabs: what lives here and the quick ways to start. */
 export function WorktreeHome({ cwd }: { cwd: string }) {
@@ -31,15 +32,19 @@ export function WorktreeHome({ cwd }: { cwd: string }) {
   const here = useMemo(() => sessions.filter((s) => normPath(s.cwd) === p).sort((a, b) => b.lastActivityAt - a.lastActivityAt), [sessions, p])
   const linked = useMemo(() => {
     const ids = new Set(here.map((s) => s.id))
-    return tasks.filter((t) => (t.assigneeSessionId && ids.has(t.assigneeSessionId)) || (!!branch && t.branch === branch && (!wsId || t.workspaceId === wsId)))
-  }, [tasks, here, branch, wsId])
+    const keyIn = (t: (typeof tasks)[number]) => !!branch && !!t.externalId && new RegExp(`(^|[^A-Za-z0-9])${t.externalId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}($|[^A-Za-z0-9])`, 'i').test(branch)
+    return tasks.filter((t) => (t.assigneeSessionId && ids.has(t.assigneeSessionId)) || (!!branch && t.branch === branch && (!wsId || t.workspaceId === wsId)) || (t.worktrees ?? []).some((w) => normPath(w.path) === p) || keyIn(t))
+  }, [tasks, here, branch, wsId, p])
 
   // chats that work in this worktree from elsewhere (a task started in the projects folder makes its worktree itself)
   const elsewhere = useMemo(() => {
     const ids = new Set(here.map((s) => s.id))
     const mine = tasks.filter((t) => (t.worktrees ?? []).some((w) => normPath(w.path) === p))
-    const by = new Set([...mine.map((t) => t.assigneeSessionId), wt?.meta?.createdBySession].filter((x): x is string => !!x))
-    return sessions.filter((s) => !ids.has(s.id) && !s.archived && s.kind === 'chat' && (by.has(s.id) || mine.some((t) => t.id === s.taskId)))
+    const maker = sessions.find((s) => s.id === wt?.meta?.createdBySession)
+    const by = new Set([...mine.map((t) => t.assigneeSessionId), maker?.id, maker?.parentId].filter((x): x is string => !!x))
+    return sessions.filter((s) => !ids.has(s.id) && !s.archived && s.kind === 'chat' && !s.virtual
+      && (by.has(s.id) || mine.some((t) => t.id === s.taskId) || (s.includeDirs ?? []).some((d) => normPath(d) === p)))
+      .sort((x, y) => Number(y.status === 'running') - Number(x.status === 'running') || y.lastActivityAt - x.lastActivityAt)
   }, [sessions, tasks, here, p, wt])
 
   const where = { cwd, workspaceId: wsId }
@@ -118,12 +123,6 @@ export function WorktreeHome({ cwd }: { cwd: string }) {
         </section>
       )}
 
-      {historyOn && (
-        <section className="wt-home-section">
-          <h2>История GigaCode</h2>
-          <HistoryList cwd={cwd} />
-        </section>
-      )}
 
       {linked.length > 0 && (
         <section className="wt-home-section">
@@ -139,6 +138,14 @@ export function WorktreeHome({ cwd }: { cwd: string }) {
               </li>
             ))}
           </ul>
+        </section>
+      )}
+
+      {historyOn && (
+        <section className="wt-home-section">
+          <Disclosure summary={<h2>История GigaCode в этой папке</h2>} defaultOpen={here.length === 0 && linked.length === 0 && elsewhere.length === 0}>
+            <HistoryList cwd={cwd} />
+          </Disclosure>
         </section>
       )}
 
