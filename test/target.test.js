@@ -374,8 +374,8 @@ test('a pull request in detail: the host diff and its comments, whatever shape t
   assert.deepEqual(prComments('нет комментариев'), []);
   const repo = makeRepo(path.join(dir, 'detail repo'));
   gitIn(repo, 'remote', 'add', 'origin', 'https://code.example/PROJ/demo-service.git');
-  fs.writeFileSync(path.join(fixtures, 'sourcecontrol.git_get_pull_request_diff.json'), text('diff --git a/A.java b/A.java\n--- a/A.java\n+++ b/A.java\n@@ -1 +1 @@\n-a\n+b\n'));
-  fs.writeFileSync(path.join(fixtures, 'sourcecontrol.git_list_pull_request_comments.json'), JSON.stringify({ comments: [{ author: { name: 'Иван' }, text: 'Поправь null' }] }));
+  fs.writeFileSync(path.join(fixtures, 'sourcecontrol.git_get_pull_request_diff.561.json'), text('diff --git a/A.java b/A.java\n--- a/A.java\n+++ b/A.java\n@@ -1 +1 @@\n-a\n+b\n'));
+  fs.writeFileSync(path.join(fixtures, 'sourcecontrol.git_list_pull_request_comments.561.json'), JSON.stringify({ comments: [{ author: { name: 'Иван' }, text: 'Поправь null' }] }));
   const cfg = config();
   const d = await pullRequestDetail({ config: cfg, mcp: createMcpManager(cfg), cwd: repo, index: 561 });
   assert.match(d.diff.text, /\+b/);

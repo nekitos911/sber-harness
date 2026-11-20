@@ -102,8 +102,8 @@ function ReleaseChip({ branch, candidates, onPick, onRemove }: { branch: string;
  * another target remains. With `detectText` the releases it names join live («только в релиз 54» drops the base),
  * and leave again when the text stops naming them; a chip the person removed is not brought back.
  */
-export function TargetsLine({ targets, onChange, workspaceId, detectText }: {
-  targets: string[]; onChange: (t: string[]) => void; workspaceId?: string | null; detectText?: string
+export function TargetsLine({ targets, onChange, workspaceId, detectText, compact }: {
+  targets: string[]; onChange: (t: string[]) => void; workspaceId?: string | null; detectText?: string; compact?: boolean
 }) {
   const settings = useSettings()
   const base = settings?.git.defaultBase ?? 'develop'
@@ -133,6 +133,7 @@ export function TargetsLine({ targets, onChange, workspaceId, detectText }: {
   // the note about how releases are done is shown once
   const [hint] = useState(() => !loadDraft<boolean>('hint:targets'))
   useEffect(() => { if (hint && hasRelease) saveDraft('hint:targets', true) }, [hint, hasRelease])
+  if (compact && !hasRelease && !rel.unresolved.length) return null
   return (
     <div className="targets-line">
       <span className="targets-label">Влить в:</span>

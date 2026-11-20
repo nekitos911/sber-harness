@@ -1279,7 +1279,9 @@ export async function startServer(opts = {}) {
     const failOpen = (e) => fail(400, `Не удалось запустить «${[command].flat()[0]}»: ${e.message}`);
     let child;
     try {
-      child = openSpawner(command, args, spawnOptions({ stdio: 'ignore' }, { group: true }));
+      const options = spawnOptions({ stdio: 'ignore' }, { group: true });
+      if (process.platform === 'win32' && command === fm) options.windowsHide = false;
+      child = openSpawner(command, args, options);
     } catch (e) {
       failOpen(e);
     }

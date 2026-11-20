@@ -1,0 +1,3 @@
+{
+  "diff": "diff --git a/src/limits.js b/src/limits.js\n--- a/src/limits.js\n+++ b/src/limits.js\n@@ -1 +1 @@\n-export const maxTextLength = 1000;\n+export const maxTextLength = 3000;\n"
+}

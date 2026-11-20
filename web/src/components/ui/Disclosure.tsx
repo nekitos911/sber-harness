@@ -33,7 +33,7 @@ export function Disclosure({ summary, actions, children, defaultOpen = false, op
         </button>
         {actions}
       </div>
-      <div className="collapse" data-open={open}>
+      <div className="collapse" data-open={open} inert={!open}>
         <div>{seen && children}</div>
       </div>
     </div>

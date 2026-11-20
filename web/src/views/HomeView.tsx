@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
-import { ArrowUp, FolderOpen, GitCompareArrows, MessageSquare, Wrench } from 'lucide-react'
+import { ArrowUp, FolderOpen, GitCompareArrows, MessageSquare, SlidersHorizontal, Wrench } from 'lucide-react'
 import { api, errorText } from '../api'
-import { openDialog, openSession, openWorktree, showPanel, toast, useFeature, useStore } from '../store'
+import { openDialog, openScreen, openSession, openWorktree, showPanel, toast, useFeature, useStore } from '../store'
 import { adoptSession } from '../lib/actions'
 import { endJob, startJob, useJobStep } from '../lib/jobs'
 import { loadDraft, saveDraft } from '../lib/draft'
-import { ago, basename, normPath } from '../lib/format'
+import { ago, normPath } from '../lib/format'
 import { dur, sessionVisualState, STATE_LABEL, type VisualState } from '../lib/sessionState'
 import { useCurrentTool, useTurnStart } from '../lib/live'
 import { FULL_ACCESS, modeShort, useSettings } from '../lib/agents'
@@ -14,14 +14,13 @@ import { listedChat } from '../lib/pending'
 import type { Session, Settings, Task } from '../types'
 import { StatusIcon } from '../components/bits'
 import { CliGlyph } from '../components/Sidebar'
-import { Select } from '../components/ui'
+import { Segmented, Select } from '../components/ui'
 import { ModelPicker } from '../components/pickers/ModelPicker'
 import { FolderPicker } from '../components/FolderPicker'
 import { ReworkPopover } from '../components/board/Rework'
 import { TargetsLine } from '../components/ReleaseTargets'
 import { SetupView, useSetupNeeded } from './SetupView'
 
-const LINK = /https?:\/\/\S+|\b[A-Z][A-Z0-9_]+-\d+\b/
 const REF = /https?:\/\/\S+|[A-Z][A-Z0-9_]+-\d+/
 const fill = (tpl: string, v: Record<string, string>) => tpl.replace(/\{(\w+)\}/g, (m, k: string) => (k in v ? v[k] : m))
 
@@ -61,11 +60,17 @@ function usePromptPreview(input: string, notes: string, agentId: string, targets
 export function HomeView() {
   // a fresh install: the first-run setup stands in for «Главная» until it is done or skipped
   const setup = useSetupNeeded()
+  const [kind, setKind] = useState<'chat' | 'task'>(() => loadDraft<'chat' | 'task'>('home:kind') ?? (loadDraft('home:input') || loadDraft('home:notes') ? 'task' : 'chat'))
+  const [sending, setSending] = useState(false)
   if (setup) return <div className="home-view"><div className="home-col"><SetupView /></div></div>
   return (
     <div className="home-view">
       <div className="home-col">
-        <Handoff />
+        <section className="handoff">
+          <Segmented label="Что открыть" disabled={sending} value={kind} onChange={(v) => { setKind(v); saveDraft('home:kind', v) }}
+            options={[{ value: 'chat', label: 'Чат' }, { value: 'task', label: 'Задача' }]} />
+          <Handoff key={kind} task={kind === 'task'} onSending={setSending} />
+        </section>
         <Now />
       </div>
     </div>
@@ -79,7 +84,8 @@ const EXAMPLES = [
   { label: 'оценить задачу', text: 'Оцени задачу: что придётся поменять и какие есть риски — ' },
 ]
 
-function Handoff() {
+function Handoff({ task, onSending }: { task: boolean; onSending: (busy: boolean) => void }) {
+  const inputKey = task ? 'home:input' : 'home:chat'
   const agents = useStore((s) => s.agents)
   const defaultAgent = useStore((s) => s.defaultAgent)
   const workspaces = useStore((s) => s.workspaces)
@@ -88,7 +94,6 @@ function Handoff() {
   // where the agent starts: the projects folder; without one (not everyone keeps all projects in one), a project
   const [projectId, setProjectId] = useState<string | null>(null)
   const where = root ?? repos.find((w) => w.id === projectId) ?? (repos.length === 1 ? repos[0] : undefined)
-  const settings = useSettings()
   const handoffOn = useFeature('handoff')
   const enabled = agents.filter((a) => a.enabled)
   // the explicit choice, else the default agent (the agents list may arrive after the first render)
@@ -97,10 +102,9 @@ function Handoff() {
   const agent = agents.find((a) => a.id === agentId)
   const [model, setModel] = useState<string | null>(null)
   const [mode, setMode] = useState<string | null>(null)
-  const [input, setInput] = useState(() => loadDraft<string>('home:input') ?? '')
-  const [notes, setNotes] = useState(() => loadDraft<string>('home:notes') ?? '')
-  // opens on the first focus and stays (hiding it on blur would move «Запустить» under the pointer mid-click)
-  const [notesOpen, setNotesOpen] = useState(false)
+  const [input, setInput] = useState(() => loadDraft<string>(inputKey) ?? '')
+  const [notes, setNotes] = useState(() => (task && loadDraft<string>('home:notes')) || '')
+  const [optionsOpen, setOptionsOpen] = useState(() => !!notes)
   const [job, setJob] = useState<string | null>(null)
   const step = useJobStep(job)
   const [error, setError] = useState<string | null>(null)
@@ -108,43 +112,43 @@ function Handoff() {
   const [picking, setPicking] = useState(false)
   const box = useRef<HTMLTextAreaElement>(null)
   const [targets, setTargets] = useState<string[]>([]) // «Куда»: empty until the text or the person sets it (then sent as is)
-  const preview = usePromptPreview(input, notes, agentId, targets)
+  const preview = usePromptPreview(task && optionsOpen ? input : '', notes, agentId, targets)
   const [previewOpen, setPreviewOpen] = useState(false)
 
-  const edit = (v: string) => { setInput(v); saveDraft('home:input', v || null); setError(null) }
+  const edit = (v: string) => { setInput(v); saveDraft(inputKey, v || null); setError(null) }
   const editNotes = (v: string) => { setNotes(v); saveDraft('home:notes', v || null) }
-  const showNotes = notesOpen || !!notes || LINK.test(input)
-  // what the line under the box promises: the projects folder and the first word of the task command («/full-task»)
-  const command = settings?.agents[agentId]?.taskPromptTemplate?.match(/^\/[\w-]+/)?.[0]
   const effectiveMode = mode ?? agent?.approvalMode ?? null
 
+  const needsProject = !where && (task || repos.length > 1)
   const go = async () => {
     const text = input.trim()
-    if (!text || job || !where) return
-    const id = startJob('Передать агенту', true)
+    if (!text || job || needsProject || !agentId) return
+    const id = startJob(task ? 'Передать агенту' : 'Начать чат', true)
     setJob(id)
+    onSending(true)
     setError(null)
     setNotice(null)
     try {
       const opts = { agent: agentId || undefined, approvalMode: mode ?? undefined, model: model ?? undefined }
-      const r = handoffOn
+      const r = task && handoffOn
         ? await api<{ session: Session; task: Task | null; jumped?: boolean; trackerError?: string; releaseWarning?: string }>('POST', '/handoff',
-          { input: text, notes: notes.trim() || undefined, ...opts, ...(targets.length ? { targets } : {}), ...(root ? {} : { workspaceId: where.id }) }, { jobId: id })
+          { input: text, notes: notes.trim() || undefined, ...opts, ...(targets.length ? { targets } : {}), ...(root ? {} : { workspaceId: where?.id }) }, { jobId: id })
         // older servers: a chat at the projects folder with the text as its first message
-        : { session: await api<Session>('POST', '/sessions', { kind: 'chat', cwd: where.path, workspaceId: where.id, prompt: [text, notes.trim()].filter(Boolean).join('\n\n'), ...opts }) }
+        : { session: await api<Session>('POST', '/sessions', { kind: 'chat', cwd: where?.path, workspaceId: where?.id, prompt: [text, notes.trim()].filter(Boolean).join('\n\n'), ...opts }) }
       if ('trackerError' in r && r.trackerError) setNotice(r.trackerError)
       if ('jumped' in r && r.jumped) toast('Задача уже в работе: открыл текущую сессию')
       if ('releaseWarning' in r && r.releaseWarning) toast(r.releaseWarning, 'info')
       setTargets([])
       edit('')
-      editNotes('')
-      setNotesOpen(false)
+      if (task) editNotes('')
+      setOptionsOpen(false)
       adoptSession(r.session)
     } catch (e) {
       setError(errorText(e))
     } finally {
       endJob(id)
       setJob(null)
+      onSending(false)
     }
   }
   const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -156,35 +160,16 @@ function Handoff() {
   }
 
   return (
-    <section className="handoff" aria-label="Передать задачу агенту">
-      <h1>Передать задачу агенту</h1>
+    <div className="handoff">
+      <h1>{task ? 'Передать задачу агенту' : 'Новый чат'}</h1>
       <div className="handoff-box" data-busy={!!job || undefined}>
         <textarea ref={box} className="handoff-input" rows={2} autoFocus value={input} disabled={!!job}
-          placeholder={`Ссылка или ключ задачи (PROJ-123) или что сделать${command ? `, ${command} добавится сам` : ''}`} aria-label="Задача для агента"
+          placeholder={task ? 'Опишите задачу или вставьте ссылку' : 'Что обсудим с агентом?'} aria-label={task ? 'Задача для агента' : 'Сообщение агенту'}
           onChange={(e) => edit(e.target.value)} onKeyDown={onKey} />
-        {!input && !job && (
-          <p className="handoff-examples"><span>Например:</span>
-            {EXAMPLES.map((x) => <button key={x.label} type="button" className="link-btn" onClick={() => { edit(x.text); box.current?.focus() }}>{x.label}</button>)}
-          </p>
-        )}
-        {/* one field on arrival: notes are optional — opened on purpose, or when a saved note exists */}
-        {!showNotes && !job && <button type="button" className="link-btn handoff-add-note" onClick={() => setNotesOpen(true)}>＋ заметка для агента</button>}
-        {showNotes && (
-          <textarea className="handoff-notes" rows={2} value={notes} disabled={!!job} placeholder="Заметки для агента (необязательно)" aria-label="Заметки"
-            onChange={(e) => editNotes(e.target.value)} onKeyDown={onKey} />
-        )}
-        {/* only when it says more than what was typed (a command, the task's text): a copy of the phrase is noise */}
-        {preview && preview !== [input.trim(), notes.trim()].filter(Boolean).join(' ') && (
-          <button type="button" className="handoff-preview" aria-expanded={previewOpen} onClick={() => setPreviewOpen(!previewOpen)}>
-            <span className="handoff-preview-label">Будет отправлено:</span>
-            <span className="mono handoff-preview-text" data-open={previewOpen || undefined}>{preview}</span>
-          </button>
-        )}
-        <TargetsLine targets={targets} onChange={setTargets} detectText={`${input} ${notes}`} />
         <div className="handoff-bar">
-          <Select size="sm" label="Агент" value={agentId} onChange={(v) => { setAgentId(v); setModel(null); setMode(null) }}
-            options={enabled.map((a) => ({ value: a.id, label: a.label }))} />
-          {agentId && <ModelPicker agentId={agentId} label="Модель" value={model} onChange={setModel} placement="bottom-start" />}
+          <button type="button" className="btn btn-ghost btn-sm" aria-expanded={optionsOpen} aria-controls="handoff-options" data-tip={task ? 'Агент, модель, заметки и ветки' : 'Рабочая папка, агент и модель'} onClick={() => setOptionsOpen(!optionsOpen)}>
+            <SlidersHorizontal aria-hidden />Параметры
+          </button>
           {agent && agent.approvalModes.length > 0 && (
             <Select size="sm" label="Режим" className={FULL_ACCESS.has(effectiveMode ?? '') ? 'mode-select mode-access' : 'mode-select'} value={effectiveMode ?? ''} onChange={setMode} display={modeShort(effectiveMode ?? '')}
               options={agent.approvalModes.map((m) => ({ value: m, label: modeShort(m), hint: agent.approvalModeLabels?.[m] }))} />
@@ -194,16 +179,37 @@ function Handoff() {
               options={repos.map((w) => ({ value: w.id, label: w.name }))} />
           )}
           <span className="grow" />
-          <button type="button" className="btn btn-primary handoff-go" disabled={!input.trim() || !!job || !where} onClick={() => void go()}>
-            {job ? (step ? `${step}…` : 'Запускаю…') : <>Запустить<ArrowUp aria-hidden /></>}
+          <button type="button" className="btn btn-primary handoff-go" disabled={!input.trim() || !!job || needsProject || !agentId} onClick={() => void go()}>
+            {job ? (step ? `${step}…` : 'Запускаю…') : <>{task ? 'Запустить' : 'Отправить'}<ArrowUp aria-hidden /></>}
           </button>
         </div>
+        <div id="handoff-options" hidden={!optionsOpen}>
+          <div className="handoff-options">
+            {where && <span className="set-note">Рабочая папка · {where.path}</span>}
+            <div className="handoff-pickers">
+              <Select size="sm" label="Агент" value={agentId} onChange={(v) => { setAgentId(v); setModel(null); setMode(null) }}
+                options={enabled.map((a) => ({ value: a.id, label: a.label }))} />
+              {agentId && <ModelPicker agentId={agentId} label="Модель" value={model} onChange={setModel} placement="bottom-start" />}
+            </div>
+            {task && <textarea className="textarea" rows={2} value={notes} disabled={!!job} placeholder="Заметка для агента" aria-label="Заметки"
+              onChange={(e) => editNotes(e.target.value)} onKeyDown={onKey} />}
+            {task && !input && !job && <div className="handoff-examples">Примеры задач
+              {EXAMPLES.map((x) => <button key={x.label} type="button" className="link-btn" onClick={() => { edit(x.text); box.current?.focus() }}>{x.label}</button>)}
+            </div>}
+            {preview && preview !== [input.trim(), notes.trim()].filter(Boolean).join(' ') && (
+              <button type="button" className="handoff-preview" aria-expanded={previewOpen} onClick={() => setPreviewOpen(!previewOpen)}>
+                <span className="handoff-preview-label">Будет отправлено:</span>
+                <span className="mono handoff-preview-text" data-open={previewOpen || undefined}>{preview}</span>
+              </button>
+            )}
+          </div>
+        </div>
+        {task && <TargetsLine targets={targets} onChange={setTargets} detectText={`${input} ${notes}`} compact={!optionsOpen} />}
       </div>
-      {root ? (
-        <p className="handoff-note">Агент запустится в {basename(root.path)}{command ? <> с <span className="mono">{command}</span></> : null}: сам выберет проект и заведёт для задачи свою ветку.</p>
-      ) : where ? (
-        <p className="handoff-note">Агент запустится в проекте {where.name}{command ? <> с <span className="mono">{command}</span></> : null} и заведёт для задачи свою ветку.</p>
-      ) : repos.length ? (
+      {!agentId && <p className="handoff-note">Выберите доступного агента в настройках.
+        <button type="button" className="link-btn" onClick={() => openScreen('settings')}>Настроить агента</button>
+      </p>}
+      {needsProject && (repos.length ? (
         <p className="handoff-note">Выберите проект — или укажите папку, где лежат все проекты: тогда агент выберет сам.
           <button type="button" className="btn btn-sm" onClick={() => setPicking(true)}><FolderOpen />Папка со всеми проектами…</button>
         </p>
@@ -213,11 +219,11 @@ function Handoff() {
           <button type="button" className="btn btn-sm" onClick={() => openDialog({ kind: 'workspace' })}><FolderOpen />Открыть проект…</button>
           <button type="button" className="btn btn-sm" onClick={() => setPicking(true)}>Папка со всеми проектами…</button>
         </p>
-      )}
+      ))}
       {notice && <p className="handoff-note handoff-warn" role="status">Трекер не ответил ({notice}): агент запущен по тексту.</p>}
       {error && <p className="handoff-error" role="alert">Не удалось запустить: {error}</p>}
       {picking && <FolderPicker title="Папка с проектами" onClose={() => setPicking(false)} onPick={(p) => void setRoot(p)} />}
-    </section>
+    </div>
   )
 }
 
@@ -236,12 +242,12 @@ function Now() {
     return {
       wait: top.filter((s) => WAIT.has(sessionVisualState(s))),
       run: top.filter((s) => RUN.has(sessionVisualState(s))),
-      done: top.filter((s) => !WAIT.has(sessionVisualState(s)) && !RUN.has(sessionVisualState(s)) && now - s.lastActivityAt < DAY),
+      done: top.filter((s) => !WAIT.has(sessionVisualState(s)) && !RUN.has(sessionVisualState(s)) && (s.finishedAt || s.preview?.trim() || s.status === 'done') && now - s.lastActivityAt < DAY),
     }
   }, [sessions, now])
   const taskOf = (s: Session) => (s.taskId ? tasks.find((t) => t.id === s.taskId) : undefined)
   if (!groups.wait.length && !groups.run.length && !groups.done.length) {
-    return <p className="now-empty">Здесь появятся задачи, которые вы передали агентам.</p>
+    return null
   }
   const done = moreDone ? groups.done : groups.done.slice(0, 5)
   return (

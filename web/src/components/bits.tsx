@@ -2,9 +2,13 @@ import { Circle, CircleCheck, CircleDashed, CircleDot, CircleHelp, CircleSlash, 
 import { sessionVisualState, STATE_LABEL, type VisualState } from '../lib/sessionState'
 import type { Session, SubAgentState } from '../types'
 
-type StatusLike = Pick<Session, 'status' | 'kind'> & Partial<Pick<Session, 'phase' | 'waitingFor' | 'stalled' | 'interrupted'>>
+type StatusLike = Pick<Session, 'status' | 'kind'> & Partial<Pick<Session, 'phase' | 'waitingFor' | 'stalled' | 'interrupted' | 'finishedAt' | 'preview' | 'externalSessionId'>>
 
-export const statusText = (s: StatusLike) => STATE_LABEL[sessionVisualState(s)]
+export function statusText(s: StatusLike) {
+  const state = sessionVisualState(s)
+  if (state === 'idle' && s.preview === '' && !s.finishedAt && !s.externalSessionId) return 'Ждёт первого сообщения'
+  return STATE_LABEL[state]
+}
 
 const ICONS: Record<VisualState, LucideIcon> = {
   waiting_answer: CircleHelp,
@@ -26,7 +30,8 @@ const ICONS: Record<VisualState, LucideIcon> = {
 export function StatusIcon({ session }: { session: StatusLike }) {
   const v = sessionVisualState(session)
   const Icon = ICONS[v]
-  return <Icon className="st" data-s={v} role="img" aria-label={STATE_LABEL[v]} />
+  const label = statusText(session)
+  return <Icon className="st" data-s={v} role="img" aria-label={label} data-tip={label} />
 }
 
 const LEGEND: VisualState[] = ['running', 'starting', 'waiting_answer', 'waiting_permission', 'stalled', 'auth', 'idle', 'done', 'error', 'stopped']

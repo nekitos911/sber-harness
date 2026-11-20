@@ -1,5 +1,5 @@
 import { createContext, memo, useContext, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react'
-import { Activity, ArrowUp, Bot, ChevronDown, Ellipsis, Folder, FolderTree, TriangleAlert, GitPullRequest, Pin, ChevronRight, FolderGit2, FolderPlus, GitBranch, GitBranchPlus, House, Inbox, MessageSquarePlus, Moon, Search, Settings, SquareKanban, SquareTerminal, Sun, X } from 'lucide-react'
+import { MessageSquare, Activity, ArrowUp, Bot, ChevronDown, Ellipsis, Folder, FolderTree, TriangleAlert, GitPullRequest, Pin, ChevronRight, FolderGit2, FolderPlus, GitBranch, GitBranchPlus, House, Inbox, MessageSquarePlus, Moon, Search, Settings, SquareKanban, SquareTerminal, Sun, X } from 'lucide-react'
 import { getState, useFeature, openDialog, openScreen, openSession, openWorktree, setState, showPanel, useActiveCwd, useStore, useThrottledStore, wtKey, type Screen } from '../store'
 import { archiveSession, dismissSession, renameSession, sessionMenu, unseenReply } from '../lib/sessionActions'
 import { loadWorktrees } from '../ws'
@@ -10,7 +10,7 @@ import { dur, sessionVisualState } from '../lib/sessionState'
 import { modelLabel, normModels, useSettings } from '../lib/agents'
 import { basename, normPath, plural, relTime, subTitle, tokens } from '../lib/format'
 import { loadDraft, saveDraft } from '../lib/draft'
-import { newChat, newTerminal } from '../lib/actions'
+import { newChat } from '../lib/actions'
 import type { Session, Task, Workspace, Worktree } from '../types'
 import { compareChats, compareRows, filteredOut, moveTo, orderProjects, prGroup, PR_GROUPS, staleChat, statusGroup, STATUS_GROUPS, type SbPrefs, type SortBy } from '../lib/sidebarPrefs'
 import type { VisualState } from '../lib/sessionState'
@@ -60,9 +60,19 @@ export function Sidebar() {
   const leaving = useLeaving(sessions)
   const sbp = useSbPrefs() // «Чаты из CLI», «Скрывать чаты старше» in the workspace parameters
   const openTab = useStore((s) => (s.view.kind === 'wt' ? s.wt[normPath(s.view.cwd)]?.active : null))
-  const hourly = Math.floor(useNow() / 3600000) // the age filter moves on hourly, not every tick
+  const ageMinute = sbp.chatsMaxAgeDays ? Math.floor(now / 60000) : 0
   const tree = useMemo(() => buildTree(sessions.filter((s) => (!s.archived || leaving.has(s.id)) && (sbp.showCli || s.origin !== 'cli') &&
-    (openTab === `s:${s.id}` || !staleChat(sbp, s, hourly * 3600000))), query, allWorktrees, sbp.sort), [sessions, query, allWorktrees, leaving, sbp, openTab, hourly])
+    (openTab === `s:${s.id}` || !staleChat(sbp, s, ageMinute * 60000))), query, allWorktrees, sbp.sort), [sessions, query, allWorktrees, leaving, sbp, openTab, ageMinute])
+  const archivedHelpers = useMemo(() => {
+    const byParent = new Map<string, Session[]>()
+    for (const s of sessions) {
+      if (!s.archived || !s.parentId || s.system || s.kind !== 'chat') continue
+      const group = byParent.get(s.parentId)
+      if (group) group.push(s)
+      else byParent.set(s.parentId, [s])
+    }
+    return byParent
+  }, [sessions])
   const filtering = !!query.trim()
   const rootWs = workspaces.find((w) => w.kind === 'root')
   const projects = workspaces.filter((w) => w.kind !== 'root')
@@ -119,7 +129,7 @@ export function Sidebar() {
           : unread > 0 && <span className="count" aria-label={`непрочитанных: ${unread}`} data-tip="Непрочитанные уведомления">{unread}</span>} />
       </div>
 
-      <MixedAgents.Provider value={new Set(tree.all.map((x) => x.agent)).size > 1}>
+      <ArchivedHelpers.Provider value={archivedHelpers}><MixedAgents.Provider value={new Set(tree.all.map((x) => x.agent)).size > 1}>
       <div className="tree" aria-label="Проекты и сессии">
         {!filtering && <PinnedSection tree={tree} />}
         {!filtering && <AttentionSection tree={tree} />}
@@ -161,7 +171,7 @@ export function Sidebar() {
           </div>
         )}
       </div>
-      </MixedAgents.Provider>
+      </MixedAgents.Provider></ArchivedHelpers.Provider>
 
       <div className="sb-foot">
         <NavItem screen="settings" icon={<Settings />} label="Настройки" />
@@ -362,7 +372,7 @@ function WorkingSection({ tree }: { tree: Tree }) {
   return (
     <section className="attention attention-run" aria-label="В работе">
       <div className="attention-head">В работе <span className="num">· {list.length}</span></div>
-      {list.map((s) => <SessionRow key={s.id} s={s} nested={false} level={0} />)}
+      {list.map((s) => <SessionRow key={s.id} s={s} nested={false} level={0} showLocation />)}
     </section>
   )
 }
@@ -392,6 +402,7 @@ const WEEK = 7 * 24 * 3600 * 1000
 const DRAG_TYPE = 'text/x-harness-project'
 const ATTENTION = new Set(['waiting_answer', 'waiting_permission', 'stalled', 'auth', 'error'])
 /** The agent's letter on rows only when the tree mixes agents (GigaCode and Claude): one agent needs no badge. */
+const ArchivedHelpers = createContext(new Map<string, Session[]>())
 const MixedAgents = createContext(false)
 const BUSY = new Set(['running', 'starting'])
 
@@ -683,7 +694,7 @@ function WorktreeRow({ ws, wt, sessions, terminals, dup, kids, active, fromOf, p
           </button>
         )}
         <span className="actions">
-          <RowAction label="Новый терминал в этом дереве" icon={<SquareTerminal />} onClick={() => void newTerminal(where)} />
+          <RowAction label="Новый чат в этом дереве" icon={<MessageSquarePlus />} onClick={() => void newChat(where)} />
           <RowAction label="Файлы" icon={<FolderTree />} onClick={() => { openWorktree(wt.path); showPanel('files') }} />
           <RowAction label="Действия с деревом" icon={<Ellipsis />} onClick={() => setMenu(true)} />
         </span>
@@ -734,11 +745,14 @@ function childrenOf(s: Session, kids: Map<string, Session[]>): { c: Session; via
 }
 
 function SessionNode({ s, kids, level = 0, base = 2, via, from }: { s: Session; kids: Map<string, Session[]>; level?: number; base?: number; via?: string; from?: Session }) {
-  // a finished sub-agent stays under its parent while the parent works (Orca), then it is archived and leaves the tree
-  const children = childrenOf(s, kids).filter((x) => !isFinishedSub(x.c) || s.status === 'running')
+  const past = useContext(ArchivedHelpers).get(s.id) ?? []
+  const family = childrenOf(s, kids)
+  const children = family.filter(({ c }) => !c.archived && (!isFinishedSub(c) || s.status === 'running'))
+  const finished = [...past, ...family.filter(({ c }) => !c.archived && isFinishedSub(c) && s.status !== 'running').map(({ c }) => c)]
+  const [historyOpen, setHistoryOpen] = useState(false)
   const internal = useStore((st) => st.subagents[s.id])
   const [open, setOpen] = useState(true)
-  const has = children.length > 0 || !!internal?.items.length
+  const has = children.length > 0 || !!internal?.items.length || finished.length > 0
   return (
     <>
       <SessionRow s={s} nested={level > 0} level={base + level} via={via} from={from} caret={has ? { open, toggle: () => setOpen(!open) } : undefined} />
@@ -747,6 +761,12 @@ function SessionNode({ s, kids, level = 0, base = 2, via, from }: { s: Session; 
           {children.map(({ c, via: v }) => isSub(c)
             ? <SessionRow key={c.id} s={c} nested level={base + level + 1} via={v} /> // a sub-agent never nests further: its own are lifted here
             : <SessionNode key={c.id} s={c} kids={kids} level={level + 1} base={base} />)}
+          {finished.length > 0 && <>
+            <button type="button" className="tree-row helper-history" style={depth(base + level + 1)} aria-expanded={historyOpen}
+              onClick={() => setHistoryOpen(!historyOpen)}><ChevronRight aria-hidden />Завершённые · {finished.length}</button>
+            {historyOpen && finished.map((c) => <button key={c.id} type="button" className="tree-row helper-history-item" style={depth(base + level + 2)}
+              data-tip={c.preview || c.title} onClick={() => openSession(c.id)}><MessageSquare aria-hidden /><span className="ellipsis">{c.title}</span></button>)}
+          </>}
           {internal?.items.map((a) => (
             <div
               key={a.id}
@@ -770,10 +790,10 @@ function SessionNode({ s, kids, level = 0, base = 2, via, from }: { s: Session; 
 }
 
 // a row re-renders when its own chat (or its place in the tree) changes, not on every event of every agent
-const SessionRow = memo(SessionRowView, (p, n) => p.s === n.s && p.nested === n.nested && p.level === n.level && p.via === n.via && p.from === n.from && p.caret?.open === n.caret?.open)
+const SessionRow = memo(SessionRowView, (p, n) => p.s === n.s && p.showLocation === n.showLocation && p.nested === n.nested && p.level === n.level && p.via === n.via && p.from === n.from && p.caret?.open === n.caret?.open)
 
-function SessionRowView({ s, nested, level = 0, caret, via, from }: {
-  s: Session; nested: boolean; level?: number; caret?: { open: boolean; toggle: () => void }; via?: string; from?: Session
+function SessionRowView({ s, nested, level = 0, caret, via, from, showLocation }: {
+  s: Session; nested: boolean; level?: number; showLocation?: boolean; caret?: { open: boolean; toggle: () => void }; via?: string; from?: Session
 }) {
   const mixed = useContext(MixedAgents)
   const [menu, setMenu] = useState(false)
@@ -816,7 +836,7 @@ function SessionRowView({ s, nested, level = 0, caret, via, from }: {
       data-s={v}
       data-unseen={unseenReply(s) || undefined}
       data-nested={nested || undefined}
-      data-detail={detailed || undefined}
+      data-detail={detailed || showLocation || undefined}
       data-enter={s.createdAt > APP_START || undefined}
       data-leaving={leaving || s.archived || undefined}
       tabIndex={0}
@@ -845,7 +865,9 @@ function SessionRowView({ s, nested, level = 0, caret, via, from }: {
             {from && <span className="sess-doing"> · от: <button type="button" className="sess-from" onClick={(e) => { e.stopPropagation(); openSession(from.id) }}>{from.title}</button></span>}
             {doing && !detailed && <span className="sess-doing"> - {doing}</span>}
           </span>
-          {detailed && <span className="sess-l2">{doing}</span>}
+          {(detailed || showLocation) && <span className="sess-l2" data-tip={showLocation ? s.cwd : undefined}>
+            {showLocation && basename(s.worktreePath ?? s.cwd)}{showLocation && detailed && ' · '}{detailed && doing}
+          </span>}
         </span>
       )}
       {model && <span className="sess-model">{model}</span>}

@@ -189,15 +189,17 @@ interface PrDetail { diff: { text?: string; error?: string; local?: boolean; hos
 /** One PR in detail beside the list: where it stands, its reviewers, its changes file by file and its comments. */
 function PrDrawer({ it, now, onClose }: { it: PrItem; now: number; onClose: () => void }) {
   const [d, setD] = useState<PrDetail | { error: string } | null>(null)
+  const [attempt, setAttempt] = useState(0)
   const [tab, setTab] = useState<'files' | 'comments'>('files')
   const cwd = useStore((s) => s.workspaces.find((w) => w.id === it.workspaceId)?.path ?? '')
   const actionsOn = useFeature('pr-actions') && !!it.workspaceId
   useEffect(() => {
     let live = true
+    setD(null)
     api<PrDetail>('GET', `/prs/detail${qs({ workspaceId: it.workspaceId ?? '', index: String(it.index), head: it.head, base: it.base })}`)
       .then((r) => { if (live) setD(r) }, (e) => { if (live) setD({ error: errorText(e) }) })
     return () => { live = false }
-  }, [it])
+  }, [it, attempt])
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && !document.querySelector('dialog[open]')) onClose() }
     document.addEventListener('keydown', onKey)
@@ -206,16 +208,16 @@ function PrDrawer({ it, now, onClose }: { it: PrItem; now: number; onClose: () =
   const st = prStanding(it)
   const files: DiffFile[] = d && !('error' in d) && d.diff.text ? parseDiff(d.diff.text) : []
   const comments = d && !('error' in d) ? d.comments.items ?? [] : []
+  const problem = d && ('error' in d ? d.error : tab === 'files' ? d.diff.error : d.comments.error)
   return (
     <aside className="pr-drawer" aria-label={`PR #${it.index}`}>
       <header className="pr-drawer-head">
-        <span className="pr-standing" data-k={st.k}>{st.label}</span>
-        <h2 className="ellipsis" data-tip={it.title}><span className="mono muted">#{it.index}</span> {it.title}</h2>
-        <button type="button" className="icon-btn" aria-label="Закрыть" data-tip="Закрыть (Esc)" onClick={onClose}><X /></button>
+        <div><span className="muted">{it.repo} · PR #{it.index}</span><h2>{it.title}</h2></div>
+        <button type="button" className="icon-btn" aria-label="Закрыть панель PR" data-tip="Закрыть панель (Esc)" onClick={onClose}><X /></button>
       </header>
       <div className="pr-drawer-meta">
         <span className="mono">{it.head} → {it.base}</span>
-        <span className="muted">{it.repo}</span>
+        <span className="pr-standing" data-k={st.k}>{st.label}</span>
         <span className="muted">обновлён {ago(it.updatedAt, now)}</span>
         {it.taskId && <button type="button" className="chip chip-mono" onClick={() => openTask(it.taskId!)}>{it.taskKey ?? it.taskId}</button>}
         {it.sessionId && <button type="button" className="chip pr-agent" onClick={() => openSession(it.sessionId!)}><Bot aria-hidden />агент</button>}
@@ -231,20 +233,22 @@ function PrDrawer({ it, now, onClose }: { it: PrItem; now: number; onClose: () =
         <Button size="sm" variant="ghost" icon={<ExternalLink />} onClick={() => window.open(it.url, '_blank', 'noopener,noreferrer')}>Открыть в браузере</Button>
       </div>
       <Segmented size="sm" label="Что показать" value={tab} onChange={setTab}
-        options={[{ value: 'files', label: d && !('error' in d) ? `Изменения · ${files.length}` : 'Изменения' }, { value: 'comments', label: d && !('error' in d) ? `Комментарии · ${comments.length}` : 'Комментарии' }]} />
+        options={[{ value: 'files', label: d && !('error' in d) && !d.diff.error ? `Изменения · ${files.length}` : 'Изменения' }, { value: 'comments', label: d && !('error' in d) && !d.comments.error ? `Комментарии · ${comments.length}` : 'Комментарии' }]} />
       <div className="pr-drawer-body">
         {d === null ? <Skeleton rows={6} label="Загрузка PR…" />
-          : 'error' in d ? <div className="empty"><p>Не удалось получить PR: <span className="mono">{d.error}</span></p></div>
-          : tab === 'files' ? (
+          : problem ? <div className="pr-load-error" role="status">
+            <strong>{tab === 'files' ? 'Не удалось загрузить изменения' : 'Не удалось загрузить комментарии'}</strong>
+            <Button size="sm" icon={<RefreshCw />} onClick={() => setAttempt((n) => n + 1)}>Повторить</Button>
+            <Disclosure summary="Технические подробности"><p>{problem}</p></Disclosure>
+          </div>
+          : !('error' in d) && (tab === 'files' ? (
             <>
-              {d.diff.local && <p className="muted pr-drawer-note">Сервис кода не отдал дифф{d.diff.hostError ? ` (${d.diff.hostError})` : ''} — показан по локальным веткам {it.base}...{it.head}.</p>}
-              {!d.diff.text && d.diff.error && <p className="muted pr-drawer-note">Дифф недоступен: {d.diff.error}</p>}
+              {d.diff.local && <p className="muted pr-drawer-note">Показаны изменения по локальным веткам.</p>}
               {files.map((f, i) => <FileDiff key={`${f.path}:${i}`} cwd={cwd} f={f} open={i < 10} />)}
-              {d.diff.text && files.length === 0 && <p className="muted pr-drawer-note">Изменений нет.</p>}
+              {files.length === 0 && <p className="muted pr-drawer-note">Изменений нет.</p>}
             </>
           ) : (
             <>
-              {d.comments.error && <p className="muted pr-drawer-note">Комментарии недоступны: {d.comments.error}</p>}
               {!d.comments.error && comments.length === 0 && <p className="muted pr-drawer-note">Комментариев нет.</p>}
               <ul className="pr-comments">
                 {comments.map((c, i) => (
@@ -255,7 +259,7 @@ function PrDrawer({ it, now, onClose }: { it: PrItem; now: number; onClose: () =
                 ))}
               </ul>
             </>
-          )}
+          ))}
       </div>
     </aside>
   )

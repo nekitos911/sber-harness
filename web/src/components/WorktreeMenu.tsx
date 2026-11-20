@@ -32,8 +32,8 @@ export const isUnread = (path: string) => readUnread().includes(normPath(path))
 
 // ---------- actions ----------
 
-export function openFolder(cwd: string) {
-  void tryApi('POST', '/open', { cwd, target: 'explorer' })
+export async function openFolder(cwd: string) {
+  if (await tryApi('POST', '/open', { cwd, target: 'explorer' })) toast(`Открываю папку ${basename(cwd)} в файловом менеджере`, 'info')
 }
 
 /** A file from the chat: «file» — its own program (a program or a script: its folder instead); «reveal» — its folder, the file selected. */

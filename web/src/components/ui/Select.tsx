@@ -66,6 +66,7 @@ export function Select<T extends string>({ value, options, onChange, label, plac
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-controls={open ? id : undefined}
+        data-tip={label}
         aria-label={label}
         aria-invalid={invalid || undefined}
         disabled={disabled}

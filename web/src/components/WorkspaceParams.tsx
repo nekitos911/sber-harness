@@ -19,7 +19,7 @@ export const useSbPrefs = () => useSyncExternalStore((f) => { subs.add(f); retur
 
 const SORT: [SortBy, string][] = [['activity', 'Активность агентов'], ['name', 'Имя'], ['new', 'Новые'], ['changes', 'Изменения']]
 const ORDER: [ProjectOrder, string][] = [['manual', 'Вручную'], ['alpha', 'По алфавиту'], ['activity', 'По активности']]
-const AGES: [number, string][] = [[0, "Не скрывать"], [1, "1 дня"], [3, "3 дней"], [7, "7 дней"], [14, "14 дней"], [30, "30 дней"]]
+const AGES: [number, string][] = [[0, "Не скрывать"], [1 / 24, "1 часа"], [3 / 24, "3 часов"], [6 / 24, "6 часов"], [12 / 24, "12 часов"], [1, "1 дня"], [3, "3 дней"], [7, "7 дней"], [14, "14 дней"], [30, "30 дней"]]
 const FILTERS: [keyof SbPrefs, string][] = [
   ['hideSleeping', 'Скрыть спящие рабочие пространства'],
   ['hideMain', 'Скрыть основную ветку'],

@@ -84,7 +84,7 @@ test('removal: refuses dirty/unmerged without force, archives sessions, safe bra
 test('open in the file manager or the configured IDE, only for registered folders', async () => {
   assert.equal((await h.api('POST', '/api/open', { cwd: repo, target: 'explorer' })).status, 200);
   const fm = spawned.at(-1);
-  assert.deepEqual([fm.args, fm.opts.windowsHide, fm.opts.shell], [[path.resolve(repo)], true, undefined]);
+  assert.deepEqual([fm.args, fm.opts.windowsHide, fm.opts.shell], [[path.resolve(repo)], process.platform !== 'win32', undefined]);
   assert.equal(fm.command, process.platform === 'win32' ? 'explorer.exe' : process.platform === 'darwin' ? 'open' : 'xdg-open');
   assert.equal((await h.api('POST', '/api/open', { cwd: root, target: 'explorer' })).status, 400, 'not a registered workspace');
   assert.equal((await h.api('POST', '/api/open', { cwd: repo, target: 'ide' })).status, 400, 'no IDE configured');

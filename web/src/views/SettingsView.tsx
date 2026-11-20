@@ -66,6 +66,7 @@ const FIELD_HINTS: [RegExp, string][] = [
 ]
 
 export function SettingsView() {
+  const labels = useStore((s) => s.agents)
   const category = useStore((s) => s.settingsCategory)
   const scroll = useRef<HTMLDivElement>(null)
   useEffect(() => { scroll.current?.scrollTo(0, 0) }, [category])
@@ -127,11 +128,14 @@ export function SettingsView() {
             </>}
             {category === 'Агенты' && <>
               {main && <AgentSection id={main} form={form} update={update} fieldError={fieldError} primary />}
+              {others.length > 0 && <section className="settings-section">
+                <h2>Другие агенты</h2>
+                {others.map((id) => <Disclosure key={id} className="agent-options" summary={labels.find((a) => a.id === id)?.label ?? id}>
+                  <AgentSection id={id} form={form} update={update} fieldError={fieldError} />
+                </Disclosure>)}
+              </section>}
               <OrchestrationSection form={form} update={update} />
               {form.checks && <ChecksCard form={form} update={update} />}
-              {others.map((id) => <Disclosure key={id} summary={id}>
-                <AgentSection id={id} form={form} update={update} fieldError={fieldError} />
-              </Disclosure>)}
             </>}
             {category === 'Подключения' && <ConnectionsSection form={form} update={update} fieldError={fieldError} />}
             {category === 'Доска и Git' && <>
@@ -249,7 +253,7 @@ function AgentSection({ id, form, update, fieldError, primary }: SectionProps & 
 
   return (
     <section className="settings-section" id={primary ? 'set-gigacode' : `set-${id}`}>
-      <h2>{label}{!primary && <span className="mono muted"> {id}</span>}</h2>
+      {primary && <h2>{label}</h2>}
       {!primary && <div className="set-rows">
         <Row label="Модель по умолчанию" hint="Если пусто, модель выбирает сам CLI.">
           <ModelPicker variant="field" agentId={id} label="Модель по умолчанию" value={a.model} onChange={(m) => set({ model: m })} placement="bottom-start" emptyText="как в CLI" />
@@ -483,9 +487,9 @@ function CommandRow({ id, a, set, error }: { id: string; a: AgentSettings; set: 
       {(custom || !presets.length) && (
         <>
           <Textarea ref={area} mono rows={3} aria-label="Шаблон команды" placeholder="/full-task {taskUrl}{notes}" value={value} onChange={(e) => set({ taskPromptTemplate: e.target.value || null })} />
-          <div className="chips" aria-label="Переменные">
+          <Disclosure summary="Вставить переменную"><div className="chips">
             {VARS.map((v) => <Chip key={v} mono onClick={() => insert(v)} tip="Вставить в шаблон">{v}</Chip>)}
-          </div>
+          </div></Disclosure>
         </>
       )}
       {unknown && <span className="field-warn"><TriangleAlert aria-hidden />Команда /{cmd} не встречалась в сессиях GigaCode. Проверьте, что она установлена.</span>}
@@ -1072,9 +1076,9 @@ function ChecksCard({ form, update }: { form: Settings; update: (s: Settings) =>
     setRuns((r) => ({ ...r, [id]: res ?? {} }))
   }
   return (
-    <div className="set-card">
-      <h3>Проверка перед «готово»</h3>
-      <p className="set-note">Команда, которую программа сама запускает в рабочем дереве, когда агент сдал задачу: тесты, линтер, проверка типов. Не прошла — вывод уходит агенту на исправление; «готово» значит «проверено», а не «агент так сказал».</p>
+    <section className="settings-section project-checks">
+      <h2>Проверки проектов</h2>
+      <p className="set-note">Укажите команду тестов или линтера для нужных проектов. Если проверка не пройдёт, агент получит вывод для исправления.</p>
       {workspaces.length === 0 && <p className="muted">Откройте проект — здесь появится его проверка.</p>}
       <div className="set-rows">
         {workspaces.map((w) => {
@@ -1082,10 +1086,10 @@ function ChecksCard({ form, update }: { form: Settings; update: (s: Settings) =>
           const sug = c.suggested?.[w.id]
           const run = runs[w.id]
           return (
-            <Row key={w.id} label={w.name} hint={!cmd ? (sug ? <>Нет проверки. <button type="button" className="link-btn" onClick={() => setCmd(w.id, sug)}>Подставить: <span className="mono">{sug}</span></button></> : 'Нет проверки: «готово» без неё.') : undefined}>
+            <Row key={w.id} label={w.name} hint={!cmd && sug ? <button type="button" className="link-btn" onClick={() => setCmd(w.id, sug)}>Подставить: <span className="mono">{sug}</span></button> : undefined}>
               <div className="check-row">
-                <Input mono aria-label={`Проверка ${w.name}`} value={cmd} placeholder={sug ?? 'например mvn -q test'} onChange={(e) => setCmd(w.id, e.target.value)} />
-                <Button size="sm" disabled={!cmd.trim() || run?.busy} onClick={() => void tryNow(w.id)}>{run?.busy ? 'Идёт…' : 'Проверить сейчас'}</Button>
+                <Input mono aria-label={`Проверка ${w.name}`} value={cmd} placeholder={sug ?? 'Команда проверки'} onChange={(e) => setCmd(w.id, e.target.value)} />
+                <Button size="sm" disabled={!cmd.trim() || run?.busy} onClick={() => void tryNow(w.id)}>{run?.busy ? 'Идёт…' : 'Проверить'}</Button>
               </div>
               {run && !run.busy && run.ok !== undefined && (
                 <Disclosure className="check-result" summary={<span className={run.ok ? 'ok-text' : 'field-error'}>{run.ok ? 'Прошла' : `Не прошла (код ${run.code ?? '—'})`} · {Math.round((run.ms ?? 0) / 1000)} с</span>}>
@@ -1096,13 +1100,13 @@ function ChecksCard({ form, update }: { form: Settings; update: (s: Settings) =>
           )
         })}
         {workspaces.length > 0 && (
-          <Row label="Попыток исправить" hint="Сколько раз агент получает упавшую проверку назад; потом — уведомление вам.">
+          <Row label="Попыток исправить" hint="После последней попытки придёт уведомление.">
             <Select label="Попыток исправить" value={String(c.maxRounds)} onChange={(v) => update({ ...form, checks: { ...c, maxRounds: Number(v) } })}
               options={[1, 2, 3, 4, 5].map((n) => ({ value: String(n), label: String(n) }))} />
           </Row>
         )}
       </div>
-    </div>
+    </section>
   )
 }
 

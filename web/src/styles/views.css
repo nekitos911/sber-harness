@@ -596,10 +596,9 @@ button.prs-group[aria-expanded="true"] .chev { transform: rotate(90deg); }
 .handoff h1 { margin: 0 0 6px; font-size: 22px; font-weight: 600; letter-spacing: -0.01em; color: var(--ink); text-wrap: balance; }
 .handoff-box { display: grid; gap: 8px; padding: 12px 12px 10px 14px; border: 1px solid var(--rule); border-radius: 12px; background: var(--deck); box-shadow: 0 6px 24px rgb(0 0 0 / 0.12); transition: border-color var(--t-fast) ease; }
 .handoff-box:focus-within { border-color: var(--ink-4); }
-.handoff-input, .handoff-notes { width: 100%; resize: none; border: 0; outline: none; background: transparent; color: var(--ink); font: inherit; }
+.handoff-input { width: 100%; resize: none; border: 0; outline: none; background: transparent; color: var(--ink); font: inherit; }
 .handoff-input { min-height: 48px; font-size: 15px; line-height: 1.5; }
-.handoff-notes { min-height: 40px; padding-top: 8px; border-top: 1px solid var(--rule-soft); font-size: 13px; line-height: 1.5; color: var(--ink-2); }
-.handoff-input::placeholder, .handoff-notes::placeholder { color: var(--ink-3); }
+.handoff-input::placeholder { color: var(--ink-3); }
 .handoff-box[data-busy] .handoff-input { opacity: 0.6; }
 .handoff-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-left: -4px; }
 .handoff-go { gap: 6px; min-width: 120px; }
@@ -608,7 +607,7 @@ button.prs-group[aria-expanded="true"] .chev { transform: rotate(90deg); }
 .handoff-warn { color: var(--lamp-run); }
 .handoff-error { margin: 0; color: var(--lamp-fail); font-size: 12.5px; }
 .now { display: grid; gap: 22px; }
-.now-empty { margin: 0; color: var(--ink-3); font-size: 13px; }
+
 .now-group { display: grid; gap: 1px; }
 .now-group h2 { display: flex; align-items: baseline; gap: 6px; margin: 0 0 6px; font-size: 12px; font-weight: 600; color: var(--ink-3); }
 .now-group h2 .num { font-weight: 500; }
@@ -626,7 +625,12 @@ button.prs-group[aria-expanded="true"] .chev { transform: rotate(90deg); }
 .now-actions { display: inline-flex; gap: 2px; visibility: hidden; }
 .now-row:hover .now-actions, .now-row:focus-within .now-actions { visibility: visible; }
 .now-more { justify-self: start; margin: 4px 8px 0; font-size: 12.5px; }
-@media (max-width: 760px) { .now-row { grid-template-columns: 16px minmax(0, 1fr) auto; } .now-activity, .now-actions { display: none; } }
+@media (max-width: 760px) {
+  .now-row { grid-template-columns: 16px minmax(0, 1fr) auto; height: auto; min-height: 34px; gap: 2px 8px; padding-block: 5px; }
+  .now-meta { grid-column: 3; grid-row: 1; }
+  .now-activity { grid-column: 2 / -1; grid-row: 2; }
+  .now-row[data-s="idle"] .now-activity, .now-row[data-s="done"] .now-activity, .now-actions { display: none; }
+}
 /* the composer's agent / model / mode: quiet chips, not form fields */
 .handoff-bar .select-trigger { width: auto; height: 26px; border-color: transparent; background: transparent; color: var(--ink-2); font-size: 12.5px; }
 .handoff-bar .select-trigger:hover:not(:disabled) { border-color: var(--rule); background: var(--deck-2); }
@@ -691,9 +695,9 @@ button.prs-group[aria-expanded="true"] .chev { transform: rotate(90deg); }
 .flow-steps li[data-state="now"] { border-top-color: var(--signal); color: var(--ink); font-weight: 600; }
 .flow-next { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; font-size: 12px; color: var(--ink-2); }
 .flow-next > span { flex: 1 1 160px; min-width: 0; }
-.handoff-add-note { justify-self: start; margin: 0 14px 4px; font-size: 12px; }
+
 /* «Например:» under an empty task box: what else to ask an agent (a spec, an explanation, an estimate) */
-.handoff-examples { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin: 0 14px 6px; color: var(--ink-3); font-size: 12px; }
+.handoff-examples { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin: 0; color: var(--ink-3); font-size: 12px; }
 .firstrun-example { margin: 0; padding: 8px 10px; border-radius: var(--r-2); background: var(--deck-2); color: var(--ink-2); font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; justify-self: stretch; }
 .firstrun-step[data-optional]:not([data-done]) > .setup-mark { color: var(--ink-4); }
 /* is the tracker / the code host connected: one line, what to do when not */
@@ -758,3 +762,30 @@ button.prs-group[aria-expanded="true"] .chev { transform: rotate(90deg); }
   .set-control { grid-template-columns: minmax(0, 1fr); }
   .set-control .segmented { flex-wrap: wrap; }
 }
+
+.handoff-options { display: grid; gap: 12px; padding: 12px 0 4px; border-top: 1px solid var(--rule); overflow-wrap: anywhere; }
+.handoff-pickers { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.handoff-options .set-note { margin: 0; }
+.handoff-bar .btn { min-height: 32px; }
+.handoff-bar .handoff-go { margin-left: auto; min-width: 0; }
+.agent-options > .disclosure-head .disclosure-toggle { min-height: 38px; font-size: 14px; color: var(--ink); }
+.agent-options .settings-section { padding: 0 0 12px 18px; margin: 0; }
+.project-checks .check-row { width: 100%; flex-wrap: wrap; }
+.project-checks .check-row .input { min-width: min(155px, 100%); }
+.pr-drawer { padding: 20px; gap: 14px; }
+.pr-drawer-head { align-items: flex-start; justify-content: space-between; }
+.pr-drawer-head h2 { margin-top: 4px; font-size: 19px; line-height: 1.35; overflow-wrap: anywhere; }
+.pr-drawer-meta { align-items: center; overflow-wrap: anywhere; }
+.pr-drawer > .segmented { align-self: flex-start; }
+.pr-drawer-body { border-top: 1px solid var(--rule); padding-top: 14px; }
+.pr-load-error { display: grid; justify-items: start; gap: 8px; }
+.pr-load-error p { overflow-wrap: anywhere; margin: 6px 0; color: var(--ink-3); }
+@media (max-width: 720px) {
+  .pr-row-link { flex-wrap: wrap; gap: 8px; }
+  .pr-row-link .pr-row-main { order: -1; flex: 1 0 100%; }
+  .pr-row-link .pr-actions { flex-wrap: wrap; }
+  .pr-drawer { width: min(100%, 540px); }
+  .home-col { padding: 28px 14px; }
+}
+
+.handoff > .segmented { justify-self: start; }

@@ -67,6 +67,9 @@ test('project order: manual keeps the dragged order, new ones after; drag moves 
 test('«Скрывать чаты старше N дней»: by last activity; a chat that works or waits for you never hides', () => {
   const now = Date.parse('2026-11-18T12:00:00Z')
   const old = { lastActivityAt: now - 4 * 86400000, status: 'idle', waitingFor: null }
+  const hourly = { ...DEFAULT_PREFS, chatsMaxAgeDays: 1 / 24 }
+  assert.equal(staleChat(hourly, { ...old, lastActivityAt: now - 3600000 }, now), false)
+  assert.equal(staleChat(hourly, { ...old, lastActivityAt: now - 3600001 }, now), true)
   assert.equal(staleChat(DEFAULT_PREFS, old, now), false)
   const p = { ...DEFAULT_PREFS, chatsMaxAgeDays: 3 }
   assert.equal(staleChat(p, old, now), true)
