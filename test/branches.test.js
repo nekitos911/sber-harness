@@ -56,6 +56,18 @@ test('branches: local first with upstream and worktree, then origin-only ones', 
   assert.ok(by['feature/local'].lastCommitAt > 0);
 });
 
+test('worktree base picker lists full remote refs and creates the branch at the selected commit', async () => {
+  const ref = 'upstream/release';
+  gitIn(repo, 'update-ref', 'refs/remotes/' + ref, 'feature/local');
+  const list = (await h.api('GET', `/api/git/branches?cwd=${q}&allRemotes=1`)).body.branches;
+  for (const name of ['develop', 'origin/develop', ref, 'feature/elsewhere']) assert.ok(list.some((b) => b.name === name), name);
+  const ws = (await h.api('POST', '/api/workspaces', { path: repo })).body;
+  const wt = await h.api('POST', `/api/workspaces/${ws.id}/worktrees`, { name: 'from-picker', base: ref });
+  assert.equal(wt.status, 200, wt.body.error);
+  assert.equal(wt.body.head, gitIn(repo, 'rev-parse', ref));
+  assert.equal(gitIn(repo, 'branch', '--show-current'), 'develop');
+});
+
 test('checkout: create from, track a remote-only branch, refuse busy branches/folders, git errors as 400', async () => {
   const chat = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', cwd: repo })).body;
 

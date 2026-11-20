@@ -1554,7 +1554,7 @@ export async function startServer(opts = {}) {
   });
   route('GET', '/api/git/log', ({ query }) => git.log(cwdOf(query), Math.min(Math.max(Number(query.n) || 50, 1), 1000)));
   route('GET', '/api/git/suggest', ({ query }) => orch.gitSuggest(cwdOf(query)));
-  route('GET', '/api/git/branches', ({ query }) => git.branches(cwdOf(query)));
+  route('GET', '/api/git/branches', ({ query }) => git.branches(cwdOf(query), { allRemotes: query.allRemotes === '1' }));
   route('GET', '/api/prs', ({ query }) => {
     if (!['mine', 'tracked', undefined].includes(query.scope)) fail(400, 'scope: mine или tracked');
     return collectPrs(query.scope || 'mine', query.refresh === '1');

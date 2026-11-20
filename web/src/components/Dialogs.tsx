@@ -9,7 +9,8 @@ import { loadDraft, saveDraft } from '../lib/draft'
 import type { GitSuggest, Session, Task, Workspace, Worktree } from '../types'
 import { Modal } from './ui/Dialog'
 import { CleanupDialog, DeleteWorktreeDialog, WorktreeInfoDialog } from './WorktreeMenu'
-import { Button, Checkbox, Chip, Disclosure, Segmented, Select, SuggestInput } from './ui'
+import { Button, Checkbox, Chip, Disclosure, Segmented, Select } from './ui'
+import { BranchRefPicker } from './pickers/BranchRefPicker'
 import { modeShort, useSettings } from '../lib/agents'
 import { pendingDeps, taskKey } from '../lib/tasks'
 import { loadPr } from '../lib/pr'
@@ -382,18 +383,16 @@ function WorktreeDialog({ workspaceId }: { workspaceId?: string }) {
       {!git.length && <span className="field-error">Нет git-репозиториев. Сначала добавьте проект.</span>}
       <label className="field">
         <span>Проект</span>
-        <Select label="Репозиторий" size="lg" value={repo} onChange={setRepo} options={git.map((w) => ({ value: w.id, label: w.name, hint: w.path }))} />
+        <Select label="Репозиторий" size="lg" value={repo} onChange={(id) => { setRepo(id); setBase('') }} options={git.map((w) => ({ value: w.id, label: w.name, hint: w.path }))} />
       </label>
       <label className="field">
         <span>Новая ветка</span>
         <input className="input mono" autoFocus placeholder="feature/JIRA-1234" value={name} onChange={(e) => setName(e.target.value)} />
       </label>
-      <Disclosure className="dialog-more" summary={`Базовая ветка · ${base.trim() || 'HEAD'}`}>
-          <label className="field">
-            <span>От ветки</span>
-            <input className="input mono" placeholder="HEAD" value={base} onChange={(e) => setBase(e.target.value)} />
-          </label>
-      </Disclosure>
+      <div className="field">
+        <span>Базовая ветка</span>
+        <BranchRefPicker key={repo} cwd={git.find((w) => w.id === repo)?.path} label="Базовая ветка" value={base} onChange={setBase} worktree />
+      </div>
     </Modal>
   )
 }
@@ -578,7 +577,7 @@ function PrDialog({ cwd, base: initBase }: { cwd: string; base?: string }) {
       <Disclosure className="dialog-more" summary={<span>Ещё: в ветку <span className="mono">{base || '…'}</span></span>}>
         <label className="field">
           <span>В ветку</span>
-          <SuggestInput mono label="Целевая ветка PR" value={base} onChange={(v) => edit({ base: v })} suggestions={[...new Set([suggest?.pr.base, ...targets].filter((t): t is string => !!t))]} />
+          <BranchRefPicker cwd={cwd} label="Целевая ветка PR" value={base} onChange={(v) => edit({ base: v })} suggested={[suggest?.pr.base, ...targets].filter((t): t is string => !!t)} />
         </label>
       </Disclosure>
     </Modal>

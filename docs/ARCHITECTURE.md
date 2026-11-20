@@ -418,6 +418,8 @@ GET    /api/git/branches?cwd=   -> { current, branches: [{ name, remote: boolean
                                      lastCommitAt: number, worktree: string|null }] }
                                  (local refs/heads + origin/* without a local twin; `worktree` = path of the worktree that
                                   has it checked out, if any — such a branch cannot be switched to here)
+                                 При allRemotes=1 список содержит локальные ветки и все известные удалённые ссылки с именем
+                                 remote, включая origin/develop при наличии локальной develop. Используется для выбора базы дерева.
 POST   /api/git/checkout        {cwd, branch, create?: boolean, from?: string} -> { branch }
                                  (create: `git switch -c <branch> <from|HEAD>`; remote-only: `git switch --track origin/<b>`;
                                   409 when a chat session in this cwd is running or the branch is checked out in another

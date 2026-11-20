@@ -329,10 +329,10 @@ const samePath = (a, b) => (process.platform === 'win32' ? path.resolve(a).toLow
  * Local branches + origin/* branches without a local twin (name without "origin/", remote: true), newest first.
  * `worktree` = path of the worktree that has the branch checked out (this one included), else null.
  */
-export async function branches(cwd) {
+export async function branches(cwd, { allRemotes = false } = {}) {
   const current = await currentBranch(cwd);
   const checkedOut = new Map((await worktrees(cwd)).filter((w) => w.branch).map((w) => [w.branch, w.path]));
-  const { stdout } = await git(cwd, ['for-each-ref', '--format=%(refname)%09%(upstream:short)%09%(committerdate:unix)', 'refs/heads', 'refs/remotes/origin']);
+  const { stdout } = await git(cwd, ['for-each-ref', '--format=%(refname)%09%(upstream:short)%09%(committerdate:unix)', 'refs/heads', allRemotes ? 'refs/remotes' : 'refs/remotes/origin']);
   const local = [];
   const remote = [];
   for (const line of stdout.split('\n').filter(Boolean)) {
@@ -342,13 +342,14 @@ export async function branches(cwd) {
       const name = ref.slice('refs/heads/'.length);
       local.push({ name, remote: false, current: name === current, upstream: upstream || null, lastCommitAt, worktree: checkedOut.get(name) ?? null });
     } else {
-      const name = ref.slice('refs/remotes/origin/'.length);
-      if (name !== 'HEAD') remote.push({ name, remote: true, current: false, upstream: `origin/${name}`, lastCommitAt, worktree: null });
+      const full = ref.slice('refs/remotes/'.length);
+      const name = allRemotes ? full : full.slice('origin/'.length);
+      if (!full.endsWith('/HEAD')) remote.push({ name, remote: true, current: false, upstream: full, lastCommitAt, worktree: null });
     }
   }
   const names = new Set(local.map((b) => b.name));
   const byDate = (a, b) => b.lastCommitAt - a.lastCommitAt || a.name.localeCompare(b.name);
-  return { current, branches: [...local.sort(byDate), ...remote.filter((b) => !names.has(b.name)).sort(byDate)] };
+  return { current, branches: [...local.sort(byDate), ...remote.filter((b) => allRemotes || !names.has(b.name)).sort(byDate)] };
 }
 
 /**
