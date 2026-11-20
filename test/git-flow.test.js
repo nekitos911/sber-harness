@@ -73,6 +73,28 @@ test('fs guard, git status/diff/commit/log', async () => {
   assert.equal((await h.api('POST', '/api/git/pr', { cwd: plain, title: 't' })).status, 501);
 });
 
+test('chat file diff follows the file into its worktree and treats its name literally', async () => {
+  const wt = path.join(root, 'chat-worktree');
+  gitIn(repoA, 'worktree', 'add', '-q', '--detach', wt);
+  const filename = 'change[1].txt';
+  fs.writeFileSync(path.join(wt, filename), 'selected edit\n');
+  fs.writeFileSync(path.join(wt, 'change1.txt'), 'different file\n');
+  const target = (cwd, file) => h.api('GET', '/api/git/file-target?' + new URLSearchParams({ cwd, path: file }));
+  for (const [cwd, file] of [[root, path.join('chat-worktree', filename)], [repoB, path.join(wt, filename)]]) {
+    const r = await target(cwd, file);
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body, { cwd: wt, path: filename });
+    const result = await h.api('GET', '/api/git/diff?' + new URLSearchParams(r.body));
+    assert.match(result.body.diff, /\+selected edit/);
+    assert.doesNotMatch(result.body.diff, /different file/);
+  }
+  const gone = path.join('removed', 'file.txt');
+  assert.deepEqual((await target(root, path.join(wt, gone))).body, { cwd: wt, path: 'removed/file.txt' });
+  assert.match((await target(root, 'notes.txt')).body.error, /вне рабочего дерева Git/);
+  assert.equal((await target(repoA, path.join(root, 'outside.txt'))).status, 400);
+  assert.equal((await h.api('GET', '/api/git/diff?' + q(root))).body.error, 'В этой папке нет рабочего дерева Git.');
+});
+
 test('task start: worktree from targets[0], branch from the key, task prompt template', async () => {
   const t = (await h.api('POST', '/api/tasks', { title: 'Health', description: 'add /health', workspaceId: wsA.id, targets: ['release-1', 'develop'] })).body;
   const s = (await h.api('POST', `/api/tasks/${t.id}/start`, { agent: 'mock' })).body;

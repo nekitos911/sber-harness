@@ -1,7 +1,7 @@
 import { memo, useMemo, useState, type MouseEvent } from 'react'
 import { ChevronRight, CircleHelp, GitCompare, LoaderCircle, ShieldAlert, TriangleAlert, Wrench } from 'lucide-react'
 import { tryApi } from '../../api'
-import { openTab } from '../../store'
+import { openChatFileDiff } from '../../lib/git'
 import { basename, normPath, plural } from '../../lib/format'
 import { fileEdit, summarizeInput } from '../../lib/toolcall'
 import { useElapsed } from '../../lib/live'
@@ -178,7 +178,7 @@ function TurnFilesView({ msgs, cwd }: { msgs: Message[]; cwd: string }) {
               <span className="turn-file-name ellipsis" data-tip={f}><span className="muted">{dir}</span>{basename(f)}</span>
               <span className="diff-stat num"><span className="add">+{c.added}</span> <span className="del">−{c.removed}</span></span>
             </>}
-            actions={<IconButton size="sm" label="Открыть дифф" icon={<GitCompare />} onClick={(e: MouseEvent) => { e.preventDefault(); openTab({ kind: 'diff', cwd, path }) }} />}
+            actions={<IconButton size="sm" label="Открыть дифф" icon={<GitCompare />} onClick={(e: MouseEvent) => { e.preventDefault(); void openChatFileDiff(cwd, f) }} />}
           >
             <DiffLines lines={c.lines} numbers={false} limit={400} label={`Изменения ${basename(f)}`} />
           </Disclosure>

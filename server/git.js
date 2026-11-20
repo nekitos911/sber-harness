@@ -205,8 +205,12 @@ export async function commitDiff(cwd, rev, file) {
 }
 
 export async function diff(cwd, file) {
-  const spec = file ? ['--', file] : [];
-  let text = (await hasHead(cwd))
+  const spec = file ? ['--', `:(literal)${file}`] : [];
+  const head = await hasHead(cwd);
+  if (!head && (await git(cwd, ['rev-parse', '--is-inside-work-tree'], { ok: [0, 128] })).stdout.trim() !== 'true') {
+    fail(400, 'В этой папке нет рабочего дерева Git.');
+  }
+  let text = head
     ? (await git(cwd, ['diff', 'HEAD', ...spec])).stdout
     : (await git(cwd, ['diff', '--cached', ...spec])).stdout + (await git(cwd, ['diff', ...spec])).stdout;
   const untracked = (await git(cwd, ['ls-files', '--others', '--exclude-standard', '-z', ...spec])).stdout.split('\0').filter(Boolean);

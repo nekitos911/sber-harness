@@ -412,6 +412,7 @@ POST   /api/git/unstage         {cwd, paths | all: true} -> { ok }   (git restor
 POST   /api/git/discard         {cwd, paths, confirm: true} -> { ok } (400 without confirm; 409 while a chat in that worktree
                                  runs; tracked → git restore --source=HEAD --staged --worktree; untracked / just added →
                                  the file is deleted (files only, inside cwd). Feature `git-stage`.)
+GET    /api/git/file-target?cwd=&path= -> { cwd, path }   (для файла из чата: корень его рабочего дерева и путь относительно корня)
 GET    /api/git/diff?cwd=&path=&rev= -> { diff }   (unified; path optional = whole tree; untracked files shown as added; rev = a commit hash (7-40 hex, else 400; unknown 404): that commit's own changes, first parent for a merge)
 GET    /api/git/log?cwd=&n=     -> [{ hash, subject, author, at }]
 GET    /api/git/branches?cwd=   -> { current, branches: [{ name, remote: boolean, current: boolean, upstream: string|null,

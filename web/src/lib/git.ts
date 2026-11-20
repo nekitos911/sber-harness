@@ -1,12 +1,17 @@
 import { useEffect } from 'react'
-import { api, errorText, qs } from '../api'
-import { getState, setState, useStore, wtKey, type GitInfo } from '../store'
+import { api, errorText, qs, tryApi } from '../api'
+import { getState, openTab, setState, useStore, wtKey, type GitInfo } from '../store'
 import type { GitStatus } from '../types'
 import { parseDiff, type DiffFile } from './diff'
 import { normPath } from './format'
 
 const inflight = new Set<string>()
 const again = new Set<string>()
+
+export async function openChatFileDiff(cwd: string, path: string) {
+  const target = await tryApi<{ cwd: string; path: string }>('GET', `/git/file-target${qs({ cwd, path })}`)
+  if (target) openTab({ kind: 'diff', ...target })
+}
 
 async function load(cwd: string): Promise<GitInfo> {
   try {

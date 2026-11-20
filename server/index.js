@@ -1233,15 +1233,18 @@ export async function startServer(opts = {}) {
     return orch.markWorktree(p, Object.fromEntries(['label', 'note', 'pinned', 'sleeping'].filter((k) => k in body).map((k) => [k, body[k]])));
   });
   /** A file the person may open from the chat: in a registered folder or its worktree, or a chat's own attachments. */
-  async function openableFile(f) {
+  async function openableRoot(f) {
     const within = (dir, p) => { const r = path.relative(dir, p); return !!r && !r.startsWith('..') && !path.isAbsolute(r); };
     const runs = path.join(store.dataDir, 'runs');
-    if (within(runs, f) && path.relative(runs, f).split(path.sep)[1] === 'attachments') return true;
+    if (within(runs, f) && path.relative(runs, f).split(path.sep)[1] === 'attachments') return runs;
     for (const ws of db.workspaces) {
-      if (within(ws.path, f)) return true;
-      if (ws.isGit && (await git.worktrees(ws.path).catch(() => [])).some((w) => within(w.path, f))) return true;
+      if (within(ws.path, f)) return ws.path;
+      if (ws.isGit) {
+        const wt = (await git.worktrees(ws.path).catch(() => [])).find((w) => within(w.path, f));
+        if (wt) return wt.path;
+      }
     }
-    return false;
+    return null;
   }
   // a program or a script is never started from a click: its folder is shown instead
   const RUNNABLE = /\.(exe|com|bat|cmd|ps1|psm1|vbs|vbe|js|jse|mjs|wsf|wsh|msi|msp|scr|pif|lnk|url|hta|cpl|reg|jar|appref-ms|application|sh|command|app)$/i;
@@ -1258,7 +1261,7 @@ export async function startServer(opts = {}) {
       check(body, { path: 'string' });
       const f = path.resolve(typeof body.cwd === 'string' ? body.cwd : '', body.path);
       if (!path.isAbsolute(body.path) && typeof body.cwd !== 'string') fail(400, 'path: абсолютный путь (или cwd)');
-      if (!(await openableFile(f))) fail(400, `не в рабочей папке и не вложение чата: ${body.path}`);
+      if (!(await openableRoot(f))) fail(400, `не в рабочей папке и не вложение чата: ${body.path}`);
       if (!fs.existsSync(f)) fail(404, `файла больше нет: ${f}`);
       revealed = body.target === 'reveal' || RUNNABLE.test(f);
       command = fm;
@@ -1545,6 +1548,21 @@ export async function startServer(opts = {}) {
       if (fs.existsSync(abs) && fs.statSync(abs).isFile()) fs.rmSync(abs);
     });
     return { ok: true };
+  });
+  route('GET', '/api/git/file-target', async ({ query }) => {
+    check(query, { cwd: 'string', path: 'string' });
+    const file = path.resolve(query.cwd, query.path);
+    const scope = insidePath(query.cwd, file) ? query.cwd : await openableRoot(file);
+    if (!scope) fail(400, 'Файл находится за пределами рабочих папок.');
+    const { abs } = wfs.resolveInside(scope, path.relative(scope, file));
+    // A deletion may have removed the file's parent directories as well.
+    let dir = path.dirname(abs);
+    while (!fs.existsSync(dir) && dir !== path.dirname(dir)) dir = path.dirname(dir);
+    const result = await git.git(dir, ['rev-parse', '--show-toplevel'], { ok: [0, 128] });
+    if (result.code) fail(400, 'Файл вне рабочего дерева Git. Правку агента можно раскрыть в чате.');
+    const cwd = path.normalize(result.stdout.replace(/\r?\n$/, ''));
+    const realFile = path.resolve(fs.realpathSync(dir), path.relative(dir, abs));
+    return { cwd, path: path.relative(cwd, realFile).split(path.sep).join('/') };
   });
   // ?rev=<hash>: that commit's changes (the commits list of the changes panel); only a hash, never an option for git
   route('GET', '/api/git/diff', ({ query }) => {

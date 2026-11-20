@@ -1,9 +1,10 @@
 import { memo, useState, type MouseEvent } from 'react'
 import { Check, Copy, ExternalLink, FileText, FolderOpen, GitCompare, LoaderCircle, TriangleAlert, X } from 'lucide-react'
 import { tryApi } from '../../api'
-import { openSession, openTab, useFeature, useStore } from '../../store'
+import { openSession, useFeature, useStore } from '../../store'
 import { openFile } from '../WorktreeMenu'
-import { basename, fullTime, normPath } from '../../lib/format'
+import { basename, fullTime } from '../../lib/format'
+import { openChatFileDiff } from '../../lib/git'
 import { emptyInput, fileEdit, summarizeInput, type FileEdit } from '../../lib/toolcall'
 import { parseDiff, type DiffFile, type DiffLine } from '../../lib/diff'
 import type { Message, ToolCall } from '../../types'
@@ -210,14 +211,6 @@ function GenericTool({ tool }: { tool: ToolCall }) {
   )
 }
 
-/** Path of a file inside the session folder (for the diff tab); null when the tool wrote outside it. */
-function relativeTo(cwd: string, file: string): string | null {
-  const f = file.replace(/\\/g, '/')
-  if (!/^([a-zA-Z]:\/|\/)/.test(f)) return f
-  const root = cwd.replace(/\\/g, '/').replace(/\/+$/, '')
-  return normPath(f).startsWith(`${normPath(root)}/`) ? f.slice(root.length + 1) : null
-}
-
 interface EditProps { tool: ToolCall; sessionId: string; file: string; created: boolean; added: number; removed: number; lines: DiffLine[] }
 
 /** A file edit as a compact diff block: «Изменён file +a −b», expand, copy, open the file's diff in the worktree. */
@@ -232,10 +225,9 @@ function EditBlock({ tool, sessionId, file, created, added, removed, lines }: Ed
       window.setTimeout(() => setCopied(false), 1400)
     } catch { /* clipboard blocked */ }
   }
-  const rel = cwd ? relativeTo(cwd, file) : null
   const openDiff = (e: MouseEvent) => {
     e.preventDefault()
-    if (cwd && rel) openTab({ kind: 'diff', cwd, path: rel })
+    if (cwd) void openChatFileDiff(cwd, file)
   }
   return (
     <Disclosure
@@ -249,7 +241,7 @@ function EditBlock({ tool, sessionId, file, created, added, removed, lines }: Ed
         <span className="diff-stat num"><span className="add">+{added}</span> <span className="del">−{removed}</span></span>
       </>}
       actions={<>
-        {rel && <IconButton size="sm" label={`Открыть diff ${basename(file)}`} icon={<GitCompare />} onClick={openDiff} />}
+        {cwd && <IconButton size="sm" label={`Открыть дифф ${basename(file)}`} icon={<GitCompare />} onClick={openDiff} />}
         <IconButton size="sm" label={copied ? 'Скопировано' : 'Копировать новый текст'} icon={copied ? <Check /> : <Copy />} onClick={copy} />
       </>}
     >
