@@ -963,6 +963,17 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
       const note = dropped.length && `⚠ Недоступные модели убраны из грейдов, CLI возьмёт модель по умолчанию: ${dropped.map(([g, id]) => `${g} → ${id}`).join(', ')}`;
       if (note && !store.messages(s.id).some((m) => m.text === note)) addMessage(s, { kind: 'system', text: note });
       let prompt = promptOf(items);
+      // «/full-task …» goes as the command's own text, as the CLI's interactive mode sends it: no `skill` step for the model
+      // to skip, no same-named skill in its place. Headless: only what fits the command line with the preamble — a longer
+      // one is left to the CLI (else it would go as a file the model reads in pieces).
+      let cmd = agentCfg.expandCommands !== false ? launcher.expandCommand?.(prompt, { cwd: s.cwd, agentCfg }) ?? null : null;
+      if (cmd && agentCfg.transport !== 'acp' && cmd.text.length > ARGV_PROMPT_MAX - 8000) cmd = null;
+      if (cmd) {
+        prompt = cmd.text;
+        // the person's message stays as typed; the text the agent got is under it (folded in the chat)
+        const said = userMsgs.find((m) => m.text.trimStart().startsWith(`/${cmd.name}`)) || store.messages(s.id).findLast((m) => m.kind === 'user' && m.text.trimStart().startsWith(`/${cmd.name}`));
+        if (said) updateMessage(s, Object.assign(said, { command: { name: cmd.name, file: cmd.file, text: cmd.text } }));
+      }
       if (!s.externalSessionId) {
         const pre = hooks.preamble(s);
         // a slash command only works as the first word of the prompt; the rest becomes its $ARGUMENTS

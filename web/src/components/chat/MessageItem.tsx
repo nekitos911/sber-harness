@@ -100,6 +100,12 @@ function UserMessage({ m }: { m: Message }) {
         </div>
       )}
       {text && <Markdown text={text} />}
+      {m.command && (
+        // what the agent got for «/name …»: the command's own text with the arguments in it, as the CLI sends it
+        <Disclosure className="msg-command" summary={<span className="muted" data-tip={m.command.file}>Текст команды /{m.command.name} · {m.command.text.split('\n').length} строк</span>}>
+          <div className="md-preview"><Markdown text={m.command.text} /></div>
+        </Disclosure>
+      )}
     </div>
   )
 }

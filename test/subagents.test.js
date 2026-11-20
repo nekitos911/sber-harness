@@ -248,3 +248,27 @@ test('the harness agent tool reaching the stream as «agent»: one chat per help
   assert.equal(line.tool.subSessionId, kids[0].id, '«Открыть чат субагента» leads to the real chat');
   assert.match(kids[0].title, /general-purpose/);
 });
+
+test('«/name args» goes as the command file\'s own text, as the CLI sends it; the message keeps what was typed', async () => {
+  fs.mkdirSync(commandsDir, { recursive: true });
+  fs.writeFileSync(path.join(commandsDir, 'deep-check.md'), '---\ndescription: проверка\n---\nТы — оркестратор.\n\nЗадача:\n{{args}}\n');
+  const argvOf = (sid) => waitFor(() => {
+    try {
+      return fs.readFileSync(argvFile, 'utf8').trim().split('\n').map((l) => JSON.parse(l)).find((x) => x.env.HARNESS_SESSION_ID === sid);
+    } catch {
+      return null;
+    }
+  }, { what: 'argv' });
+  const promptOf = (run) => run.argv[run.argv.indexOf('-p') + 1];
+  const c = await chat('/deep-check PROJ-7 сверь со спекой');
+  const prompt = promptOf(await argvOf(c.id));
+  assert.ok(prompt.endsWith('Ты — оркестратор.\n\nЗадача:\nPROJ-7 сверь со спекой'), prompt.slice(-120));
+  assert.ok(!prompt.includes('/deep-check') && !prompt.includes('description:'), 'no slash left for the CLI, no frontmatter');
+  await waitFor(async () => (await messages(c.id)).find((m) => m.kind === 'user')?.command, { what: 'the command on the message' });
+  const said = (await messages(c.id)).find((m) => m.kind === 'user');
+  assert.equal(said.text, '/deep-check PROJ-7 сверь со спекой');
+  assert.deepEqual([said.command.name, said.command.text], ['deep-check', 'Ты — оркестратор.\n\nЗадача:\nPROJ-7 сверь со спекой']);
+  // no such command file: the CLI's own (a built-in, a skill), sent as typed
+  const other = await chat('/nope-cmd x');
+  assert.ok(promptOf(await argvOf(other.id)).startsWith('/nope-cmd x'));
+});

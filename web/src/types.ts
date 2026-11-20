@@ -194,6 +194,7 @@ export interface Message {
   link?: string | null // e.g. the GigaCode login URL
   action?: 'pick-model' | null // failure the user fixes by choosing another model
   imported?: boolean // copied from a CLI-recorded chat (turn 0): no timing of its own
+  command?: { name: string; file: string; text: string } | null // «/name …» the harness sent as the command's own text
   // parts: several questions asked in one call (all in one card, answered together)
   question?: { id: string; text: string; options: { label: string; description?: string }[]; multiSelect?: boolean; parts?: { text: string; header?: string; options: { label: string; description?: string }[]; multiSelect?: boolean }[]; answer?: string | null; answered?: boolean; resolved?: string | null } | null
   permission?: { id: string; tool: string; input: unknown; reason?: string | null; transport?: 'headless' | 'acp'; options: PermissionOption[]; choice?: string | null; resolved?: string | null; answered?: boolean; pattern?: string | null } | null

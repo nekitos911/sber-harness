@@ -412,6 +412,7 @@ function geminiFamily(id, defaults, resolve) {
     allowed: (ctx) => allowedList(defaults, ctx),
     /** what the CLI actually runs with this turn (session.effectiveApprovalMode) */
     effectiveMode: ({ session, agentCfg }) => cliApprovalMode(defaults, agentCfg, session.approvalMode || agentCfg.approvalMode) || null,
+    expandCommand: (prompt, { cwd, agentCfg }) => expandCommand(prompt, { cwd, home: defaults.commandsHome ?? null, commandsDir: agentCfg.commandsDir ?? null }),
     resolve: resolve || ((agentCfg) => ({ ...resolveCommand(agentCfg.command || defaults.command), env: {} })),
     buildArgs({ prompt, session, agentCfg, extraArgs = [] }) {
       const args = [...extraArgs]; // a one-off helper run's quickArgs (e.g. --safe-mode)
@@ -484,6 +485,29 @@ const claude = {
   parse: (o, state = {}) => normalize(o, Object.assign(state, { usageStyle: 'anthropic' })),
 };
 
+/**
+ * «/name args» the way the CLI's interactive mode sends it: the text of the command file — <cwd>/<home>/commands/<name>.md
+ * (the project's own) first, else agents.<id>.commandsDir or ~/<home>/commands — frontmatter dropped, {{args}} / $ARGUMENTS
+ * replaced by the arguments, or the invocation added after the text when it has neither (VERIFY: GigaCode's own rule).
+ * «a:b» is <dir>/a/b.md. null = the CLI handles it itself: no such file (a built-in command, a skill), a .toml one, or
+ * shell / file injections (!{…}, @{…}) the harness does not run. → { name, file, text }
+ */
+export function expandCommand(prompt, { cwd, home = null, commandsDir = null }) {
+  const m = /^\/([\w.-]+(?::[\w.-]+)*)(?=\s|$)/.exec(prompt);
+  if (!m) return null;
+  const name = m[1];
+  const args = prompt.slice(m[0].length).trim();
+  const rel = `${name.split(':').join(path.sep)}.md`;
+  const user = commandsDir ? commandsDir.replace(/^~(?=[\\/]|$)/, os.homedir()) : home && path.join(os.homedir(), home, 'commands');
+  const file = [cwd && home && path.join(cwd, home, 'commands', rel), user && path.join(user, rel)].find((f) => f && fs.existsSync(f));
+  if (!file) return null;
+  const body = fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '').replace(/^---\r?\n[\s\S]*?\r?\n---[ \t]*(\r?\n|$)/, '');
+  if (/!\{|@\{/.test(body)) return null;
+  const slot = /\{\{args\}\}|\$ARGUMENTS/g;
+  const text = slot.test(body) ? body.replace(slot, () => args) : args ? `${body.trimEnd()}\n\n${prompt}` : body;
+  return { name, file, text: text.trim() };
+}
+
 // A custom command reaches the model as text and the model loads it with the skill tool, first
 // (test/fixtures/gigacode.slash.ndjson). The harness preamble behind it («find the harness tools first») once took that
 // first step's place and the command never ran: this line goes between the command and the preamble.
@@ -494,7 +518,7 @@ export const launchers = {
   // quickArgs: one-off helper runs (commit/PR messages) start without MCP/skills/hooks (VERIFY --safe-mode on the target)
   gigacode: geminiFamily('gigacode', { quickArgs: ['--safe-mode'], compressCommand: '/compress', contextCommand: '/context', command: 'gigacode', settingsEnv: 'GIGACODE_SYSTEM_SETTINGS_PATH', firstEventTimeoutMs: 120000, continueArgs: ['-c'], approvalModeMap: { auto: 'auto-edit' }, allowedToolsFlag: '--allowed-tools', allowedTools: DEFAULT_ALLOWED_TOOLS, autoSandbox: null, partialMessagesFlag: null /* opt-in: on the target 2 of 3 tool calls then came without arguments (VERIFY) */, stripModelSuffix: true,
     // its MCP tools are deferred: a call by a guessed name («harness_worker_done») is refused until tool_search registers them
-    toolsHint: 'Инструменты harness здесь отложенные: перед первым вызовом найди их через tool_search по слову «harness»; точные имена — mcp__harness__worker_done, mcp__harness__ask, mcp__harness__agent, mcp__harness__send_message.', commandHint }, (cfg) => resolveGigacode(cfg)),
+    toolsHint: 'Инструменты harness здесь отложенные: перед первым вызовом найди их через tool_search по слову «harness»; точные имена — mcp__harness__worker_done, mcp__harness__ask, mcp__harness__agent, mcp__harness__send_message.', commandHint, commandsHome: '.gigacode' }, (cfg) => resolveGigacode(cfg)),
   qwen: geminiFamily('qwen', { command: 'qwen', settingsEnv: 'QWEN_CODE_SYSTEM_SETTINGS_PATH', firstEventTimeoutMs: 30000, approvalModeMap: { auto: 'auto-edit' }, allowedToolsFlag: '--allowed-tools', allowedTools: DEFAULT_ALLOWED_TOOLS }),
   gemini: geminiFamily('gemini', { command: 'gemini', settingsEnv: 'GEMINI_CLI_SYSTEM_SETTINGS_PATH', firstEventTimeoutMs: 30000 }),
   claude,

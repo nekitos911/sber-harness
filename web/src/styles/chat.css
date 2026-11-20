@@ -435,3 +435,7 @@ svg.step-icon.spinner { color: var(--lamp-run); }
 .composer-mirror mark.att-ref { background: var(--deck-3, var(--rule)); box-shadow: 0 0 0 1px var(--rule-strong); }
 .att-open { display: inline-flex; align-items: center; gap: 6px; min-width: 0; height: 100%; width: 100%; padding: 0; border: 0; background: none; color: inherit; font: inherit; cursor: pointer; }
 .att-n { color: var(--ink-3); font-size: 11px; }
+
+/* «/name …» sent as the command's text: folded under the person's message */
+.msg-command { margin-top: 6px; border-top: 1px solid var(--rule-soft); padding-top: 4px; font-size: 12px; }
+.msg-command .md-preview { max-height: 60vh; overflow: auto; font-size: 13px; }

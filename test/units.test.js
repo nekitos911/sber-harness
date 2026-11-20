@@ -6,6 +6,7 @@ import path from 'node:path';
 import { render } from '../server/orchestration.js';
 import { readRegistry } from '../server/registry.js';
 import { findLiteralSecrets } from '../server/config.js';
+import { expandCommand } from '../server/launchers.js';
 import { tmpDir, rmrf } from './helpers.js';
 
 const dir = tmpDir();
@@ -85,4 +86,27 @@ test('excludeFromCommit: nested service folders (.gigacode/tmp/) are service fil
   assert.ok(isService('.bpmnt-14822-r3-targeted.log', junk));
   assert.ok(!isService('src/main/java/a/Client.java', junk));
   assert.ok(!isService('docs/class-diagram.md', junk));
+});
+
+test('expandCommand: the command file\'s text with the arguments, the project\'s first; null leaves it to the CLI', () => {
+  const user = path.join(dir, 'cmd-user');
+  const cwd = path.join(dir, 'cmd-proj');
+  fs.mkdirSync(path.join(user, 'git'), { recursive: true });
+  fs.mkdirSync(path.join(cwd, '.gigacode', 'commands'), { recursive: true });
+  fs.writeFileSync(path.join(user, 'a.md'), 'Сделай: $ARGUMENTS и {{args}}');
+  fs.writeFileSync(path.join(user, 'plain.md'), '\uFEFF---\ndescription: x\n---\nПросто текст.\n');
+  fs.writeFileSync(path.join(user, 'git', 'commit.md'), 'Коммит {{args}}');
+  fs.writeFileSync(path.join(user, 'shell.md'), 'Статус: !{git status}');
+  fs.writeFileSync(path.join(user, 'same.md'), 'пользовательская');
+  fs.writeFileSync(path.join(cwd, '.gigacode', 'commands', 'same.md'), 'проектная {{args}}');
+  const x = (p, o = {}) => expandCommand(p, { cwd, home: '.gigacode', commandsDir: user, ...o });
+  assert.equal(x('/a PROJ-1 $&').text, 'Сделай: PROJ-1 $& и PROJ-1 $&', 'every slot, the arguments literally');
+  assert.equal(x('/plain').text, 'Просто текст.', 'BOM and frontmatter dropped');
+  assert.equal(x('/plain и ещё').text, 'Просто текст.\n\n/plain и ещё', 'no slot: the invocation after the text');
+  assert.equal(x('/git:commit fix').text, 'Коммит fix');
+  assert.equal(x('/same 1').text, 'проектная 1', 'the project\'s command first');
+  assert.equal(x('/shell'), null, 'shell injection: the CLI runs it');
+  assert.equal(x('/nope x'), null);
+  assert.equal(x('не команда /a'), null);
+  assert.equal(x('/a', { commandsDir: null, home: null }), null, 'no folders: nothing');
 });
