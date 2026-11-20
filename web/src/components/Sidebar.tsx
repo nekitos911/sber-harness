@@ -7,7 +7,7 @@ import { api } from '../api'
 import { runJob } from '../lib/jobs'
 import { useCurrentTool, useStateLine } from '../lib/live'
 import { dur, sessionVisualState } from '../lib/sessionState'
-import { modelLabel, normModels } from '../lib/agents'
+import { modelLabel, normModels, useSettings } from '../lib/agents'
 import { basename, normPath, plural, relTime, subTitle, tokens } from '../lib/format'
 import { loadDraft, saveDraft } from '../lib/draft'
 import { newChat, newTerminal } from '../lib/actions'
@@ -49,8 +49,10 @@ export function Sidebar() {
   const minePrs = useStore((s) => { const m = s.prsMine.mine; return m && typeof m === 'object' && 'items' in m ? m.items.filter((p) => p.state === 'open').length : null })
   const taskPrs = useStore((s) => s.tasks.filter((t) => t.pr?.state === 'open').length)
   const prsMineOn = useFeature('prs-mine')
-  useEffect(() => { if (prsMineOn) loadPrsMine('mine') }, [prsMineOn])
-  const openPrs = minePrs ?? taskPrs
+  const settings = useSettings()
+  const loadMine = prsMineOn && !!settings && settings.integrations?.pr?.active !== false
+  useEffect(() => { if (loadMine) loadPrsMine('mine', true) }, [loadMine])
+  const openPrs = (loadMine ? minePrs : null) ?? taskPrs
   // the same chats as «Ждут вас» below (a question, a permission, a login; failed or cut in the last day)
   const review = useReviewIds()
   const waiting = agents.filter((s) => needsYou(s, now, review) && sessionVisualState(s) !== 'stalled').length

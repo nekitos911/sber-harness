@@ -30,7 +30,7 @@ export function Dialogs() {
 
 function DialogSwitch({ d }: { d: DialogRequest }) {
   switch (d.kind) {
-    case 'workspace': return <WorkspaceDialog from={d.from} />
+    case 'workspace': return <WorkspaceDialog from={d.from} stay={d.stay} />
     case 'chat': return <ChatDialog workspaceId={d.workspaceId} cwd={d.cwd} />
     case 'terminal': return <TerminalDialog workspaceId={d.workspaceId} cwd={d.cwd} />
     case 'worktree': return <WorktreeDialog workspaceId={d.workspaceId} />
@@ -63,7 +63,7 @@ function useBusy() {
 
 // ---------- workspace ----------
 
-function WorkspaceDialog({ from }: { from?: string }) {
+function WorkspaceDialog({ from, stay }: { from?: string; stay?: boolean }) {
   const [path, setPath] = useState('')
   const [name, setName] = useState('')
   const [picking, setPicking] = useState(!!from)
@@ -81,7 +81,7 @@ function WorkspaceDialog({ from }: { from?: string }) {
         const ws = await tryApi<Workspace>('POST', '/workspaces', { path: path.trim(), name: name.trim() || undefined })
         if (!ws) return
         setState((s) => ({ workspaces: s.workspaces.some((w) => w.id === ws.id) ? s.workspaces : [...s.workspaces, ws] }))
-        openWorktree(ws.path)
+        if (!stay) openWorktree(ws.path)
         toast(`Проект «${ws.name}» добавлен`, 'ok')
         closeDialog()
       })}
@@ -89,10 +89,10 @@ function WorkspaceDialog({ from }: { from?: string }) {
       <div className="field">
         <span>Папка проекта</span>
         <div className="chips-row" style={{ flexWrap: 'nowrap' }}>
-          <input className="input mono" style={{ flex: 1 }} aria-label="Путь к папке" placeholder="D:\projects\my-service" value={path} onChange={(e) => setPath(e.target.value)} />
+          <input className="input mono" style={{ flex: 1 }} aria-label="Путь к папке" placeholder="Полный путь к папке проекта" value={path} onChange={(e) => setPath(e.target.value)} />
           <Button icon={<FolderPlus />} autoFocus onClick={() => setPicking(true)}>Обзор…</Button>
         </div>
-        {path && !valid && <span className="field-error">Нужен абсолютный путь, например C:\code\app</span>}
+        {path && !valid && <span className="field-error">Нужен абсолютный путь, например C:\code\app или /home/user/code/app</span>}
         {!path && <span className="field-hint">Выберите папку кнопкой «Обзор…» или вставьте путь.</span>}
       </div>
       {picking && (

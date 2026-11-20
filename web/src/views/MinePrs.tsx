@@ -22,10 +22,12 @@ const stop = (e: MouseEvent) => e.stopPropagation()
 export function MinePrs() {
   const [scope, setScopeState] = useState<PrScope>(() => loadDraft<PrScope>('prs:scope') ?? 'mine')
   const setScope = (v: PrScope) => { setScopeState(v); saveDraft('prs:scope', v === 'mine' ? null : v) }
-  const data = useStore((s) => s.prsMine[scope])
+  const active = useStore((s) => s.settings?.integrations?.pr?.active)
+  const cached = useStore((s) => s.prsMine[scope])
+  const data = active === false ? 'off' : cached
   const now = useNow()
   const [refreshing, setRefreshing] = useState(false)
-  useEffect(() => { loadPrsMine(scope) }, [scope])
+  useEffect(() => { if (active !== false) loadPrsMine(scope, cached === 'off') }, [scope, active])
   useEffect(() => { if (refreshing && data && typeof data === 'object' && !('error' in data)) setRefreshing(false) }, [data, refreshing])
   const refresh = () => { setRefreshing(true); loadPrsMine(scope, true) }
   const [sel, setSel] = useState<PrItem | null>(null) // the PR open in the drawer

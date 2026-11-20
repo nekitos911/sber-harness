@@ -69,8 +69,7 @@ node server/index.js --print-config
 
 ## 3. Задачи из onework
 
-1. Сервер `onework` берётся из `~/.gigacode/settings.json` (`mcpServersFrom`); секрет `Authorization` берётся
-   из файла секретов. Проверка: `node scripts/mcp-call.js onework --list`.
+1. Сервер `onework` можно взять из `~/.gigacode/settings.json` (`mcpServersFrom`) или добавить через «Настройки» → «Подключения». Там же можно записать `Authorization` в файл секретов. Проверка: `node scripts/mcp-call.js onework --list`.
 2. Локально: `integrations.tasks.enabled: true`, `space` = код пространства (например, то, что стоит до `-` в ключах задач),
    `urlTemplate` = `https://<tracker-host>/swtr/units/all/unit/{key}`, при необходимости `refreshSec` (≥ 10) и `statusMap`.
 3. Сырой ответ вручную: `node scripts/mcp-call.js onework sbertrack_findIssues '{"space_code":"<SPACE>","assignee":"me","page_size":5}'`.

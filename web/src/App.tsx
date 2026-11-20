@@ -14,7 +14,6 @@ import { Loading } from './components/bits'
 import { CommandPalette } from './components/CommandPalette'
 import { TooltipLayer } from './components/ui'
 import { ErrorBoundary } from './components/ErrorBoundary'
-import { BoardView } from './views/BoardView'
 import { AgentsView } from './views/AgentsView'
 import { InboxView } from './views/InboxView'
 import { PrsView } from './views/PrsView'
@@ -33,6 +32,7 @@ const MUTATING = '.btn-primary, .composer-send, [data-mutates]'
 
 // Heavy editors load on first use.
 const TerminalView = lazy(() => import('./views/TerminalView'))
+const BoardView = lazy(() => import('./views/BoardView').then((m) => ({ default: m.BoardView })))
 const FileView = lazy(() => import('./views/FileView'))
 
 export function App() {
@@ -110,7 +110,7 @@ export function App() {
               <ErrorBoundary area={SCREEN_AREA[view.screen]}><ScreenContent screen={view.screen} /></ErrorBoundary>
             </section>
           )}
-          {/* Every worktree's tabs stay mounted (terminals, scroll, drafts); only the active one of the shown worktree is visible. */}
+          {/* Previously visited tabs stay mounted (terminals, scroll, drafts); only the active one of the shown worktree is visible. */}
           {Object.entries(wt).flatMap(([k, e]) => e.tabs.map((t) => {
             const key = tabKey(t)
             const shown = k === here && e.active === key
@@ -146,7 +146,7 @@ const SCREEN_AREA: Record<Screen, string> = { home: 'главную', board: 'д
 function ScreenContent({ screen }: { screen: Screen }) {
   switch (screen) {
     case 'home': return <HomeView />
-    case 'board': return <BoardView />
+    case 'board': return <Suspense fallback={<Loading />}><BoardView /></Suspense>
     case 'agents': return <AgentsView />
     case 'prs': return <PrsView />
     case 'inbox': return <InboxView />
@@ -156,6 +156,9 @@ function ScreenContent({ screen }: { screen: Screen }) {
 }
 
 function TabContent({ tab, active }: { tab: Tab; active: boolean }) {
+  const [visited, setVisited] = useState(active)
+  if (active && !visited) setVisited(true)
+  if (!active && !visited) return null
   switch (tab.kind) {
     case 'session': return <SessionTab id={tab.id} active={active} />
     case 'file': return <Suspense fallback={<Loading />}><FileView cwd={tab.cwd} path={tab.path} /></Suspense>

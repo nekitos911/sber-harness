@@ -24,7 +24,7 @@ export interface WtTabs { cwd: string; tabs: Tab[]; active: string | null }
 export type Loc = { screen: Screen } | { cwd: string; tab: string | null }
 
 export type DialogRequest =
-  | { kind: 'workspace'; from?: string } // from: where «Обзор…» starts (the projects folder)
+  | { kind: 'workspace'; from?: string; stay?: boolean } // from: where «Обзор…» starts (the projects folder)
   | { kind: 'chat'; workspaceId?: string; cwd?: string }
   | { kind: 'terminal'; workspaceId?: string; cwd?: string }
   | { kind: 'worktree'; workspaceId?: string }
@@ -81,6 +81,7 @@ export interface State extends Prefs {
   worktrees: Record<string, Worktree[]>
   git: Record<string, GitInfo> // key = normPath(cwd)
   agentMeta: Record<string, AgentMeta | null> // null = this server has no /agents/:id/info
+  settingsCategory: 'Рабочее место' | 'Агенты' | 'Подключения' | 'Доска и Git'
   settings: Settings | null // loaded on demand (pickers need grades; the settings screen edits it)
   prs: Record<string, PrState | undefined> // key = normPath(cwd): PR of the branch checked out there
   prsMine: Partial<Record<PrScope, PrListState>> // GET /api/prs: «Мои» / «По задачам»
@@ -151,7 +152,7 @@ let state: State = {
   conn: 'connecting', loaded: false, authExpired: false, scheme: resolveScheme(prefs.theme),
   tasks: [], sessions: [], workspaces: [], notifications: [], agents: [], defaultAgent: null, shell: '',
   integrations: { tasks: false, pr: false },
-  messages: {}, subagents: {}, worktrees: {}, git: {}, agentMeta: {}, settings: null, prs: {}, prsMine: {}, sdd: {}, recentFolders: [], slowStarts: {}, agentGit: {}, sbOverlay: false, panelOverlay: false, history: {}, recovery: null, features: [], dirty: {}, toasts: [], jobs: [], focusTaskId: null, dialog: null, back: [], forward: [],
+  messages: {}, subagents: {}, worktrees: {}, git: {}, agentMeta: {}, settings: null, settingsCategory: 'Рабочее место', prs: {}, prsMine: {}, sdd: {}, recentFolders: [], slowStarts: {}, agentGit: {}, sbOverlay: false, panelOverlay: false, history: {}, recovery: null, features: [], dirty: {}, toasts: [], jobs: [], focusTaskId: null, dialog: null, back: [], forward: [],
 }
 
 const listeners = new Set<() => void>()
@@ -219,7 +220,7 @@ document.documentElement.dataset.theme = state.scheme
 
 export type Feature = 'sdd' | 'subagents' | 'virtual-sessions' | 'worker-run' | 'pr-status' | 'branches' | 'fs-search'
   | 'agent-info' | 'models-refresh' | 'tracker-links' | 'worktree-meta' | 'open' | 'board-columns' | 'review-loop' | 'skills-install' | 'demo'
-  | 'fs-raw' | 'rework' | 'tracker-import' | 'folders' | 'include-dirs' | 'acp' | 'pr-decline' | 'questions' | 'permissions' | 'activity' | 'recovery' | 'cli-history' | 'prs-mine' | 'git-generate' | 'git-via-agent' | 'git-stage' | 'handoff' | 'release-resolve' | 'handoff-dry-run' | 'cli-adopt' | 'integrations-check' | 'pick-folder' | 'checks' | 'revive' | 'bind-task' | 'open-file' | 'pr-actions' | 'pr-detail' | 'pin'
+  | 'fs-raw' | 'rework' | 'tracker-import' | 'folders' | 'include-dirs' | 'acp' | 'pr-decline' | 'questions' | 'permissions' | 'activity' | 'recovery' | 'cli-history' | 'prs-mine' | 'git-generate' | 'git-via-agent' | 'git-stage' | 'handoff' | 'release-resolve' | 'handoff-dry-run' | 'cli-adopt' | 'integrations-check' | 'pick-folder' | 'checks' | 'revive' | 'bind-task' | 'open-file' | 'pr-actions' | 'pr-detail' | 'pin' | 'mcp-connections'
 
 /** Whether this server implements an optional API group (no flag list = an older server = none). */
 export const hasFeature = (f: Feature) => state.features.includes(f)

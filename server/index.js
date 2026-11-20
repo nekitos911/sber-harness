@@ -16,7 +16,7 @@ import { createSessions, newId, settledTool, titleFrom } from './sessions.js';
 import { createOrchestration, commonDir, render } from './orchestration.js';
 import * as git from './git.js';
 import * as wfs from './fs.js';
-import { createMcpManager, loadSecrets, secretsFile, serverDefs } from './mcp-client.js';
+import { createMcpManager, loadSecrets, secretsFile, serverDefs, connectionDefinition, saveServerSecret } from './mcp-client.js';
 import { launchers, gigacodeCommand } from './launchers.js';
 import { isAlive, resolveCommand, spawnOptions } from './runner.js';
 import { createModelCatalog, scanModelRefs } from './models.js';
@@ -44,7 +44,7 @@ const NO_BUILD_HTML = '<!doctype html><meta charset="utf-8"><title>Harness</titl
 const GRADES = ['default', 'fast', 'review', 'explore'];
 // optional API groups this server implements (docs/ARCHITECTURE.md "Feature flags"); a flag ships with its route
 export const FEATURES = ['branches', 'fs-search', 'pr-status', 'agent-info', 'models-refresh', 'tracker-links', 'board-columns', 'review-loop',
-  'subagents', 'virtual-sessions', 'worker-run', 'skills-install', 'demo', 'worktree-meta', 'open', 'sdd', 'health', 'folders', 'include-dirs', 'questions', 'permissions', 'activity', 'rework', 'fs-raw', 'tracker-import', 'pr-decline', 'task-suggest', 'recovery', 'acp', 'worktree-lazy', 'cli-history', 'prs-mine', 'git-generate', 'git-via-agent', 'git-stage', 'handoff', 'release-resolve', 'cli-adopt', 'handoff-dry-run', 'integrations-check', 'pick-folder', 'checks', 'revive', 'bind-task', 'open-file', 'pr-actions', 'pr-detail', 'pin'];
+  'subagents', 'virtual-sessions', 'worker-run', 'skills-install', 'demo', 'worktree-meta', 'open', 'sdd', 'health', 'folders', 'include-dirs', 'questions', 'permissions', 'activity', 'rework', 'fs-raw', 'tracker-import', 'pr-decline', 'task-suggest', 'recovery', 'acp', 'worktree-lazy', 'cli-history', 'prs-mine', 'git-generate', 'git-via-agent', 'git-stage', 'handoff', 'release-resolve', 'cli-adopt', 'handoff-dry-run', 'integrations-check', 'pick-folder', 'checks', 'revive', 'bind-task', 'open-file', 'pr-actions', 'pr-detail', 'pin', 'mcp-connections'];
 // titles of operations the UI may follow by sending x-job-id (WS { t: 'job' } frames)
 const JOB_TITLES = {
   'POST /api/tasks/sync': 'Синхронизация с трекером',
@@ -682,6 +682,12 @@ export async function startServer(opts = {}) {
     return p;
   }
 
+  function persistConfig(patch) {
+    const next = Object.fromEntries(Object.entries(patch).map(([k, v]) => [k, deepMerge(config[k], v)]));
+    writeAtomic(config.localConfigFile, `${JSON.stringify(deepMerge(readJsonFile(config.localConfigFile), patch), null, 2)}\n`);
+    Object.assign(config, next);
+  }
+
   async function saveSettings(body) {
     const patch = {};
     if (body.agents !== undefined) {
@@ -778,9 +784,7 @@ export async function startServer(opts = {}) {
     }
     const integrations = integrationsPatch(body);
     if (Object.keys(integrations).length) patch.integrations = integrations;
-    const next = Object.fromEntries(Object.entries(patch).map(([k, v]) => [k, deepMerge(config[k], v)]));
-    writeAtomic(config.localConfigFile, `${JSON.stringify(deepMerge(readJsonFile(config.localConfigFile), patch), null, 2)}\n`);
-    Object.assign(config, next);
+    persistConfig(patch);
     scheduleSync();
     schedulePrs();
     if (patch.workspaces) {
@@ -1704,6 +1708,41 @@ export async function startServer(opts = {}) {
   });
 
   // mcp, notifications
+  route('GET', '/api/mcp/config', () => ({
+    servers: Object.entries(serverDefs(config)).filter(([name]) => name !== 'harness').map(([name, def]) =>
+      ({ name, enabled: def.enabled, transport: def.transport, local: Object.hasOwn(config.mcpServers, name), editable: config.mcpServers[name]?.managed === true })),
+    secretsFile: secretsFile(config),
+  }));
+  route('POST', '/api/mcp/servers', ({ body }) => {
+    check(body, { name: 'string', transport: 'string' });
+    const def = connectionDefinition(config, body.name, body);
+    persistConfig({ mcpServers: { [body.name]: { ...def, enabled: true, managed: true } } });
+    return { name: body.name };
+  });
+  route('PUT', '/api/mcp/servers/:name', ({ params, body }) => {
+    if (!Object.hasOwn(serverDefs(config), params.name) || params.name in Object.prototype || params.name === 'harness') fail(404, 'Сервер не найден');
+    if (body.transport) {
+      if (body.transport !== config.mcpServers[params.name]?.transport) fail(400, 'Для другого типа подключения добавьте отдельный сервер');
+      const def = connectionDefinition(config, params.name, body, true);
+      persistConfig({ mcpServers: { [params.name]: def } });
+      return { name: params.name };
+    }
+    if (typeof body?.enabled !== 'boolean') fail(400, 'Укажите, включён ли сервер');
+    persistConfig({ mcpServers: { [params.name]: { enabled: body.enabled } } });
+    return { enabled: body.enabled };
+  });
+  route('PUT', '/api/mcp/secrets/:name', ({ params, body }) => {
+    check(body, { key: 'string', value: 'string' });
+    const def = serverDefs(config)[params.name];
+    const field = def?.transport === 'http' ? 'headers' : 'env';
+    const key = Object.keys(def?.[field] || {}).find((k) => field === 'headers' ? k.toLowerCase() === body.key.toLowerCase() : k === body.key) ?? body.key;
+    saveServerSecret(config, params.name, key, body.value);
+    if (Object.hasOwn(def[field] || {}, key)) {
+      persistConfig({ mcpServers: { [params.name]: { [field]: { [key]: '$secret:' + params.name + '/' + key } } } });
+    }
+    return { saved: true };
+  });
+  route('POST', '/api/mcp/servers/:name/reconnect', async ({ params }) => (await mcp.status(params.name))[0]);
   route('GET', '/api/mcp/servers', () => mcp.status());
   /**
    * «Проверить подключение» of the tracker and the code host: is their MCP server defined (the harness's config or the
@@ -1733,7 +1772,7 @@ export async function startServer(opts = {}) {
     const t = config.integrations.tasks || {};
     const p = config.integrations.pr || {};
     const [tasks, pr] = await Promise.all([check(t.server, [t.tools?.find, t.tools?.get]), check(p.server, [p.tool])]);
-    return { tasks, pr, servers: Object.keys(defs).filter((n) => n !== 'harness').sort() };
+    return { tasks, pr, servers: Object.keys(defs).filter((n) => n !== 'harness' && defs[n].enabled).sort() };
   });
   route('POST', '/api/notifications/read-all', () => {
     for (const n of db.notifications) {

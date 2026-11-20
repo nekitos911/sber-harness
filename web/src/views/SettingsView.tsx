@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { ChipsInput } from '../components/ChipsInput'
 import { DEFAULT_REWORK } from '../components/board/Rework'
 import { FolderPicker } from '../components/FolderPicker'
-import { ArrowDown, ArrowUp, Check, CircleCheck, Pencil, CircleX, LogIn, Plus, RefreshCw, Search, TriangleAlert, X } from 'lucide-react'
+import { ArrowDown, ArrowUp, Check, CircleCheck, Pencil, CircleX, LogIn, Plus, RefreshCw, TriangleAlert, X } from 'lucide-react'
 import { api, ApiError, errorText, qs, tryApi } from '../api'
 import { openScreen, setState, toast, useFeature, useStore } from '../store'
 import { adoptSession } from '../lib/actions'
@@ -13,12 +13,13 @@ import { useNow } from '../lib/useNow'
 import type { AgentSettings, BoardColumn, BoardSettings, GitBranches, Grade, Session, Settings, TaskStatus } from '../types'
 import { Skeleton } from '../components/bits'
 import { ModelPicker } from '../components/pickers/ModelPicker'
+import { Connections } from '../components/Connections'
 import { IntegrationStatus, useIntegrationsCheck } from '../components/IntegrationStatus'
 import { Button, Chip, Disclosure, IconButton, Input, Segmented, Select, SuggestInput, Switch, Textarea } from '../components/ui'
 
 const MAIN = 'gigacode'
 /** The agent the settings lead with: the default one (mock in the demo), else GigaCode. */
-const mainAgent = (form: Settings) => (form.agents[form.defaultAgent] ? form.defaultAgent : form.agents[MAIN] ? MAIN : form.defaultAgent)
+const mainAgent = (form: Settings) => (form.defaultAgent !== 'claude' && form.agents[form.defaultAgent] ? form.defaultAgent : form.agents[MAIN] ? MAIN : Object.keys(form.agents).find((id) => id !== 'claude') ?? '')
 const VARS = ['{taskUrl}', '{notes}', '{key}', '{title}', '{description}', '{targets}', '{branch}', '{repo}']
 const TIMEOUTS = [60, 120, 180, 300]
 const SYNC = [{ v: 0, l: 'выключено' }, { v: 60, l: 'каждую минуту' }, { v: 300, l: 'каждые 5 мин' }, { v: 900, l: 'каждые 15 мин' }, { v: 1800, l: 'каждые 30 мин' }]
@@ -38,16 +39,24 @@ const render = (tpl: string) => tpl
   .replaceAll('{key}', SAMPLE.key).replaceAll('{title}', SAMPLE.title).replaceAll('{branch}', SAMPLE.branch)
   .replaceAll('{targetSlug}', slug(SAMPLE.target)).replaceAll('{target}', SAMPLE.target).replaceAll('{id}', 'T-12')
 
-/** Number of leaf values that differ (the save bar shows it). */
-function countChanges(a: unknown, b: unknown): number {
-  if (a === b) return 0
-  if (typeof a !== 'object' || typeof b !== 'object' || !a || !b || Array.isArray(a) || Array.isArray(b)) {
-    return JSON.stringify(a) === JSON.stringify(b) ? 0 : 1
+function changedFields(a: Record<string, unknown>, b: Record<string, unknown>): Record<string, unknown> {
+  const patch: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(b)) {
+    if (JSON.stringify(a[key]) === JSON.stringify(value)) continue
+    // Settings maps (grades, columns, project commands) are submitted as a unit.
+    patch[key] = value
   }
-  const keys = new Set([...Object.keys(a), ...Object.keys(b)])
-  let n = 0
-  for (const k of keys) n += countChanges((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k])
-  return n
+  return patch
+}
+
+function settingsPatch(before: Settings, after: Settings) {
+  const patch = changedFields({ ...before }, { ...after })
+  if (patch.agents) {
+    patch.agents = Object.fromEntries(Object.entries(after.agents)
+      .filter(([id, agent]) => JSON.stringify(agent) !== JSON.stringify(before.agents[id]))
+      .map(([id, agent]) => [id, changedFields({ ...before.agents[id] }, { ...agent })]))
+  }
+  return patch
 }
 
 /** Which field a server validation error is about (shown next to that field). */
@@ -57,13 +66,16 @@ const FIELD_HINTS: [RegExp, string][] = [
 ]
 
 export function SettingsView() {
+  const category = useStore((s) => s.settingsCategory)
+  const scroll = useRef<HTMLDivElement>(null)
+  useEffect(() => { scroll.current?.scrollTo(0, 0) }, [category])
   const conn = useStore((s) => s.conn)
   const [orig, setOrig] = useState<Settings | null>(null)
   const [form, setForm] = useState<Settings | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [saveError, setSaveError] = useState<{ field: string | null; text: string } | null>(null)
   const [saving, setSaving] = useState(false)
-  const changes = useMemo(() => (orig && form ? countChanges(orig, form) : 0), [orig, form])
+  const changes = useMemo(() => !!orig && !!form && JSON.stringify(orig) !== JSON.stringify(form), [orig, form])
 
   useEffect(() => {
     if (conn !== 'open' || changes) return
@@ -80,10 +92,10 @@ export function SettingsView() {
   const save = async () => {
     setSaving(true)
     try {
-      const saved = (await api<Settings>('PUT', '/settings', form)) ?? form
+      const saved = (await api<Settings>('PUT', '/settings', settingsPatch(orig, form))) ?? form
       setOrig(saved)
       setForm(structuredClone(saved))
-      setState({ settings: saved })
+      setState({ settings: saved, defaultAgent: saved.defaultAgent })
       setSaveError(null)
       toast('Настройки сохранены', 'ok')
     } catch (e) {
@@ -96,40 +108,44 @@ export function SettingsView() {
   const fieldError = (f: string) => (saveError?.field === f ? saveError.text : undefined)
 
   const main = mainAgent(form)
-  const others = Object.keys(form.agents).filter((id) => id !== main)
+  const others = Object.keys(form.agents).filter((id) => id !== main && id !== 'claude')
 
   return (
     <Shell>
       <form className="settings" onSubmit={(e) => { e.preventDefault(); if (changes) void save() }}>
-        <div className="settings-layout settings-single">
-        <div className="settings-body" id="settings-scroll">
-          <BasicSettings form={form} update={update} fieldError={fieldError} main={main} />
-          <AdvancedSettings>
-          <GeneralSection form={form} update={update} />
-          <AgentSection id={main} form={form} update={update} fieldError={fieldError} primary />
-          <OrchestrationSection form={form} update={update} />
-          <BoardSection form={form} update={update} />
-          <TrackerSection form={form} update={update} fieldError={fieldError} />
-          <GitSection form={form} update={update} fieldError={fieldError} />
-          <PrSection form={form} update={update} />
-          {others.length > 0 && (
-            <section className="settings-section">
-              <Disclosure className="settings-others" summary={<h2>Другие агенты (для разработки)</h2>}>
-                <div className="settings-others-body">
-                  {others.map((id) => <AgentSection key={id} id={id} form={form} update={update} fieldError={fieldError} />)}
-                </div>
-              </Disclosure>
-            </section>
-          )}
-          </AdvancedSettings>
+        <div className="settings-layout">
+          <nav className="settings-nav" aria-label="Разделы настроек">
+            {(['Рабочее место', 'Агенты', 'Подключения', 'Доска и Git'] as const).map((name) => (
+              <button key={name} type="button" aria-current={category === name ? 'page' : undefined}
+                onClick={() => setState({ settingsCategory: name })}>{name}</button>
+            ))}
+          </nav>
+          <div ref={scroll} className="settings-body" id="settings-scroll">
+            {category === 'Рабочее место' && <>
+              <BasicSettings form={form} update={update} fieldError={fieldError} main={main} />
+              <GeneralSection form={form} update={update} />
+            </>}
+            {category === 'Агенты' && <>
+              {main && <AgentSection id={main} form={form} update={update} fieldError={fieldError} primary />}
+              <OrchestrationSection form={form} update={update} />
+              {form.checks && <ChecksCard form={form} update={update} />}
+              {others.map((id) => <Disclosure key={id} summary={id}>
+                <AgentSection id={id} form={form} update={update} fieldError={fieldError} />
+              </Disclosure>)}
+            </>}
+            {category === 'Подключения' && <ConnectionsSection form={form} update={update} fieldError={fieldError} />}
+            {category === 'Доска и Git' && <>
+              <BoardSection form={form} update={update} />
+              <GitSection form={form} update={update} fieldError={fieldError} />
+            </>}
+          </div>
         </div>
-        </div>
-        {(changes > 0 || saveError) && (
+        {(changes || saveError) && (
           <div className="save-bar" role="region" aria-label="Несохранённые изменения">
             <span className="save-bar-count">
-              {changes > 0 ? <>Несохранённых изменений: <span className="num">{changes}</span></> : 'Не сохранено'}
+              {changes ? <>Есть несохранённые изменения</> : 'Не сохранено'}
             </span>
-            {saveError && !saveError.field && <span className="field-error" role="alert">{saveError.text}</span>}
+            {saveError && <span className="field-error" role="alert">{saveError.text}</span>}
             <span className="grow" />
             <Button onClick={() => { setForm(structuredClone(orig)); setSaveError(null) }} disabled={saving}>Отменить</Button>
             <Button type="submit" variant="primary" disabled={saving || !changes}>{saving ? 'Сохраняем…' : 'Сохранить'}</Button>
@@ -145,7 +161,6 @@ function Shell({ children }: { children: ReactNode }) {
     <div className="settings-view">
       <header className="view-head">
         <h1>Настройки</h1>
-        <span className="muted">сохраняются в harness.config.local.json; секреты здесь не показываются</span>
         <span className="grow" />
         <button type="button" className="link-btn" onClick={() => openScreen('setup')}>Мастер первого запуска</button>
       </header>
@@ -154,27 +169,16 @@ function Shell({ children }: { children: ReactNode }) {
   )
 }
 
-/** A settings row: label and one-line explanation on the left, the control on the right, error under it. */
-/**
- * «Основное»: what most people set once: the agent (state, sign-in, model, mode), the projects folder, the tracker,
- * and how the agent runs. Everything else is under «Расширенные настройки».
- */
 function BasicSettings({ form, update, fieldError, main }: SectionProps & { main: string }) {
   const labels = useStore((s) => s.agents)
   const foldersOn = useFeature('folders')
-  const acpOn = useFeature('acp')
   const a = form.agents[main]
   const set = (patch: Partial<AgentSettings>) => update({ ...form, agents: { ...form.agents, [main]: { ...a, ...patch } } })
-  const t = form.integrations?.tasks
-  const setT = (patch: NonNullable<NonNullable<Settings['integrations']>['tasks']>) =>
-    update({ ...form, integrations: { ...form.integrations, tasks: { ...t, ...patch } } })
-  const spaces = Array.isArray(t?.space) ? t.space : t?.space ? [t.space] : []
   const modeLabels = a?.approvalModeLabels ?? {}
-  const check = useIntegrationsCheck()
   if (!a) return null
   return (
     <section className="settings-section settings-basic" id="set-basic">
-      <h2>Основное</h2>
+      <h2>Рабочее место</h2>
       <div className="set-card">
         <h3>{labels.find((x) => x.id === main)?.label ?? 'GigaCode'}</h3>
         <AgentStatus id={main} />
@@ -199,65 +203,17 @@ function BasicSettings({ form, update, fieldError, main }: SectionProps & { main
           </div>
         </div>
       )}
-      {t && (
-        <div className="set-card">
-          <h3>Трекер задач</h3>
-          <IntegrationStatus kind="tasks" check={check} />
-          <div className="set-rows">
-            <Row label="Импорт задач"><Switch label="Импорт задач из трекера" checked={!!t.enabled} onChange={(v) => setT({ enabled: v })} /></Row>
-            <Row label="Пространства" hint="Enter или запятая: добавить." error={fieldError('space')}>
-              <ChipsInput label="пространство" values={spaces}
-                onChange={(v) => { const up = [...new Set(v.map((x) => x.trim().toUpperCase()).filter(Boolean))]; setT({ space: up.length === 1 ? up[0] : up }) }} />
-            </Row>
-          </div>
-        </div>
-      )}
-      <div className="set-card">
-        <h3>Пулл-реквесты</h3>
-        <IntegrationStatus kind="pr" check={check} />
-      </div>
-      {form.checks && <ChecksCard form={form} update={update} />}
-      {acpOn && (
-        <div className="set-card">
-          <h3>Как запускать агента</h3>
-          <div className="set-rows">
-            <Row label="Запуск" hint={a.transport === 'acp' ? 'Один процесс на чат: быстрее, ждёт ваших разрешений. Экспериментально.' : 'Новый запуск на каждое сообщение, как gigacode -p.'}>
-              <Segmented label="Как запускать агента" value={a.transport ?? 'headless'} onChange={(v) => set({ transport: v })}
-                options={[{ value: 'headless', label: 'На каждое сообщение' }, { value: 'acp', label: 'Процесс на чат' }]} />
-            </Row>
-          </div>
-        </div>
-      )}
     </section>
   )
 }
 
-/** One folded section with everything else, and a search over the row labels inside it. */
-function AdvancedSettings({ children }: { children: ReactNode }) {
-  const [q, setQ] = useState('')
-  const body = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    const el = body.current
-    if (!el) return
-    const needle = q.trim().toLowerCase()
-    for (const row of el.querySelectorAll<HTMLElement>('.set-row')) {
-      row.hidden = !!needle && !(row.querySelector('.set-label > span:first-child')?.textContent ?? '').toLowerCase().includes(needle)
-    }
-    for (const sec of el.querySelectorAll<HTMLElement>('.settings-section')) {
-      sec.hidden = !!needle && !sec.querySelector('.set-row:not([hidden])')
-    }
-  }, [q])
-  return (
-    <Disclosure className="settings-advanced" summary={<h2>Расширенные настройки</h2>}>
-      <div ref={body} className="settings-advanced-body">
-        <div className="search settings-search">
-          <Search aria-hidden />
-          <input className="input" type="search" placeholder="Найти настройку" aria-label="Найти настройку" value={q} onChange={(e) => setQ(e.target.value)} />
-        </div>
-        {children}
-      </div>
-    </Disclosure>
-  )
+function ConnectionsSection(props: SectionProps) {
+  const check = useIntegrationsCheck()
+  return <>
+    <Connections onSaved={check.recheck} />
+    <TrackerSection {...props} check={check} />
+    <PrSection {...props} check={check} />
+  </>
 }
 
 function Row({ label, hint, error, children, wide }: { label: ReactNode; hint?: ReactNode; error?: string; children: ReactNode; wide?: boolean }) {
@@ -294,7 +250,6 @@ function AgentSection({ id, form, update, fieldError, primary }: SectionProps & 
   return (
     <section className="settings-section" id={primary ? 'set-gigacode' : `set-${id}`}>
       <h2>{label}{!primary && <span className="mono muted"> {id}</span>}</h2>
-      {primary && <AgentStatus id={id} />}
       {!primary && <div className="set-rows">
         <Row label="Модель по умолчанию" hint="Если пусто, модель выбирает сам CLI.">
           <ModelPicker variant="field" agentId={id} label="Модель по умолчанию" value={a.model} onChange={(m) => set({ model: m })} placement="bottom-start" emptyText="как в CLI" />
@@ -357,7 +312,12 @@ function AgentSection({ id, form, update, fieldError, primary }: SectionProps & 
       <div className="set-rows">
         <CommandRow id={id} a={a} set={set} error={fieldError('command')} />
         {primary && reworkOn && <ReworkRow a={a} set={set} />}
-        {/* «Как запускать агента» itself is in «Основное» */}
+        {primary && acpOn && (
+            <Row label="Запуск" hint={a.transport === 'acp' ? 'Один процесс на чат: быстрее, ждёт ваших разрешений. Экспериментально.' : 'Новый запуск на каждое сообщение, как gigacode -p.'}>
+              <Segmented label="Как запускать агента" value={a.transport ?? 'headless'} onChange={(v) => set({ transport: v })}
+                options={[{ value: 'headless', label: 'На каждое сообщение' }, { value: 'acp', label: 'Процесс на чат' }]} />
+            </Row>
+        )}
         {primary && acpOn && a.transport === 'acp' && (
           <Row label="Простой выгружает процесс через" hint="Неактивный чат освобождает память; следующее сообщение снова запустит процесс.">
             <Select label="Простой выгружает процесс через" value={!a.acpIdleMin ? 'never' : String(a.acpIdleMin)}
@@ -407,8 +367,9 @@ function AgentStatus({ id }: { id: string }) {
   const [refreshing, setRefreshing] = useState(false)
   const [editPath, setEditPath] = useState(false)
   const refreshOn = useFeature('models-refresh')
+  const agentLabel = useStore((s) => s.agents.find((agent) => agent.id === id)?.label ?? id)
   const login = async () => {
-    const s = await tryApi<Session>('POST', '/sessions', { kind: 'terminal', agent: id, title: 'Вход в GigaCode' })
+    const s = await tryApi<Session>('POST', '/sessions', { kind: 'terminal', agent: id, title: 'Вход в ' + agentLabel })
     if (s) adoptSession(s)
   }
   const refreshModels = async () => {
@@ -446,15 +407,12 @@ function AgentStatus({ id }: { id: string }) {
       {/* not found: the path fix is the whole story — no login, catalogue or MCP rows repeating the same error */}
       {r.ok && <>
       <dl className="status-grid">
-        {r.ok && r.command && <><dt>Команда</dt><dd>{editPath ? <CliPathFix id={id} error="" initial={r.command} onChecked={() => { setEditPath(false); void recheck() }} /> : <AutoValue value={r.command} mono open={false} onToggle={() => setEditPath(true)} />}</dd></>}
-        {r.node && <><dt>Node</dt><dd className="mono">{r.node}</dd></>}
-        {r.entry && <><dt>Точка входа</dt><dd className="mono">{r.entry}</dd></>}
         <dt>Вход</dt>
         <dd className="status-auth">
           {meta.auth === 'ok' || (meta.auth === undefined && r.identity) ? <><Ok ok />выполнен</>
             : meta.auth === 'required' || (meta.auth === undefined && !r.identity) ? <><TriangleAlert className="warn" aria-hidden />требуется вход</>
               : <span className="muted">неизвестно (станет ясно при первом запуске)</span>}
-          {meta.auth !== 'ok' && r.ok && <Button size="sm" icon={<LogIn />} onClick={() => void login()}>Войти в GigaCode</Button>}
+          {meta.auth !== 'ok' && r.ok && <Button size="sm" icon={<LogIn />} onClick={() => void login()}>Войти в {agentLabel}</Button>}
         </dd>
         <dt>Каталог моделей</dt>
         <dd className="status-auth">
@@ -462,15 +420,14 @@ function AgentStatus({ id }: { id: string }) {
             : meta.catalog?.at ? <span>обновлён {ago(meta.catalog.at, now)}</span> : <span className="muted">ещё не запрашивался</span>}
           {refreshOn && <Button size="sm" variant="ghost" icon={<RefreshCw className={refreshing ? 'spinner' : undefined} />} disabled={refreshing || !r.ok} onClick={() => void refreshModels()}>Обновить список</Button>}
         </dd>
+      </dl>
+      <Disclosure summary="Диагностика CLI">
+      <dl className="status-grid">
+        {r.command && <><dt>Команда</dt><dd>{editPath ? <CliPathFix id={id} error="" initial={r.command} onChecked={() => { setEditPath(false); void recheck() }} /> : <AutoValue value={r.command} mono open={false} onToggle={() => setEditPath(true)} />}</dd></>}
+        {r.node && <><dt>Node</dt><dd className="mono">{r.node}</dd></>}
+        {r.entry && <><dt>Точка входа</dt><dd className="mono">{r.entry}</dd></>}
         {seen && (
           <>
-            <dt>MCP-серверы</dt>
-            <dd className="status-mcp">
-              {seen.mcpServers.length ? seen.mcpServers.map((s) => {
-                const ok = /connect|ok|ready|running/i.test(s.status)
-                return <span key={s.name} className="mcp-item" data-bad={!ok || undefined} data-tip={s.status}>{ok ? <CircleCheck /> : <CircleX />}{s.name}</span>
-              }) : <span className="muted">нет</span>}
-            </dd>
             <dt>Команды</dt><dd>{seen.slashCommands.length ? `${seen.slashCommands.length} slash-команд` : <span className="muted">не сообщались</span>}</dd>
           </>
         )}
@@ -490,7 +447,8 @@ function AgentStatus({ id }: { id: string }) {
           </>
         )}
       </dl>
-      <p className="set-note">{seen ? `По данным последней сессии, ${ago(seen.at, now)}.` : 'Сессий этого агента ещё не было: MCP и команды появятся после первого запуска.'}</p>
+      {seen && <p className="set-note">По данным последней сессии, {ago(seen.at, now)}.</p>}
+      </Disclosure>
       </>}
     </div>
   )
@@ -630,7 +588,7 @@ function ReworkRow({ a, set }: { a: AgentSettings; set: (p: Partial<AgentSetting
 
 // ---------- tracker ----------
 
-function TrackerSection({ form, update, fieldError }: SectionProps) {
+function TrackerSection({ form, update, fieldError, check }: SectionProps & { check: ReturnType<typeof useIntegrationsCheck> }) {
   const t = form.integrations?.tasks
   const set = (patch: NonNullable<NonNullable<Settings['integrations']>['tasks']>) =>
     update({ ...form, integrations: { ...form.integrations, tasks: { ...t, ...patch } } })
@@ -639,8 +597,16 @@ function TrackerSection({ form, update, fieldError }: SectionProps) {
   const sample = (t?.urlTemplate ?? '').replaceAll('{key}', `${spaces[0] || 'PROJ'}-1234`)
   return (
     <section className="settings-section" id="set-tracker">
-      <h2>Трекер (onework)</h2>
+      <h2>Трекер задач</h2>
+      <IntegrationStatus kind="tasks" check={check} />
       <div className="set-rows">
+        {t && <>
+            <Row label="Импорт задач"><Switch label="Импорт задач из трекера" checked={!!t.enabled} onChange={(v) => set({ enabled: v })} /></Row>
+            <Row label="Пространства" hint="Enter или запятая: добавить." error={fieldError('space')}>
+              <ChipsInput label="пространство" values={spaces}
+                onChange={(v) => { const up = [...new Set(v.map((x) => x.trim().toUpperCase()).filter(Boolean))]; set({ space: up.length === 1 ? up[0] : up }) }} />
+            </Row>
+        </>}
         <Row label="Синхронизация" hint="Как часто перечитывать задачи из трекера." error={fieldError('sync')}>
           <Select label="Интервал синхронизации" value={String(refresh)} onChange={(v) => update({ ...form, tasks: { ...form.tasks, refreshSec: Number(v) } })}
             options={[...SYNC, ...(SYNC.some((s) => s.v === refresh) ? [] : [{ v: refresh, l: `каждые ${refresh} с` }])].map((s) => ({ value: String(s.v), label: s.l }))} />
@@ -741,20 +707,20 @@ function TemplateRow({ f, value, onChange, error }: { f: (typeof GIT_TEMPLATES)[
 
 // ---------- PR ----------
 
-function PrSection({ form, update }: Omit<SectionProps, 'fieldError'>) {
+function PrSection({ form, update, check }: Omit<SectionProps, 'fieldError'> & { check: ReturnType<typeof useIntegrationsCheck> }) {
   const pr = form.integrations?.pr
   if (!pr) return null
   const lim = pr.limits ?? {}
   return (
     <section className="settings-section" id="set-pr">
-      <h2>Pull requests</h2>
+      <h2>Пулл-реквесты</h2>
+      <IntegrationStatus kind="pr" check={check} />
       <div className="set-rows">
-        <Row label="PR-интеграция" hint={pr.active === undefined ? 'Кнопка «Создать PR» в панели изменений и экран «Пулл-реквесты».'
-          : pr.active ? 'Включена: «Создать PR» и экран «Пулл-реквесты» работают.' : 'Сейчас выключена: MCP-сервер sourcecontrol не найден или интеграция выключена.'}>
+        <Row label="Создание пулл-реквестов" hint="В режиме «Авто» Harness использует настроенный сервер хостинга кода.">
           <Segmented label="PR-интеграция" value={String(pr.enabled ?? 'auto') as 'auto' | 'true' | 'false'}
             onChange={(v) => update({ ...form, integrations: { ...form.integrations, pr: { ...pr, enabled: v === 'auto' ? 'auto' : v === 'true' } } })}
             options={[
-              { value: 'auto', label: pr.enabled === 'auto' || pr.enabled === undefined ? (pr.active ? 'Авто (найден sourcecontrol)' : 'Авто (sourcecontrol не найден)') : 'Авто', hint: 'Включается сама, когда есть MCP-сервер sourcecontrol' },
+              { value: 'auto', label: 'Авто' },
               { value: 'true', label: 'Вкл' },
               { value: 'false', label: 'Выкл' },
             ]} />
@@ -972,8 +938,8 @@ function GeneralSection({ form, update }: Omit<SectionProps, 'fieldError'>) {
       <h2>Общие</h2>
       <div className="set-rows">
         <Row label="Агент по умолчанию" hint="Для «Новый чат» и «Взять в работу».">
-          <Select label="Агент по умолчанию" value={form.defaultAgent} onChange={(v) => update({ ...form, defaultAgent: v })}
-            options={Object.keys(form.agents).filter((k) => form.agents[k].enabled !== false || k === form.defaultAgent)
+          <Select label="Агент по умолчанию" value={form.defaultAgent === 'claude' ? '' : form.defaultAgent} placeholder="Выберите агента" onChange={(v) => update({ ...form, defaultAgent: v })}
+            options={Object.keys(form.agents).filter((k) => k !== 'claude' && (form.agents[k].enabled !== false || k === form.defaultAgent))
               .map((k) => ({ value: k, label: labels.find((x) => x.id === k)?.label ?? k, hint: k }))} />
         </Row>
         {form.sessions !== undefined && (
@@ -1061,7 +1027,7 @@ function InstallFile({ id, kind, name, target, title, action }: { id: string; ki
 /** «CLI не найден»: the path in plain words, a field to fix it and a check; the raw message under «Подробности». */
 export function CliPathFix({ id, error, onChecked, initial }: { id: string; error: string; onChecked: () => void; initial?: string }) {
   const quoted = /"([^"]+)"/.exec(error)?.[1] ?? initial ?? ''
-  const exe = quoted ? quoted.split(/[\\/]/).pop() : 'gigacode.cmd'
+  const exe = quoted ? quoted.split(/[\\/]/).pop() : id
   const [path, setPath] = useState(quoted)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
@@ -1082,7 +1048,7 @@ export function CliPathFix({ id, error, onChecked, initial }: { id: string; erro
     <div className="cli-fix">
       {error && <p className="status-error">{/not found|не найден/i.test(error) ? <>Не найден {exe}. Укажите, где он лежит, и нажмите «Проверить»:</> : 'Агент не запускается: проверьте путь и нажмите «Проверить».'}</p>}
       <div className="cli-fix-row">
-        <Input mono aria-label="Путь к gigacode.cmd" value={path} placeholder="C:/Program Files/.gigacode/bin/gigacode.cmd" onChange={(e) => setPath(e.target.value)} />
+        <Input mono aria-label="Путь к агенту" value={path} placeholder="Полный путь к исполняемому файлу" onChange={(e) => setPath(e.target.value)} />
         <Button disabled={busy || !path.trim()} onClick={() => void check()}>{busy ? 'Проверяем…' : 'Проверить'}</Button>
       </div>
       {err && <p className="field-error">{err}</p>}

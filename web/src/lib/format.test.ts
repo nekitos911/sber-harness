@@ -1,7 +1,7 @@
 // Run: node --test web/src/lib/format.test.ts
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { ago, reviewKind, subTitle } from './format.ts'
+import { ago, folderCrumbs, reviewKind, subTitle } from './format.ts'
 
 test('reviewer statuses: UNAPPROVED is pending, NEEDS_WORK asks for changes', () => {
   assert.equal(reviewKind('APPROVED'), 'approved')
@@ -22,4 +22,12 @@ test('sub-agent titles: «profile · task» and the older «profile: task»', ()
   assert.deepEqual(subTitle('java-reviewer · проверь лимиты'), ['java-reviewer', 'проверь лимиты'])
   assert.deepEqual(subTitle('java-reviewer: проверь'), ['java-reviewer', 'проверь'])
   assert.equal(subTitle('Обычный чат'), undefined)
+})
+
+test('folder navigation keeps drive, share and POSIX roots intact', () => {
+  const paths = (p: string) => folderCrumbs(p).map((c) => c.path)
+  assert.deepEqual(paths('C:\\code\\app'), ['C:\\', 'C:\\code', 'C:\\code\\app'])
+  assert.deepEqual(paths('\\\\host\\share\\code'), ['\\\\host\\share', '\\\\host\\share\\code'])
+  assert.deepEqual(paths('/home/a\\b'), ['/', '/home', '/home/a\\b'])
+  assert.deepEqual(paths('/'), ['/'])
 })

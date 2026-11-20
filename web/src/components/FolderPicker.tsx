@@ -3,24 +3,10 @@ import { createPortal } from 'react-dom'
 import { ChevronRight, Clock, CornerLeftUp, Folder, FolderOpen, HardDrive } from 'lucide-react'
 import { api, errorText, qs } from '../api'
 import { useFeature, useStore } from '../store'
-import { basename } from '../lib/format'
+import { basename, folderCrumbs } from '../lib/format'
 import { Modal } from './ui/Dialog'
 
 interface Dirs { path: string; parent: string | null; entries: { name: string; path: string }[]; roots: string[] }
-
-/** C:\a\b → [C:\, C:\a, C:\a\b]; /a/b → [/, /a, /a/b] */
-function crumbs(path: string): { name: string; path: string }[] {
-  const sep = path.includes('\\') ? '\\' : '/'
-  const parts = path.split(/[\\/]+/).filter(Boolean)
-  const out: { name: string; path: string }[] = []
-  let acc = /^[A-Za-z]:/.test(path) ? '' : sep
-  for (const p of parts) {
-    acc = acc === sep ? `${sep}${p}` : acc ? `${acc}${sep}${p}` : `${p}${sep}`
-    out.push({ name: p, path: acc })
-  }
-  if (!/^[A-Za-z]:/.test(path)) out.unshift({ name: sep, path: sep })
-  return out
-}
 
 /**
  * Pick a folder on the server's machine: roots (drives, / and ~), breadcrumbs, the folders here with a filter and
@@ -108,7 +94,7 @@ function FolderBrowser({ title = 'Выбор папки', initial, submitLabel =
       )}
       {dirs && (
         <nav className="fp-crumbs" aria-label="Путь">
-          {crumbs(dirs.path).map((c, i, all) => (
+          {folderCrumbs(dirs.path).map((c, i, all) => (
             <span key={c.path} className="fp-crumb">
               <button type="button" className="link" aria-current={i === all.length - 1 ? 'location' : undefined} onClick={() => setAt(c.path)}>{c.name}</button>
               {i < all.length - 1 && <ChevronRight aria-hidden />}

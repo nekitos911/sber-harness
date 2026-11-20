@@ -33,6 +33,19 @@ export const fullTime = (at: number) => new Date(at).toLocaleString('ru-RU')
 
 export const basename = (p: string) => p.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || p
 
+export function folderCrumbs(path: string) {
+  const windowsRoot = path.match(/^(?:[A-Za-z]:[\\/]|(?:\\\\|\/\/)[^\\/]+[\\/][^\\/]+)/)?.[0]
+  const root = windowsRoot ?? '/'
+  const sep = root.includes('\\') ? '\\' : '/'
+  const crumbs = [{ name: root, path: root }]
+  let current = root
+  for (const part of path.slice(root.length).split(windowsRoot ? /[\\/]+/ : /\/+/).filter(Boolean)) {
+    current += (current.endsWith(sep) ? '' : sep) + part
+    crumbs.push({ name: part, path: current })
+  }
+  return crumbs
+}
+
 /** Path identity for matching sessions to worktrees (Windows paths are case-insensitive). */
 export const normPath = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
 

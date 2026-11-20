@@ -486,7 +486,12 @@ POST   /api/sessions/:id/attachments?name=  (raw bytes, any type, ≤10 MB) -> {
                                     pasted screenshot, saved as <stamp>-<name> in <dataDir>/runs/<id>/attachments (the
                                     name sanitized, never leaving the folder); the turn whose message mentions that folder
                                     gets it in includeDirs (ACP: fs roots)
-GET    /api/mcp/servers         -> [{ name, enabled, transport, ok, error?, problem?, tools: [{name, description}] }]
+GET    /api/mcp/config          -> { servers: [{ name, enabled, transport, local, editable }], secretsFile }
+POST   /api/mcp/servers         { name, transport, url | command + args } -> { name }
+PUT    /api/mcp/servers/:name   { enabled } | { transport, url | command + args } -> { enabled } | { name }
+PUT    /api/mcp/secrets/:name   { key, value } -> { saved: true }
+POST   /api/mcp/servers/:name/reconnect -> состояние одного сервиса после нового initialize и tools/list
+GET    /api/mcp/servers         -> [{ name, roles: ("tasks" | "pr")[], enabled, transport, ok, error?, problem?, tools: [{name, description}] }]
 GET    /api/integrations/check  -> { tasks: Check, pr: Check, servers: string[] }   // флаг integrations-check
 POST   /api/checks/run { workspaceId, command } -> { ok, code, output, ms, timedOut }   // флаг checks: «Проверить сейчас» в папке проекта
 POST   /api/sessions/:id/revive  -> Session   // флаг revive: «Повторить» — продолжить оборвавшийся чат сейчас (409, если он работает)

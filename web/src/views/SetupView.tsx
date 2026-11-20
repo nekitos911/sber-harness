@@ -1,13 +1,12 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Check, Circle, CircleAlert, FolderOpen } from 'lucide-react'
-import { api, errorText, tryApi } from '../api'
-import { openDialog, openScreen, setState, toast, useStore } from '../store'
-import { loadAgentMeta, loadSettings, useAgentMeta, useSettings } from '../lib/agents'
+import { api, errorText } from '../api'
+import { getState, openDialog, openScreen, setState, toast, useStore } from '../store'
+import { loadAgentMeta, useAgentMeta, useSettings } from '../lib/agents'
 import type { Settings } from '../types'
 import { FolderPicker } from '../components/FolderPicker'
-import { Button, Input, Segmented, Select, Switch } from '../components/ui'
+import { Button, Disclosure, Input, Segmented, Select, Switch } from '../components/ui'
 import { CliPathFix } from './SettingsView'
-import { IntegrationStatus, useIntegrationsCheck } from '../components/IntegrationStatus'
 
 const SKILL = 'harness-orchestration'
 
@@ -34,9 +33,12 @@ export function useSetupNeeded(): boolean | null {
   const agent = useSetupAgent()
   const meta = useAgentMeta(agent?.id)
   const projects = useStore((s) => s.workspaces.some((w) => w.kind === 'root' || !w.kind))
+  const missing = !!settings && !!agent && meta !== undefined && (!meta?.resolved.ok || !projects)
+  const [started, setStarted] = useState(false)
+  useEffect(() => { if (missing) setStarted(true) }, [missing])
+  if (settings?.user?.setupDone) return false
   if (!settings || !agent || meta === undefined) return null
-  if (settings.user?.setupDone) return false
-  return !meta?.resolved.ok || !projects
+  return started || missing
 }
 
 /**
@@ -67,14 +69,6 @@ export function SetupView() {
   const [installSkill, setInstallSkill] = useState(false)
   const [picking, setPicking] = useState(false)
   const [busy, setBusy] = useState(false)
-  const check = useIntegrationsCheck()
-  const tracker = settings?.integrations?.tasks
-  const savedSpace = [tracker?.space ?? []].flat().join(', ')
-  const [importOn, setImportOn] = useState<boolean | null>(null)
-  const [space, setSpace] = useState<string | null>(null)
-  const importing = importOn ?? !!tracker?.enabled
-  const spaces = (space ?? savedSpace).split(/[\s,]+/).map((x) => x.trim().toUpperCase()).filter(Boolean)
-
   const agentOk = !!meta?.resolved.ok
   const placesOk = !!root || projects.length > 0
   const commandOk = mode === 'text' || /^[\w.-]+$/.test(cmd)
@@ -94,14 +88,12 @@ export function SetupView() {
       // not have (a default from another machine) is replaced by the plain text
       const chosen = mode === 'command' ? cmd : null
       const changed = !skip && chosen !== current
-      if (!skip && installSkill && skill !== 'installed') await tryApi('POST', `/agents/${encodeURIComponent(id)}/skills/install`, { name: SKILL, force: skill === 'different' || undefined })
-      // the tracker only when touched here, and only with a space to import from
-      const trackerPatch = !skip && (importOn !== null || space !== null) && (!importing || spaces.length)
-        ? { integrations: { tasks: { enabled: importing, ...(spaces.length ? { space: spaces.length === 1 ? spaces[0] : spaces } : {}) } } } : {}
-      await api<Settings>('PUT', '/settings', { user: { setupDone: true }, ...(changed ? { agents: { [id]: taskTemplates(chosen) } } : {}), ...trackerPatch })
-      await loadSettings(true)
+      if (!skip && installSkill && skill !== 'installed') await api('POST', `/agents/${encodeURIComponent(id)}/skills/install`, { name: SKILL, force: skill === 'different' || undefined })
+      const saved = await api<Settings>('PUT', '/settings', { user: { setupDone: true }, ...(!skip && id ? { defaultAgent: id } : {}), ...(changed ? { agents: { [id]: taskTemplates(chosen) } } : {}) })
+      setState({ settings: saved, ...(!skip ? { defaultAgent: id } : {}) })
       if (!skip) loadAgentMeta(id, true)
-      openScreen('home')
+      const view = getState().view
+      if (view.kind === 'screen' && view.screen === 'setup') openScreen('home')
     } catch (e) {
       toast(errorText(e), 'error')
     } finally {
@@ -112,8 +104,8 @@ export function SetupView() {
   return (
     <section className="setup firstrun" aria-label="Первый запуск">
       <header className="setup-head">
-        <h2>Настроим рабочее место</h2>
-        <span className="muted">два обязательных шага, остальное по желанию — всё можно поменять потом в «Настройках»</span>
+        <h2>Ваше рабочее место</h2>
+        <span className="muted">Выберите агента и откройте проект, чтобы начать первый чат.</span>
       </header>
       <ol className="setup-steps firstrun-steps">
         <li className="firstrun-step" data-done={agentOk || undefined}>
@@ -121,12 +113,11 @@ export function SetupView() {
           <div className="firstrun-body">
             <strong>Агент</strong>
             {agents.filter((a) => a.enabled).length > 1 && (
-              <Select size="sm" label="Агент" value={id} onChange={(v) => setAgentId(v)} options={agents.filter((a) => a.enabled).map((a) => ({ value: a.id, label: a.label }))} />
+              <Select size="sm" label="Агент" value={id} onChange={(v) => { setAgentId(v); setHow(null); setCommand(null); setInstallSkill(false) }} options={agents.filter((a) => a.enabled).map((a) => ({ value: a.id, label: a.label }))} />
             )}
             {meta === undefined ? <span className="muted">Проверяем…</span>
               : agentOk ? <span className="muted">{agent?.label} найден{meta?.resolved.command ? <>: <span className="mono">{meta.resolved.command}</span></> : null}</span>
-                : <><span className="muted">{agent?.label ?? 'Агент'} не найден на этом компьютере. Укажите путь к его запуску и нажмите «Проверить».</span>
-                  <CliPathFix id={id} error={meta?.resolved.error ?? ''} onChecked={() => loadAgentMeta(id, true)} /></>}
+                : <CliPathFix id={id} error={meta?.resolved.error || 'Укажите путь к агенту'} onChecked={() => loadAgentMeta(id, true)} />}
             {meta?.auth === 'required' && <span className="field-warn">Агент просит войти: войдите в него в терминале или по ссылке из первого чата.</span>}
           </div>
         </li>
@@ -138,15 +129,18 @@ export function SetupView() {
             <span className="muted">
               {root ? <>Папка со всеми проектами: <span className="mono">{root.path}</span> — агент сам выберет нужный проект.</>
                 : projects.length ? <>Открыто: {projects.map((w) => w.name).join(', ')}. Если все проекты лежат в одной папке, укажите её — тогда агент выберет проект сам.</>
-                  : 'Если все проекты лежат в одной папке — укажите её, и агент сам выберет нужный. Если нет — откройте проект, в котором работать.'}
+                  : 'Откройте репозиторий или выберите общую папку для нескольких проектов.'}
             </span>
             <div className="firstrun-actions">
-              <Button size="sm" icon={<FolderOpen />} onClick={() => openDialog({ kind: 'workspace' })}>Открыть проект…</Button>
+              <Button size="sm" icon={<FolderOpen />} onClick={() => openDialog({ kind: 'workspace', stay: true })}>Открыть проект…</Button>
               <Button size="sm" onClick={() => setPicking(true)}>{root ? 'Другая папка с проектами…' : 'Папка со всеми проектами…'}</Button>
             </div>
           </div>
         </li>
 
+      </ol>
+      <Disclosure summary="Команда для задач и помощники" className="firstrun-options">
+        <ul className="setup-steps">
         <li className="firstrun-step" data-done={commandOk || undefined} data-optional>
           {commandOk ? <Check className="setup-mark" aria-label="готово" /> : <Circle className="setup-mark" aria-label="не заполнено" />}
           <div className="firstrun-body">
@@ -178,30 +172,12 @@ export function SetupView() {
             </div>
           </li>
         )}
-        {check.r !== null && (
-          <li className="firstrun-step" data-optional data-done={(check.r?.tasks.ok && check.r?.pr.ok) || undefined}>
-            {check.r?.tasks.ok && check.r?.pr.ok ? <Check className="setup-mark" aria-label="готово" /> : <Circle className="setup-mark" aria-label="необязательно" />}
-            <div className="firstrun-body">
-              <strong>Задачи из трекера и пулл-реквесты <span className="muted">· необязательно</span></strong>
-              <span className="muted">С ними задачи берутся с доски «Задачи» одной кнопкой, а PR создаётся прямо отсюда. Без них задачу можно описать словами, а PR создать вручную.</span>
-              <IntegrationStatus kind="tasks" check={check} />
-              {check.r?.tasks.ok && (
-                <div className="firstrun-actions">
-                  <Switch checked={importing} onChange={setImportOn} label="Подтягивать мои задачи из трекера" />
-                  <span>Подтягивать мои задачи из пространства</span>
-                  <Input mono aria-label="Пространство трекера" placeholder="например PROJ" value={space ?? savedSpace} onChange={(e) => setSpace(e.target.value)} />
-                </div>
-              )}
-              {check.r?.tasks.ok && importing && !spaces.length && <span className="field-warn">Укажите пространство (код проекта в трекере), из которого брать задачи.</span>}
-              <IntegrationStatus kind="pr" check={check} />
-            </div>
-          </li>
-        )}
-      </ol>
+        </ul>
+      </Disclosure>
       <footer className="firstrun-foot">
         <button type="button" className="link-btn" disabled={busy} onClick={() => void finish(true)}>Пропустить</button>
         <span className="grow" />
-        <Button variant="primary" disabled={!ready || busy} busy={busy} onClick={() => void finish(false)}>Готово</Button>
+        <Button variant="primary" disabled={!ready || busy} busy={busy} onClick={() => void finish(false)}>Начать работу</Button>
       </footer>
       {picking && <FolderPicker title="Папка со всеми проектами" onClose={() => setPicking(false)} onPick={(p) => void setRoot(p)} />}
     </section>

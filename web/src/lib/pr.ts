@@ -41,6 +41,6 @@ export function reviewText(pr: Pick<PrInfo, 'reviewers' | 'state'>) {
 
 /** Settings → «Pull requests». */
 export function openPrSettings() {
+  setState({ settingsCategory: 'Подключения' })
   openScreen('settings')
-  window.setTimeout(() => document.getElementById('set-pr')?.scrollIntoView({ block: 'start', behavior: 'smooth' }), 200)
 }

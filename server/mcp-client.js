@@ -5,6 +5,7 @@
 // Secrets (docs/ARCHITECTURE.md "Console MCP"): resolved at call time, never logged or returned by an API.
 import fs from 'node:fs';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { deepMerge, expandHome } from './config.js';
 import { resolveCommand, endChild, spawnOptions } from './runner.js';
@@ -56,6 +57,52 @@ export function loadSecrets(config) {
   if (lines.length === 1 && !lines[0].includes('=')) add('onework/Authorization', lines[0]);
   else for (const l of lines) if (l.includes('=')) add(l.slice(0, l.indexOf('=')).trim(), l.slice(l.indexOf('=') + 1).trim());
   return secrets;
+}
+
+/** Update one scoped credential without returning values or replacing unrelated entries. */
+export function saveServerSecret(config, name, key, value) {
+  if (!Object.hasOwn(serverDefs(config), name) || name in Object.prototype || name === 'harness' || !/^[\w.-]+$/.test(name)) fail(404, 'Сервер не найден');
+  if (typeof key !== 'string' || !/^[a-zA-Z][a-zA-Z0-9_-]{0,100}$/.test(key) ||
+      typeof value !== 'string' || !value.trim() || /[\r\n\0]/.test(value)) fail(400, 'Укажите имя и значение секрета в одну строку');
+  const file = secretsFile(config);
+  let source = '';
+  try { source = fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, ''); } catch (e) { if (e.code !== 'ENOENT') throw e; }
+  const scoped = name + '/' + key;
+  let output;
+  if (source.trimStart().startsWith('{')) {
+    let map;
+    try { map = JSON.parse(source); } catch { fail(400, 'Исправьте JSON в существующем файле секретов'); }
+    for (const old of Object.keys(map)) if (canon(old) === canon(scoped)) delete map[old];
+    map[scoped] = value;
+    output = JSON.stringify(map, null, 2);
+  } else {
+    const lines = source.trimEnd().split(/\r?\n/);
+    const entries = lines.filter((line) => line.trim() && !line.trimStart().startsWith('#'));
+    if (entries.length === 1 && !entries[0].includes('=')) lines[lines.indexOf(entries[0])] = 'onework/Authorization=' + entries[0].trim();
+    else if (entries.some((line) => line.indexOf('=') <= 0)) fail(400, 'Исправьте строку без имени или значения в файле секретов');
+    const kept = lines.filter((line) => !line.includes('=') || canon(line.slice(0, line.indexOf('=')).trim()) !== canon(scoped));
+    output = [...kept, scoped + '=' + value].join('\n').trimStart();
+  }
+  const tmp = file + '.' + randomUUID() + '.tmp';
+  try {
+    fs.writeFileSync(tmp, output + '\n', { flag: 'wx', mode: 0o600 });
+    fs.renameSync(tmp, file);
+  } finally { fs.rmSync(tmp, { force: true }); }
+}
+
+/** A new local connection has its own name, so it cannot inherit credentials from a namesake. */
+export function connectionDefinition(config, name, body, edit = false) {
+  if (typeof name !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9.-]{0,63}$/.test(name) || name in Object.prototype || name === 'harness') fail(400, 'Имя сервера может содержать буквы латиницы, цифры, точку и дефис');
+  if (edit && !config.mcpServers[name]?.managed) fail(400, 'Этот сервер задан во внешней конфигурации');
+  if (!edit && Object.keys(serverDefs(config)).some((n) => n.toLowerCase() === name.toLowerCase())) fail(409, 'Сервер с таким именем уже существует');
+  if (body.transport === 'http') {
+    let url;
+    try { url = new URL(body.url); } catch { fail(400, 'Введите полный HTTP(S)-адрес MCP'); }
+    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash || /\$/.test(url.href)) fail(400, 'Укажите HTTP(S)-адрес без учётных данных, параметров и фрагмента');
+    return { transport: 'http', url: url.href };
+  }
+  if (body.transport !== 'stdio' || typeof body.command !== 'string' || !body.command.trim() || !Array.isArray(body.args) || !body.args.every((arg) => typeof arg === 'string')) fail(400, 'Укажите команду и аргументы для stdio');
+  return { transport: 'stdio', command: body.command.trim(), args: body.args };
 }
 
 /** Every secret as MCP_SECRET_<NAME> ("/" -> "_"), for stdio MCP children and agent processes. */
@@ -207,10 +254,13 @@ function httpTransport(name, cfg) {
     try {
       res = await fetch(cfg.url, { method: 'POST', headers, body: JSON.stringify(body), signal: AbortSignal.timeout(ms) });
     } catch (e) {
-      throw e.name === 'TimeoutError' ? timeoutError(name, body.method, ms) : rpcError(name, e);
+      throw e.name === 'TimeoutError' ? timeoutError(name, body.method, ms) : rpcError(name, { message: e.cause?.code || e.message });
     }
     sessionId = res.headers.get('mcp-session-id') || sessionId;
-    if (!res.ok) throw rpcError(name, { message: `HTTP ${res.status}: ${(await res.text()).slice(0, 500)}` });
+    if (!res.ok) {
+      await res.body?.cancel();
+      throw rpcError(name, { message: `HTTP ${res.status}` });
+    }
     if (body.id == null) return null;
     // shortcut: an SSE response is read to its end; streamable-HTTP servers close it after the response.
     const msg = (res.headers.get('content-type') || '').includes('text/event-stream') ? parseSse(await res.text(), body.id) : await res.json();
@@ -237,13 +287,17 @@ function httpTransport(name, cfg) {
 export function createMcpManager(config) {
   /** Server config with secrets applied; throws { problem: true } when a referenced secret is missing. */
   function prepared(name) {
-    const def = serverDefs(config)[name] || fail(404, `MCP-сервер «${name}» не настроен (mcpServers)`);
+    const defs = serverDefs(config);
+    const def = defs[name] || fail(404, `MCP-сервер «${name}» не настроен (mcpServers)`);
     if (!def.enabled) fail(400, `MCP-сервер «${name}» выключен (mcpServers.${name}.enabled)`);
     const secrets = loadSecrets(config);
     const own = {}; // "<server>/<Name>" secrets: headers of an http server, env of a stdio server
-    const prefix = `${canon(name)}_`;
-    for (const [key, { name: secretName, value }] of secrets) {
-      if (key.startsWith(prefix)) own[secretName.slice(name.length + 1)] = value;
+    // Legacy server_KEY entries use the longest matching server name. A slash gives the owner explicitly.
+    const owners = Object.keys(defs).sort((a, b) => b.length - a.length);
+    for (const { name: secretName, value } of secrets.values()) {
+      const slash = secretName.indexOf('/');
+      const owner = slash >= 0 ? secretName.slice(0, slash) : owners.find((n) => secretName.toLowerCase().startsWith(n.toLowerCase() + '_'));
+      if (owner?.toLowerCase() === name.toLowerCase()) own[secretName.slice(owner.length + 1)] = value;
     }
     const resolved = resolveRefs({ env: def.env || {}, headers: def.headers || {}, args: def.args || [], url: def.url || '' }, secrets);
     const http = def.transport === 'http';
@@ -251,7 +305,7 @@ export function createMcpManager(config) {
       ...def,
       ...resolved,
       headers: { ...(http ? own : {}), ...resolved.headers },
-      env: { ...secretEnv(config), ...(http ? {} : own), ...resolved.env },
+      env: { ...(def.managed || http ? {} : secretEnv(config)), ...(http ? {} : own), ...resolved.env },
     };
   }
 
@@ -291,12 +345,15 @@ export function createMcpManager(config) {
     listTools,
     callTool,
     toolsSeen: (name) => seen.get(name) ?? null,
-    async status() {
+    async status(onlyName) {
       // the harness calls only its integrations' servers and the ones in its own config; the rest of the user's GigaCode
       // servers (mcpServersFrom: java-lsp, …) are the agents' business — not started here on every page load
       const used = new Set([config.integrations?.tasks?.server, config.integrations?.pr?.server, ...Object.keys(config.mcpServers || {})].filter(Boolean));
-      return Promise.all(Object.entries(serverDefs(config)).filter(([name]) => used.has(name)).map(async ([name, def]) => {
-        const row = { name, enabled: def.enabled, transport: def.transport, ok: false, tools: [] };
+      const defs = serverDefs(config);
+      if (onlyName && (!Object.hasOwn(defs, onlyName) || !used.has(onlyName))) fail(404, 'Сервис не найден');
+      return Promise.all(Object.entries(defs).filter(([name]) => used.has(name) && (!onlyName || name === onlyName)).map(async ([name, def]) => {
+        const roles = ['tasks', 'pr'].filter((kind) => config.integrations?.[kind]?.server === name);
+        const row = { name, roles, enabled: def.enabled, transport: def.transport, ok: false, tools: [] };
         if (!row.enabled) return row;
         try {
           row.tools = (await listTools(name)).map((t) => ({ name: t.name, description: t.description || '' }));

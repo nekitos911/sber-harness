@@ -8,20 +8,18 @@ import { Button, Select } from './ui'
 interface One { server: string | null; found: boolean; ok: boolean; missing: string[]; error?: string }
 interface Check { tasks: One; pr: One; servers: string[] }
 
-// one request for every block on the page; «Проверить» asks again
-let shared: Promise<Check | null> | null = null
-
-/** GET /integrations/check: undefined while asking, null when this server cannot tell. */
 export function useIntegrationsCheck() {
   const on = useFeature('integrations-check')
   const [r, setR] = useState<Check | null | undefined>(undefined)
-  const run = (fresh: boolean) => {
-    if (fresh || !shared) shared = api<Check>('GET', '/integrations/check').catch(() => null)
+  const [version, setVersion] = useState(0)
+  useEffect(() => {
+    if (!on) return
+    let active = true
     setR(undefined)
-    void shared.then(setR)
-  }
-  useEffect(() => { if (on) run(false) }, [on]) // eslint-disable-line react-hooks/exhaustive-deps
-  return { r: on ? r : null, recheck: () => run(true) }
+    api<Check>('GET', '/integrations/check').then((v) => { if (active) setR(v) }, () => { if (active) setR(null) })
+    return () => { active = false }
+  }, [on, version])
+  return { r: on ? r : null, recheck: () => setVersion((v) => v + 1) }
 }
 
 const LABEL = { tasks: 'трекера задач', pr: 'пулл-реквестов' }
@@ -40,6 +38,7 @@ export function IntegrationStatus({ kind, check }: { kind: 'tasks' | 'pr'; check
   const pick = async (server: string) => {
     if ((await tryApi('PUT', '/settings', { integrations: { [kind]: { server } } })) === undefined) return
     await loadSettings(true)
+    window.dispatchEvent(new Event('mcp-changed'))
     recheck()
   }
   return (
@@ -53,21 +52,13 @@ export function IntegrationStatus({ kind, check }: { kind: 'tasks' | 'pr'; check
                 : <><span className="mono">{c.server}</span> отвечает, но это не сервер {LABEL[kind]}: у него нет {c.missing.join(', ')}.</>}
         </span>
       </p>
-      {!c.found && (
-        <p className="muted">
-          Программа берёт MCP-серверы из настроек GigaCode (<span className="mono">~/.gigacode/settings.json</span>, раздел{' '}
-          <span className="mono">mcpServers</span>): если сервер {LABEL[kind]} подключён самому агенту, он найдётся сам. Если нет — добавьте его туда и нажмите «Проверить».
-        </p>
-      )}
-      {!c.ok && (
-        <div className="integ-actions">
+      <div className="integ-actions">
           {others.length > 0 && (
-            <Select size="sm" label={`Сервер ${LABEL[kind]}`} placeholder="Это другой сервер…" value="" onChange={(v) => void pick(v)}
+            <Select size="sm" label={`Сервер ${LABEL[kind]}`} placeholder="Выбрать другой сервер…" value="" onChange={(v) => void pick(v)}
               options={others.map((s) => ({ value: s, label: s }))} />
           )}
           <Button size="sm" icon={<RefreshCw />} onClick={recheck}>Проверить</Button>
-        </div>
-      )}
+      </div>
     </div>
   )
 }

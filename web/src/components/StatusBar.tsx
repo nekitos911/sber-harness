@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
-import { Check, X } from 'lucide-react'
-import { api } from '../api'
-import { useStore } from '../store'
-import { Popover } from './ui'
+import { Check, RefreshCw, X } from 'lucide-react'
+import { api, errorText } from '../api'
+import { openScreen, setState, useFeature, useStore } from '../store'
+import { Button, Popover } from './ui'
 
-interface McpServer { name: string; enabled: boolean; ok: boolean; error?: string; problem?: string }
+interface McpServer { name: string; enabled: boolean; ok: boolean; error?: string; problem?: string; roles?: ('tasks' | 'pr')[]; tools?: { name: string }[] }
 
 /** What the usual services are for, in words; the id stays next to it. */
-const PURPOSE: Record<string, string> = { onework: 'Трекер задач', sourcecontrol: 'Пулл-реквесты' }
+const PURPOSE = { tasks: 'Трекер задач', pr: 'Пулл-реквесты' }
 
 export function StatusBar() {
   const conn = useStore((s) => s.conn)
@@ -15,11 +15,29 @@ export function StatusBar() {
   const [open, setOpen] = useState(false)
   const mcpBtn = useRef<HTMLButtonElement>(null)
 
+  const canReconnect = useFeature('mcp-connections')
+  const [pending, setPending] = useState<string[]>([])
   useEffect(() => {
     if (conn !== 'open') return
-    api<McpServer[]>('GET', '/mcp/servers').then(setMcp, () => setMcp(null))
+    let version = 0
+    const refresh = () => {
+      const ticket = ++version
+      api<McpServer[]>('GET', '/mcp/servers').then((rows) => { if (ticket === version) setMcp(rows) }, () => { if (ticket === version) setMcp(null) })
+    }
+    refresh()
+    window.addEventListener('mcp-changed', refresh)
+    return () => { ++version; window.removeEventListener('mcp-changed', refresh) }
   }, [conn])
 
+  const reconnect = async (name: string) => {
+    setPending((names) => [...names, name])
+    try {
+      const row = await api<McpServer>('POST', '/mcp/servers/' + encodeURIComponent(name) + '/reconnect')
+      setMcp((rows) => rows?.map((old) => old.name === name ? row : old) ?? null)
+    } catch (e) {
+      setMcp((rows) => rows?.map((old) => old.name === name ? { ...old, ok: false, problem: undefined, error: errorText(e) } : old) ?? null)
+    } finally { setPending((names) => names.filter((n) => n !== name)) }
+  }
   const enabled = mcp?.filter((m) => m.enabled) ?? []
   const broken = enabled.filter((m) => !m.ok || m.problem)
 
@@ -33,21 +51,28 @@ export function StatusBar() {
             {broken.length > 0 && `, с ошибкой: ${broken.length}`}
           </button>
           <Popover anchor={mcpBtn} open={open} onClose={() => setOpen(false)} placement="top-end" label="Сервисы для задач и PR" className="sb-mcp-pop">
-            <p className="sb-mcp-head">Сервисы, через которые приходят задачи и создаются PR (подключены по MCP). Сервисы самого агента — в «Настройках».</p>
-            {enabled.length === 0 && <p className="muted">Не настроены.</p>}
-            {enabled.map((m) => (
-              <div key={m.name} className="sb-mcp-row" data-bad={!m.ok || !!m.problem || undefined}>
-                {m.ok && !m.problem ? <Check aria-hidden /> : <X aria-hidden />}
-                <span>{PURPOSE[m.name] ?? m.name}</span>{PURPOSE[m.name] && <span className="mono muted">{m.name}</span>}
-                {(m.problem || (!m.ok && m.error)) && <span className="sb-mcp-err">{m.problem ?? m.error}</span>}
+            <strong className="sb-mcp-head">Состояние сервисов</strong>
+            {enabled.length === 0 && <p className="muted">Нет включённых MCP-сервисов.</p>}
+            {enabled.map((m) => {
+              const purpose = m.roles?.map((role) => PURPOSE[role]).join(' · ')
+              const error = m.problem || m.error
+              const ok = m.ok && !error
+              return <div key={m.name} className="sb-mcp-row" data-bad={!ok || undefined}>
+                {ok ? <Check aria-hidden /> : <X aria-hidden />}
+                <div className="sb-mcp-name"><strong>{purpose || m.name}</strong>
+                  <small>{purpose && m.name + ' · '}{ok ? 'Подключено' : 'Ошибка подключения'}</small>
+                </div>
+                {canReconnect && <Button size="sm" variant="ghost" aria-label={'Переподключить ' + m.name} busy={pending.includes(m.name)}
+                  icon={<RefreshCw />} onClick={() => void reconnect(m.name)}>Переподключить</Button>}
+                {error && <div className="sb-mcp-err" role="status">
+                  {/UNABLE_TO_VERIFY_LEAF_SIGNATURE|SELF_SIGNED_CERT|CERT_UNTRUSTED/i.test(error) && <p>Не удалось проверить цепочку сертификатов. Проверьте доверенный CA на этом компьютере.</p>}
+                  {error}
+                </div>}
               </div>
-            ))}
-            {broken.length > 0 && (
-              <p className="muted">
-                Нет секрета — допишите его в файл секретов (CONSOLE_MCP_SECRETS). Сервер не нужен — выключите в harness.config.local.json:
-                <code> mcpServers.&lt;имя&gt;.enabled: false</code>.
-              </p>
-            )}
+            })}
+            <button type="button" className="link-btn" onClick={() => {
+              setOpen(false); setState({ settingsCategory: 'Подключения' }); openScreen('settings')
+            }}>Настроить подключения</button>
           </Popover>
         </>
       )}

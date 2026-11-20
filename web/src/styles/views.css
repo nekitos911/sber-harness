@@ -214,10 +214,6 @@
 .map-row { display: grid; grid-template-columns: minmax(0, 1fr) 20px 200px; align-items: center; gap: 8px; }
 .map-arrow { color: var(--ink-4); text-align: center; }
 
-.settings-others .disclosure-toggle { padding: 2px 0; }
-.settings-others .disclosure-toggle h2 { font-size: 13px; color: var(--ink-2); }
-.settings-others-body { display: grid; gap: 8px; padding-top: 16px; }
-.settings-others-body .settings-section { padding: 14px 16px; margin: 0; border: 1px solid var(--rule); border-radius: var(--r-2); }
 
 /* Appears only with unsaved changes; part of the layout (never floats over a field). */
 .save-bar {
@@ -380,17 +376,15 @@
 .install-cmd { display: grid; gap: 6px; justify-items: start; }
 .install-confirm { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 10px; border: 1px solid var(--rule); border-radius: var(--r-1); background: var(--well); font-size: 12.5px; }
 .ok-text { display: inline-flex; align-items: center; gap: 6px; color: var(--lamp-done); }
-.settings-advanced { margin-top: 6px; }
-.settings-advanced .disclosure-toggle h3 { margin: 0; }
-.settings-advanced .collapse > div > * + * { margin-top: 8px; }
 
 /* ---------- settings layout (review) ---------- */
 
+.settings-view { container-type: inline-size; }
 .settings-layout { flex: 1; min-height: 0; display: grid; grid-template-columns: 200px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
 .settings-nav { display: grid; align-content: start; gap: 1px; padding: 24px 8px 24px 16px; border-right: 1px solid var(--rule-soft); overflow-y: auto; }
-.settings-nav a { display: block; height: 28px; padding: 0 10px; border-radius: var(--r-1); color: var(--ink-3); line-height: 28px; text-decoration: none; }
-.settings-nav a:hover { background: var(--deck-2); color: var(--ink); text-decoration: none; }
-.settings-nav a[aria-current="true"] { background: var(--deck-3); color: var(--ink); font-weight: 500; }
+.settings-nav button { border: 0; background: transparent; cursor: pointer; font: inherit; text-align: left; display: block; min-height: 34px; padding: 0 10px; border-radius: var(--r-1); color: var(--ink-3); line-height: 28px; text-decoration: none; }
+.settings-nav button:hover { background: var(--deck-2); color: var(--ink); text-decoration: none; }
+.settings-nav button[aria-current="page"] { background: var(--deck-3); color: var(--ink); font-weight: 500; }
 .settings-body > * { max-width: 880px; margin-left: 0; margin-right: 0; }
 .settings-body { padding: 24px 40px 64px 32px; scroll-padding-top: 16px; }
 .set-row { grid-template-columns: 280px minmax(0, 360px); }
@@ -481,10 +475,11 @@ button.chip.chip-mono[aria-pressed="true"] { background: var(--signal-soft); col
 .quick-tools { margin-top: 6px; }
 
 /* narrow window: settings in one column, the section list on top */
-@media (max-width: 999px) {
+@container (max-width: 760px) {
   .settings-layout { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
   .settings-nav { display: flex; gap: 2px; padding: 8px 12px; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--rule-soft); }
-  .settings-nav a { flex: none; }
+  .settings-nav button { flex: none; }
+  .settings-body { padding: 18px; }
   .set-row, .set-row[data-wide] { grid-template-columns: minmax(0, 1fr); gap: 6px; }
   .set-label { padding-top: 0; }
 }
@@ -652,17 +647,12 @@ button.prs-group[aria-expanded="true"] .chev { transform: rotate(90deg); }
 .handoff-preview-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11.5px; color: var(--ink-2); }
 .handoff-preview-text[data-open] { white-space: pre-wrap; overflow-wrap: anywhere; }
 .handoff-preview:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 3px; }
-/* Settings: «Основное» in calm cards, the rest folded under «Расширенные настройки» */
-.settings-single { grid-template-columns: minmax(0, 1fr); }
-.settings-single .settings-body { width: min(820px, 100%); margin: 0 auto; }
+/* Settings panels */
 .settings-basic { display: grid; gap: 14px; }
 .set-card { padding: 14px 18px 6px; border: 1px solid var(--rule); border-radius: 12px; background: var(--deck); }
 .set-card > h3 { margin: 0 0 6px; font-size: 13.5px; font-weight: 600; color: var(--ink); }
 .set-card .status-card { margin: 6px 0 4px; }
 .set-card .set-row { border-top-color: var(--rule-soft); }
-.settings-advanced { margin-top: 28px; }
-.settings-advanced-body { display: grid; gap: 8px; padding-top: 8px; }
-.settings-search { width: min(360px, 100%); margin-bottom: 8px; }
 /* «Куда: [develop] · ＋ релиз» */
 .targets-line { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; font-size: 12.5px; }
 .targets-label { color: var(--ink-3); }
@@ -740,3 +730,31 @@ button.prs-group[aria-expanded="true"] .chev { transform: rotate(90deg); }
 .pr-comments { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
 .pr-comments li { padding: 8px 10px; border: 1px solid var(--rule); border-radius: var(--r-2); background: var(--deck); }
 .pr-comment-head { font-size: 12px; margin-bottom: 4px; }
+
+
+.firstrun { padding: clamp(16px, 3vw, 32px); gap: 18px; }
+.firstrun .setup-head { display: grid; gap: 6px; }
+.firstrun .setup-head h2 { font-size: 24px; letter-spacing: -.025em; }
+.firstrun .firstrun-step { padding-block: 14px; }
+.firstrun-options { border-top: 1px solid var(--rule-soft); padding-top: 10px; }
+.firstrun-foot { padding-top: 14px; border-top: 1px solid var(--rule-soft); }
+.connection-list { display: grid; min-width: 0; }
+.connection-line { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--rule-soft); }
+.connection-line > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.connection-line small, .sb-mcp-name small { display: block; color: var(--ink-3); font-size: 12px; }
+.connection-editor { display: grid; gap: 12px; padding: 14px; background: var(--deck-2); border-radius: var(--r-2); }
+.connection-editor label { display: grid; gap: 4px; }
+.connection-editor .btn { justify-self: start; }
+.connection-editor small { overflow-wrap: anywhere; }
+@container (max-width: 500px) {
+  .connection-line { flex-wrap: wrap; }
+  .connection-line > span { flex-basis: 100%; }
+}
+
+@container (max-width: 520px) {
+  .settings-nav { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .status-grid { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+  .status-grid dd + dt { margin-top: 8px; }
+  .set-control { grid-template-columns: minmax(0, 1fr); }
+  .set-control .segmented { flex-wrap: wrap; }
+}

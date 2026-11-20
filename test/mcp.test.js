@@ -12,7 +12,7 @@ import { createBus } from '../server/bus.js';
 import { createTasks } from '../server/tasks.js';
 import { importTasks, transitionTask } from '../server/integrations/tasks.js';
 import { createPullRequest } from '../server/integrations/pr.js';
-import { tmpDir, rmrf } from './helpers.js';
+import { startTestServer, tmpDir, rmrf } from './helpers.js';
 
 const dir = tmpDir();
 after(() => rmrf(dir));
@@ -96,7 +96,7 @@ test('http client: SSE responses, Mcp-Session-Id, secret headers and ${env:} ref
     req.on('end', () => {
       if (req.method !== 'POST') return res.end();
       const msg = JSON.parse(body);
-      seen.push({ method: msg.method, session: req.headers['mcp-session-id'], auth: req.headers.authorization, team: req.headers['x-team'] });
+      seen.push({ method: msg.method, session: req.headers['mcp-session-id'], auth: req.headers.authorization, foreign: req.headers['other/authorization'], legacy: req.headers['other_token'], team: req.headers['x-team'] });
       if (msg.id == null) return res.writeHead(202).end();
       if (msg.method === 'initialize') {
         res.writeHead(200, { 'content-type': 'application/json', 'mcp-session-id': 'sess-1' });
@@ -111,19 +111,19 @@ test('http client: SSE responses, Mcp-Session-Id, secret headers and ${env:} ref
   });
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   const secrets = path.join(dir, 'secrets.json');
-  fs.writeFileSync(secrets, JSON.stringify({ 'remote/Authorization': 'Bearer s3cret' }));
+  fs.writeFileSync(secrets, JSON.stringify({ 'remote/Authorization': 'Bearer s3cret', 'remote_other_TOKEN': 'another', 'remote_other/Authorization': 'private' }));
   process.env.HARNESS_TEST_TEAM = 'core';
   try {
     const mcp = createMcpManager(baseConfig({
       mcpSecretsFile: secrets,
-      mcpServers: { remote: { url: `http://127.0.0.1:${server.address().port}/mcp`, headers: { 'x-team': '${env:HARNESS_TEST_TEAM}' }, timeoutMs: 5000 } },
+      mcpServers: { remote_other: { enabled: false }, remote: { url: `http://127.0.0.1:${server.address().port}/mcp`, headers: { 'x-team': '${env:HARNESS_TEST_TEAM}' }, timeoutMs: 5000 } },
     }));
     assert.deepEqual((await mcp.listTools('remote')).map((t) => t.name), ['echo']);
     assert.deepEqual(toolResultValue(await mcp.callTool('remote', 'echo', { x: 1 })), { echoed: { x: 1 } });
     assert.deepEqual(seen.map((s) => s.method), ['initialize', 'notifications/initialized', 'tools/list', 'initialize', 'notifications/initialized', 'tools/call']);
     assert.ok(seen.filter((s) => s.method === 'initialize').every((s) => s.session === undefined));
     assert.ok(seen.filter((s) => s.method !== 'initialize').every((s) => s.session === 'sess-1'));
-    assert.ok(seen.every((s) => s.auth === 'Bearer s3cret' && s.team === 'core'));
+    assert.ok(seen.every((s) => s.auth === 'Bearer s3cret' && s.team === 'core' && !s.foreign && !s.legacy));
   } finally {
     server.close();
   }
@@ -204,4 +204,50 @@ test('status probes only the servers the harness calls (integrations, its own co
   const mcp = createMcpManager(baseConfig({ mcpServersFrom: from }));
   assert.deepEqual((await mcp.status()).map((r) => r.name), ['tracker']);
   assert.ok('java-lsp' in serverDefs(baseConfig({ mcpServersFrom: from })), 'still known for scripts/mcp-call.js');
+});
+
+test('standalone MCP setup persists, keeps credentials write-only, and reconnects one service', async (t) => {
+  const secrets = path.join(dir, 'setup-secrets');
+  const source = path.join(dir, 'imported-servers.json');
+  const previous = { ...process.env };
+  process.env.HARNESS_MCP_SECRETS = secrets;
+  process.env.CONSOLE_MCP_SETTINGS = source;
+  t.after(() => {
+    for (const key of ['HARNESS_MCP_SECRETS', 'CONSOLE_MCP_SETTINGS']) {
+      if (previous[key] === undefined) delete process.env[key];
+      else process.env[key] = previous[key];
+    }
+  });
+  const original = JSON.stringify({ mcpServers: { imported: { command: 'missing-command', env: { Token: 'original-value' } } } });
+  fs.writeFileSync(source, original);
+  fs.writeFileSync(secrets, '# keep this comment\nonework/Authorization=existing');
+  const h = await startTestServer({ mcpServersFrom: source, mcpSecretsFile: secrets });
+  try {
+    const create = (body) => h.api('POST', '/api/mcp/servers', body);
+    const add = { name: 'own', ...MOCK };
+    assert.equal((await create(add)).status, 200);
+    assert.equal((await create(add)).status, 409);
+    assert.equal((await create({ ...add, name: 'imported' })).status, 409);
+    assert.equal((await create({ ...add, name: 'constructor' })).status, 400);
+    assert.equal((await create({ name: 'bad', transport: 'http', url: 'https://user:password@example.org' })).status, 400);
+    assert.equal((await create({ name: 'remote', transport: 'http', url: 'https://example.invalid/mcp' })).status, 200);
+    const secret = { key: 'Token', value: 'demo-credential' };
+    assert.equal((await h.api('PUT', '/api/mcp/secrets/imported', secret)).status, 200);
+    assert.equal((await h.api('PUT', '/api/mcp/secrets/imported', { ...secret, value: 'bad\ninjection' })).status, 400);
+    assert.equal(loadSecrets({ mcpSecretsFile: secrets, root: dir }).get('imported_token').value, secret.value);
+    assert.match(fs.readFileSync(secrets, 'utf8'), /# keep this comment\nonework\/Authorization=existing/);
+    const meta = (await h.api('GET', '/api/mcp/config')).body;
+    assert.deepEqual(meta.servers.find((c) => c.name === 'own'), { name: 'own', local: true, editable: true, enabled: true, transport: 'stdio' });
+    const local = fs.readFileSync(h.configFile.replace('.json', '.local.json'), 'utf8');
+    assert.doesNotMatch(JSON.stringify(meta) + local, /demo-credential|original-value/);
+    assert.equal(JSON.parse(local).mcpServers.imported.env.Token, '$secret:imported/Token');
+    assert.equal(fs.readFileSync(source, 'utf8'), original);
+    assert.equal((await h.api('PUT', '/api/mcp/servers/imported', MOCK)).status, 400);
+    assert.equal((await h.api('PUT', '/api/mcp/servers/own', MOCK)).status, 200);
+    const connect = () => h.api('POST', '/api/mcp/servers/own/reconnect');
+    assert.equal((await connect()).body.tools.length, 3);
+    await h.api('PUT', '/api/mcp/servers/own', { enabled: false });
+    assert.equal((await connect()).body.enabled, false);
+    assert.equal((await h.api('POST', '/api/mcp/servers/unknown/reconnect')).status, 404);
+  } finally { await h.close(); }
 });
