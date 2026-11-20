@@ -1447,10 +1447,23 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
    * worktree whose root contains the cwd (longest prefix, a sub-folder included) and its repository; otherwise the
    * deepest registered folder.
    */
-  async function placeFor(cwd, fresh = false, retry = true) {
+  async function placeFor(cwd, fresh = false, retry = true, selected = null) {
     // the harness's own folders (default chat folders, login terminal, model discovery, run files); a projects
     // folder inside the data dir (the demo's <dataDir>/projects) is an ordinary place
     if (['chats', 'terms', 'runs'].some((d) => insideDir(path.join(store.dataDir, d), cwd))) return { workspaceId: null, worktreePath: null, system: true };
+    // A chat opened from the sidebar already names its workspace. Confirm its location before scanning unrelated repos.
+    if (selected?.isGit) {
+      const exact = (await worktreesOf(selected.path)).find((wt) => samePath(wt.path, cwd));
+      if (exact) return { workspaceId: selected.id, worktreePath: exact.path, system: false };
+    } else if (selected && samePath(selected.path, cwd)) {
+      // A normal projects folder has no enclosing .git directory (or .git file for a linked worktree).
+      let dir = cwd;
+      while (!fs.existsSync(path.join(dir, '.git'))) {
+        const parent = path.dirname(dir);
+        if (parent === dir) return { workspaceId: selected.id, worktreePath: null, system: false };
+        dir = parent;
+      }
+    }
     let best = null;
     // all repos at once: one git process each, never one after another (17 repos × a slow git on Windows = seconds)
     const lists = await Promise.all(db.workspaces.filter((x) => x.isGit).map(async (w) => [w, await worktreesOf(w.path, fresh)]));
@@ -1550,7 +1563,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
         launcherId: kind === 'chat' ? agentCfg.launcher : null,
         cwd,
         ...(await (async () => {
-          const place = await placeFor(cwd);
+          const place = await placeFor(cwd, false, true, ws);
           return { workspaceId: place.system ? null : ws?.id ?? place.workspaceId, worktreePath: place.worktreePath, system: place.system };
         })()),
         branch: o.branch ?? null,

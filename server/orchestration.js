@@ -568,6 +568,9 @@ export function createOrchestration({ config, store, bus, tasks, sessions, addWo
     const persistent = worktree === 'new' || !!a.workspace;
     if (!persistent && atDepthLimit(caller)) fail(409, NO_SUBAGENTS);
     const base = other && elsewhere ? other.path : caller.worktreePath || caller.cwd;
+    if (worktree === 'new' && !(await git.isRepo(base))) {
+      fail(400, `Папка «${base}» вне репозитория Git. Для отдельного рабочего дерева укажите workspace — репозиторий из workspace_list. Для работы прямо в папке используйте worktree: "current".`);
+    }
     let cwd = a.workspace || worktree === 'new' ? base : caller.cwd;
     let branch = a.workspace ? await git.currentBranch(base) : caller.branch;
     let madeWorktree = worktree === 'new';

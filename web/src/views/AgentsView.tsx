@@ -3,8 +3,8 @@ import { CliGlyph } from '../components/Sidebar'
 import { listedChat } from '../lib/pending'
 import { ArchiveRestore, Bot, Ellipsis, ListPlus, MessageSquarePlus, Send } from 'lucide-react'
 import { tryApi } from '../api'
-import { openDialog, openSession, openTask, useStore } from '../store'
-import { ago, ROLE } from '../lib/format'
+import { openDialog, openSession, openTask, setState, useStore } from '../store'
+import { ago, basename, ROLE } from '../lib/format'
 import { useNow } from '../lib/useNow'
 import type { Session } from '../types'
 import { Branch, StatusIcon, statusText } from '../components/bits'
@@ -46,11 +46,16 @@ function ordered(list: Session[]) {
 
 export function AgentsView() {
   const sessions = useStore((s) => s.sessions)
-  const [archive, setArchive] = useState(false)
+  const mode = useStore((s) => s.agentsMode)
+  const archive = mode === 'archive'
   // «Активные» = the set the sidebar counts (listedChat); «Архив» = archived ones
   // a CLI chat nobody continued here is history, not an agent: off the board unless it works or waits right now
   const history = (s: Session) => s.origin === 'cli' && !s.cliImportedAt && !BUSY_OR_WAITING.has(sessionVisualState(s))
-  const chats = useMemo(() => sessions.filter((s) => (archive ? s.kind === 'chat' && !s.virtual && !s.system && !!s.archived : listedChat(s) && !history(s))).sort((a, b) => b.lastActivityAt - a.lastActivityAt), [sessions, archive])
+  const chats = useMemo(() => sessions.filter((s) => {
+    if (archive) return s.kind === 'chat' && !s.virtual && !s.system && !!s.archived
+    if (mode === 'running') return listedChat(s) && ['running', 'starting'].includes(sessionVisualState(s))
+    return listedChat(s) && !history(s)
+  }).sort((a, b) => b.lastActivityAt - a.lastActivityAt), [sessions, archive, mode])
   const [allIn, setAllIn] = useState<Set<string>>(new Set()) // lanes opened past the last day
   const now = useNow()
   const archivedCount = useMemo(() => sessions.filter((s) => s.kind === 'chat' && !s.virtual && s.archived).length, [sessions])
@@ -64,8 +69,8 @@ export function AgentsView() {
       <header className="view-head">
         <h1>Агенты</h1>
         <span className="count">{chats.length}</span>
-        <Segmented size="sm" label="Какие чаты показывать" value={archive ? 'archive' : 'active'} onChange={(v) => setArchive(v === 'archive')}
-          options={[{ value: 'active', label: 'Активные' }, { value: 'archive', label: archivedCount > 0 ? `Архив ${archivedCount}` : 'Архив' }]} />
+        <Segmented size="sm" label="Какие чаты показывать" value={mode} onChange={(agentsMode) => setState({ agentsMode })}
+          options={[{ value: 'active', label: 'Активные' }, { value: 'running', label: 'В работе' }, { value: 'archive', label: archivedCount > 0 ? `Архив ${archivedCount}` : 'Архив' }]} />
 
         <span className="grow" />
         <button type="button" className="btn" onClick={() => openDialog({ kind: 'chat' })}>
@@ -76,12 +81,13 @@ export function AgentsView() {
       {chats.length === 0 ? (
         <div className="empty">
           <Bot className="empty-icon" aria-hidden />
-          <h2>{archive ? 'Архив пуст' : 'Начните чат с агентом'}</h2>
-          <p>{archive ? 'Здесь можно вернуться к архивированным чатам.' : 'Здесь появятся агент и его помощники. Можно следить за работой и открывать их чаты.'}</p>
+          <h2>{archive ? 'Архив пуст' : mode === 'running' ? 'Сейчас никто не работает' : 'Начните чат с агентом'}</h2>
+          {mode !== 'running' && <p>{archive ? 'Здесь можно вернуться к архивированным чатам.' : 'Здесь появятся агент и его помощники. Можно следить за работой и открывать их чаты.'}</p>}
         </div>
       ) : (
         <div className="lanes">
           {GROUPS.map((g) => {
+            if (mode === 'running' && g.id !== 'run') return null
             const lane = [...chats, ...subs].filter((s) => g.match.includes(laneState(s)))
             // «Ответили» / «Готово» keep the last day; older ones wait behind «ещё N» (auto-archive takes them later)
             const aged = (g.id === 'idle' || g.id === 'done') && !archive && !allIn.has(g.id)
@@ -169,7 +175,10 @@ function AgentCard({ s, nested, parent }: { s: Session; nested: boolean; parent?
       {!nested && parent && (
         <button type="button" className="agent-parent" onClick={() => openSession(parent.id)}>↳ от {parent.title}</button>
       )}
-      {s.branch && <div className="agent-where"><Branch name={s.branch} /></div>}
+      <div className="agent-where" data-tip={s.cwd}>
+        <span className="ellipsis">{basename(s.worktreePath ?? s.cwd) || s.cwd}</span>
+        {s.branch && <Branch name={s.branch} />}
+      </div>
       {ask
         ? <button type="button" className="agent-preview agent-ask" onClick={() => openSession(s.id)} data-tip="Открыть и ответить">{ask}</button>
         : s.preview && !s.waitingFor && <p className="agent-preview">{s.preview}</p>/* waiting: its state says what it needs, not the last «Done.» */}

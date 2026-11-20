@@ -98,6 +98,7 @@ export interface State extends Prefs {
   toasts: Toast[]
   jobs: Job[]
   focusTaskId: string | null
+  agentsMode: 'active' | 'running' | 'archive'
   dialog: DialogRequest | null
   back: Loc[]
   forward: Loc[]
@@ -149,6 +150,7 @@ const resolveScheme = (pref: Theme | null): Theme => pref ?? 'dark'
 const prefs = readPrefs()
 let state: State = {
   ...prefs,
+  agentsMode: 'active',
   conn: 'connecting', loaded: false, authExpired: false, scheme: resolveScheme(prefs.theme),
   tasks: [], sessions: [], workspaces: [], notifications: [], agents: [], defaultAgent: null, shell: '',
   integrations: { tasks: false, pr: false },

@@ -458,9 +458,8 @@ function WhereLine({ session }: { session: Session }) {
     return s.workspaces.find((w) => w.id === byWt) ?? s.workspaces.find((w) => w.id === session.workspaceId) ?? ownerWorkspace(s.workspaces, session.cwd)
   })
   const agent = useStore((s) => s.agents.find((a) => a.id === session.agent))
-  // «GigaCode · Все проекты (IdeaProjects)» / «GigaCode · project · branch or folder» — never one name twice.
   const parts: string[] = [agent?.label ?? session.agent]
-  if (ws?.kind === 'root') parts.push(`Все проекты (${basename(ws.path)})`)
+  if (ws?.kind === 'root') parts.push(basename(ws.path) || ws.path)
   else if (ws) parts.push(ws.name)
   const here = basename(session.cwd)
   const showFolder = !session.branch && ws?.kind !== 'root' && !parts.includes(here) && (!ws || normPath(ws.path) !== normPath(session.cwd))

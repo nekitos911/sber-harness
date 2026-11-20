@@ -1,5 +1,5 @@
 import { createContext, memo, useContext, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react'
-import { MessageSquare, Activity, ArrowUp, Bot, ChevronDown, Ellipsis, Folder, FolderTree, TriangleAlert, GitPullRequest, Pin, ChevronRight, FolderGit2, FolderPlus, GitBranch, GitBranchPlus, House, Inbox, MessageSquarePlus, Moon, Search, Settings, SquareKanban, SquareTerminal, Sun, X } from 'lucide-react'
+import { Activity, ArrowUp, Bot, ChevronDown, Ellipsis, Folder, FolderTree, TriangleAlert, GitPullRequest, Pin, ChevronRight, FolderGit2, FolderPlus, GitBranch, GitBranchPlus, House, Inbox, MessageSquarePlus, Moon, Search, Settings, SquareKanban, SquareTerminal, Sun, X } from 'lucide-react'
 import { getState, useFeature, openDialog, openScreen, openSession, openWorktree, setState, showPanel, useActiveCwd, useStore, useThrottledStore, wtKey, type Screen } from '../store'
 import { archiveSession, dismissSession, renameSession, sessionMenu, unseenReply } from '../lib/sessionActions'
 import { loadWorktrees } from '../ws'
@@ -26,6 +26,9 @@ import { loadPrsMine } from '../lib/prsMine'
 
 const depth = (d: number) => ({ '--depth': d }) as CSSProperties
 const APP_START = Date.now() // rows for sessions born after this animate in; the initial list does not
+const CHAT_PREVIEW = 4
+const CHAT_PAGE = 20
+const isFolder = (ws: Workspace) => !ws.isGit || ws.kind === 'folder' || ws.kind === 'root'
 
 const activate = (fn: () => void) => (e: KeyboardEvent) => {
   if (e.target !== e.currentTarget) return
@@ -41,6 +44,7 @@ export function Sidebar() {
   const scheme = useStore((s) => s.scheme)
   const width = useStore((s) => s.sidebarWidth)
   const [query, setQuery] = useState('')
+  const filtering = !!query.trim()
 
   // the same set as the Agents screen: listed chats; «работают» = running, starting or silent
   const agents = sessions.filter(listedChat)
@@ -62,18 +66,7 @@ export function Sidebar() {
   const openTab = useStore((s) => (s.view.kind === 'wt' ? s.wt[normPath(s.view.cwd)]?.active : null))
   const ageMinute = sbp.chatsMaxAgeDays ? Math.floor(now / 60000) : 0
   const tree = useMemo(() => buildTree(sessions.filter((s) => (!s.archived || leaving.has(s.id)) && (sbp.showCli || s.origin !== 'cli') &&
-    (openTab === `s:${s.id}` || !staleChat(sbp, s, ageMinute * 60000))), query, allWorktrees, sbp.sort), [sessions, query, allWorktrees, leaving, sbp, openTab, ageMinute])
-  const archivedHelpers = useMemo(() => {
-    const byParent = new Map<string, Session[]>()
-    for (const s of sessions) {
-      if (!s.archived || !s.parentId || s.system || s.kind !== 'chat') continue
-      const group = byParent.get(s.parentId)
-      if (group) group.push(s)
-      else byParent.set(s.parentId, [s])
-    }
-    return byParent
-  }, [sessions])
-  const filtering = !!query.trim()
+    (filtering || openTab === `s:${s.id}` || !staleChat(sbp, s, ageMinute * 60000))), query, allWorktrees, sbp.sort), [sessions, filtering, query, allWorktrees, leaving, sbp, openTab, ageMinute])
   const rootWs = workspaces.find((w) => w.kind === 'root')
   const projects = workspaces.filter((w) => w.kind !== 'root')
   const prefs = sbp
@@ -87,7 +80,7 @@ export function Sidebar() {
     (!!activeCwd && (normPath(activeCwd) === normPath(ws.path) || normPath(activeCwd).startsWith(`${normPath(ws.path)}/`) || (allWorktrees[ws.id] ?? []).some((w) => normPath(w.path) === normPath(activeCwd))))
   const lastOf = (ws: Workspace) => Math.max(0, ...tree.all.filter((x) => tree.owner(x) === ws.id).map((x) => x.lastActivityAt), ...(allWorktrees[ws.id] ?? []).map((w) => w.lastActivityAt ?? 0))
   const ordered = orderProjects(projects, prefs, lastOf)
-  const listed = ordered.filter((w) => !prefs.hiddenProjects.includes(w.id) && (prefs.folders || w.kind !== 'folder'))
+  const listed = ordered.filter((w) => !prefs.hiddenProjects.includes(w.id) && (prefs.folders || !isFolder(w)))
   const quiet = filtering ? [] : listed.filter((w) => !isActive(w))
   const compactList = listed.length <= 3
   const shownProjects = filtering || ((compactList || showAll) && !prefs.hideEmpty) ? listed : listed.filter(isActive)
@@ -108,7 +101,8 @@ export function Sidebar() {
     <nav className="sidebar" aria-label="Навигация">
       <div className="sb-search">
         <Search aria-hidden />
-        <input className="input" type="search" placeholder="Поиск" aria-label="Поиск по сессиям и проектам" value={query} onChange={(e) => setQuery(e.target.value)} />
+        <input className="input" type="search" placeholder="Поиск чатов" aria-label="Поиск по сессиям и проектам" value={query} onChange={(e) => setQuery(e.target.value)} />
+        <WorkspaceParams projects={projects} />
       </div>
 
       <div className="nav">
@@ -130,25 +124,24 @@ export function Sidebar() {
           : unread > 0 && <span className="count" aria-label={`непрочитанных: ${unread}`} data-tip="Непрочитанные уведомления">{unread}</span>} />
       </div>
 
-      <ArchivedHelpers.Provider value={archivedHelpers}><MixedAgents.Provider value={new Set(tree.all.map((x) => x.agent)).size > 1}>
+      <SidebarSearch.Provider value={filtering}><MixedAgents.Provider value={new Set(tree.all.map((x) => x.agent)).size > 1}>
       <div className="tree" aria-label="Проекты и сессии">
         {!filtering && <PinnedSection tree={tree} />}
         {!filtering && <AttentionSection tree={tree} />}
-        {!filtering && <WorkingSection tree={tree} />}
-        {rootWs && prefs.folders && <ProjectNode ws={rootWs} tree={tree} filtering={filtering} />}
+        {!filtering && <WorkingSection tree={tree} sessions={sessions} />}
+        {rootWs && prefs.folders && <ProjectNode key={rootWs.id + ':' + query.trim()} ws={rootWs} tree={tree} filtering={filtering} activeTab={openTab} />}
         <div className="sb-head">
           <span>Проекты <span className="num">· {projects.length}</span></span>
-          <WorkspaceParams projects={projects} />
           <button type="button" className="icon-btn icon-btn-sm" data-tip="Добавить проект" aria-label="Добавить проект" onClick={() => openDialog({ kind: 'workspace' })}>
             <FolderPlus />
           </button>
         </div>
         {grouped ? (
           <>
-            <GroupedWorktrees projects={listed.filter((w) => w.kind !== 'folder')} tree={tree} />
-            {listed.filter((w) => w.kind === 'folder').map((ws) => <ProjectNode key={ws.id} ws={ws} tree={tree} filtering={filtering} />)}
+            <GroupedWorktrees projects={listed.filter((w) => !isFolder(w))} tree={tree} />
+            {listed.filter(isFolder).map((ws) => <ProjectNode key={ws.id} ws={ws} tree={tree} filtering={filtering} activeTab={openTab} />)}
           </>
-        ) : shownProjects.map((ws) => <ProjectNode key={ws.id} ws={ws} tree={tree} filtering={filtering} drag={drag(ws)} />)}
+        ) : shownProjects.map((ws) => <ProjectNode key={ws.id} ws={ws} tree={tree} filtering={filtering} activeTab={openTab} drag={drag(ws)} />)}
         {!grouped && !compactList && quiet.length > 0 && !prefs.hideEmpty && (
           <button type="button" className="tree-row tree-more" style={depth(0)} aria-expanded={showAll} onClick={() => setShowAll(!showAll)}>
             <Ellipsis aria-hidden />
@@ -172,7 +165,7 @@ export function Sidebar() {
           </div>
         )}
       </div>
-      </MixedAgents.Provider></ArchivedHelpers.Provider>
+      </MixedAgents.Provider></SidebarSearch.Provider>
 
       <div className="sb-foot">
         <NavItem screen="settings" icon={<Settings />} label="Настройки" />
@@ -333,7 +326,7 @@ function AttentionSection({ tree }: { tree: Tree }) {
       {list.map((s) => {
         const v = sessionVisualState(s)
         const ws = workspaces.find((w) => w.id === tree.owner(s))
-        const where = [ws?.kind === 'root' ? 'Все проекты' : ws?.name, s.branch ?? (ws && normPath(ws.path) !== normPath(s.cwd) ? basename(s.cwd) : null)].filter(Boolean).join(' · ')
+        const where = [ws?.kind === 'root' ? basename(ws.path) : ws?.name, s.branch ?? (ws && normPath(ws.path) !== normPath(s.cwd) ? basename(s.cwd) : null)].filter(Boolean).join(' · ')
         const since = s.lastEventAt ?? s.lastActivityAt
         return (
           <div key={s.id} className="tree-row tree-sess attention-row" role="button" tabIndex={0} style={depth(0)} data-s={v} data-unseen={unseenReply(s) || undefined}
@@ -364,16 +357,42 @@ function PinnedSection({ tree }: { tree: Tree }) {
   )
 }
 
-/** «В работе»: every chat whose turn runs now, with what it does — who works is seen at once (like Orca), not by digging. */
-function WorkingSection({ tree }: { tree: Tree }) {
-  const list = tree.all
-    .filter((s) => !s.virtual && (sessionVisualState(s) === 'running' || sessionVisualState(s) === 'starting'))
-    .sort((a, b) => b.lastActivityAt - a.lastActivityAt)
+function WorkingSection({ tree, sessions }: { tree: Tree; sessions: Session[] }) {
+  const [open, setOpen] = useState(false)
+  const list = tree.all.filter((s) => listedChat(s) && BUSY.has(sessionVisualState(s)))
   if (!list.length) return null
+  const families = new Map<string, { parent: Session; children: Session[] }>()
+  if (open) {
+    const byId = new Map(sessions.map((s) => [s.id, s]))
+    for (const s of list) {
+      let parent = s
+      const seen = new Set([s.id])
+      while (parent.parentId && !seen.has(parent.parentId)) {
+        const next = byId.get(parent.parentId)
+        if (!next) break
+        seen.add(next.id)
+        parent = next
+      }
+      const family = families.get(parent.id) ?? { parent, children: [] }
+      if (s !== parent) family.children.push(s)
+      families.set(parent.id, family)
+    }
+  }
   return (
     <section className="attention attention-run" aria-label="В работе">
-      <div className="attention-head">В работе <span className="num">· {list.length}</span></div>
-      {list.map((s) => <SessionRow key={s.id} s={s} nested={false} level={0} showLocation />)}
+      <button type="button" className="tree-row tree-more" style={depth(0)} aria-expanded={open} onClick={() => setOpen(!open)}>
+        {open ? <ChevronDown aria-hidden /> : <ChevronRight aria-hidden />}В работе · {list.length}
+      </button>
+      {open && <>
+        {Array.from(families.values()).slice(0, 3).map(({ parent, children }) => (
+          <div key={parent.id} role="group" aria-label={parent.title}>
+            <SessionRow s={parent} nested={false} level={0} showLocation />
+            {children.slice(0, 2).map((s) => <SessionRow key={s.id} s={s} nested level={1} showLocation
+              via={s.parentId !== parent.id ? tree.all.find((p) => p.id === s.parentId)?.title : undefined} />)}
+          </div>
+        ))}
+        <button type="button" className="tree-row tree-more" style={depth(1)} onClick={() => { setState({ agentsMode: 'running' }); openScreen('agents') }}>Все работающие агенты · {list.length}</button>
+      </>}
     </section>
   )
 }
@@ -403,8 +422,8 @@ const WEEK = 7 * 24 * 3600 * 1000
 const DRAG_TYPE = 'text/x-harness-project'
 const ATTENTION = new Set(['waiting_answer', 'waiting_permission', 'stalled', 'auth', 'error'])
 /** The agent's letter on rows only when the tree mixes agents (GigaCode and Claude): one agent needs no badge. */
-const ArchivedHelpers = createContext(new Map<string, Session[]>())
 const MixedAgents = createContext(false)
+const SidebarSearch = createContext(false)
 const BUSY = new Set(['running', 'starting'])
 
 interface WtRow {
@@ -508,8 +527,8 @@ function GroupedWorktrees({ projects, tree }: { projects: Workspace[]; tree: Tre
   )
 }
 
-function ProjectNode({ ws, tree, filtering, drag }: {
-  ws: Workspace; tree: Tree; filtering: boolean
+function ProjectNode({ ws, tree, filtering, drag, activeTab }: {
+  ws: Workspace; tree: Tree; filtering: boolean; activeTab?: string | null
   drag?: { onMove: (id: string) => void; onStep: (dir: -1 | 1) => void } // «Порядок проектов → Вручную»
 }) {
   const mine = tree.roots.filter((s) => tree.owner(s) === ws.id)
@@ -520,13 +539,15 @@ function ProjectNode({ ws, tree, filtering, drag }: {
   const holdsActive = !!activeCwd && (normPath(activeCwd) === normPath(ws.path) || (worktrees ?? []).some((w) => normPath(w.path) === normPath(activeCwd)) || mine.some((s) => normPath(s.cwd) === normPath(activeCwd)))
   // Open by default only where something is; a choice the user made sticks.
   const [choice, setChoice] = useState(() => loadDraft<boolean>(`sb:open:${ws.id}`))
-  const open = choice ?? (mine.length > 0 || holdsActive)
-  const toggle = () => { setChoice(!open); saveDraft(`sb:open:${ws.id}`, !open) }
+  const isRoot = ws.kind === 'root'
+  const open = choice ?? (holdsActive || (!isRoot && mine.length > 0))
+  const [chatLimit, setChatLimit] = useState(filtering ? CHAT_PAGE : CHAT_PREVIEW)
+  const toggle = () => { setChoice(!open); saveDraft(`sb:open:${ws.id}`, !open); setChatLimit(CHAT_PREVIEW) }
   const [moreChoice, setMoreChoice] = useState(() => loadDraft<boolean>(`sb:more:${ws.id}`) ?? false)
   const setMore = (v: boolean) => { setMoreChoice(v); saveDraft(`sb:more:${ws.id}`, v || null) }
   const [menu, setMenu] = useState(false)
   const projRow = useRef<HTMLDivElement>(null)
-  const plain = ws.kind === 'root' || ws.kind === 'folder' // the projects folder and plain folders hold chats directly
+  const plain = isFolder(ws)
   const expanded = open || filtering
   const loaded = worktrees !== undefined
 
@@ -538,17 +559,21 @@ function ProjectNode({ ws, tree, filtering, drag }: {
     if (expanded && ws.isGit && !plain) void loadWorktrees(ws.id).then(() => loadWorktrees(ws.id, true)) // rows at once, badges next
   }, [expanded, ws.id, ws.isGit, plain, sig])
 
-  const rows = useMemo(() => arrange(worktreeRows(ws, worktrees, tree, tasks, activeCwd, now), prefs), [ws, worktrees, tree, tasks, activeCwd, now, prefs])
+  const rows = useMemo(() => plain || !expanded ? [] : arrange(worktreeRows(ws, worktrees, tree, tasks, activeCwd, now), prefs), [plain, expanded, ws, worktrees, tree, tasks, activeCwd, now, prefs])
   const visible = filtering ? rows.filter((r) => r.here.length > 0) : moreChoice ? rows : rows.filter((r) => r.matters)
   const hidden = filtering ? 0 : rows.length - rows.filter((r) => r.matters).length
 
   if (filtering && mine.length === 0) return null
-  const isRoot = ws.kind === 'root'
-  const name = isRoot ? 'Общие чаты' : ws.name
+  const folder = basename(ws.path) || ws.path
+  const name = isRoot ? `Чаты в ${folder}` : ws.name
+  const preview = plain && expanded && mine.length > chatLimit
+    ? mine.filter((chat, i) => i < chatLimit || (activeTab && withKids([chat], tree.kids).some((s) => activeTab === `s:${s.id}`)))
+    : mine
+  const hiddenChats = mine.length - preview.length
 
   return (
     <div className="tree-group" data-open={expanded || undefined} data-root={isRoot || undefined}>
-      <div ref={projRow} className="tree-row tree-project" role="button" tabIndex={0} aria-expanded={expanded} data-tip={plain ? ws.path : ws.name} data-tip-trunc={!isRoot || undefined} onClick={toggle}
+      <div ref={projRow} className="tree-row tree-project" role="button" tabIndex={0} aria-expanded={expanded} data-tip={isRoot ? `Папка с проектами · ${ws.path}` : plain ? ws.path : ws.name} data-tip-trunc={!isRoot || undefined} onClick={toggle}
         onKeyDown={(e) => {
           if (drag && e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) { e.preventDefault(); drag.onStep(e.key === 'ArrowUp' ? -1 : 1); return }
           activate(toggle)(e)
@@ -567,7 +592,7 @@ function ProjectNode({ ws, tree, filtering, drag }: {
         {plain && myTerminals.length > 0 && <TerminalCount terminals={myTerminals} />}
         {/* a project too: a chat in its main folder (on its current branch); the agent makes worktrees itself when it needs them */}
         <span className="actions">
-          <RowAction label={isRoot ? 'Новый чат по всем проектам' : `Новый чат в ${name}`} icon={<MessageSquarePlus />} onClick={() => void newChat({ workspaceId: ws.id, cwd: ws.path })} />
+          <RowAction label={`Новый чат в ${isRoot ? folder : name}`} icon={<MessageSquarePlus />} onClick={() => void newChat({ workspaceId: ws.id, cwd: ws.path })} />
           {ws.isGit && <RowAction label="Новое рабочее дерево" icon={<GitBranchPlus />} onClick={() => openDialog({ kind: 'worktree', workspaceId: ws.id })} />}
           <RowAction label="Действия с проектом" icon={<Ellipsis />} onClick={() => setMenu(true)} />
         </span>
@@ -576,7 +601,7 @@ function ProjectNode({ ws, tree, filtering, drag }: {
       {expanded && (
         <div className="tree-children">
           {plain && mine.length === 0 && <div className="tree-note" style={depth(1)}>Пока нет чатов</div>}
-          {plain ? mine.map((s) => <SessionNode key={s.id} s={s} kids={tree.kids} base={1} />)
+          {plain ? preview.map((s) => <SessionNode key={s.id} s={s} kids={tree.kids} base={1} />)
             : !loaded && ws.isGit ? <div className="tree-skel"><Skeleton rows={2} label="Загрузка рабочих деревьев…" /></div>
               : (
                 <>
@@ -589,6 +614,12 @@ function ProjectNode({ ws, tree, filtering, drag }: {
                   )}
                 </>
               )}
+          {hiddenChats > 0 && (
+            <button type="button" className="tree-row tree-more" style={depth(1)} onClick={() => setChatLimit((limit) => limit + CHAT_PAGE)}>
+              <Ellipsis aria-hidden />
+              Ещё {Math.min(CHAT_PAGE, hiddenChats)} из {hiddenChats}
+            </button>
+          )}
         </div>
       )}
     </div>
@@ -746,14 +777,13 @@ function childrenOf(s: Session, kids: Map<string, Session[]>): { c: Session; via
 }
 
 function SessionNode({ s, kids, level = 0, base = 2, via, from }: { s: Session; kids: Map<string, Session[]>; level?: number; base?: number; via?: string; from?: Session }) {
-  const past = useContext(ArchivedHelpers).get(s.id) ?? []
   const family = childrenOf(s, kids)
   const children = family.filter(({ c }) => !c.archived && (!isFinishedSub(c) || s.status === 'running'))
-  const finished = [...past, ...family.filter(({ c }) => !c.archived && isFinishedSub(c) && s.status !== 'running').map(({ c }) => c)]
-  const [historyOpen, setHistoryOpen] = useState(false)
   const internal = useStore((st) => st.subagents[s.id])
-  const [open, setOpen] = useState(true)
-  const has = children.length > 0 || !!internal?.items.length || finished.length > 0
+  const searching = useContext(SidebarSearch)
+  const [choice, setOpen] = useState<boolean | null>(null)
+  const open = choice ?? (searching || children.length + (internal?.items.length ?? 0) <= 2)
+  const has = children.length > 0 || !!internal?.items.length
   return (
     <>
       <SessionRow s={s} nested={level > 0} level={base + level} via={via} from={from} caret={has ? { open, toggle: () => setOpen(!open) } : undefined} />
@@ -762,12 +792,6 @@ function SessionNode({ s, kids, level = 0, base = 2, via, from }: { s: Session; 
           {children.map(({ c, via: v }) => isSub(c)
             ? <SessionRow key={c.id} s={c} nested level={base + level + 1} via={v} /> // a sub-agent never nests further: its own are lifted here
             : <SessionNode key={c.id} s={c} kids={kids} level={level + 1} base={base} />)}
-          {finished.length > 0 && <>
-            <button type="button" className="tree-row helper-history" style={depth(base + level + 1)} aria-expanded={historyOpen}
-              onClick={() => setHistoryOpen(!historyOpen)}><ChevronRight aria-hidden />Завершённые · {finished.length}</button>
-            {historyOpen && finished.map((c) => <button key={c.id} type="button" className="tree-row helper-history-item" style={depth(base + level + 2)}
-              data-tip={c.preview || c.title} onClick={() => openSession(c.id)}><MessageSquare aria-hidden /><span className="ellipsis">{c.title}</span></button>)}
-          </>}
           {internal?.items.map((a) => (
             <div
               key={a.id}

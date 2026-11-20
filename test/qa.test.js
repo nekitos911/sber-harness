@@ -174,6 +174,13 @@ test('auto placement: a root coordinator starts a subtask worker in a new worktr
 
   const caller = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', cwd: projects })).body;
   const run = await h.api('POST', '/api/agent/worker_run', { spec: 'посмотри #done ок', workspace: ws.name }, { 'x-harness-session': caller.id });
+  const missing = await h.api('POST', '/api/agent/worker_run', { spec: 'посмотри', worktree: 'new' }, { 'x-harness-session': caller.id });
+  assert.equal(missing.status, 400);
+  assert.match(missing.body.error, /укажите workspace/);
+  const here = await h.api('POST', '/api/agent/worker_run', { spec: '#done ок', worktree: 'current' }, { 'x-harness-session': caller.id });
+  assert.equal(here.status, 200, here.body?.error);
+  const helper = await session(here.body.sessionId);
+  assert.deepEqual([helper.cwd, helper.parentId], [projects, caller.id]);
   assert.equal(run.status, 200, run.body?.error);
   assert.equal(run.body.placement, 'new (auto)');
   const child = await session(run.body.sessionId);

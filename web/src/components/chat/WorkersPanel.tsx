@@ -30,21 +30,24 @@ export function WorkersPanel({ sessionId, workers }: { sessionId: string; worker
   const own = workers.filter((w) => !w.virtual && !elsewhere.includes(w))
   const inner = workers.filter((w) => w.virtual)
   const [open, setOpen] = useState(true)
+  const [showHistory, setShowHistory] = useState(false)
   const now = useNow()
   const internal = sub?.items ?? []
-  if (!workers.length && !internal.length) return null
+  const current = new Set(workers.map((w) => w.id))
+  const history = all.filter((s) => s.parentId === sessionId && s.kind === 'chat' && !s.system && !current.has(s.id))
+  if (!workers.length && !internal.length && !history.length) return null
 
   const total = workers.length + internal.length
   const busy = workers.filter((w) => w.status === 'running').length + internal.filter((a) => BUSY.has(a.state)).length
 
   return (
     <div className="workers">
-      <button type="button" className="workers-head" aria-expanded={open} onClick={() => setOpen(!open)}>
+      {total > 0 && <button type="button" className="workers-head" aria-expanded={open} onClick={() => setOpen(!open)}>
         <span>{total} {plural(total, 'агент', 'агента', 'агентов')}</span>
         {busy > 0 && <span className="workers-busy">В работе: {busy}</span>}
         <span className="grow" />
         <ChevronDown className="chev" aria-hidden />
-      </button>
+      </button>}
       <div className="collapse" data-open={open}>
         <div>
           {own.map((w) => (
@@ -76,6 +79,14 @@ export function WorkersPanel({ sessionId, workers }: { sessionId: string; worker
           )}
         </div>
       </div>
+      {history.length > 0 && <>
+        <button type="button" className="workers-head" aria-expanded={showHistory} onClick={() => setShowHistory(!showHistory)}>
+          История помощников · {history.length}<span className="grow" /><ChevronDown className="chev" aria-hidden />
+        </button>
+        {showHistory && history.map((w) => <div className="worker-row" key={w.id}>
+          <StatusIcon session={w} /><button type="button" className="worker-title ellipsis" data-tip={w.preview || w.title} onClick={() => openSession(w.id)}>{w.title}</button>
+        </div>)}
+      </>}
     </div>
   )
 }

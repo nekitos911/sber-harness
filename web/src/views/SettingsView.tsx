@@ -205,7 +205,7 @@ function BasicSettings({ form, update, fieldError, main }: SectionProps & { main
       {foldersOn && form.workspaces !== undefined && (
         <div className="set-card">
           <div className="set-rows">
-            <Row label="Папка с проектами" hint="Здесь агент начинает задачу и сам выбирает проект.">
+            <Row label="Папка с проектами" hint="Стартовая папка агента. Её чаты видны над списком проектов. Подойдёт и обычная папка без Git.">
               <ProjectsFolder value={form.workspaces?.root ?? null} onChange={(root) => update({ ...form, workspaces: { ...form.workspaces, root } })} />
             </Row>
           </div>

@@ -46,6 +46,10 @@ test('projects folder: auto-detected from two repositories, listed first; a chat
   const inRepo = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', cwd: repoA })).body;
   const atRoot = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', cwd: root })).body;
   assert.deepEqual([inRepo.workspaceId, atRoot.workspaceId], [a.id, first.id]);
+  for (const [ws, worktree] of [[first, null], [a, repoA]]) {
+    const chat = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', workspaceId: ws.id })).body;
+    assert.deepEqual([chat.workspaceId, chat.worktreePath, chat.system], [ws.id, worktree, false]);
+  }
   assert.equal((await state()).recentFolders[0], root);
 });
 

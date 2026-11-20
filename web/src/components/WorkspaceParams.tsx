@@ -29,7 +29,6 @@ const FILTERS: [keyof SbPrefs, string][] = [
   ['hideEmpty', 'Скрыть без сессий и изменений'],
 ]
 
-/** «Параметры рабочих пространств»: the sliders button in the «Проекты» header and its popover (like Orca's). */
 export function WorkspaceParams({ projects }: { projects: Workspace[] }) {
   const p = useSbPrefs()
   const [open, setOpen] = useState(false)
@@ -40,15 +39,21 @@ export function WorkspaceParams({ projects }: { projects: Workspace[] }) {
   const close = () => { setOpen(false); setSub(null) }
   return (
     <>
-      <button ref={btn} type="button" className="icon-btn icon-btn-sm sb-params" aria-label="Параметры рабочих пространств" data-tip="Параметры рабочих пространств"
+      <button ref={btn} type="button" className="icon-btn icon-btn-sm sb-params" aria-label="Фильтры чатов и проектов" data-tip="Фильтры чатов и проектов"
         aria-expanded={open} data-dot={hidesSomething(p) || undefined} onClick={() => (open ? close() : setOpen(true))}>
         <SlidersHorizontal />
       </button>
       {/* closed: nothing built (the sidebar re-renders on every agent event) */}
-      {open && <Popover anchor={btn} open={open} onClose={close} placement="right-start" label="Параметры рабочих пространств" className="sbp">
+      {open && <Popover anchor={btn} open={open} onClose={close} placement="right-start" label="Фильтры чатов и проектов" className="sbp">
         {/* a press elsewhere in the panel closes an open submenu (the submenus are portaled, but React events bubble here) */}
         <div onPointerDown={(e) => { if (!(e.target as Element).closest('.sbp-sub, .sbp-row[aria-expanded="true"]')) setSub(null) }}>
-          <div className="sbp-title">Параметры рабочих пространств</div>
+          <div className="sbp-title">Фильтры чатов и проектов</div>
+          <div className="sbp-sec">Чаты</div>
+          <Sub id="age" label="Скрывать чаты старше" value={AGES.find(([v]) => v === p.chatsMaxAgeDays)?.[1] ?? `${p.chatsMaxAgeDays} дн.`} sub={sub} setSub={setSub}>
+            {AGES.map(([v, label]) => <Radio key={v} checked={p.chatsMaxAgeDays === v} onSelect={() => setSbPrefs({ chatsMaxAgeDays: v })}>{label}</Radio>)}
+            <p className="sbp-hint">Открытый чат и те, что работают или ждут вас, остаются в списке. Поиск находит и более старые чаты.</p>
+          </Sub>
+          <SwitchRow label="Чаты из CLI" hint="Сессии, начатые в GigaCode CLI" checked={p.showCli} onChange={toggle('showCli')} />
           <div className="sbp-sec">Показать</div>
           <Sub id="projects" label="Проекты" value={hidden ? `${projects.length - hidden} из ${projects.length}` : 'Все'} sub={sub} setSub={setSub}>
             <Radio checked={!hidden} onSelect={() => setSbPrefs({ hiddenProjects: [] })}>Все проекты</Radio>
@@ -61,8 +66,7 @@ export function WorkspaceParams({ projects }: { projects: Workspace[] }) {
               ))}
             </div>
           </Sub>
-          <SwitchRow label="Папки" hint="Общие чаты и обычные папки" checked={p.folders} onChange={toggle('folders')} />
-          <SwitchRow label="Чаты из CLI" hint="Сессии, начатые в GigaCode CLI" checked={p.showCli} onChange={toggle('showCli')} />
+          <SwitchRow label="Папки" hint="Папка с проектами и другие папки с чатами" checked={p.folders} onChange={toggle('folders')} />
           <div className="sbp-sec">Группировать по</div>
           <div className="sbp-seg">
             <Segmented size="sm" label="Группировать по" value={p.group} onChange={(group) => setSbPrefs({ group })}
@@ -84,10 +88,6 @@ export function WorkspaceParams({ projects }: { projects: Workspace[] }) {
             <SwitchRow label="Время" checked={p.showTime} onChange={toggle('showTime')} />
           </Sub>
           <div className="sbp-sec">Фильтры</div>
-          <Sub id="age" label="Скрывать чаты старше" value={AGES.find(([v]) => v === p.chatsMaxAgeDays)?.[1] ?? `${p.chatsMaxAgeDays} дн.`} sub={sub} setSub={setSub}>
-            {AGES.map(([v, label]) => <Radio key={v} checked={p.chatsMaxAgeDays === v} onSelect={() => setSbPrefs({ chatsMaxAgeDays: v })}>{label}</Radio>)}
-            <p className="sbp-hint">По последней активности. Открытый чат и те, что работают или ждут вас, видны всегда.</p>
-          </Sub>
           {FILTERS.map(([k, label]) => <SwitchRow key={k} label={label} checked={!!p[k]} onChange={toggle(k)} />)}
           <p className="sbp-hint">Чаты, которые ждут вас, видны всегда — в «Ждут вас».</p>
           <div className="sbp-foot">
