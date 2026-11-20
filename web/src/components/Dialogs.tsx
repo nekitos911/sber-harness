@@ -64,11 +64,14 @@ function useBusy() {
 // ---------- workspace ----------
 
 function WorkspaceDialog({ from, stay }: { from?: string; stay?: boolean }) {
+  const projectsRoot = useStore((s) => s.workspaces.find((w) => w.kind === 'root')?.path)
   const [path, setPath] = useState('')
   const [name, setName] = useState('')
-  const [picking, setPicking] = useState(!!from)
+  const [picking, setPicking] = useState(false)
   const [busy, run, step] = useBusy()
   const valid = isAbsolutePath(path)
+  if (picking) return <FolderPicker title="Папка проекта" initial={valid ? path : from || projectsRoot} submitLabel="Выбрать эту папку"
+    onClose={() => setPicking(false)} onPick={(p) => { setPath(p); setPicking(false) }} />
   return (
     <Modal
       title="Добавить проект"
@@ -89,16 +92,11 @@ function WorkspaceDialog({ from, stay }: { from?: string; stay?: boolean }) {
       <div className="field">
         <span>Папка проекта</span>
         <div className="chips-row" style={{ flexWrap: 'nowrap' }}>
-          <input className="input mono" style={{ flex: 1 }} aria-label="Путь к папке" placeholder="Полный путь к папке проекта" value={path} onChange={(e) => setPath(e.target.value)} />
-          <Button icon={<FolderPlus />} autoFocus onClick={() => setPicking(true)}>Обзор…</Button>
+          <input className="input mono" style={{ flex: 1 }} data-initial-focus aria-label="Путь к папке" placeholder="Полный путь к папке проекта" value={path} onChange={(e) => setPath(e.target.value)} />
+          <Button icon={<FolderPlus />} onClick={() => setPicking(true)}>Обзор…</Button>
         </div>
         {path && !valid && <span className="field-error">Нужен абсолютный путь, например C:\code\app или /home/user/code/app</span>}
-        {!path && <span className="field-hint">Выберите папку кнопкой «Обзор…» или вставьте путь.</span>}
       </div>
-      {picking && (
-        <FolderPicker title="Папка проекта" initial={path || from || null} submitLabel="Выбрать эту папку"
-          onClose={() => setPicking(false)} onPick={(p) => { setPath(p); setPicking(false) }} />
-      )}
       <label className="field">
         <span>Название</span>
         <input className="input" placeholder={path ? basename(path) : 'по имени папки'} value={name} onChange={(e) => setName(e.target.value)} />
@@ -383,21 +381,18 @@ function WorktreeDialog({ workspaceId }: { workspaceId?: string }) {
     >
       {!git.length && <span className="field-error">Нет git-репозиториев. Сначала добавьте проект.</span>}
       <label className="field">
-        <span>Ветка</span>
-        <input className="input mono" autoFocus placeholder="feature/JIRA-1234" value={name} onChange={(e) => setName(e.target.value)} />
-        <span className="field-hint">Имя новой ветки; папка рабочего дерева будет названа так же.</span>
+        <span>Проект</span>
+        <Select label="Репозиторий" size="lg" value={repo} onChange={setRepo} options={git.map((w) => ({ value: w.id, label: w.name, hint: w.path }))} />
       </label>
-      <Disclosure className="dialog-more" summary={<span>Ещё: {git.find((w) => w.id === repo)?.name ?? 'репозиторий'} · от {base.trim() || 'HEAD'}</span>}>
-        <div className="dialog-grid">
-          <label className="field">
-            <span>Репозиторий</span>
-            <Select label="Репозиторий" size="lg" value={repo} onChange={setRepo} options={git.map((w) => ({ value: w.id, label: w.name, hint: w.path }))} />
-          </label>
+      <label className="field">
+        <span>Новая ветка</span>
+        <input className="input mono" autoFocus placeholder="feature/JIRA-1234" value={name} onChange={(e) => setName(e.target.value)} />
+      </label>
+      <Disclosure className="dialog-more" summary={`Базовая ветка · ${base.trim() || 'HEAD'}`}>
           <label className="field">
             <span>От ветки</span>
             <input className="input mono" placeholder="HEAD" value={base} onChange={(e) => setBase(e.target.value)} />
           </label>
-        </div>
       </Disclosure>
     </Modal>
   )

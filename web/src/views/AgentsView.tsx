@@ -29,9 +29,16 @@ const GROUPS: { id: string; label: string; hint: string; match: VisualState[]; o
 function ordered(list: Session[]) {
   const ids = new Set(list.map((s) => s.id))
   const out: { s: Session; nested: boolean }[] = []
+  const children = new Map<string, Session[]>()
+  for (const s of list) {
+    if (!s.parentId) continue
+    const siblings = children.get(s.parentId)
+    if (siblings) siblings.push(s)
+    else children.set(s.parentId, [s])
+  }
   const visit = (s: Session, nested: boolean) => {
     out.push({ s, nested })
-    for (const k of list) if (k.parentId === s.id) visit(k, true)
+    for (const k of children.get(s.id) ?? []) visit(k, true)
   }
   for (const s of list) if (!s.parentId || !ids.has(s.parentId)) visit(s, false)
   return out
@@ -69,9 +76,8 @@ export function AgentsView() {
       {chats.length === 0 ? (
         <div className="empty">
           <Bot className="empty-icon" aria-hidden />
-          <h2>Агентов пока нет</h2>
-          <p>Они появляются, когда вы начинаете чат, берёте задачу в работу или координатор запускает исполнителей.</p>
-          <button type="button" className="btn btn-primary" onClick={() => openDialog({ kind: 'chat' })}>Новый чат</button>
+          <h2>{archive ? 'Архив пуст' : 'Начните чат с агентом'}</h2>
+          <p>{archive ? 'Здесь можно вернуться к архивированным чатам.' : 'Здесь появятся агент и его помощники. Можно следить за работой и открывать их чаты.'}</p>
         </div>
       ) : (
         <div className="lanes">

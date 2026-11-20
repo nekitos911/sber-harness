@@ -173,17 +173,17 @@ export function InboxView() {
         <h1>Входящие</h1>
         {pending > 0 ? <span className="count count-signal" data-tip="Ждёт меня">{pending}</span> : unread > 0 && <span className="count">{unread}</span>}
         <span className="grow" />
-        <button type="button" className="btn" disabled={!unread} onClick={() => void readAll()}>
+        {unread > 0 && <button type="button" className="btn" onClick={() => void readAll()}>
           <CheckCheck />
           Прочитать все
-        </button>
+        </button>}
       </header>
       <Interrupted />
       <WaitingForYou />
       {list.length === 0 && pending > 0 ? null : list.length === 0 ? ( // the cards above are the content: no «Пусто» under them
         <div className="empty">
           <Inbox className="empty-icon" aria-hidden />
-          <h2>Пусто</h2>
+          <h2>Новых уведомлений нет</h2>
           <p>Сюда приходят вопросы агентов, отчёты исполнителей и ошибки.</p>
         </div>
       ) : (

@@ -1,92 +1,128 @@
 import { useEffect, useState } from 'react'
-import { KeyRound, Pencil, Plus } from 'lucide-react'
+import { createPortal } from 'react-dom'
+import { Cable, KeyRound, Pencil, Plus, Terminal } from 'lucide-react'
 import { api, errorText } from '../api'
 import { loadSettings } from '../lib/agents'
 import { useFeature } from '../store'
-import { Button, Disclosure, Input, Segmented, Switch, Textarea } from './ui'
+import { Modal } from './ui/Dialog'
+import { Button, IconButton, Input, Segmented, Switch, Textarea } from './ui'
 
-interface Connection { name: string; enabled: boolean; transport: 'http' | 'stdio'; local: boolean; editable: boolean }
-interface Config { servers: Connection[]; secretsFile: string }
+type Transport = 'http' | 'stdio'
+type Source = 'none' | 'value' | 'env'
+interface Credential { key: string; variable?: string; bearer?: boolean }
+interface Connection { name: string; enabled: boolean; transport: Transport; local: boolean; editable: boolean; credentials?: Credential[] }
+type Editor = { kind: 'add' } | { kind: 'address' | 'auth'; server: Connection }
 
 export function Connections({ onSaved }: { onSaved: () => void }) {
   const supported = useFeature('mcp-connections')
-  const [config, setConfig] = useState<Config | null>(null)
-  const [editing, setEditing] = useState<Connection | null>(null)
-  const [adding, setAdding] = useState(false)
-  const [name, setName] = useState('')
-  const [transport, setTransport] = useState<'http' | 'stdio'>('http')
-  const [address, setAddress] = useState('')
-  const [args, setArgs] = useState('')
-  const [secret, setSecret] = useState<string | null>(null)
-  const [key, setKey] = useState('')
-  const [value, setValue] = useState('')
+  const [servers, setServers] = useState<Connection[]>([])
+  const [editor, setEditor] = useState<Editor | null>(null)
   const [busy, setBusy] = useState(false)
-  const [message, setMessage] = useState('')
   const [error, setError] = useState('')
-  const reload = () => api<Config>('GET', '/mcp/config').then(setConfig)
-  useEffect(() => { if (supported) reload().catch((e) => setError(errorText(e))) }, [supported])
+  const reload = async () => setServers((await api<{ servers: Connection[] }>('GET', '/mcp/config')).servers)
+  useEffect(() => { if (supported) void reload().catch((e) => setError(errorText(e))) }, [supported])
   if (!supported) return null
 
-  const change = async (action: () => Promise<void>, success: string) => {
+  const refresh = async () => {
+    window.dispatchEvent(new Event('mcp-changed'))
+    onSaved()
+    try { await Promise.all([reload(), loadSettings(true)]); setError('') }
+    catch (e) { setError(errorText(e)) }
+  }
+  const toggle = async (server: Connection, enabled: boolean) => {
     setBusy(true)
-    setError('')
-    setMessage('')
     try {
-      await action()
-      await Promise.all([reload(), loadSettings(true)])
-      onSaved()
-      window.dispatchEvent(new Event('mcp-changed'))
-      setMessage(success)
+      await api('PUT', '/mcp/servers/' + encodeURIComponent(server.name), { enabled })
+      await refresh()
     } catch (e) { setError(errorText(e)) } finally { setBusy(false) }
   }
-  const save = () => change(async () => {
-    const endpoint = editing ? '/mcp/servers/' + encodeURIComponent(editing.name) : '/mcp/servers'
-    const definition = transport === 'http' ? { url: address.trim() } : { command: address.trim(), args: args.split('\n').filter(Boolean) }
-    await api(editing ? 'PUT' : 'POST', endpoint, { name: name.trim(), transport, ...definition })
-    setAdding(false); setEditing(null); setAddress(''); setArgs(''); setName('')
-  }, editing ? 'Параметры подключения обновлены.' : 'Сервер добавлен. Его можно выбрать для трекера или пулл-реквестов.')
-  const saveSecret = () => change(async () => {
-    await api('PUT', '/mcp/secrets/' + encodeURIComponent(secret!), { key: key.trim(), value })
-    setValue(''); setSecret(null)
-  }, 'Ключ доступа сохранён.')
   return <section className="settings-section">
-    <h2>Серверы MCP</h2>
-    <p className="set-note">Harness находит подключения GigaCode автоматически. Для отдельного подключения укажите адрес сервиса или команду запуска.</p>
+    <header className="connection-head">
+      <h2>Серверы MCP</h2>
+      <Button icon={<Plus />} onClick={() => setEditor({ kind: 'add' })}>Добавить сервер</Button>
+    </header>
+    <p className="set-note">Подключения из GigaCode появляются здесь автоматически.</p>
     <div className="connection-list">
-      {config?.servers.map((c) => <div key={c.name}>
-        <div className="connection-line">
-          <span><strong>{c.name}</strong><small>{c.transport === 'http' ? 'HTTP' : 'Локальная команда'} · {c.local ? 'Harness' : 'Из файла настроек'}</small></span>
-          {c.editable && <Button size="sm" variant="ghost" disabled={busy} icon={<Pencil />} aria-label={'Изменить ' + c.name} onClick={() => {
-            setEditing(c); setAdding(true); setName(c.name); setTransport(c.transport); setAddress(''); setArgs(''); setError(''); setMessage('')
-          }}>Изменить</Button>}
-          <Button size="sm" variant="ghost" disabled={busy} aria-label={'Ключ доступа для ' + c.name} icon={<KeyRound />} onClick={() => {
-            setSecret(secret === c.name ? null : c.name); setKey(c.transport === 'http' ? 'Authorization' : ''); setValue(''); setError(''); setMessage('')
-          }}>Ключ</Button>
-          <Switch label={'Включить ' + c.name + ' для Harness'} checked={c.enabled} disabled={busy} onChange={(enabled) => void change(async () => {
-            await api('PUT', '/mcp/servers/' + encodeURIComponent(c.name), { enabled })
-          }, enabled ? 'Сервер включён.' : 'Сервер выключен.')} />
-        </div>
-        {secret === c.name && <div className="connection-editor">
-          <label>{c.transport === 'http' ? 'Имя HTTP-заголовка' : 'Переменная окружения'}<Input value={key} onChange={(e) => setKey(e.target.value)} /></label>
-          <label>Значение<Input type="password" autoComplete="new-password" value={value} onChange={(e) => setValue(e.target.value)} /></label>
-          <small className="muted">Ключ будет записан в {config.secretsFile}</small>
-          <Button size="sm" disabled={!value.trim() || !key.trim() || busy} onClick={() => void saveSecret()}>Сохранить ключ</Button>
-        </div>}
+      {servers.map((s) => <div key={s.name} className="connection-line">
+        {s.transport === 'http' ? <Cable aria-hidden /> : <Terminal aria-hidden />}
+        <span><strong>{s.name}</strong><small>{s.transport === 'http' ? 'HTTP' : 'Команда · stdio'} · {s.local ? 'Harness' : 'GigaCode'}</small></span>
+        {s.editable && <IconButton label={'Изменить подключение ' + s.name} icon={<Pencil />} onClick={() => setEditor({ kind: 'address', server: s })} />}
+        <IconButton label={'Настроить доступ для ' + s.name} icon={<KeyRound />} onClick={() => setEditor({ kind: 'auth', server: s })} />
+        <Switch label={'Включить ' + s.name + ' для Harness'} checked={s.enabled} disabled={busy} onChange={(enabled) => void toggle(s, enabled)} />
       </div>)}
     </div>
-    <Disclosure open={adding} onToggle={(open) => { setAdding(open); if (!open && editing) { setEditing(null); setName(''); setArgs(''); setAddress('') } }}
-      summary={editing ? 'Изменить ' + editing.name : 'Добавить сервер'}>
-      <div className="connection-editor">
-        <label>Имя сервера<Input disabled={!!editing} value={name} placeholder="my-tracker" onChange={(e) => setName(e.target.value)} /></label>
-        {!editing && <Segmented label="Тип подключения" value={transport} onChange={(v) => { setTransport(v); setAddress('') }}
-          options={[{ value: 'http', label: 'HTTP' }, { value: 'stdio', label: 'Локальная команда' }]} />}
-        <label>{transport === 'http' ? 'Адрес MCP' : 'Исполняемый файл'}<Input value={address} placeholder={transport === 'http' ? 'https://example.org/mcp' : 'node'} onChange={(e) => setAddress(e.target.value)} /></label>
-        {transport === 'stdio' && <label>Аргументы, по одному в строке<Textarea value={args} rows={3} onChange={(e) => setArgs(e.target.value)} /></label>}
-        {editing && <small className="muted">Новые параметры заменят прежние. Для этого сервера продолжит действовать сохранённый ключ.</small>}
-        <Button size="sm" icon={editing ? <Pencil /> : <Plus />} disabled={busy || !name.trim() || !address.trim()} onClick={() => void save()}>{editing ? 'Сохранить подключение' : 'Добавить подключение'}</Button>
-      </div>
-    </Disclosure>
     {error && <p role="alert" className="field-error">{error}</p>}
-    {message && <p role="status" className="set-note">{message}</p>}
+    {editor && createPortal(<ConnectionEditor editor={editor} onClose={() => setEditor(null)} onSaved={refresh} />, document.body)}
   </section>
+}
+
+function ConnectionEditor({ editor, onClose, onSaved }: { editor: Editor; onClose: () => void; onSaved: () => Promise<void> }) {
+  const server = editor.kind === 'add' ? null : editor.server
+  const [name, setName] = useState(server?.name ?? '')
+  const [transport, setTransport] = useState<Transport>(server?.transport ?? 'http')
+  const [address, setAddress] = useState('')
+  const [args, setArgs] = useState('')
+  const [created, setCreated] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const credentials = server?.credentials ?? []
+  const first = credentials[0]
+  const [key, setKey] = useState(first?.key ?? (transport === 'http' ? 'Authorization' : 'API_KEY'))
+  const [variable, setVariable] = useState(first?.variable ?? '')
+  const [value, setValue] = useState('')
+  const [bearer, setBearer] = useState(first?.bearer ?? false)
+  const [source, setSource] = useState<Source>(first ? (first.variable ? 'env' : 'value') : 'none')
+  const authOnly = editor.kind === 'auth' || created
+  const auth = editor.kind !== 'address'
+  const existing = credentials.some((entry) => entry.key === key)
+  const selectKey = (entry: Credential) => {
+    setKey(entry.key); setVariable(entry.variable ?? ''); setBearer(!!entry.bearer); setValue('')
+    setSource(entry.variable ? 'env' : 'value')
+  }
+  const invalid = (!authOnly && (!name.trim() || !address.trim())) ||
+    (auth && source !== 'none' && (!key.trim() || !(source === 'env' ? variable : value).trim()))
+  const save = async () => {
+    setBusy(true); setError('')
+    try {
+      if (!authOnly) {
+        const def = transport === 'http' ? { url: address.trim() } : { command: address.trim(), args: args.split('\n').filter(Boolean) }
+        await api(server ? 'PUT' : 'POST', '/mcp/servers' + (server ? '/' + encodeURIComponent(name) : ''), { name: name.trim(), transport, ...def })
+        if (!server) setCreated(true)
+      }
+      if (auth && (source !== 'none' || existing)) {
+        await api('PUT', '/mcp/secrets/' + encodeURIComponent(name.trim()), { key: key.trim(), source,
+          ...(source === 'env' ? { variable: variable.trim(), bearer } : source === 'value' ? { value } : {}) })
+      }
+      await onSaved()
+      onClose()
+    } catch (e) { setError(errorText(e)) } finally { setBusy(false) }
+  }
+  return <Modal title={authOnly ? 'Доступ · ' + name : server ? 'Подключение · ' + name : 'Новый MCP-сервер'}
+    submitLabel={authOnly || server ? 'Сохранить' : 'Добавить сервер'} disabled={invalid} busy={busy}
+    onClose={() => { if (created) void onSaved(); onClose() }} onSubmit={() => void save()}>
+    {!authOnly && <>
+      {!server && <label className="field">Название<Input data-initial-focus value={name} placeholder="my-server" onChange={(e) => setName(e.target.value)} /></label>}
+      {!server && <Segmented label="Транспорт" value={transport} onChange={(v) => {
+        setTransport(v); setAddress(''); setKey(v === 'http' ? 'Authorization' : 'API_KEY'); setBearer(false)
+      }} options={[{ value: 'http', label: 'HTTP' }, { value: 'stdio', label: 'Процесс (stdio)' }]} />}
+      <label className="field">{transport === 'http' ? 'Адрес сервера' : 'Команда запуска'}
+        <Input mono value={address} placeholder={transport === 'http' ? 'http://localhost:8080/mcp' : 'node'} onChange={(e) => setAddress(e.target.value)} />
+      </label>
+      {transport === 'stdio' && <label className="field">Аргументы, по одному в строке<Textarea mono rows={2} value={args} onChange={(e) => setArgs(e.target.value)} /></label>}
+      {editor.kind === 'address' && <p className="muted">Введите новые параметры подключения. Ключи доступа сохранятся.</p>}
+    </>}
+    {auth && <div className="connection-auth">
+      {credentials.length > 0 && <div className="credential-keys">{credentials.map((c) => <Button size="sm" key={c.key} aria-pressed={c.key === key} onClick={() => selectKey(c)}>{c.key}</Button>)}
+        <Button size="sm" variant="ghost" icon={<Plus />} onClick={() => { setKey(''); setValue(''); setVariable(''); setSource('value'); setBearer(false) }}>Ещё ключ</Button></div>}
+      <Segmented label="Источник ключа" value={source} onChange={setSource} options={[{ value: 'none', label: existing ? 'Не передавать' : 'Без ключа' }, { value: 'value', label: 'Значение' }, { value: 'env', label: 'Из окружения' }]} />
+      {source !== 'none' && <>
+        <label className="field">{transport === 'http' ? 'Имя HTTP-заголовка' : 'Переменная процесса'}<Input mono value={key} onChange={(e) => setKey(e.target.value)} /></label>
+        {source === 'value'
+          ? <label className="field">{existing ? 'Новое значение' : 'Значение'}<Input type="password" autoComplete="new-password" value={value} onChange={(e) => setValue(e.target.value)} /></label>
+          : <><label className="field">Переменная окружения Harness<Input mono placeholder="MY_API_KEY" value={variable} onChange={(e) => setVariable(e.target.value)} /></label>
+            {transport === 'http' && <label><input type="checkbox" checked={bearer} onChange={(e) => setBearer(e.target.checked)} /> Добавлять Bearer перед значением</label>}</>}
+      </>}
+    </div>}
+    {error && <p role="alert" className="field-error">{created ? 'Сервер добавлен. Проверьте параметры доступа. ' : ''}{error}</p>}
+  </Modal>
 }

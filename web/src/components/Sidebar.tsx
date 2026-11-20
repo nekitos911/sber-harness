@@ -89,7 +89,8 @@ export function Sidebar() {
   const ordered = orderProjects(projects, prefs, lastOf)
   const listed = ordered.filter((w) => !prefs.hiddenProjects.includes(w.id) && (prefs.folders || w.kind !== 'folder'))
   const quiet = filtering ? [] : listed.filter((w) => !isActive(w))
-  const shownProjects = filtering || (showAll && !prefs.hideEmpty) ? listed : listed.filter(isActive)
+  const compactList = listed.length <= 3
+  const shownProjects = filtering || ((compactList || showAll) && !prefs.hideEmpty) ? listed : listed.filter(isActive)
   const grouped = prefs.group !== 'project' && !filtering
   // «Порядок проектов → Вручную»: drag a project row, or Alt+↑/↓ on it.
   const manual = prefs.order === 'manual' && prefs.group === 'project' && !filtering
@@ -134,6 +135,7 @@ export function Sidebar() {
         {!filtering && <PinnedSection tree={tree} />}
         {!filtering && <AttentionSection tree={tree} />}
         {!filtering && <WorkingSection tree={tree} />}
+        {rootWs && prefs.folders && <ProjectNode ws={rootWs} tree={tree} filtering={filtering} />}
         <div className="sb-head">
           <span>Проекты <span className="num">· {projects.length}</span></span>
           <WorkspaceParams projects={projects} />
@@ -141,14 +143,13 @@ export function Sidebar() {
             <FolderPlus />
           </button>
         </div>
-        {rootWs && prefs.folders && <ProjectNode ws={rootWs} tree={tree} filtering={filtering} />}
         {grouped ? (
           <>
             <GroupedWorktrees projects={listed.filter((w) => w.kind !== 'folder')} tree={tree} />
             {listed.filter((w) => w.kind === 'folder').map((ws) => <ProjectNode key={ws.id} ws={ws} tree={tree} filtering={filtering} />)}
           </>
         ) : shownProjects.map((ws) => <ProjectNode key={ws.id} ws={ws} tree={tree} filtering={filtering} drag={drag(ws)} />)}
-        {!grouped && quiet.length > 0 && !prefs.hideEmpty && (
+        {!grouped && !compactList && quiet.length > 0 && !prefs.hideEmpty && (
           <button type="button" className="tree-row tree-more" style={depth(0)} aria-expanded={showAll} onClick={() => setShowAll(!showAll)}>
             <Ellipsis aria-hidden />
             <span className="ellipsis">{showAll ? 'Свернуть тихие проекты' : <>Ещё {quiet.length} {plural(quiet.length, 'проект', 'проекта', 'проектов')} <span className="muted">без сессий и изменений</span></>}</span>
@@ -543,11 +544,11 @@ function ProjectNode({ ws, tree, filtering, drag }: {
 
   if (filtering && mine.length === 0) return null
   const isRoot = ws.kind === 'root'
-  const name = isRoot ? 'Все проекты' : ws.name
+  const name = isRoot ? 'Общие чаты' : ws.name
 
   return (
     <div className="tree-group" data-open={expanded || undefined} data-root={isRoot || undefined}>
-      <div ref={projRow} className="tree-row tree-project" role="button" tabIndex={0} aria-expanded={expanded} data-tip={plain ? ws.path : ws.name} data-tip-trunc onClick={toggle}
+      <div ref={projRow} className="tree-row tree-project" role="button" tabIndex={0} aria-expanded={expanded} data-tip={plain ? ws.path : ws.name} data-tip-trunc={!isRoot || undefined} onClick={toggle}
         onKeyDown={(e) => {
           if (drag && e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) { e.preventDefault(); drag.onStep(e.key === 'ArrowUp' ? -1 : 1); return }
           activate(toggle)(e)
@@ -561,12 +562,12 @@ function ProjectNode({ ws, tree, filtering, drag }: {
         style={depth(0)} onContextMenu={(e) => { e.preventDefault(); setMenu(true) }}>
         <ChevronRight className="chev" aria-hidden />
         {plain ? <Folder aria-hidden /> : <FolderGit2 aria-hidden />}
-        <span className="label">{name}{isRoot && <span className="tree-path"> {basename(ws.path)}</span>}</span>
+        <span className="label">{name}</span>
         {!expanded && <RowSummary sessions={withKids(mine, tree.kids)} />}
         {plain && myTerminals.length > 0 && <TerminalCount terminals={myTerminals} />}
         {/* a project too: a chat in its main folder (on its current branch); the agent makes worktrees itself when it needs them */}
-        <RowAction label={plain ? `Новый чат: ${name}` : `Новый чат в ${name} (основная папка)`} icon={<MessageSquarePlus />} onClick={() => void newChat({ workspaceId: ws.id, cwd: ws.path })} />
         <span className="actions">
+          <RowAction label={isRoot ? 'Новый чат по всем проектам' : `Новый чат в ${name}`} icon={<MessageSquarePlus />} onClick={() => void newChat({ workspaceId: ws.id, cwd: ws.path })} />
           {ws.isGit && <RowAction label="Новое рабочее дерево" icon={<GitBranchPlus />} onClick={() => openDialog({ kind: 'worktree', workspaceId: ws.id })} />}
           <RowAction label="Действия с проектом" icon={<Ellipsis />} onClick={() => setMenu(true)} />
         </span>
@@ -574,6 +575,7 @@ function ProjectNode({ ws, tree, filtering, drag }: {
       <Menu anchor={projRow} open={menu} onClose={() => setMenu(false)} items={menu ? projectMenu(ws) : []} label={`Проект ${ws.name}`} placement="bottom-end" />
       {expanded && (
         <div className="tree-children">
+          {plain && mine.length === 0 && <div className="tree-note" style={depth(1)}>Пока нет чатов</div>}
           {plain ? mine.map((s) => <SessionNode key={s.id} s={s} kids={tree.kids} base={1} />)
             : !loaded && ws.isGit ? <div className="tree-skel"><Skeleton rows={2} label="Загрузка рабочих деревьев…" /></div>
               : (
@@ -671,11 +673,10 @@ function WorktreeRow({ ws, wt, sessions, terminals, dup, kids, active, fromOf, p
         onKeyDown={(e) => { onWorktreeKey(e, ws, wt); activate(pick)(e) }}
         onContextMenu={(e) => { e.preventDefault(); setMenu(true) }}>
         <span className="wt-mark" data-mark={mark} aria-label={mark === 'sleep' ? 'спит' : mark === 'attention' ? 'нужно внимание' : mark === 'busy' ? 'агенты работают' : undefined}>
-          {mark === 'sleep' ? <Moon aria-hidden /> : mark === 'busy' ? <Activity aria-hidden /> : mark === 'attention' ? <span className="wt-dot" /> : <GitBranch aria-hidden />}
+          {mark === 'sleep' ? <Moon aria-hidden /> : mark === 'busy' ? <Activity aria-hidden /> : mark === 'attention' ? <span className="wt-dot" /> : wt.main ? <House aria-label="Основное рабочее дерево" /> : <GitBranch aria-hidden />}
         </span>
         <span className="label">
-          {/* the main checkout is «⌂ develop»: its folder name is the project's, already on the line above */}
-          {wt.main ? <><House className="wt-house" aria-label="основная копия" />{wt.branch ?? name}</> : name}
+          {wt.main ? wt.branch ?? name : name}
           {!wt.main && showBranch && <span className="tree-path"> {wt.branch}</span>}
           {dup && <span className="tree-path"> · {basename(wt.path)}</span>}
           {project && <span className="tree-path"> · {project}</span>}

@@ -7,7 +7,7 @@ html, body, #root { height: 100%; margin: 0; }
 body {
   background: var(--canvas);
   color: var(--ink);
-  font: 13px/1.45 var(--font-ui);
+  font: 14px/1.45 var(--font-ui);
   -webkit-font-smoothing: antialiased;
   overflow: hidden;
 }
@@ -90,7 +90,7 @@ input, textarea { caret-color: var(--signal); }
 }
 .input, .select { height: var(--h-ctl); padding: 0 8px; }
 .textarea { padding: 6px 8px; resize: vertical; line-height: 1.5; }
-.input::placeholder, .textarea::placeholder { color: var(--ink-4); }
+.input::placeholder, .textarea::placeholder { color: var(--ink-3); }
 .input:focus, .select:focus, .textarea:focus {
   outline: none; border-color: var(--signal); box-shadow: 0 0 0 3px var(--signal-soft);
 }
@@ -180,7 +180,7 @@ kbd {
   display: grid; place-content: center; justify-items: center; gap: 10px;
   padding: 48px 24px; text-align: center; color: var(--ink-3); height: 100%;
 }
-.empty h2 { font-size: 15px; font-weight: 600; color: var(--ink); }
+.empty h2 { font-size: 18px; font-weight: 600; color: var(--ink); letter-spacing: -.015em; }
 .empty p { max-width: 44ch; text-wrap: pretty; }
 .empty svg.empty-icon { width: 28px; height: 28px; color: var(--ink-4); }
 

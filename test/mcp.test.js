@@ -56,6 +56,26 @@ test('toolResultValue prefers structuredContent, then JSON text, then text', () 
   assert.equal(toolResultValue({ content: [{ type: 'text', text: 'plain' }] }), 'plain');
 });
 
+test('stdio passes a scoped value or an environment binding and can omit an inherited variable', async (t) => {
+  const variable = 'HARNESS_TEST_STDIO_ACCESS';
+  const previous = process.env[variable];
+  process.env[variable] = 'from-environment';
+  t.after(() => { if (previous === undefined) delete process.env[variable]; else process.env[variable] = previous; });
+  const file = path.join(dir, 'stdio-auth.json');
+  fs.writeFileSync(file, JSON.stringify({ ['local/' + variable]: 'from-file' }));
+  const probe = `require('node:readline').createInterface({ input: process.stdin }).on('line', line => {
+    const m = JSON.parse(line);
+    if (m.id != null) console.log(JSON.stringify({ jsonrpc: '2.0', id: m.id,
+      result: m.method === 'tools/list' ? { tools: [{ name: process.env.${variable} ?? 'omitted' }] } : {} }));
+  });`;
+  for (const [ref, expected] of [['$secret:local/' + variable, 'from-file'], ['${env:' + variable + '}', 'from-environment'], [null, 'omitted']]) {
+    const config = baseConfig({ mcpSecretsFile: file, mcpServers: { local: {
+      managed: true, command: process.execPath, args: ['-e', probe], env: { [variable]: ref },
+    } } });
+    assert.equal((await createMcpManager(config).listTools('local'))[0].name, expected);
+  }
+});
+
 test('secrets: JSON map, name=value lines, a bare value; MCP_SECRET_ env names', () => {
   const file = path.join(dir, 'secrets.txt');
   const cfg = baseConfig({ mcpSecretsFile: file });
@@ -124,6 +144,13 @@ test('http client: SSE responses, Mcp-Session-Id, secret headers and ${env:} ref
     assert.ok(seen.filter((s) => s.method === 'initialize').every((s) => s.session === undefined));
     assert.ok(seen.filter((s) => s.method !== 'initialize').every((s) => s.session === 'sess-1'));
     assert.ok(seen.every((s) => s.auth === 'Bearer s3cret' && s.team === 'core' && !s.foreign && !s.legacy));
+    for (const [reference, expected] of [['Bearer ${env:HARNESS_TEST_TEAM}', 'Bearer core'], [null, undefined]]) {
+      const cfg = baseConfig({ mcpSecretsFile: secrets, mcpServers: { remote: {
+        url: `http://127.0.0.1:${server.address().port}/mcp`, headers: { authorization: reference },
+      }, remote_other: { enabled: false } } });
+      await createMcpManager(cfg).listTools('remote');
+      assert.equal(seen.at(-1).auth, expected);
+    }
   } finally {
     server.close();
   }
@@ -237,10 +264,17 @@ test('standalone MCP setup persists, keeps credentials write-only, and reconnect
     assert.equal(loadSecrets({ mcpSecretsFile: secrets, root: dir }).get('imported_token').value, secret.value);
     assert.match(fs.readFileSync(secrets, 'utf8'), /# keep this comment\nonework\/Authorization=existing/);
     const meta = (await h.api('GET', '/api/mcp/config')).body;
-    assert.deepEqual(meta.servers.find((c) => c.name === 'own'), { name: 'own', local: true, editable: true, enabled: true, transport: 'stdio' });
+    assert.deepEqual(meta.servers.find((c) => c.name === 'own'), { name: 'own', local: true, editable: true, enabled: true, transport: 'stdio', credentials: [] });
+    const bind = (body) => h.api('PUT', '/api/mcp/secrets/imported', { key: 'Token', ...body });
+    assert.equal((await bind({ source: 'env', variable: 'NOT A NAME' })).status, 400);
     const local = fs.readFileSync(h.configFile.replace('.json', '.local.json'), 'utf8');
     assert.doesNotMatch(JSON.stringify(meta) + local, /demo-credential|original-value/);
     assert.equal(JSON.parse(local).mcpServers.imported.env.Token, '$secret:imported/Token');
+    assert.equal((await bind({ source: 'env', variable: 'HARNESS_TEST_TEAM' })).status, 200);
+    const bindings = async () => (await h.api('GET', '/api/mcp/config')).body.servers.find((c) => c.name === 'imported').credentials;
+    assert.deepEqual(await bindings(), [{ key: 'Token', variable: 'HARNESS_TEST_TEAM', bearer: false }]);
+    assert.equal((await bind({ source: 'none' })).status, 200);
+    assert.deepEqual(await bindings(), []);
     assert.equal(fs.readFileSync(source, 'utf8'), original);
     assert.equal((await h.api('PUT', '/api/mcp/servers/imported', MOCK)).status, 400);
     assert.equal((await h.api('PUT', '/api/mcp/servers/own', MOCK)).status, 200);

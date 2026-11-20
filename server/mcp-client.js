@@ -37,6 +37,40 @@ export function secretsFile(config) {
 
 const canon = (name) => String(name).replace(/\//g, '_').toLowerCase();
 
+function scopedSecrets(secrets, owners, server) {
+  const own = Object.create(null);
+  for (const { name, value } of secrets.values()) {
+    const slash = name.indexOf('/');
+    const owner = slash >= 0 ? name.slice(0, slash) : owners.find((n) => name.toLowerCase().startsWith(n.toLowerCase() + '_'));
+    if (owner?.toLowerCase() === server.toLowerCase()) own[name.slice(owner.length + 1)] = value;
+  }
+  return own;
+}
+
+export function connectionList(config) {
+  const defs = serverDefs(config);
+  const owners = Object.keys(defs).sort((a, b) => b.length - a.length);
+  const secrets = loadSecrets(config);
+  return Object.entries(defs).filter(([name]) => name !== 'harness').map(([name, def]) => {
+    const fields = def.transport === 'http' ? def.headers : def.env;
+    const keys = mergedFields(def.transport, scopedSecrets(secrets, owners, name), fields);
+    const credentials = Object.entries(keys).filter(([, v]) => v !== null).map(([key]) => {
+      const ref = /^(Bearer )?\$\{env:([A-Za-z_][A-Za-z0-9_]*)\}$/.exec(fields?.[key] ?? '');
+      return ref ? { key, variable: ref[2], bearer: !!ref[1] } : { key };
+    });
+    return { name, enabled: def.enabled, transport: def.transport, local: Object.hasOwn(config.mcpServers, name), editable: config.mcpServers[name]?.managed === true, credentials };
+  });
+}
+
+function mergedFields(transport, own, configured) {
+  // HTTP field names ignore case. Keep the configured spelling and its precedence.
+  const fields = new Map();
+  for (const [key, value] of Object.entries({ ...own, ...configured })) {
+    fields.set(transport === 'http' ? key.toLowerCase() : key, [key, value]);
+  }
+  return Object.fromEntries(fields.values());
+}
+
 /** Secrets file -> Map(canonical name -> { name, value }). JSON map, `name=value` lines, or one bare value. */
 export function loadSecrets(config) {
   const secrets = new Map();
@@ -62,7 +96,7 @@ export function loadSecrets(config) {
 /** Update one scoped credential without returning values or replacing unrelated entries. */
 export function saveServerSecret(config, name, key, value) {
   if (!Object.hasOwn(serverDefs(config), name) || name in Object.prototype || name === 'harness' || !/^[\w.-]+$/.test(name)) fail(404, 'Сервер не найден');
-  if (typeof key !== 'string' || !/^[a-zA-Z][a-zA-Z0-9_-]{0,100}$/.test(key) ||
+  if (typeof key !== 'string' || !/^[a-zA-Z_][a-zA-Z0-9_-]{0,100}$/.test(key) || key in Object.prototype ||
       typeof value !== 'string' || !value.trim() || /[\r\n\0]/.test(value)) fail(400, 'Укажите имя и значение секрета в одну строку');
   const file = secretsFile(config);
   let source = '';
@@ -291,21 +325,19 @@ export function createMcpManager(config) {
     const def = defs[name] || fail(404, `MCP-сервер «${name}» не настроен (mcpServers)`);
     if (!def.enabled) fail(400, `MCP-сервер «${name}» выключен (mcpServers.${name}.enabled)`);
     const secrets = loadSecrets(config);
-    const own = {}; // "<server>/<Name>" secrets: headers of an http server, env of a stdio server
     // Legacy server_KEY entries use the longest matching server name. A slash gives the owner explicitly.
     const owners = Object.keys(defs).sort((a, b) => b.length - a.length);
-    for (const { name: secretName, value } of secrets.values()) {
-      const slash = secretName.indexOf('/');
-      const owner = slash >= 0 ? secretName.slice(0, slash) : owners.find((n) => secretName.toLowerCase().startsWith(n.toLowerCase() + '_'));
-      if (owner?.toLowerCase() === name.toLowerCase()) own[secretName.slice(owner.length + 1)] = value;
-    }
+    const own = scopedSecrets(secrets, owners, name);
     const resolved = resolveRefs({ env: def.env || {}, headers: def.headers || {}, args: def.args || [], url: def.url || '' }, secrets);
     const http = def.transport === 'http';
+    const merged = mergedFields(def.transport, own, http ? resolved.headers : resolved.env);
+    // Undefined masks inherited variables when Node constructs the child's environment.
+    const injected = Object.fromEntries(Object.entries(merged).filter(([, v]) => !http || v !== null).map(([k, v]) => [k, v ?? undefined]));
     return {
       ...def,
       ...resolved,
-      headers: { ...(http ? own : {}), ...resolved.headers },
-      env: { ...(def.managed || http ? {} : secretEnv(config)), ...(http ? {} : own), ...resolved.env },
+      headers: http ? injected : resolved.headers,
+      env: http ? resolved.env : { ...(def.managed ? {} : secretEnv(config)), ...injected },
     };
   }
 

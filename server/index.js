@@ -16,7 +16,7 @@ import { createSessions, newId, settledTool, titleFrom } from './sessions.js';
 import { createOrchestration, commonDir, render } from './orchestration.js';
 import * as git from './git.js';
 import * as wfs from './fs.js';
-import { createMcpManager, loadSecrets, secretsFile, serverDefs, connectionDefinition, saveServerSecret } from './mcp-client.js';
+import { createMcpManager, loadSecrets, secretsFile, serverDefs, connectionDefinition, connectionList, saveServerSecret } from './mcp-client.js';
 import { launchers, gigacodeCommand } from './launchers.js';
 import { isAlive, resolveCommand, spawnOptions } from './runner.js';
 import { createModelCatalog, scanModelRefs } from './models.js';
@@ -1711,8 +1711,7 @@ export async function startServer(opts = {}) {
 
   // mcp, notifications
   route('GET', '/api/mcp/config', () => ({
-    servers: Object.entries(serverDefs(config)).filter(([name]) => name !== 'harness').map(([name, def]) =>
-      ({ name, enabled: def.enabled, transport: def.transport, local: Object.hasOwn(config.mcpServers, name), editable: config.mcpServers[name]?.managed === true })),
+    servers: connectionList(config),
     secretsFile: secretsFile(config),
   }));
   route('POST', '/api/mcp/servers', ({ body }) => {
@@ -1734,14 +1733,24 @@ export async function startServer(opts = {}) {
     return { enabled: body.enabled };
   });
   route('PUT', '/api/mcp/secrets/:name', ({ params, body }) => {
-    check(body, { key: 'string', value: 'string' });
+    check(body, { key: 'string' });
+    if (!Object.hasOwn(serverDefs(config), params.name) || params.name in Object.prototype || params.name === 'harness') fail(404, 'Сервер не найден');
+    if (!/^[A-Za-z_][A-Za-z0-9_-]{0,100}$/.test(body.key) || body.key in Object.prototype) fail(400, 'Некорректное имя ключа');
     const def = serverDefs(config)[params.name];
     const field = def?.transport === 'http' ? 'headers' : 'env';
     const key = Object.keys(def?.[field] || {}).find((k) => field === 'headers' ? k.toLowerCase() === body.key.toLowerCase() : k === body.key) ?? body.key;
-    saveServerSecret(config, params.name, key, body.value);
-    if (Object.hasOwn(def[field] || {}, key)) {
-      persistConfig({ mcpServers: { [params.name]: { [field]: { [key]: '$secret:' + params.name + '/' + key } } } });
+    let reference;
+    if (body.source === 'env') {
+      if (typeof body.variable !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(body.variable)) fail(400, 'Укажите имя переменной окружения');
+      reference = (body.bearer === true && field === 'headers' ? 'Bearer ' : '') + '${env:' + body.variable + '}';
+    } else if (body.source === 'none') {
+      reference = null;
+    } else {
+      if (body.source !== undefined && body.source !== 'value') fail(400, 'Неизвестный источник значения');
+      saveServerSecret(config, params.name, key, body.value);
+      reference = '$secret:' + params.name + '/' + key;
     }
+    persistConfig({ mcpServers: { [params.name]: { [field]: { [key]: reference } } } });
     return { saved: true };
   });
   route('POST', '/api/mcp/servers/:name/reconnect', async ({ params }) => (await mcp.status(params.name))[0]);

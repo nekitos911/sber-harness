@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { ChipsInput } from '../components/ChipsInput'
 import { DEFAULT_REWORK } from '../components/board/Rework'
 import { FolderPicker } from '../components/FolderPicker'
-import { ArrowDown, ArrowUp, Check, CircleCheck, Pencil, CircleX, LogIn, Plus, RefreshCw, TriangleAlert, X } from 'lucide-react'
+import { ArrowDown, ArrowUp, Bot, Cable, Check, CircleCheck, Pencil, CircleX, LogIn, PanelsTopLeft, Plus, RefreshCw, SquareKanban, TriangleAlert, X } from 'lucide-react'
 import { api, ApiError, errorText, qs, tryApi } from '../api'
 import { openScreen, setState, toast, useFeature, useStore } from '../store'
 import { adoptSession } from '../lib/actions'
@@ -18,6 +18,10 @@ import { IntegrationStatus, useIntegrationsCheck } from '../components/Integrati
 import { Button, Chip, Disclosure, IconButton, Input, Segmented, Select, SuggestInput, Switch, Textarea } from '../components/ui'
 
 const MAIN = 'gigacode'
+const CATEGORIES = [
+  { name: 'Рабочее место', Icon: PanelsTopLeft }, { name: 'Агенты', Icon: Bot },
+  { name: 'Подключения', Icon: Cable }, { name: 'Доска и Git', Icon: SquareKanban },
+] as const
 /** The agent the settings lead with: the default one (mock in the demo), else GigaCode. */
 const mainAgent = (form: Settings) => (form.defaultAgent !== 'claude' && form.agents[form.defaultAgent] ? form.defaultAgent : form.agents[MAIN] ? MAIN : Object.keys(form.agents).find((id) => id !== 'claude') ?? '')
 const VARS = ['{taskUrl}', '{notes}', '{key}', '{title}', '{description}', '{targets}', '{branch}', '{repo}']
@@ -116,9 +120,9 @@ export function SettingsView() {
       <form className="settings" onSubmit={(e) => { e.preventDefault(); if (changes) void save() }}>
         <div className="settings-layout">
           <nav className="settings-nav" aria-label="Разделы настроек">
-            {(['Рабочее место', 'Агенты', 'Подключения', 'Доска и Git'] as const).map((name) => (
+            {CATEGORIES.map(({ name, Icon }) => (
               <button key={name} type="button" aria-current={category === name ? 'page' : undefined}
-                onClick={() => setState({ settingsCategory: name })}>{name}</button>
+                onClick={() => setState({ settingsCategory: name })}><Icon aria-hidden />{name}</button>
             ))}
           </nav>
           <div ref={scroll} className="settings-body" id="settings-scroll">

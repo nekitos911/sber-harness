@@ -144,8 +144,8 @@ export function SetupView() {
         <li className="firstrun-step" data-done={commandOk || undefined} data-optional>
           {commandOk ? <Check className="setup-mark" aria-label="готово" /> : <Circle className="setup-mark" aria-label="не заполнено" />}
           <div className="firstrun-body">
-            <strong>Есть ли у вас своя команда для задач? <span className="muted">· необязательно</span></strong>
-            <span className="muted">Некоторые заводят в агенте команду, которая ведёт задачу по шагам: разобраться, сделать, проверить, открыть PR (например, <span className="mono">/full-task</span>). Если такой нет — ничего страшного, агент получит задачу как есть.</span>
+            <strong>Команда для задач</strong>
+            <span className="muted">По умолчанию агент получает текст задачи. Можно запускать свою команду, например <span className="mono">/full-task</span>.</span>
             <Segmented size="sm" label="Своя команда для задач" value={mode} onChange={(v) => setHow(v)}
               options={[{ value: 'text', label: 'Нет' }, { value: 'command', label: 'Есть' }]} />
             {mode === 'command' && (
@@ -167,7 +167,7 @@ export function SetupView() {
             <Switch checked={installSkill} onChange={setInstallSkill} label="Показывать помощников агента" />
             <div className="firstrun-body">
               <strong>Показывать помощников агента <span className="muted">· необязательно</span></strong>
-              <span className="muted">Иногда агент зовёт на помощь другого агента — например, проверить код свежим взглядом. Если включить, каждый такой помощник появится здесь отдельным чатом: видно, что он делает, ему можно ответить или остановить. Если нет — помощники работают внутри агента незаметно.</span>
+              <span className="muted">У каждого помощника появится свой чат. В нём можно посмотреть ход работы, ответить или остановить агента.</span>
               <span className="muted">Для этого в папку агента запишется файл с инструкцией (навык).</span>
             </div>
           </li>

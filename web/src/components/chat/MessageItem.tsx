@@ -68,7 +68,7 @@ export function ReplyOptions({ options, to, onSent }: { options: string[]; to: s
 /** An attached file: a click opens it in its program; the folder button shows where it lies. */
 function FileChip({ path, n }: { path: string; n: number }) {
   const can = useFeature('open-file')
-  if (!can) return <span className="chip" data-tip={path}><FileText aria-hidden />{basename(path)}</span>
+  if (!can) return <span className="chip" data-tip={path}><FileText aria-hidden />#{n} {basename(path)}</span>
   return (
     <span className="chip file-chip">
       <button type="button" className="file-chip-open" data-tip={`Открыть: ${path}`} onClick={() => openFile(path)}><FileText aria-hidden /><span className="muted num">#{n}</span> {basename(path).replace(/^\d{8}-\d{6}-/, '')}</button>
@@ -94,9 +94,9 @@ function UserMessage({ m }: { m: Message }) {
       )}
       {paths.length > 0 && (
         <div className="msg-atts" aria-label="Вложения">
-          {paths.map((p) => (isImagePath(p) && cwd
-            ? <Thumb key={p} cwd={cwd} path={p} />
-            : <FileChip key={p} path={p} n={paths.indexOf(p) + 1} />))}
+          {paths.map((p, i) => (isImagePath(p) && cwd
+            ? <Thumb key={p} cwd={cwd} path={p} number={i + 1} />
+            : <FileChip key={p} path={p} n={i + 1} />))}
         </div>
       )}
       {text && <Markdown text={text} />}

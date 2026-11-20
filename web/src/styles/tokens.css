@@ -17,7 +17,7 @@
 
   --ink: #e8e8e8;
   --ink-2: #b9b9b9;
-  --ink-3: #8f8f8f;      /* secondary text, meta: >= 4.5:1 on every surface */
+  --ink-3: #a5a5a5;      /* secondary text, meta */
   --ink-4: #6a6a6a;      /* placeholders, disabled, rules-as-text only */
 
   --primary: #e8e8e8;     /* primary button: light on dark */
@@ -74,7 +74,7 @@
   --r-1: 4px;
   --r-2: 6px;
   --r-3: 10px;
-  --h-ctl: 28px;
+  --h-ctl: 30px;
 
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);      /* enter */
   --ease-in: cubic-bezier(0.55, 0, 1, 0.45);       /* exit: short, gets out of the way */

@@ -22,11 +22,18 @@ export function FolderPicker(props: PickerProps) {
   const native = useFeature('pick-folder')
   const [own, setOwn] = useState(!native)
   const done = useRef(false) // «Отмена» / «Выбрать здесь» while the window is open: its late answer is ignored
+  const request = useRef<Promise<{ path: string | null }> | null>(null)
   useEffect(() => {
     if (own) return
-    api<{ path: string | null }>('POST', '/fs/pick-folder', { title: props.title ?? 'Выбор папки', initial: props.initial || undefined })
-      .then((r) => { if (done.current) return; done.current = true; if (r?.path) props.onPick(r.path); else props.onClose() })
-      .catch(() => { if (!done.current) setOwn(true) })
+    let mounted = true
+    request.current ??= api<{ path: string | null }>('POST', '/fs/pick-folder', { title: props.title ?? 'Выбор папки', initial: props.initial || undefined })
+    request.current.then((r) => {
+      if (!mounted || done.current) return
+      done.current = true
+      if (r?.path) props.onPick(r.path)
+      else props.onClose()
+    }).catch(() => { if (mounted && !done.current) setOwn(true) })
+    return () => { mounted = false }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
   if (own) return <FolderBrowser {...props} />
   return (

@@ -135,7 +135,7 @@ export function StepList({ msgs, live }: { msgs: Message[]; live: boolean }) {
   )
 }
 
-export function Thumb({ cwd, path }: { cwd: string; path: string }) {
+export function Thumb({ cwd, path, number }: { cwd: string; path: string; number?: number }) {
   const [url, setUrl] = useState<string | null>(null)
   const [failed, setFailed] = useState(false)
   const box = useRef<HTMLDialogElement>(null)
@@ -146,11 +146,12 @@ export function Thumb({ cwd, path }: { cwd: string; path: string }) {
     apiBlobUrl(`/fs/raw${qs({ cwd, path })}`).then((u) => { made = u; if (live) setUrl(u); else URL.revokeObjectURL(u) }, () => { if (live) setFailed(true) })
     return () => { live = false; if (made) URL.revokeObjectURL(made) }
   }, [cwd, path])
-  if (failed) return null
+  if (failed) return number ? <span className="chip" data-tip={path}>#{number} {basename(path)}</span> : null
   return (
     <>
       <button type="button" className="thumb" data-tip={path} onClick={() => box.current?.showModal()} disabled={!url}>
         {url ? <img src={url} alt={basename(path)} /> : <span className="thumb-wait" aria-hidden />}
+        {number && <span className="att-num">#{number}</span>}
       </button>
       {url && (
         <dialog ref={box} className="lightbox" aria-label={basename(path)} onClick={() => box.current?.close()}>

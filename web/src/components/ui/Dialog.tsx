@@ -29,6 +29,7 @@ export function Modal({ title, submitLabel, cancelLabel = 'Отмена', onSubm
     const d = ref.current
     d?.showModal()
     if (focusSubmit) d?.querySelector<HTMLButtonElement>('button[type="submit"]')?.focus()
+    else d?.querySelector<HTMLElement>('[data-initial-focus]')?.focus()
     return () => d?.close()
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 

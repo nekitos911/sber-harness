@@ -303,15 +303,17 @@ function CommitRow({ cwd, c, now }: { cwd: string; c: GitCommit; now: number }) 
   const [files, setFiles] = useState<DiffFile[] | null | 'error'>(null)
   const toggle = () => {
     setOpen(!open)
-    if (!open && files === null) api<{ diff: string }>('GET', `/git/diff${qs({ cwd, rev: c.hash })}`).then((r) => setFiles(parseDiff(r.diff)), () => setFiles('error'))
+    if (!open && (!files || files === 'error')) {
+      setFiles(null)
+      api<{ diff: string }>('GET', `/git/diff${qs({ cwd, rev: c.hash })}`).then((r) => setFiles(parseDiff(r.diff)), () => setFiles('error'))
+    }
   }
   return (
     <div className="commit" data-open={open || undefined}>
       <button type="button" className="commit-row" aria-expanded={open} data-tip={c.subject} onClick={toggle}>
         <ChevronRight className="chev" aria-hidden />
-        <span className="mono">{shortHash(c.hash)}</span>
         <span className="subject">{c.subject}</span>
-        <span className="by">{c.author} · {relTime(c.at, now)}</span>
+        {open && <span className="by">{c.author} · {relTime(c.at, now)} · {shortHash(c.hash)}</span>}
       </button>
       {open && (files === null ? <Skeleton rows={2} /> : files === 'error' ? <p className="muted commit-files">Не удалось получить изменения коммита.</p> : (
         <div className="commit-files">
