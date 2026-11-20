@@ -8,7 +8,7 @@ import { gsLetter, refreshGit, splitPath, useGit, useGitWatch } from '../../lib/
 import { parseDiff, type DiffFile } from '../../lib/diff'
 import { useNow } from '../../lib/useNow'
 import type { GitCommit, GitFile, GitSuggest, Settings } from '../../types'
-import { Disclosure, Menu, type MenuItem } from '../ui'
+import { Disclosure, Menu, MenuButton, type MenuItem } from '../ui'
 import { openPrSettings, usePr } from '../../lib/pr'
 import { Skeleton } from '../bits'
 import { GenerateStatus, useGenerate, type Generated } from '../GenerateMessage'
@@ -26,6 +26,7 @@ const generatedCache = new Map<string, Generated>()
 
 const STATUS_LABEL: Record<GitFile['status'], string> = { M: 'изменён', A: 'добавлен', D: 'удалён', R: 'переименован', '?': 'новый, не в git', U: 'конфликт' }
 const TITLE_MAX = 72
+const isNewFile = (f: GitFile) => f.x === '?' || f.x === 'A'
 
 /** The message box holds title and body as one text: the first line is the title. */
 const split = (msg: string) => { const [t = '', ...rest] = msg.split('\n'); return { title: t.trim(), body: rest.join('\n').trim() } }
@@ -86,9 +87,10 @@ export function ChangesTab({ cwd, inline = false, agentBusy = false }: { cwd: st
   }, [cwd, filesSig, branch, ready])
 
   // The change set: sorted paths with their status and the diff stat. A new one may get a new message.
-  const statSig = git?.files?.map((f) => `${f.added}/${f.removed}`).join(',') ?? ''
-  const changeSig = `${normPath(cwd)}|${[...(status?.files ?? [])].filter((f) => !f.service).map((f) => f.status + f.path).sort().join('|')}|${statSig}`
-  const hasChanges = (status?.files ?? []).some((f) => !f.service)
+  const commitFiles = status?.files.filter((f) => !f.service) ?? []
+  const statSig = commitFiles.map((f) => `${f.status}${f.path}:${f.added}/${f.removed}`).sort().join('|')
+  const changeSig = `${normPath(cwd)}|${statSig}|${status?.totals?.added}/${status?.totals?.removed}`
+  const hasChanges = commitFiles.length > 0
   const generate = async (sig: string) => {
     const r = await gen.run()
     if (!r || touched.current) return // never over what the person typed meanwhile
@@ -127,7 +129,7 @@ export function ChangesTab({ cwd, inline = false, agentBusy = false }: { cwd: st
     setMsg('')
   }
 
-  const files = status.files.filter((f) => !f.service)
+  const files = commitFiles
   const service = status.files.filter((f) => f.service)
   // staging: only when the server reports it (GitFile.staged) and can change it (feature git-stage); else commit-all
   const staged = stageOn ? files.filter((f) => f.staged) : []
@@ -162,15 +164,18 @@ export function ChangesTab({ cwd, inline = false, agentBusy = false }: { cwd: st
   }
   const discard = (f: GitFile) => openDialog({
     kind: 'confirm', title: `Отменить изменения в ${splitPath(f.path).name}?`, danger: true, ok: 'Отменить изменения',
-    text: f.status === '?' ? `Новый файл ${f.path} будет удалён.` : `Изменения в ${f.path} будут потеряны.`,
+    text: isNewFile(f) ? `Новый файл ${f.path} будет удалён.` : `Изменения в ${f.path} будут потеряны.`,
     // confirm: true only after this dialog — the server refuses a discard without it
     onConfirm: () => void tryApi('POST', '/git/discard', { cwd, paths: [f.path], confirm: true }).then((r) => { if (r !== undefined) refreshGit(cwd) }),
   })
   // a group's «↶» (as in Orca): new files are deleted, changed ones go back to the last commit
-  const discardAll = (list: GitFile[]) => {
-    const fresh = list.filter((f) => f.status === '?' || f.status === 'A').length
+  const discardAll = (list: GitFile[], excluded = false) => {
+    const fresh = list.filter(isNewFile).length
+    const removeOnly = fresh === list.length
+    const action = removeOnly ? 'Удалить файлы' : 'Сбросить изменения'
+    const scope = excluded ? 'Исключены из коммита' : 'Изменения'
     openDialog({
-      kind: 'confirm', title: `Отменить все изменения (${list.length})?`, danger: true, ok: 'Отменить все',
+      kind: 'confirm', title: `${action} из группы «${scope}» (${list.length})?`, danger: true, ok: action,
       text: [fresh && `Новые файлы будут удалены: ${fresh}.`, list.length - fresh && `Изменённые файлы вернутся к последнему коммиту: ${list.length - fresh}.`].filter(Boolean).join(' '),
       onConfirm: () => void tryApi('POST', '/git/discard', { cwd, paths: list.map((f) => f.path), confirm: true }).then((r) => { if (r !== undefined) refreshGit(cwd) }),
     })
@@ -206,7 +211,8 @@ export function ChangesTab({ cwd, inline = false, agentBusy = false }: { cwd: st
   const q = query?.trim().toLowerCase() ?? ''
   const match = (f: GitFile) => !q || f.path.toLowerCase().includes(q)
   const prInfo = pr && typeof pr === 'object' && 'index' in pr ? pr : null
-  const totals = status.totals ?? git?.files?.reduce((t, f) => ({ added: t.added + f.added, removed: t.removed + f.removed }), { added: 0, removed: 0 })
+  const totals = status.totals
+  const visibleService = service.filter(match)
   const taskKey = suggest?.taskId ? suggest.key ?? suggest.taskId : null
 
   return (
@@ -240,18 +246,20 @@ export function ChangesTab({ cwd, inline = false, agentBusy = false }: { cwd: st
         </div>
       )}
 
-      <div className="scm-message" data-generating={gen.running || undefined}>
-        <textarea className="textarea" aria-label="Сообщение коммита" placeholder="Сообщение" rows={3} value={msg} disabled={gen.running} onChange={(e) => edit(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !primaryDisabled) { e.preventDefault(); primary() } }} />
-        {gen.on && (
-          <button type="button" className="icon-btn icon-btn-sm scm-gen" aria-label="Сгенерировать сообщение" data-tip="Сгенерировать: GigaCode напишет по изменениям и задаче"
-            disabled={gen.running} onClick={() => { touched.current = false; saveDraft(draftKey, null); void generate(changeSig) }}>
-            <Sparkles className={gen.running ? 'spinner' : undefined} />
-          </button>
-        )}
-      </div>
-      {title.length > TITLE_MAX && <p className="scm-hint">Первая строка — заголовок: <span className="num">{title.length}/{TITLE_MAX}</span>, лучше короче.</p>}
-      <GenerateStatus g={gen} onRetry={() => void generate(changeSig)} />
+      {hasChanges && <>
+        <div className="scm-message" data-generating={gen.running || undefined}>
+          <textarea className="textarea" aria-label="Сообщение коммита" placeholder="Сообщение коммита" rows={3} value={msg} disabled={gen.running} onChange={(e) => edit(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !primaryDisabled) { e.preventDefault(); primary() } }} />
+          {gen.on && (
+            <button type="button" className="icon-btn icon-btn-sm scm-gen" aria-label="Сгенерировать сообщение" data-tip="Сгенерировать: GigaCode напишет по изменениям и задаче"
+              disabled={gen.running} onClick={() => { touched.current = false; saveDraft(draftKey, null); void generate(changeSig) }}>
+              <Sparkles className={gen.running ? 'spinner' : undefined} />
+            </button>
+          )}
+        </div>
+        {title.length > TITLE_MAX && <p className="scm-hint">Первая строка — заголовок: <span className="num">{title.length}/{TITLE_MAX}</span>, лучше короче.</p>}
+        <GenerateStatus g={gen} onRetry={() => void generate(changeSig)} />
+      </>}
 
       <div className="split-btn">
         <button type="button" className="btn btn-primary" disabled={primaryDisabled} onClick={primary}>{primaryLabel}</button>
@@ -265,7 +273,7 @@ export function ChangesTab({ cwd, inline = false, agentBusy = false }: { cwd: st
         <input className="input scm-search" autoFocus placeholder="Найти файл" aria-label="Найти в изменённых файлах" value={query}
           onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => e.key === 'Escape' && setQuery(null)} />
       )}
-      {files.length === 0 && <p className="muted scm-clean">Рабочая копия чистая: агенты здесь ничего не меняли или всё закоммичено.</p>}
+      {files.length === 0 && <p className="muted scm-clean">{service.length ? 'Нет изменений для коммита.' : 'Рабочая копия чистая.'}</p>}
       {staged.length > 0 && (
         <FileGroup label="Проиндексировано" files={staged.filter(match)} total={staged.length} cwd={cwd} git={git} staged stageOn={stageOn}
           onAll={() => void stage('all', false)} onStage={(f) => void stage([f.path], false)} onDiscard={discard} />
@@ -274,10 +282,12 @@ export function ChangesTab({ cwd, inline = false, agentBusy = false }: { cwd: st
         <FileGroup label="Изменения" files={unstaged.filter(match)} total={unstaged.length} cwd={cwd} git={git} stageOn={stageOn}
           onAll={() => void stage('all', true)} onStage={(f) => void stage([f.path], true)} onDiscard={discard} onDiscardAll={() => discardAll(unstaged)} />
       )}
-      {service.length > 0 && (
-        <Disclosure className="service-files" summary={<span className="muted" data-tip="Служебные папки, скомпилированные классы и логи (git.excludeFromCommit): в коммит не попадают">Не коммитятся · {service.length}</span>}>
-          {stageOn && <button type="button" className="link service-clear" onClick={() => discardAll(service)}><RotateCcw aria-hidden />Отменить все ({service.length})</button>}
-          <ul className="change-list">{service.map((f) => <ChangeRow key={f.path} cwd={cwd} f={f} git={git} stageOn={stageOn} onDiscard={() => discard(f)} />)}</ul>
+      {visibleService.length > 0 && (
+        <Disclosure className="service-files" summary={<>Исключены из коммита <span className="num muted">{visibleService.length}</span></>}
+          actions={stageOn && <MenuButton className="icon-btn-sm" label="Действия с исключёнными файлами" icon={<Ellipsis />} placement="bottom-end"
+            items={[{ label: visibleService.every(isNewFile) ? 'Удалить новые файлы…' : 'Сбросить изменения в файлах…', danger: true, onSelect: () => discardAll(visibleService, true) }]} />}>
+          <p className="muted scm-clean">Файлы исключены правилом <code>git.excludeFromCommit</code>.</p>
+          <ul className="change-list">{visibleService.map((f) => <ChangeRow key={f.path} cwd={cwd} f={f} git={git} stageOn={stageOn} onDiscard={() => discard(f)} />)}</ul>
         </Disclosure>
       )}
 
@@ -505,7 +515,6 @@ function LinkedWorktrees({ cwd, error }: { cwd: string; error: string }) {
       {seenLine}
     </div>
     {/* its changes, commit and push right in the chat: no leaving the work to look at them */}
-    <div className="linked-current" data-tip={current.path}>Изменения в <strong>{current.repo ?? basename(current.path)}</strong> <span className="mono muted">{basename(current.path)}</span></div>
     <ChangesTab key={current.path} cwd={current.path} inline agentBusy={running} />
     </>
   )

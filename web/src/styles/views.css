@@ -367,9 +367,8 @@
 .sdd-strip:hover { background: var(--deck); }
 .sdd-plan { font-weight: 500; color: var(--ink); max-width: 40%; }
 .service-files { margin-top: 6px; }
-.service-files .disclosure-toggle { font-size: 12px; }
-.service-clear { display: inline-flex; align-items: center; gap: 4px; margin: 2px 0 4px 6px; font-size: 12px; }
-.service-clear svg { width: 12px; height: 12px; }
+.service-files .disclosure-toggle { min-height: 26px; font-size: 12px; font-weight: 600; }
+.service-files .scm-clean { margin: 2px 0 6px 19px; }
 .model-refs { display: grid; gap: 4px; }
 .model-ref { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
 .model-ref .mono { font-size: 11.5px; }
@@ -494,7 +493,6 @@ button.chip.chip-mono[aria-pressed="true"] { background: var(--signal-soft); col
 .linked-seen { margin: 8px 0 0; font-size: 12px; overflow-wrap: anywhere; }
 .linked-hint { margin: 2px 0 6px; font-size: 12px; }
 /* which repository the changes below belong to (a folder chat works in several) */
-.linked-current { margin: 4px 12px 0; padding: 6px 0 4px; border-top: 1px solid var(--rule); font-size: 12.5px; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } /* the projects a chat in the projects folder only reads */
 .linked-wt { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 30px; padding: 0 8px; border: 0; border-radius: var(--r-1); background: none; color: var(--ink-2); text-align: left; }
 .linked-wt:hover { background: var(--deck-2); color: var(--ink); }
 .linked-wt[aria-pressed="true"] { background: var(--signal-soft); color: var(--ink); } /* the worktree shown below */
@@ -579,7 +577,7 @@ button.prs-group[aria-expanded="true"] .chev { transform: rotate(90deg); }
 .scm-group { display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px; }
 .scm-group-head-row { display: flex; align-items: center; gap: 6px; }
 .scm-group-actions .link { white-space: nowrap; } /* «Просмотреть всё» on one line */
-.scm-group-head { display: inline-flex; align-items: center; gap: 4px; padding: 2px 0; border: 0; background: none; color: var(--ink-3); font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; cursor: pointer; }
+.scm-group-head { display: inline-flex; align-items: center; gap: 7px; min-height: 26px; padding: 2px 0; border: 0; background: none; color: var(--ink-2); font-size: 12px; font-weight: 600; cursor: pointer; }
 .scm-group-head:hover { color: var(--ink); }
 .scm-group-head .chev { width: 12px; height: 12px; transition: transform 120ms var(--ease-out); }
 .scm-group-head[aria-expanded="true"] .chev { transform: rotate(90deg); }

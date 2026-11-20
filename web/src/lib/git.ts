@@ -13,9 +13,16 @@ async function load(cwd: string): Promise<GitInfo> {
     const raw = await api<GitStatus>('GET', `/git/status${qs({ cwd })}`)
     const status: GitStatus = { branch: raw?.branch ?? null, upstream: raw?.upstream ?? null, ahead: raw?.ahead ?? 0, behind: raw?.behind ?? 0, files: Array.isArray(raw?.files) ? raw.files : [] }
     let files: DiffFile[] | null = []
-    if (status.files.length) {
-      // One whole-tree diff gives every file's +N −M and the inline diffs (untracked files come as added).
+    status.totals = raw?.totals
+    status.webUrl = raw?.webUrl
+    if (!status.totals && status.files.length) {
+      // Older servers return no line counts. Count only files eligible for commit.
       try { files = parseDiff(String((await api<{ diff: string }>('GET', `/git/diff${qs({ cwd })}`))?.diff ?? '')) } catch { files = null }
+      const eligible = new Set(status.files.filter((f) => !f.service).map((f) => f.path))
+      status.totals = files?.reduce((sum, f) => {
+        if (eligible.has(f.path)) { sum.added += f.added; sum.removed += f.removed }
+        return sum
+      }, { added: 0, removed: 0 })
     }
     return { status, error: null, files }
   } catch (e) {
