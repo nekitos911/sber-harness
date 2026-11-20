@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { ArrowDown, Check, Copy, Ellipsis, ExternalLink, FolderPlus, KeyRound, Link2, ShieldCheck, Wrench, X, GitCompareArrows, MessageSquare, RotateCcw, ScrollText, Square, Trash2 } from 'lucide-react'
 import { api, errorText, tryApi } from '../api'
 import { getState, openDialog, openScreen, openSession, openTask, setState, showPanel, useFeature, useStore, upsertSession } from '../store'
@@ -67,8 +67,15 @@ export function ChatView({ id, active }: { id: string; active: boolean }) {
   const shownAt = useRef(0) // messages newer than the first render of the transcript fade in; history does not
   if (messages && !shownAt.current) shownAt.current = Date.now()
   const scroller = useRef<HTMLDivElement>(null)
+  const transcript = useRef<HTMLDivElement>(null)
   const stick = useRef(true)
   const [atBottom, setAtBottom] = useState(true)
+  const syncBottom = useCallback((el: HTMLDivElement) => {
+    if (!el.clientHeight) return
+    const bottom = el.scrollHeight - el.scrollTop - el.clientHeight < 48
+    stick.current = bottom
+    setAtBottom(bottom)
+  }, [])
   // Opening (or coming back to) a chat starts at «Новое» when something unread is there, else at the bottom.
   const restored = useRef(false)
   const anchor = useRef<number | null>(null) // distance from the bottom kept while older messages are added on top
@@ -80,15 +87,18 @@ export function ChatView({ id, active }: { id: string; active: boolean }) {
     setWasActive(active)
     if (active) { setMark({ since: loadDraft<number>(seenKey), at: Date.now() }); restored.current = false }
   }
-  // The panel above the composer (workers, banners) grows and shrinks: a chat that follows output stays at the bottom.
-  const bottomRef = useRef<HTMLDivElement>(null)
+  // Folding a tool or resizing the viewport can reveal the last message without firing a scroll event.
   useEffect(() => {
-    const el = bottomRef.current
-    if (!el) return
-    const ro = new ResizeObserver(() => { const sc = scroller.current; if (sc && stick.current) sc.scrollTop = sc.scrollHeight })
+    const el = scroller.current
+    if (!active || !el || !transcript.current) return
+    const ro = new ResizeObserver(() => {
+      if (stick.current) el.scrollTop = el.scrollHeight
+      syncBottom(el)
+    })
     ro.observe(el)
+    ro.observe(transcript.current)
     return () => ro.disconnect()
-  }, [session?.id])
+  }, [active, session?.id, syncBottom])
   // Sending always goes to the bottom, wherever the user had scrolled.
   useEffect(() => {
     const on = (e: Event) => {
@@ -149,30 +159,24 @@ export function ChatView({ id, active }: { id: string; active: boolean }) {
     if (!restored.current && list.length) {
       restored.current = true
       const mark = el.querySelector<HTMLElement>('.new-divider')
-      if (mark && mark.offsetTop < el.scrollHeight - el.clientHeight) { // unread messages below the fold: start at the mark
-        el.scrollTop = mark.offsetTop - 48
-        stick.current = false
-        setAtBottom(false)
+      const markTop = mark && el.scrollTop + mark.getBoundingClientRect().top - el.getBoundingClientRect().top
+      if (markTop !== null && markTop < el.scrollHeight - el.clientHeight) {
+        el.scrollTop = markTop - 48
+        syncBottom(el)
         return
       }
       stick.current = true
     }
     if (stick.current) el.scrollTop = el.scrollHeight
-  }, [list.length, lastText, active, running, id, newSince])
+  }, [list.length, lastText, active, running, id, newSince, syncBottom])
 
   if (!session) return <Loading label="Загрузка сессии…" />
 
-  const onScroll = () => {
-    const el = scroller.current
-    if (!el) return
-    const bottom = el.scrollHeight - el.scrollTop - el.clientHeight < 48
-    stick.current = bottom
-    if (bottom !== atBottom) setAtBottom(bottom)
-  }
   const toBottom = () => {
     const el = scroller.current
-    if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
-    stick.current = true
+    if (!el) return
+    el.scrollTop = el.scrollHeight
+    syncBottom(el)
   }
 
   const showLog = async () => {
@@ -202,8 +206,8 @@ export function ChatView({ id, active }: { id: string; active: boolean }) {
         </div>
       )}
 
-      <div className="chat-scroll" ref={scroller} onScroll={onScroll}>
-        <div className="chat-col" role="log" aria-live="polite" aria-relevant="additions">
+      <div className="chat-scroll" ref={scroller} onScroll={(e) => syncBottom(e.currentTarget)}>
+        <div className="chat-col" ref={transcript} role="log" aria-live="polite" aria-relevant="additions">
           {!messages && !loadError && <Skeleton rows={6} label="Загрузка истории…" />}
           {loadError && (
             <div className="empty">
@@ -237,7 +241,7 @@ export function ChatView({ id, active }: { id: string; active: boolean }) {
         </div>
       </div>
 
-      <div className="chat-bottom" ref={bottomRef}>
+      <div className="chat-bottom">
         {!atBottom && (
           <button type="button" className="btn to-bottom" onClick={toBottom}>
             <ArrowDown />
