@@ -1,10 +1,9 @@
-import { useMemo, useState, type KeyboardEvent } from 'react'
+import { useMemo, useState } from 'react'
 import { ClipboardCopy, Ellipsis, FolderOpen, GitBranchPlus, Info, ListChecks, Mail, MessageSquarePlus, Code, Moon, Pin, PinOff, SquareTerminal, Sun, Trash2 } from 'lucide-react'
 import { api, ApiError, errorText, tryApi } from '../api'
 import { closeDialog, getState, hasFeature, openDialog, setState, toast, upsert, useStore } from '../store'
 import { basename, COLUMNS, normPath, relTime } from '../lib/format'
 import { newChat, newTerminal } from '../lib/actions'
-import { modKey, shortcut } from '../lib/keys'
 import { loadWorktrees } from '../ws'
 import type { Task, TaskStatus, Workspace, Worktree } from '../types'
 import { Checkbox, Dialog, Input, Segmented, Textarea, type MenuItem } from './ui'
@@ -81,7 +80,7 @@ export function worktreeMenu(ws: Workspace, wt: Worktree, task: Task | undefined
     { label: 'Терминал', icon: <SquareTerminal />, onSelect: () => void newTerminal(where) },
     { label: 'Копировать путь', icon: <ClipboardCopy />, onSelect: () => copy(wt.path, 'путь') },
     { label: 'Ещё', icon: <Ellipsis />, children: more },
-    ...(!wt.main ? [{ label: 'Удалить рабочее дерево', icon: <Trash2 />, danger: true, divider: true, hint: shortcut('⌫', true), onSelect: () => openDialog({ kind: 'wt-delete', workspaceId: ws.id, path: wt.path }) }] : []),
+    ...(!wt.main ? [{ label: 'Удалить рабочее дерево', icon: <Trash2 />, danger: true, divider: true, onSelect: () => openDialog({ kind: 'wt-delete', workspaceId: ws.id, path: wt.path }) }] : []),
   ]
 }
 
@@ -251,14 +250,6 @@ export function CleanupDialog({ workspaceId }: { workspaceId: string }) {
       </div>
     </Dialog>
   )
-}
-
-/** Ctrl+Shift+Backspace (⇧⌘⌫ on macOS) on a focused worktree card asks to delete it. */
-export function onWorktreeKey(e: KeyboardEvent, ws: Workspace, wt: Worktree) {
-  if (modKey(e) && e.shiftKey && e.key === 'Backspace' && !wt.main && e.target === e.currentTarget) {
-    e.preventDefault()
-    openDialog({ kind: 'wt-delete', workspaceId: ws.id, path: wt.path })
-  }
 }
 
 export const ideEnabled = () => !!(getState().settings as unknown as { ide?: unknown } | null)?.ide

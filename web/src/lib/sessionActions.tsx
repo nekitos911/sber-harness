@@ -11,6 +11,9 @@ export const isLive = (s: Session) => s.status === 'running' || !!s.turnClosing
 export const unseenReply = (s: Session) => s.kind === 'chat' && !s.parentId && !s.virtual && !s.archived && !isLive(s) && !s.waitingFor
   && (s.status === 'idle' || s.status === 'done') && (s.finishedAt ?? 0) > (s.dismissedAt ?? 0)
 
+/** A sub-agent's «задача выполнена» not opened since it finished: a bright check in the sidebar, dimmed once seen. */
+export const unseenDone = (s: Session) => s.status === 'done' && (s.finishedAt ?? 0) > (s.dismissedAt ?? 0)
+
 /** Seen: out of «Ждут вас» (its answer, error or cut turn); the chat itself stays. */
 export async function dismissSession(s: Session) {
   const r = await tryApi<Session>('PATCH', `/sessions/${encodeURIComponent(s.id)}`, { dismissed: true })

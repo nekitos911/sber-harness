@@ -1,7 +1,7 @@
 import { createContext, memo, useContext, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react'
 import { Activity, ArrowUp, Bot, ChevronDown, Ellipsis, Folder, FolderTree, TriangleAlert, GitPullRequest, Pin, ChevronRight, FolderGit2, FolderPlus, GitBranch, GitBranchPlus, House, Inbox, MessageSquarePlus, Moon, Search, Settings, SquareKanban, SquareTerminal, Sun, X } from 'lucide-react'
 import { getState, useFeature, openDialog, openScreen, openSession, openWorktree, setState, showPanel, useActiveCwd, useStore, useThrottledStore, wtKey, type Screen } from '../store'
-import { archiveSession, dismissSession, renameSession, sessionMenu, unseenReply } from '../lib/sessionActions'
+import { archiveSession, dismissSession, renameSession, sessionMenu, unseenDone, unseenReply } from '../lib/sessionActions'
 import { loadWorktrees } from '../ws'
 import { api } from '../api'
 import { runJob } from '../lib/jobs'
@@ -18,7 +18,7 @@ import { loadPr } from '../lib/pr'
 import { setSbPrefs, useSbPrefs, WorkspaceParams } from './WorkspaceParams'
 import { Skeleton, StatusIcon, SubStateIcon, subStateLabel } from './bits'
 import { Button, Menu, Popover } from './ui'
-import { ideEnabled, isUnread, onWorktreeKey, projectMenu, setUnread, worktreeMenu } from './WorktreeMenu'
+import { ideEnabled, isUnread, projectMenu, setUnread, worktreeMenu } from './WorktreeMenu'
 import { useNow } from '../lib/useNow'
 import { useRail } from '../lib/useMedia'
 import { listedChat, pendingCount, unreadCount } from '../lib/pending'
@@ -119,9 +119,9 @@ export function Sidebar() {
             </span>
           )}
         />
-        <NavItem screen="prs" icon={<GitPullRequest />} label="Пулл-реквесты" end={openPrs > 0 && <span className="count" data-tip={minePrs !== null ? `Моих открытых PR: ${openPrs}` : `Открытых PR задач: ${openPrs}`}>{openPrs}</span>} />
-        <NavItem screen="inbox" icon={<Inbox />} label="Входящие" end={pending > 0 ? <span className="count count-signal" aria-label={`ждёт меня: ${pending}`} data-tip="Ждёт меня: вопросы, разрешения, готовые задачи">{pending}</span>
-          : unread > 0 && <span className="count" aria-label={`непрочитанных: ${unread}`} data-tip="Непрочитанные уведомления">{unread}</span>} />
+        <NavItem screen="prs" icon={<GitPullRequest />} label="Пулл-реквесты" end={openPrs > 0 && <span className="nav-dot" data-tip={minePrs !== null ? `Моих открытых PR: ${openPrs}` : `Открытых PR задач: ${openPrs}`}>{openPrs}</span>} />
+        <NavItem screen="inbox" icon={<Inbox />} label="Входящие" end={pending > 0 ? <span className="nav-dot" data-k="wait" aria-label={`ждёт меня: ${pending}`} data-tip="Ждёт меня: вопросы, разрешения, готовые задачи">{pending}</span>
+          : unread > 0 && <span className="nav-dot" aria-label={`непрочитанных: ${unread}`} data-tip="Непрочитанные уведомления">{unread}</span>} />
       </div>
 
       <SidebarSearch.Provider value={filtering}><MixedAgents.Provider value={new Set(tree.all.map((x) => x.agent)).size > 1}>
@@ -615,7 +615,7 @@ function ProjectNode({ ws, tree, filtering, drag, activeTab }: {
                 </>
               )}
           {hiddenChats > 0 && (
-            <button type="button" className="tree-row tree-more" style={depth(1)} onClick={() => setChatLimit((limit) => limit + CHAT_PAGE)}>
+            <button type="button" className="tree-row tree-more" style={depth(plain ? 2 : 1)} onClick={() => setChatLimit((limit) => limit + CHAT_PAGE)}>
               <Ellipsis aria-hidden />
               Ещё {Math.min(CHAT_PAGE, hiddenChats)} из {hiddenChats}
             </button>
@@ -662,7 +662,6 @@ function WorktreeRow({ ws, wt, sessions, terminals, dup, kids, active, fromOf, p
 }) {
   const changed = useStore((s) => s.git[normPath(wt.path)]?.status?.files.filter((f) => !f.service).length ?? wt.dirty ?? 0)
   const task = useStore((s) => (wt.taskId ? s.tasks.find((t) => t.id === wt.taskId) : s.tasks.find((t) => !!wt.branch && t.branch === wt.branch)))
-  const activeSession = useStore((s) => (s.view.kind === 'wt' ? s.wt[normPath(s.view.cwd)]?.active : null))
   const [menu, setMenu] = useState(false)
   const [errOpen, setErrOpen] = useState(false)
   const [unread, setUnreadState] = useState(() => isUnread(wt.path))
@@ -684,10 +683,9 @@ function WorktreeRow({ ws, wt, sessions, terminals, dup, kids, active, fromOf, p
   const states = withKids(sessions, kids).map(sessionVisualState)
   // an agent working in a sleeping worktree wins: no moon, no dimming while it runs
   const mark = states.some((v) => ATTENTION.has(v)) ? 'attention' : states.some((v) => BUSY.has(v)) ? 'busy' : sleeping ? 'sleep' : 'idle'
-  // The row's caret folds its agents (kept per worktree); one that needs you or is on screen keeps them open.
-  const needs = states.some((v) => ATTENTION.has(v)) || sessions.some((x) => activeSession === `s:${x.id}`)
+  // The row's caret folds its agents (kept per worktree), always: a folded one that needs you still shows on the mark and in «Ждут вас»
   const [foldChoice, setFold] = useState<boolean | null>(() => loadDraft<boolean>(`sb:fold:${normPath(wt.path)}`))
-  const folded = sessions.length > 0 && !needs && !!foldChoice
+  const folded = sessions.length > 0 && !!foldChoice
   const toggleFold = () => { setFold(!folded); saveDraft(`sb:fold:${normPath(wt.path)}`, !folded || null) }
   const err = wt.meta?.lastError
   // The server writes { text: «Не удалось удалить: <git's words>», at }: the head is the row, the rest the popover.
@@ -701,8 +699,14 @@ function WorktreeRow({ ws, wt, sessions, terminals, dup, kids, active, fromOf, p
       <div ref={row} className="tree-row tree-wt" role="button" tabIndex={0} style={depth(1)}
         data-tip={wt.branch ? `${name}\n${wt.branch}` : name}
         aria-current={active ? 'location' : undefined} onClick={pick}
-        onKeyDown={(e) => { onWorktreeKey(e, ws, wt); activate(pick)(e) }}
+        onKeyDown={activate(pick)}
         onContextMenu={(e) => { e.preventDefault(); setMenu(true) }}>
+        {sessions.length > 0 ? (
+          <button type="button" className="caret" aria-expanded={!folded} aria-label={folded ? 'Показать агентов' : 'Свернуть агентов'}
+            onClick={(e) => { e.stopPropagation(); toggleFold() }} onKeyDown={(e) => e.stopPropagation()}>
+            <ChevronDown />
+          </button>
+        ) : <span className="caret-space" aria-hidden />}
         <span className="wt-mark" data-mark={mark} aria-label={mark === 'sleep' ? 'спит' : mark === 'attention' ? 'нужно внимание' : mark === 'busy' ? 'агенты работают' : undefined}>
           {mark === 'sleep' ? <Moon aria-hidden /> : mark === 'busy' ? <Activity aria-hidden /> : mark === 'attention' ? <span className="wt-dot" /> : wt.main ? <House aria-label="Основное рабочее дерево" /> : <GitBranch aria-hidden />}
         </span>
@@ -719,12 +723,6 @@ function WorktreeRow({ ws, wt, sessions, terminals, dup, kids, active, fromOf, p
           {ahead > 0 && <span className="wt-stat num" data-tip={`${ahead} ${plural(ahead, 'коммит', 'коммита', 'коммитов')} не в базовой ветке`}><ArrowUp aria-hidden />{ahead}</span>}
           {terminals.length > 0 && <TerminalCount terminals={terminals} />}
         </span>
-        {sessions.length > 0 && !needs && (
-          <button type="button" className="caret" aria-expanded={!folded} aria-label={folded ? 'Показать агентов' : 'Свернуть агентов'}
-            onClick={(e) => { e.stopPropagation(); toggleFold() }} onKeyDown={(e) => e.stopPropagation()}>
-            <ChevronDown />
-          </button>
-        )}
         <span className="actions">
           <RowAction label="Новый чат в этом дереве" icon={<MessageSquarePlus />} onClick={() => void newChat(where)} />
           <RowAction label="Файлы" icon={<FolderTree />} onClick={() => { openWorktree(wt.path); showPanel('files') }} />
@@ -734,7 +732,7 @@ function WorktreeRow({ ws, wt, sessions, terminals, dup, kids, active, fromOf, p
       <Menu anchor={row} open={menu} onClose={() => setMenu(false)} items={worktreeMenu(ws, wt, task, ideEnabled())} label={`Рабочее дерево ${name}`} placement="bottom-end" />
       {errText && (
         <>
-          <button ref={errRow} type="button" className="tree-row wt-error" style={depth(2)} onClick={() => setErrOpen(!errOpen)} aria-expanded={errOpen}>
+          <button ref={errRow} type="button" className="tree-row wt-error" style={depth(3)} onClick={() => setErrOpen(!errOpen)} aria-expanded={errOpen}>
             <TriangleAlert aria-hidden />{errTitle}
           </button>
           <Popover anchor={errRow} open={errOpen} onClose={() => setErrOpen(false)} placement="bottom-start" label={errTitle} className="wt-error-pop">
@@ -860,6 +858,7 @@ function SessionRowView({ s, nested, level = 0, caret, via, from, showLocation }
       role="button"
       data-s={v}
       data-unseen={unseenReply(s) || undefined}
+      data-seen={(v === 'done' && !unseenDone(s)) || undefined}
       data-nested={nested || undefined}
       data-detail={detailed || showLocation || undefined}
       data-enter={s.createdAt > APP_START || undefined}
@@ -872,6 +871,19 @@ function SessionRowView({ s, nested, level = 0, caret, via, from, showLocation }
       onContextMenu={(e) => { e.preventDefault(); setMenu(true) }}
       style={depth(level)}
     >
+      {/* folds on the left, like projects and worktrees; in a tree an empty slot keeps the icons in one column */}
+      {caret ? (
+        <button
+          type="button"
+          className="caret"
+          aria-expanded={caret.open}
+          aria-label={caret.open ? 'Свернуть агентов' : 'Показать агентов'}
+          onClick={(e) => { e.stopPropagation(); caret.toggle() }}
+          onKeyDown={(e) => e.stopPropagation()}
+        >
+          <ChevronDown />
+        </button>
+      ) : level > 0 && <span className="caret-space" aria-hidden />}
       <StatusIcon session={s} />
       {!nested && mixed && <AgentGlyph agent={s.agent} />}
       {editing ? (
@@ -897,18 +909,6 @@ function SessionRowView({ s, nested, level = 0, caret, via, from, showLocation }
       )}
       {model && <span className="sess-model">{model}</span>}
       {when && <span className="sess-time">{when}</span>}
-      {caret && (
-        <button
-          type="button"
-          className="caret"
-          aria-expanded={caret.open}
-          aria-label={caret.open ? 'Свернуть агентов' : 'Показать агентов'}
-          onClick={(e) => { e.stopPropagation(); caret.toggle() }}
-          onKeyDown={(e) => e.stopPropagation()}
-        >
-          <ChevronDown />
-        </button>
-      )}
       <span className="actions">
         <RowAction label="Действия с чатом" icon={<Ellipsis />} onClick={() => setMenu(true)} />
       </span>
@@ -956,7 +956,7 @@ function TerminalCount({ terminals }: { terminals: Session[] }) {
   return (
     <button type="button" className="wt-stat wt-term num" data-tip={`${terminals.length} ${plural(terminals.length, 'терминал', 'терминала', 'терминалов')}: открыть последний`}
       onClick={(e) => { e.stopPropagation(); openSession(last.id) }} onKeyDown={(e) => e.stopPropagation()}>
-      ⌨{terminals.length}
+      <SquareTerminal aria-hidden />{terminals.length}
     </button>
   )
 }
