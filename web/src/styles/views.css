@@ -79,16 +79,20 @@
 .commit-box .actions .btn:not(.btn-primary) { flex: 1; }
 
 /* a commit: a button that opens into its files */
-.commit-row { display: grid; grid-template-columns: auto auto minmax(0, 1fr); gap: 0 6px; width: 100%; padding: 4px 6px; border: 0; border-radius: var(--r-1); background: none; color: var(--ink); font: inherit; font-size: 12.5px; text-align: left; cursor: pointer; }
+.commit-row { display: grid; grid-template-columns: auto auto minmax(0, 1fr); gap: 0 6px; width: 100%; padding: 4px 6px 4px 19px; border: 0; border-radius: var(--r-1); background: none; color: var(--ink); font: inherit; font-size: 12.5px; text-align: left; cursor: pointer; }
 .commit-row:hover { background: var(--deck-2); }
 .commit-row .chev { width: 12px; height: 12px; margin-top: 3px; color: var(--ink-4); transition: transform 120ms var(--ease-out); }
 .commit-row[aria-expanded="true"] .chev { transform: rotate(90deg); }
 .commit-row .mono { color: var(--ink-3); font-size: 11px; line-height: 19px; }
 .commit-row .subject { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .commit-row .by { grid-column: 3; color: var(--ink-4); font-size: 11px; }
-.commit-files { margin: 0 0 6px 18px; padding-left: 6px; border-left: 1px solid var(--rule); }
-.commit-all { display: inline-flex; align-items: center; gap: 4px; margin: 2px 0 0 6px; font-size: 12px; }
-.commit-all svg { width: 12px; height: 12px; }
+.commit-files { margin: 0 0 6px 24px; padding-left: 6px; border-left: 1px solid var(--rule); } /* the line under the commit's caret */
+.commit-all { display: inline-flex; align-items: center; gap: 6px; height: 24px; margin: 2px 0 0 6px; padding: 0 6px 0 0; border: 0; border-radius: var(--r-1); background: none; color: var(--ink-3); font: inherit; font-size: 12px; cursor: pointer; }
+.commit-all:hover { color: var(--ink); }
+.commit-all svg { width: 14px; height: 14px; }
+/* the Git panel as a tree: a group's files and commits one step (caret + gap) in from its caret, a commit's files under its subject */
+.scm .scm-group > .change-list .change-row { padding-left: 27px; }
+.scm .commit-files .change-row { padding-left: 14px; }
 
 /* ---------- terminal ---------- */
 

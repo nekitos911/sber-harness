@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
-import { ArrowRight, ChevronDown, ChevronRight, Ellipsis, ExternalLink, File, FileCode, FileJson, FileText, GitBranch, GitPullRequest, Minus, Plus, RotateCcw, Search, Sparkles } from 'lucide-react'
+import { ArrowRight, ChevronDown, ChevronRight, Ellipsis, ExternalLink, File, FileCode, FileDiff, FileJson, FileText, GitBranch, GitPullRequest, Minus, Plus, RotateCcw, Search, Sparkles } from 'lucide-react'
 import { api, qs, tryApi } from '../../api'
 import { getState, openDialog, openTab, openTask, openWorktree, setState, showPanel, toast, useFeature, useStore } from '../../store'
 import { basename, normPath, plural, relTime, shortHash } from '../../lib/format'
@@ -347,7 +347,7 @@ function CommitRow({ cwd, c, now }: { cwd: string; c: GitCommit; now: number }) 
               )
             })}
           </ul>
-          <button type="button" className="link commit-all" onClick={() => openTab({ kind: 'diff', cwd, path: null, rev: c.hash })}><ExternalLink aria-hidden />Открыть все изменения вместе</button>
+          <button type="button" className="commit-all" onClick={() => openTab({ kind: 'diff', cwd, path: null, rev: c.hash })}><FileDiff aria-hidden />Все изменения коммита</button>
         </div>
       ))}
     </div>
