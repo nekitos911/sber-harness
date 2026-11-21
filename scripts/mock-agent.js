@@ -106,14 +106,16 @@ if (has(/#nopartial\b/) && argv.includes('--include-partial-messages')) {
 const stickyDir = process.env.MOCK_AGENT_STATE_DIR || path.join(os.tmpdir(), 'harness-mock-agent');
 const sticky = resume && path.join(stickyDir, `${resume.replace(/[^\w-]/g, '_')}.crash`);
 if (sticky && has(/#crashalways\b/)) { fs.mkdirSync(stickyDir, { recursive: true }); fs.writeFileSync(sticky, '1'); }
-const busy = lines.map((l) => l.match(/^\s*#busy\s+(\S+)\s+(\d+)/)).find(Boolean);
+// #busy <name> <n>: the first n starts collide (ExtensionStoreBusyError); #busylock: GigaCode's stale-lock error instead
+const busy = lines.map((l) => l.match(/^\s*#busy(lock)?\s+(\S+)\s+(\d+)/)).find(Boolean);
 if (busy) {
-  const counter = path.join(stickyDir, `busy-${busy[1]}`);
+  const counter = path.join(stickyDir, `busy-${busy[2]}`);
   fs.mkdirSync(stickyDir, { recursive: true });
   const n = Number(fs.existsSync(counter) ? fs.readFileSync(counter, 'utf8') : 0);
-  if (n < Number(busy[2])) {
+  if (n < Number(busy[3])) {
     fs.writeFileSync(counter, String(n + 1));
-    process.stderr.write('An unexpected critical error occurred:\nExtensionStoreBusyError: Extension store is busy at C:\\Users\\u\\.gigacode\\extension-store.\n');
+    if (busy[1]) process.stderr.write('Error: Unable to update lock within the stale threshold\n    at file:///C:/Program%20Files/.gigacode/lib/chunks/c-TD633MIT.js:4:12738\n    at FSReqCallback.oncomplete (node:fs:196:5)\n');
+    else process.stderr.write('An unexpected critical error occurred:\nExtensionStoreBusyError: Extension store is busy at C:\\Users\\u\\.gigacode\\extension-store.\n');
     process.exit(1);
   }
 }

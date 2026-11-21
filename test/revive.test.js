@@ -74,6 +74,14 @@ test('«Extension store is busy» at start: the same message again a few seconds
   assert.ok(!ms.some((m) => m.kind === 'error'), 'no error card for a collision that cleared');
 });
 
+test('GigaCode\'s «Unable to update lock within the stale threshold» at start: retried the same way', async () => {
+  const s = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', cwd: root, prompt: `#busylock lock-${Date.now()} 1 привет` })).body;
+  await waitFor(async () => (await messages(s.id)).some((m) => m.kind === 'assistant' && /Hello from mock agent/.test(m.text)), { timeout: 20000, what: 'started on the retry' });
+  const ms = await messages(s.id);
+  assert.ok(ms.some((m) => m.kind === 'system' && /занят другим запуском \(Unable to update lock within the stale threshold\)/.test(m.text)));
+  assert.ok(!ms.some((m) => m.kind === 'error'), 'no error card');
+});
+
 test('«Повторить» on a chat that cannot start: one «продолжи» stays in its queue, not one more per click', async () => {
   const dir = path.join(root, 'исчезнет');
   fs.mkdirSync(dir);

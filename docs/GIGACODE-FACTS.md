@@ -238,6 +238,8 @@
    `ExtensionStoreBusyError: Extension store is busy at ~/.gigacode/extension-store` (код 1). Теперь харнесс разносит запуски
    одного агента на `agents.<id>.spawnGapMs` (по умолчанию 1200 мс) и при такой ошибке сам повторяет запуск (до 4 раз, пауза
    2–5 с + 2 с на попытку). ПРОВЕРИТЬ: три субагента разом — все стартуют.
+   ВИДЕЛИ (ACP, 2026-11-21): тот же сценарий другой ошибкой — процесс ~40 с ждал MCP и упал с кодом 1:
+   `Error: Unable to update lock within the stale threshold` (файловая блокировка GigaCode). Харнесс повторяет и её.
 
 0. **ACP и гейт «сначала прочитай, потом правь».** ВИДЕЛИ на целевой машине (чат ACP, 2026-11-18): `edit` трижды
    отклонён «File … has not been read in this session. Use the read_file tool first…» сразу после успешного `read_file`

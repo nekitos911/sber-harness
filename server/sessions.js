@@ -923,7 +923,9 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     if (at > Date.now()) await new Promise((res) => { const t = setTimeout(res, at - Date.now()); r.slotWake = () => { clearTimeout(t); res(); }; });
     r.slotWake = null;
   }
-  const START_BUSY = /ExtensionStoreBusyError|store is busy|EBUSY|resource busy or locked/i;
+  // «Unable to update lock within the stale threshold»: GigaCode's file lock lost to another process starting at the same
+  // time (seen 2026-11-21, ACP, exit 1 before any event)
+  const START_BUSY = /ExtensionStoreBusyError|store is busy|EBUSY|resource busy or locked|Unable to update lock within the stale threshold|Lock file is already being held/i;
 
   async function startTurn(s) {
     const r = runtime(s.id);
