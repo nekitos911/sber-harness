@@ -298,6 +298,15 @@ async function cutAgentTool(type, prompt) {
   return say(' agent call timed out');
 }
 
+/** #agentlate <type> <prompt>: the same tool, ACP-style — the harness gets the call first, the stream line comes later and without arguments. */
+async function lateAgentTool(type, prompt) {
+  const id = `agent_${++toolSeq}`;
+  const r = await api('POST', '/api/agent/agent', { subagent_type: type, description: 'probe', prompt, run_in_background: true });
+  emit({ type: 'tool_use', tool_name: 'agent', tool_id: id, parameters: {} });
+  emit({ type: 'tool_result', tool_id: id, status: 'success', output: JSON.stringify(r) });
+  return say(' agent started late');
+}
+
 /** #agentmcp <type> <prompt>: the harness's `agent` MCP tool, its call reaching the stream under the bare name «agent». */
 async function runAgentTool(type, prompt) {
   const id = `agent_${++toolSeq}`;
@@ -316,6 +325,8 @@ async function runAgentTool(type, prompt) {
 for (const l of lines) {
   const am = l.match(/#agentmcp\s+(\S+)\s+(.+)/);
   if (am) { await runAgentTool(am[1], am[2].trim()); continue; }
+  const late = l.match(/#agentlate\s+(\S+)\s+(.+)/);
+  if (late) { await lateAgentTool(late[1], late[2].trim()); continue; }
   const cut = l.match(/#cutagent\s+(\S+)\s+(.+)/);
   if (cut) { await cutAgentTool(cut[1], cut[2].trim()); continue; }
   const m = l.match(/#spawn\s+(.+)/);

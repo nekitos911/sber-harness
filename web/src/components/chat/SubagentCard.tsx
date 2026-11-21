@@ -12,7 +12,8 @@ const str = (v: unknown) => (typeof v === 'string' ? v : '')
 /** GigaCode's built-in `agent`/`fork` tool (claude: Task): a sub-agent run inside this call. */
 export function isSubagentTool(tool: ToolCall) {
   const input = (tool.input ?? {}) as Obj
-  return /^(agent|fork|task)$/i.test(tool.name) || typeof input.subagent_type === 'string'
+  // by name first: ACP sends the arguments late (or never), and a call must not switch from a step line to a card midway
+  return /^(agent|fork|task)$/i.test(tool.name) || /^(mcp__harness__|harness\.)(agent|worker_run)$/.test(tool.name) || typeof input.subagent_type === 'string'
 }
 
 /**
@@ -67,7 +68,7 @@ export function SubagentCard({ tool }: { tool: ToolCall }) {
         {progress.length > 0 && (
           <pre ref={feed} className="agent-feed" aria-live={running ? 'polite' : undefined}>{progress.join('\n')}</pre>
         )}
-        {running && !progress.length && <p className="muted agent-wait">Субагент запущен, ждём первых шагов…</p>}
+        {running && !progress.length && <p className="muted agent-wait">{/harness/.test(tool.name) ? 'Работает отдельным чатом: его шаги — в «Открыть чат субагента».' : 'Субагент запущен, ждём первых шагов…'}</p>}
         {tool.output && (
           <div className="agent-result" data-error={tool.status === 'error' || undefined}>
             <div className="tool-label">Результат</div>

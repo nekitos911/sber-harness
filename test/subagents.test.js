@@ -249,6 +249,15 @@ test('the harness agent tool reaching the stream as «agent»: one chat per help
   assert.match(kids[0].title, /general-purpose/);
 });
 
+test('ACP: the harness agent call comes first, its «agent» stream line later and without arguments — still no read-only copy', async () => {
+  const caller = await chat('#agentlate general-purpose проверь поздно #done ок');
+  await waitFor(async () => (await messages(caller.id)).some((m) => m.kind === 'assistant' && m.text.includes('agent started late')), { timeout: 20000, what: 'the call' });
+  const kids = (await state()).sessions.filter((s) => s.parentId === caller.id);
+  assert.deepEqual(kids.map((s) => !!s.virtual), [false], 'only the real helper chat');
+  const line = (await messages(caller.id)).find((m) => m.kind === 'tool' && m.tool?.name === 'agent');
+  assert.equal(line.tool.subSessionId, kids[0].id);
+});
+
 test('«/name args» goes as the command file\'s own text, as the CLI sends it; the message keeps what was typed', async () => {
   fs.mkdirSync(commandsDir, { recursive: true });
   fs.writeFileSync(path.join(commandsDir, 'deep-check.md'), '---\ndescription: проверка\n---\nТы — оркестратор.\n\nЗадача:\n{{args}}\n');

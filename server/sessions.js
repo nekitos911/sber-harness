@@ -429,7 +429,8 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
   const adopted = new Map();
   function takeAdopted(parentId, prompt) {
     const list = (adopted.get(parentId) || []).filter((x) => Date.now() - x.at < 10 * 60000);
-    const i = list.findIndex((x) => x.prompt === prompt);
+    // ACP may never send the arguments: a copy without them is the next started call, by order (as adoptVirtual does)
+    const i = ['{}', 'null', ''].includes(String(prompt ?? '').trim()) ? 0 : list.findIndex((x) => x.prompt === prompt);
     const hit = i >= 0 ? list.splice(i, 1)[0] : null;
     if (list.length) adopted.set(parentId, list); else adopted.delete(parentId);
     return hit?.workerId ?? null;
