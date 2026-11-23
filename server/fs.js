@@ -37,7 +37,7 @@ export function resolveInside(cwd, rel = '') {
     }
   }
   if (!inside(root, real)) fail(400, 'путь выходит за пределы папки');
-  return { root, abs };
+  return { root, abs, real };
 }
 
 const relPosix = (root, abs) => path.relative(root, abs).split(path.sep).join('/');

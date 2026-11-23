@@ -97,6 +97,8 @@ worktrees. **Several repositories:** one subtask per repo (`task_create(parent_i
 |---|---|
 | `agent` / `worker_run` | run a helper synchronously in its own chat and get its result |
 | `worker_start` | start a worker (task or spec) with placement `current` / `new-child` / `new-top-level`; returns at once |
+| `worktree_peers` | see running agents in this tree, including independent chats, their tasks and reserved files |
+| `worktree_claim` | before editing, claim paths relative to the worktree root; only edit on ok=true. Claims end with the turn. Coordinate a single committer when sharing a tree. |
 | `worker_list`, `worker_inspect` | see your workers: state, activity, branch, diff stat, last text, report |
 | `send_message` | message a session, `parent`, `user`, or a group (`@all`, `@idle`, `@worktree:<path>`); wakes it |
 | `ask` | ask your coordinator (or the user) a question, optionally with `options` |

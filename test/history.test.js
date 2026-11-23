@@ -7,6 +7,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { globDirs, parseHistoryFile, createHistory } from '../server/history.js';
+import { WORKTREE_RULE } from '../server/orchestration.js';
 import { startTestServer, makeRepo, tmpDir, rmrf, waitFor } from './helpers.js';
 
 const FIX = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'history', 'HASH', 'chats');
@@ -76,7 +77,7 @@ test('continue: a harness chat with the imported transcript; the next message re
   await h.api('POST', `/api/sessions/${s.id}/messages`, { text: 'продолжай' });
   await waitFor(async () => (await h.api('GET', `/api/sessions/${s.id}/messages`)).body.some((m) => m.kind === 'assistant' && m.text.includes(`resumed ${ID}`)), { what: 'resumed turn' });
   const run = fs.readFileSync(argvFile, 'utf8').trim().split('\n').map((l) => JSON.parse(l)).find((r) => r.env.HARNESS_SESSION_ID === s.id);
-  assert.deepEqual(run.argv.slice(run.argv.indexOf('--resume'), run.argv.indexOf('--resume') + 4), ['--resume', ID, '-p', 'продолжай']);
+  assert.deepEqual(run.argv.slice(run.argv.indexOf('--resume'), run.argv.indexOf('--resume') + 4), ['--resume', ID, '-p', `продолжай\n\n${WORKTREE_RULE}`]);
   await waitFor(async () => (await h.api('GET', '/api/state')).body.sessions.find((x) => x.id === s.id).status === 'idle', { what: 'idle' });
 });
 

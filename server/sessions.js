@@ -984,7 +984,11 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
         const command = prompt.match(/^\/([\w.:-]+)/)?.[1];
         const hint = command && launcher.defaults.commandHint?.(command);
         if (pre) prompt = prompt.startsWith('/') ? [prompt, hint, pre].filter(Boolean).join('\n\n') : `${pre}\n\n${prompt}`;
+      } else {
+        const peers = hooks.peerContext?.(s);
+        if (peers) prompt += '\n\n' + peers;
       }
+      s.worktreeRulesSent = true;
       // the project's allow rules (allow_project) join the session's own on every turn
       const projectTools = (s.workspaceId && db.prefs?.allowedToolsByWorkspace?.[s.workspaceId]) || [];
       const turnSession = { ...s, ...(approvalOnce ? { approvalMode: approvalOnce } : {}), grantsOnce, ...(projectTools.length ? { allowedTools: [...new Set([...(s.allowedTools || []), ...projectTools])] } : {}) };

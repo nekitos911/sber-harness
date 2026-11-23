@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { CODE_ROOT } from '../server/config.js';
-import { parseProfile, SUBAGENT_CONTEXT, TEMP_FILES } from '../server/orchestration.js';
+import { parseProfile, SUBAGENT_CONTEXT, TEMP_FILES, WORKTREE_RULE } from '../server/orchestration.js';
 import { startTestServer, tmpDir, rmrf, waitFor, makeRepo } from './helpers.js';
 
 const root = tmpDir();
@@ -32,6 +32,35 @@ after(async () => {
 const state = async () => (await h.api('GET', '/api/state')).body;
 const messages = async (id) => (await h.api('GET', `/api/sessions/${id}/messages`)).body;
 const chat = async (prompt) => (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', cwd: root, prompt })).body;
+
+test('independent chats in one tree reserve files atomically until the turn stops', async () => {
+  const first = await chat('#silent');
+  const second = await chat('hello');
+  await waitFor(async () => (await state()).sessions.find((s) => s.id === second.id)?.status === 'idle');
+  await h.api('POST', '/api/sessions/' + second.id + '/messages', { text: '#silent' });
+  const call = (sid, tool, args = {}) => h.api('POST', '/api/agent/' + tool, args, { 'x-harness-session': sid });
+  const claim = (sid, paths) => call(sid, 'worktree_claim', { paths });
+  try {
+    const resumed = await waitFor(() => fs.readFileSync(argvFile, 'utf8').trim().split('\n').map(JSON.parse)
+      .find((run) => run.env.HARNESS_SESSION_ID === second.id && run.argv.includes('--resume')));
+    assert.ok(resumed.argv[resumed.argv.indexOf('-p') + 1].includes(first.id));
+    const ids = [first.id, second.id];
+    const results = await Promise.all(ids.map((id) => claim(id, ['shared.txt'])));
+    assert.deepEqual(results.map((r) => r.body.ok).sort(), [false, true]);
+    const owner = ids[results.findIndex((r) => r.body.ok)];
+    const other = ids.find((id) => id !== owner);
+    assert.equal((await claim(owner, ['./shared.txt'])).body.ok, true);
+    assert.deepEqual((await claim(other, ['free.txt', './shared.txt'])).body, { ok: false, owner, file: './shared.txt' });
+    assert.equal((await claim(owner, ['free.txt'])).body.ok, true);
+    const peers = (await call(other, 'worktree_peers')).body.peers;
+    assert.deepEqual(peers.find((s) => s.id === owner).files, ['shared.txt', 'free.txt']);
+    assert.equal((await claim(other, ['../outside'])).status, 400);
+    await h.api('POST', '/api/sessions/' + owner + '/stop');
+    await waitFor(async () => (await claim(other, ['shared.txt'])).body.ok);
+  } finally {
+    for (const id of [first.id, second.id]) await h.api('POST', '/api/sessions/' + id + '/stop');
+  }
+});
 
 test('profile frontmatter: scalars and a tools list, body = role prompt', () => {
   assert.deepEqual(parseProfile(PROFILE), {
@@ -85,13 +114,13 @@ test('harness `agent` alias: listed only in harness mode; builtin mode drops it 
         return null;
       }
     });
-    assert.equal(run.argv[run.argv.indexOf('-p') + 1], `${TEMP_FILES}\n\nбез блока`, 'no context block; the temp-files rule stays');
+    assert.equal(run.argv[run.argv.indexOf('-p') + 1], `${TEMP_FILES}\n\n${WORKTREE_RULE}\n\nбез блока`, 'no context block; the temp-files rule stays');
   } finally {
     await h.api('PUT', '/api/settings', { orchestration: { subagents: 'harness' } });
   }
   const withBlock = await chat('с блоком');
   const run2 = await waitFor(() => fs.readFileSync(argvFile, 'utf8').trim().split('\n').map((l) => JSON.parse(l)).find((x) => x.env.HARNESS_SESSION_ID === withBlock.id));
-  assert.equal(run2.argv[run2.argv.indexOf('-p') + 1], `${SUBAGENT_CONTEXT}\n\n${TEMP_FILES}\n\nс блоком`);
+  assert.equal(run2.argv[run2.argv.indexOf('-p') + 1], `${SUBAGENT_CONTEXT}\n\n${TEMP_FILES}\n\n${WORKTREE_RULE}\n\nс блоком`);
 });
 
 test('worker_run over MCP: progress notifications while waiting; past its wait the sub-agent goes to the background, its result to come as a message', async () => {

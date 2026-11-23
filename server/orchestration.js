@@ -3,6 +3,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { CODE_ROOT, expandHome } from './config.js';
+import { resolveInside } from './fs.js';
 import * as git from './git.js';
 import { jobStep } from './jobs.js';
 import { FULL_ACCESS_MODES, newId, subagentTitle } from './sessions.js';
@@ -65,6 +66,7 @@ export const NO_SUBAGENTS = 'Субагенты не запускают свои
 // «not found in registry» spelled out: GigaCode's MCP tools are deferred, and an agent that called mcp__harness__agent
 // without tool_search took that answer for «there is none» and fell back to unseen built-in background sub-agents
 // a worktree once got 948 compiled classes and two test logs of 20 000+ lines: every new file there is a change to commit
+export const WORKTREE_RULE = 'Перед каждой правкой, включая shell, вызови worktree_claim сервера harness с путями относительно корня дерева (его возвращает worktree_peers). Редактируй только после ok=true. При конфликте оставь файл владельцу. Резерв действует до конца хода. При совместной работе согласуйте одного исполнителя для коммита и переключения ветки.';
 export const TEMP_FILES = 'Временные файлы (логи прогонов, вывод тестов, скомпилированные классы, распакованные архивы) создавай вне репозитория, в системной временной папке, и не оставляй в рабочем дереве: всё новое в нём попадает в изменения задачи.';
 export const SUBAGENT_CONTEXT ='Ты работаешь внутри harness. Его инструменты (mcp__harness__agent, mcp__harness__ask, mcp__harness__worker_done, mcp__harness__send_message) отложенные: перед первым вызовом загрузи их через tool_search по слову «harness». Ответ «Tool ... not found in registry» значит «ещё не загружен» — сделай tool_search «harness» и повтори вызов. Субагентов запускай инструментом mcp__harness__agent с теми же аргументами, что у встроенного agent (subagent_type, prompt, model) — harness откроет каждого субагента отдельным чатом и вернёт тебе его результат так же. Несколько субагентов параллельно — по одному вызову mcp__harness__agent на шаг, каждый с run_in_background: true: они работают одновременно, а результаты придут сообщениями (несколько вызовов в одном шаге GigaCode может отклонить как «tool_call bridge refused … name» — тогда повтори их по одному). Нужен субагент в фоне (ты продолжаешь, человек может тебе писать) — mcp__harness__agent с run_in_background: true: он работает своим чатом, его результат придёт тебе сообщением. Встроенный agent в фоне не запускай: ни harness, ни человек такого субагента не видят, а с концом хода его работа может пропасть. Только если и после tool_search «harness» инструмента нет — запускай встроенным agent (не в фоне) и напиши об этом одной строкой в отчёте; не отказывайся из-за этого от субагентов и ревьюеров. Вопросы человеку — через mcp__harness__ask (варианты в options): вызов ждёт ответа и возвращает его; если вернулся без ответа — заверши ход.';
 const CONTEXT_LAUNCHERS = new Set(['gigacode', 'qwen', 'gemini', 'mock']);
@@ -490,7 +492,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions, addWo
   // ---- sub-agents as real chats: worker_run / harness `agent` (Level 2) ----
 
   const runWaiters = new Map(); // sessionId -> [resolve]
-  const READ_ONLY_TOOLS = new Set(['whoami', 'task_list', 'task_get', 'workspace_list', 'worker_list', 'worker_inspect', 'send_message', 'ask', 'worker_done']);
+  const READ_ONLY_TOOLS = new Set(['whoami', 'worktree_peers', 'task_list', 'task_get', 'workspace_list', 'worker_list', 'worker_inspect', 'send_message', 'ask', 'worker_done']);
   const QUESTION_PICKUP_MS = 60000; // a waiting parent polls every ≤25 s (harness-mcp WAIT_SLICE_MS)
 
   function loadProfile(agentCfg, name) {
@@ -840,12 +842,47 @@ export function createOrchestration({ config, store, bus, tasks, sessions, addWo
     if (task.agentState !== state) tasks.update(task.id, { agentState: state }, 'harness');
   }
 
+  const treeOf = (s) => s.worktreePath || s.cwd;
+
+  function worktreePeers(c) {
+    if (!c) fail(400, 'Нужна сессия агента');
+    return sessions.list().filter((s) => s.id !== c.id && s.kind === 'chat' && !s.virtual && !s.archived
+      && s.status === 'running' && samePath(treeOf(s), treeOf(c))).map((s) => ({
+      id: s.id, title: s.title, task: tasks.find(s.taskId)?.title || null,
+      files: Array.from(s.claimedFiles || [], (file) => path.relative(treeOf(c), file)),
+    }));
+  }
+
+  function claimFiles(c, paths) {
+    if (!c || c.kind !== 'chat' || c.virtual || c.archived || c.status !== 'running') fail(409, 'Нужен активный ход агента');
+    if (!paths.length) fail(400, 'Укажите файлы для резервирования');
+    const files = paths.map((file) => {
+      if (!file.trim() || path.isAbsolute(file)) fail(400, 'Нужен относительный путь к файлу');
+      const { real, root } = resolveInside(treeOf(c), file);
+      if (real === root || fs.statSync(real, { throwIfNoEntry: false })?.isDirectory()) fail(400, 'Укажите файл');
+      return wtKey(real);
+    });
+    for (const owner of sessions.list()) {
+      if (owner.id === c.id || owner.status !== 'running' || !owner.claimedFiles?.length) continue;
+      const conflict = files.findIndex((file) => owner.claimedFiles.includes(file));
+      if (conflict >= 0) return { ok: false, owner: owner.id, file: paths[conflict] };
+    }
+    c.claimedFiles = [...new Set([...(c.claimedFiles || []), ...files])];
+    store.save();
+    return { ok: true };
+  }
+
+  function peerContext(s) {
+    const peers = worktreePeers(s);
+    return peers.length ? `[harness] Корень дерева: ${treeOf(s)}. Работающие соседи: ${JSON.stringify(peers)}` : '';
+  }
+
   // ---- preambles ----
 
   function preamble(s) {
     const context = s.ephemeral && atDepthLimit(s) ? `${NO_SUBAGENTS}.` : SUBAGENT_CONTEXT;
     const block = config.orchestration?.subagents !== 'builtin' && CONTEXT_LAUNCHERS.has(s.launcherId) ? context : '';
-    return [block, TEMP_FILES, rolePreamble(s),s.atRoot ? hintsLine(s.repoHints) : null, s.taskId ? linksLine(tasks.find(s.taskId)) : null].filter(Boolean).join('\n\n');
+    return [block, TEMP_FILES, rolePreamble(s), WORKTREE_RULE, peerContext(s), s.atRoot ? hintsLine(s.repoHints) : null, s.taskId ? linksLine(tasks.find(s.taskId)) : null].filter(Boolean).join('\n\n');
   }
 
   function rolePreamble(s) {
@@ -1051,6 +1088,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions, addWo
   // ---- post-turn: escalation and error notifications ----
 
   function turnEnded(s, { reported, communicated, stopped, reviving, queueEmpty, userFollowUp }) {
+    delete s.claimedFiles;
     dropAsk(s.id); // the turn is over: a later answer starts the next one (the queue)
     settleGitRequests(s, stopped);
     if (reviving) return; // the harness continues it by itself in a moment (sessions: revive)
@@ -1106,13 +1144,16 @@ export function createOrchestration({ config, store, bus, tasks, sessions, addWo
   }
 
   sessions.hooks.preamble = preamble;
+  sessions.hooks.peerContext = (s) => [!s.worktreeRulesSent && WORKTREE_RULE, peerContext(s)].filter(Boolean).join('\n');
   sessions.hooks.sessionGone = (s, how) => {
+    delete s.claimedFiles;
     for (const t of db.tasks.filter((x) => x.assigneeSessionId === s.id)) {
       tasks.update(t.id, { assigneeSessionId: null, agentState: null }, 'harness'); // the column stays
       tasks.addLog(t.id, 'harness', how === 'removed' ? 'Сессия агента удалена' : 'Сессия агента перенесена в архив', 'agent_gone', { sessionId: s.id, how });
     }
   };
   sessions.hooks.turnStarted = (s) => {
+    delete s.claimedFiles;
     const p = s.worktreePath || s.cwd;
     if (p && db.worktreeMeta?.[wtKey(p)]?.sleeping) markWorktree(p, { sleeping: false }); // an agent at work wakes it
   };
@@ -1251,6 +1292,18 @@ export function createOrchestration({ config, store, bus, tasks, sessions, addWo
   }
 
   const TOOLS = [
+    {
+      name: 'worktree_peers',
+      description: 'Other running harness agents in your worktree, their tasks and reserved files.',
+      inputSchema: obj({}),
+      run: (_, c) => ({ root: c && treeOf(c), peers: worktreePeers(c) }),
+    },
+    {
+      name: 'worktree_claim',
+      description: 'Reserve files relative to your worktree root before editing. All paths succeed together. A conflict returns the owner session. Reservations expire at turn end.',
+      inputSchema: obj({ paths: strArr('File paths relative to the worktree root') }, ['paths']),
+      run: (a, c) => claimFiles(c, a.paths),
+    },
     {
       name: 'whoami',
       description: 'Your harness session: id, role (coordinator/worker/solo), parent, task, cwd, branch.',
