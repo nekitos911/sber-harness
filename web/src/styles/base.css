@@ -199,7 +199,7 @@ kbd {
 @keyframes dialog-in { from { opacity: 0; transform: scale(0.97); } }
 .dialog form { display: grid; gap: 14px; padding: 18px 20px 20px; }
 .dialog h2 { font-size: 15px; font-weight: 600; }
-.dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+.dialog-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 4px; }
 .dialog-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 
 /* ---------- toasts ---------- */

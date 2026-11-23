@@ -6,7 +6,7 @@ import { loadDraft, saveDraft } from '../lib/draft'
 import type { RecoveryItem } from '../types'
 import { StatusIcon } from './bits'
 import { Modal } from './ui/Dialog'
-import { Checkbox, MenuButton } from './ui'
+import { Button, Checkbox, MenuButton } from './ui'
 import { Ellipsis } from 'lucide-react'
 
 const REASON: Record<RecoveryItem['reason'], string> = { reboot: 'Перезагрузка ПК', harness_restart: 'Перезапуск harness', crash: 'Сбой' }
@@ -34,16 +34,16 @@ export function RecoveryDialog() {
     setItems((list) => list.filter((x) => x.id !== id))
     setState((s) => ({ recovery: s.recovery && s.recovery.sessions.length > 1 ? { ...s.recovery, sessions: s.recovery.sessions.filter((x) => x.id !== id) } : null }))
   }
-  const resume = async () => {
-    if (!chosen.length) return
+  const resume = async (rows: RecoveryItem[]) => {
+    if (busy || !rows.length) return
     setBusy(true)
     try {
-      await api('POST', '/recovery/resume', { sessionIds: chosen.map((s) => s.id), message: message.trim() || undefined })
-      setResumed((r) => new Set([...r, ...chosen.map((s) => s.id)]))
+      const { resumed: ids } = await api<{ resumed: string[] }>('POST', '/recovery/resume', { sessionIds: rows.map((s) => s.id), message: message.trim() || undefined })
+      setResumed((r) => new Set([...r, ...ids]))
       saveDraft('recovery:message', null)
-      toast(`Продолжено ${chosen.length} ${plural(chosen.length, 'сессия', 'сессии', 'сессий')}`, 'ok')
+      toast(`Продолжено ${ids.length} ${plural(ids.length, 'сессия', 'сессии', 'сессий')}`, 'ok')
       setState((s) => {
-        const rest = s.recovery?.sessions.filter((x) => !chosen.some((c) => c.id === x.id)) ?? []
+        const rest = s.recovery?.sessions.filter((x) => !rows.some((c) => c.id === x.id)) ?? []
         return { recovery: rest.length ? { ...s.recovery!, sessions: rest } : null }
       })
       closeDialog() // the rest (if any) stays under «Прерванные» in the inbox
@@ -59,14 +59,15 @@ export function RecoveryDialog() {
       title="Восстановление сессий"
       submitLabel={left.length ? `Продолжить выбранные (${chosen.length})` : 'Готово'}
       cancelLabel="Закрыть"
+      extraAction={left.length > 0 && <Button size="lg" disabled={busy} onClick={() => void resume(left)}>Продолжить все</Button>}
       focusSubmit
       busy={busy}
       disabled={left.length > 0 && !chosen.length}
       wide
       onClose={closeDialog}
-      onSubmit={() => (left.length ? void resume() : closeDialog())}
+      onSubmit={() => (left.length ? void resume(chosen) : closeDialog())}
     >
-      <p className="muted" style={{ marginTop: -6 }}>{reasons ? `${reasons}: ` : ''}эти сессии прервались посреди хода. Отмеченным уйдёт сообщение ниже, и они продолжат с того же места; «…» в строке — убрать сессию из списка.</p>
+      <p className="muted" style={{ marginTop: -6 }}>{reasons ? `${reasons}: ` : ''}эти сессии прервались посреди хода. Можно отправить сообщение ниже всем сессиям в списке или только отмеченным. Через «…» можно убрать сессию из списка.</p>
       <ul className="recovery-list">
         {items.map((it) => {
           const s = sessions.find((x) => x.id === it.id)
