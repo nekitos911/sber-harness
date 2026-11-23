@@ -79,7 +79,7 @@ test('«Скрывать чаты старше N дней»: by last activity; a
   assert.equal(hidesSomething(p), true)
 })
 
-test('chats in a folder follow «Сортировать по»: Новые = newest first, Активность = latest activity, Имя', () => {
+test('chat rows stay in creation order as activity changes, unless sorted by name', () => {
   const chats = [
     { title: 'Б старый', createdAt: 1, lastActivityAt: 50 },
     { title: 'А новый', createdAt: 3, lastActivityAt: 10 },
@@ -87,6 +87,7 @@ test('chats in a folder follow «Сортировать по»: Новые = new
   ]
   const order = (s: 'new' | 'activity' | 'name') => [...chats].sort(compareChats(s)).map((c) => c.title[0])
   assert.deepEqual(order('new'), ['А', 'В', 'Б'])
-  assert.deepEqual(order('activity'), ['Б', 'В', 'А'])
+  chats[0].lastActivityAt += 100
+  assert.deepEqual(order('activity'), ['А', 'В', 'Б'])
   assert.deepEqual(order('name'), ['А', 'Б', 'В'])
 })

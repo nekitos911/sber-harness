@@ -8,7 +8,7 @@ import { openScreen, setState, toast, useFeature, useStore } from '../store'
 import { adoptSession } from '../lib/actions'
 import { desktopNotifyOn, setDesktopNotify } from '../lib/notify'
 import { ago, COLUMNS } from '../lib/format'
-import { FULL_ACCESS, GRADES, loadAgentMeta, loadSettings, modeShort, normMeta, normModels, useAgentMeta } from '../lib/agents'
+import { FULL_ACCESS, GRADES, mainAgent, loadAgentMeta, loadSettings, modeShort, normMeta, normModels, useAgentMeta } from '../lib/agents'
 import { useNow } from '../lib/useNow'
 import type { AgentSettings, BoardColumn, BoardSettings, GitBranches, Grade, Session, Settings, TaskStatus } from '../types'
 import { Skeleton } from '../components/bits'
@@ -22,8 +22,6 @@ const CATEGORIES = [
   { name: 'Рабочее место', Icon: PanelsTopLeft }, { name: 'Агенты', Icon: Bot },
   { name: 'Подключения', Icon: Cable }, { name: 'Доска и Git', Icon: SquareKanban },
 ] as const
-/** The agent the settings lead with: the default one (mock in the demo), else GigaCode. */
-const mainAgent = (form: Settings) => (form.defaultAgent !== 'claude' && form.agents[form.defaultAgent] ? form.defaultAgent : form.agents[MAIN] ? MAIN : Object.keys(form.agents).find((id) => id !== 'claude') ?? '')
 const VARS = ['{taskUrl}', '{notes}', '{key}', '{title}', '{description}', '{targets}', '{branch}', '{repo}']
 const TIMEOUTS = [60, 120, 180, 300]
 const SYNC = [{ v: 0, l: 'выключено' }, { v: 60, l: 'каждую минуту' }, { v: 300, l: 'каждые 5 мин' }, { v: 900, l: 'каждые 15 мин' }, { v: 1800, l: 'каждые 30 мин' }]
@@ -998,7 +996,7 @@ const PRESET_HINT: Record<string, string> = {
 }
 
 /** A file shipped with the harness (skill or command): written into ~/.gigacode only on an explicit, confirmed click. */
-function InstallFile({ id, kind, name, target, title, action }: { id: string; kind: 'skills' | 'commands'; name: string; target: string; title: string; action: string }) {
+export function InstallFile({ id, kind, name, target, title, action }: { id: string; kind: 'skills' | 'commands'; name: string; target: string; title: string; action: string }) {
   const meta = useAgentMeta(id)
   const [confirm, setConfirm] = useState(false)
   const [busy, setBusy] = useState(false)

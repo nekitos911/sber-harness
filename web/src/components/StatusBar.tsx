@@ -2,12 +2,33 @@ import { useEffect, useRef, useState } from 'react'
 import { Check, RefreshCw, X } from 'lucide-react'
 import { api, errorText } from '../api'
 import { openScreen, setState, useFeature, useStore } from '../store'
+import { mainAgent, useAgentMeta, useSettings } from '../lib/agents'
+import { InstallFile } from '../views/SettingsView'
 import { Button, Popover } from './ui'
 
 interface McpServer { name: string; enabled: boolean; ok: boolean; error?: string; problem?: string; roles?: ('tasks' | 'pr')[]; tools?: { name: string }[] }
 
 /** What the usual services are for, in words; the id stays next to it. */
 const PURPOSE = { tasks: 'Трекер задач', pr: 'Пулл-реквесты' }
+
+function SkillStatus() {
+  const settings = useSettings()
+  const enabled = useFeature('skills-install')
+  const id = settings && enabled && settings.orchestration?.subagents !== 'builtin' ? mainAgent(settings) : ''
+  const state = useAgentMeta(id)?.skills?.['harness-orchestration']
+  const anchor = useRef<HTMLButtonElement>(null)
+  const [open, setOpen] = useState(false)
+  if (!state) return null
+  const label = state === 'installed' ? 'Навык установлен' : state === 'different' ? 'Обновить навык' : 'Установить навык'
+  return <>
+    <button type="button" ref={anchor} className="sb-skill" data-ready={state === 'installed'} aria-expanded={open}
+      data-tip="Навык оркестрации" onClick={() => setOpen(!open)}>{label}</button>
+    <Popover anchor={anchor} open={open} onClose={() => setOpen(false)} placement="top-start" label="Навык оркестрации" className="sb-mcp-pop">
+      <strong>Навык оркестрации · {id}</strong>
+      <InstallFile key={id} id={id} kind="skills" name="harness-orchestration" target="harness-orchestration/SKILL.md" title="Навык оркестрации" action="Установить" />
+    </Popover>
+  </>
+}
 
 export function StatusBar() {
   const conn = useStore((s) => s.conn)
@@ -43,6 +64,7 @@ export function StatusBar() {
 
   return (
     <footer className="statusbar">
+      <SkillStatus />
       {/* who works is in the sidebar («В работе», «Ждут вас»): the bar keeps only what is nowhere else */}
       {mcp && (
         <>

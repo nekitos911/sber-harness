@@ -29,7 +29,7 @@ export function WorktreeHome({ cwd }: { cwd: string }) {
   const branch = git?.status?.branch ?? wt?.branch ?? null
   const changed = git?.status?.files.filter((f) => !f.service).length ?? 0
 
-  const here = useMemo(() => sessions.filter((s) => normPath(s.cwd) === p).sort((a, b) => b.lastActivityAt - a.lastActivityAt), [sessions, p])
+  const here = useMemo(() => sessions.filter((s) => normPath(s.cwd) === p).sort((a, b) => b.createdAt - a.createdAt), [sessions, p])
   const linked = useMemo(() => {
     const ids = new Set(here.map((s) => s.id))
     const keyIn = (t: (typeof tasks)[number]) => !!branch && !!t.externalId && new RegExp(`(^|[^A-Za-z0-9])${t.externalId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}($|[^A-Za-z0-9])`, 'i').test(branch)
@@ -44,7 +44,7 @@ export function WorktreeHome({ cwd }: { cwd: string }) {
     const by = new Set([...mine.map((t) => t.assigneeSessionId), maker?.id, maker?.parentId].filter((x): x is string => !!x))
     return sessions.filter((s) => !ids.has(s.id) && !s.archived && s.kind === 'chat' && !s.virtual
       && (by.has(s.id) || mine.some((t) => t.id === s.taskId) || (s.includeDirs ?? []).some((d) => normPath(d) === p)))
-      .sort((x, y) => Number(y.status === 'running') - Number(x.status === 'running') || y.lastActivityAt - x.lastActivityAt)
+      .sort((x, y) => y.createdAt - x.createdAt)
   }, [sessions, tasks, here, p, wt])
 
   const where = { cwd, workspaceId: wsId }

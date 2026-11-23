@@ -3,6 +3,9 @@ import { api, ApiError } from '../api'
 import { getState, hasFeature, setState, useFeature, useStore } from '../store'
 import type { AgentMeta, Grade, ModelEntry, Settings } from '../types'
 
+/** The agent the settings lead with: the default one (mock in the demo), else GigaCode. */
+export const mainAgent = (form: Settings) => (form.defaultAgent !== 'claude' && form.agents[form.defaultAgent] ? form.defaultAgent : form.agents.gigacode ? 'gigacode' : Object.keys(form.agents).find((id) => id !== 'claude') ?? '')
+
 export const GRADES: Grade[] = ['default', 'fast', 'review', 'explore']
 
 /** Catalog entries may arrive as plain strings from older configs. */

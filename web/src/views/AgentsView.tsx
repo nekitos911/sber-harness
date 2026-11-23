@@ -55,7 +55,7 @@ export function AgentsView() {
     if (archive) return s.kind === 'chat' && !s.virtual && !s.system && !!s.archived
     if (mode === 'running') return listedChat(s) && ['running', 'starting'].includes(sessionVisualState(s))
     return listedChat(s) && !history(s)
-  }).sort((a, b) => b.lastActivityAt - a.lastActivityAt), [sessions, archive, mode])
+  }).sort((a, b) => archive ? b.lastActivityAt - a.lastActivityAt : b.createdAt - a.createdAt), [sessions, archive, mode])
   const [allIn, setAllIn] = useState<Set<string>>(new Set()) // lanes opened past the last day
   const now = useNow()
   const archivedCount = useMemo(() => sessions.filter((s) => s.kind === 'chat' && !s.virtual && s.archived).length, [sessions])
