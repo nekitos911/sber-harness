@@ -3,7 +3,7 @@ import { Check, ChevronDown, LoaderCircle, RefreshCw } from 'lucide-react'
 import { openScreen, useFeature, useStore } from '../../store'
 import { api, errorText } from '../../api'
 import { ago } from '../../lib/format'
-import { GRADES, loadAgentMeta, loadSettings, modelLabel, useAgentMeta, useSettings } from '../../lib/agents'
+import { GRADES, loadAgentMeta, loadSettings, modelLabel, sameModel, useAgentMeta, useSettings } from '../../lib/agents'
 import { pickerModels } from '../../lib/models'
 import { useElapsed } from '../../lib/live'
 import { ComboList, Popover, type ComboItem, type Placement } from '../ui'
@@ -56,7 +56,7 @@ export function ModelPicker({ agentId, value, onChange, variant = 'inline', labe
   }
 
   const items = useMemo<ComboItem[]>(() => {
-    const gradeOf = (id: string) => GRADES.filter((g) => grades[g] === id)
+    const gradeOf = (id: string) => GRADES.filter((g) => sameModel(grades[g], id))
     const row = (title: string, sub: string, selected: boolean, mono = false) => (
       <>
         <span className="option-main">

@@ -96,9 +96,21 @@ export function App() {
   const here = view.kind === 'wt' ? wtKey(view.cwd) : null
   const hereTabs = here ? wt[here] : undefined
   const showsTab = !!hereTabs?.tabs.some((t) => tabKey(t) === hereTabs.active)
+  const desktop = useStore((s) => s.desktop)
+
+  // The desktop window has no title bar of its own: the app's top bar is the place to drag, double-click and resize the window.
+  useEffect(() => {
+    if (!desktop) return
+    const el = document.documentElement
+    el.dataset.desktop = desktop.platform
+    const off = desktop.onMaximized((value) => setState({ desktop: { ...desktop, maximized: value } }))
+    return () => { delete el.dataset.desktop; off?.() }
+  }, [desktop?.maximizable]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="app" data-sidebar={rail || sidebar} data-conn={conn} data-compact={compact || undefined} data-rail={(rail && !sbOverlay) || undefined} data-sb-overlay={(rail && sbOverlay) || undefined}
+      data-desktop={desktop ? 'on' : undefined}
+      data-platform={desktop?.platform}
       style={{ '--sb-w': rail ? '48px' : sidebar ? `${width}px` : '0px' } as CSSProperties}>
       <ErrorBoundary area="верхнюю панель"><TopBar onCommand={() => setPalette(true)} /></ErrorBoundary>
       <ErrorBoundary area="боковую панель"><Sidebar /></ErrorBoundary>

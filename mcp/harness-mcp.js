@@ -29,6 +29,8 @@ function connection() {
   } else if (!url) {
     try { url = JSON.parse(readFile(path.join(dataDir, 'server.json'))).url; } catch {}
   }
+  // a server given by its URL and token directly (a test harness, a second instance) keeps its token: the data folder's
+  // one belongs to whatever harness runs there, not to this one
   const token = process.env.HARNESS_TOKEN || readFile(path.join(dataDir, 'token'));
   if (!url || !token) throw new Error('Harness is not reachable: set HARNESS_URL and HARNESS_TOKEN or start the harness (data/server.json)');
   return { url: url.replace(/\/$/, ''), token, session: process.env.HARNESS_SESSION_ID || '' };
@@ -87,8 +89,9 @@ export async function runAndWait(name, args, progressToken, notify = () => {}) {
       const r = await api('GET', `/api/agent/worker_wait?sessionId=${encodeURIComponent(sessionId)}&timeoutMs=0&release=1`, undefined, { idempotent: true });
       return { status: r.status, summary: r.summary, sessionId };
     }
-    // stateless on the server: after a harness restart the same poll simply continues
-    const r = await api('GET', `/api/agent/worker_wait?sessionId=${encodeURIComponent(sessionId)}&timeoutMs=${Math.min(WAIT_SLICE_MS, left)}`, undefined, { idempotent: true, until: deadline });
+    // stateless on the server: after a harness restart the same poll simply continues. release=1: this call is over in
+    // this same request — the sub-agent is taken off the waiter only now, so a message to it still ends the call
+    const r = await api('GET', `/api/agent/worker_wait?sessionId=${encodeURIComponent(sessionId)}&timeoutMs=${Math.min(WAIT_SLICE_MS, left)}&release=1`, undefined, { idempotent: true, until: deadline });
     if (r.done) return { status: r.status, summary: r.summary, sessionId };
     if (progressToken !== undefined) notify({ method: 'notifications/progress', params: { progressToken, progress: tick, message: `sub-agent ${sessionId}: ${r.status ?? 'running'}` } });
   }

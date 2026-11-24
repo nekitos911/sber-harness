@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef, useState } from 'react'
-import { ArrowUp, ChevronDown, ChevronUp, Clock, FileText, Pencil, Plus, Square, X } from 'lucide-react'
+import { ArrowUp, ChevronDown, ChevronUp, Clock, FileText, Pencil, Plus, Square, X, Zap } from 'lucide-react'
 import { tryApi } from '../../api'
 import { getState, setDraft, setState, useFeature, useStore, upsertSession } from '../../store'
 import { openFile } from '../WorktreeMenu'
@@ -78,11 +78,13 @@ export function Composer({ session, active }: { session: Session; active: boolea
   }
   const canOpen = useFeature('open-file')
 
-  const send = async () => {
+  /** «cut»: the message ends the step it found and opens the next turn («Сразу агенту», Ctrl+Enter). Without it a
+   * message waits in the queue for the step to end by itself — nothing is cut unless the person asks. */
+  const send = async ({ cut = false } = {}) => {
     const body = withAttachments(text.trim(), atts.map((a) => a.path))
     if (!body || sending) return
     setSending(true)
-    const res = await tryApi<{ queued: boolean }>('POST', `/sessions/${session.id}/messages`, { text: body })
+    const res = await tryApi<{ queued: boolean; cut?: boolean }>('POST', `/sessions/${session.id}/messages`, cut ? { text: body, cut: true } : { text: body })
     setSending(false)
     if (!res) return
     update('')
@@ -130,7 +132,7 @@ export function Composer({ session, active }: { session: Session; active: boolea
         ref={ref}
         rows={1}
         className="composer-input"
-        placeholder={session.waitingFor === 'answer' ? 'Ответ на вопрос агента — здесь или в карточке выше' : running && !session.turnClosing ? 'Сообщение встанет в очередь' : session.status === 'stopped' ? 'Остановлено. Следующее сообщение продолжит работу' : 'Задайте вопрос; @ — файлы, / — команды'}
+        placeholder={session.waitingFor === 'answer' ? 'Ответ на вопрос агента — здесь или в карточке выше' : running && !session.turnClosing ? 'Enter — в очередь, Ctrl+Enter — сразу агенту (шаг прервётся)' : session.status === 'stopped' ? 'Остановлено. Следующее сообщение продолжит работу' : 'Задайте вопрос; @ — файлы, / — команды'}
         aria-label="Сообщение агенту"
         value={text}
         onChange={(e) => { update(e.target.value); setCaret(e.target.selectionStart) }}
@@ -144,7 +146,10 @@ export function Composer({ session, active }: { session: Session; active: boolea
         }}
         onKeyDown={(e) => {
           if (suggest.onKeyDown(e)) return
-          if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void send() }
+          if (e.key !== 'Enter' || e.shiftKey || e.nativeEvent.isComposing) return
+          e.preventDefault()
+          // Ctrl+Enter («Сразу агенту») ends the running step and hands the message to the next turn; Enter queues it
+          void send({ cut: e.ctrlKey || e.metaKey })
         }}
       />
       </div>
@@ -181,6 +186,12 @@ export function Composer({ session, active }: { session: Session; active: boolea
         <button type="button" className="composer-send" onClick={() => void send()} disabled={(!text.trim() && !atts.length) || sending} aria-label={running ? 'Поставить в очередь' : 'Отправить'} data-tip={running ? 'В очередь (Enter)' : 'Отправить (Enter)'}>
           <ArrowUp />
         </button>
+        {running && (
+          <button type="button" className="icon-btn composer-now" onClick={() => void send({ cut: true })} disabled={(!text.trim() && !atts.length) || sending}
+            aria-label="Сразу агенту: прервать шаг" data-tip={`Сразу агенту (Ctrl+Enter): шаг${session.turnClosing ? ' (результат уже пришёл)' : ' сейчас прервётся'}; контекст сохраняется`}>
+            <Zap />
+          </button>
+        )}
       </div>
     </div>
   )
@@ -226,10 +237,10 @@ ${q.text}` : q.text)
       <div className="cq-head">
         <button type="button" className="cq-toggle" aria-expanded={shown} onClick={() => setOpen(!shown)}>
           {shown ? <ChevronUp aria-hidden /> : <ChevronDown aria-hidden />}
-          <span>{running ? `В очереди: ${queue.length} — уйдёт после текущего шага` : `В очереди: ${queue.length} — агент сейчас не работает`}</span>
+          <span>{running ? `В очереди: ${queue.length} — уйдёт после текущего шага (раньше, если шаг только ждёт субагентов)` : `В очереди: ${queue.length} — агент сейчас не работает`}</span>
         </button>
         {running
-          ? <button type="button" className="link-btn" data-tip="Остановить текущий шаг и отправить очередь сразу; контекст сохраняется, помощники доработают и пришлют результат" onClick={() => void tryApi('POST', `/sessions/${session.id}/queue/send`, { interrupt: true })}>Прервать и отправить</button>
+          ? <button type="button" className="link-btn" data-tip="Остановить текущий шаг и отправить очередь сразу; контекст сохраняется, помощники доработают и пришлют результат" onClick={() => void tryApi('POST', `/sessions/${session.id}/queue/send`, { interrupt: true })}>Прервать шаг и отправить очередь</button>
           : <button type="button" className="link-btn" onClick={() => void tryApi('POST', `/sessions/${session.id}/queue/send`)}>Отправить сейчас</button>}
       </div>
       {shown && queue.map((q) => (

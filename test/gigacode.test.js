@@ -125,14 +125,12 @@ test('exact argv on new and resumed turns; settings.json without permissions; id
   const settings = JSON.parse(fs.readFileSync(s.settingsPath, 'utf8'));
   assert.deepEqual(settings, {
     tools: { sandbox: 'workspace' },
-    agents: { modelGrades: {}, allowedGrades: [] },
     chatRecording: true,
     mcpServers: {
       harness: {
         command: process.execPath,
         args: [path.join(CODE_ROOT, 'mcp', 'harness-mcp.js')],
         env: { HARNESS_URL: h.srv.url, HARNESS_TOKEN: h.srv.token, HARNESS_SESSION_ID: s.id, HARNESS_SERVER_JSON: path.join(h.dataDir, 'server.json') },
-        trust: true,
         timeout: 3600000,
       },
     },
@@ -304,10 +302,11 @@ test('agent info: identity found + its source shim, never the value; effectiveAp
 test('mcpExclude goes into the run settings under the configured key only', () => {
   const harnessMcp = { command: 'node', args: [], env: {} };
   const settings = (agentCfg) => sessionSettings({ agentCfg: { settings: {}, ...agentCfg }, harnessMcp, agentMcpServers: {} });
-  assert.deepEqual(settings({ mcpExclude: ['java-lsp', 'harness'] }).mcp, { excluded: ['java-lsp'] }, 'never the harness server');
-  const gemini = settings({ mcpExclude: ['java-lsp'], mcpExcludeKey: 'excludeMCPServers' });
-  assert.deepEqual([gemini.excludeMCPServers, gemini.mcp], [['java-lsp'], undefined]);
-  assert.equal(settings({}).mcp, undefined);
+  const defaults = settings({ mcpExclude: ['java-lsp', 'harness'] });
+  assert.deepEqual([defaults.excludeMCPServers, defaults.mcp], [['java-lsp'], undefined], 'never the harness server');
+  const custom = settings({ mcpExclude: ['java-lsp'], mcpExcludeKey: 'mcp.excluded' });
+  assert.deepEqual([custom.excludeMCPServers, custom.mcp], [undefined, { excluded: ['java-lsp'] }]);
+  assert.equal(settings({}).excludeMCPServers, undefined);
 });
 
 test('--model goes without the /models context suffix (GigaCode rejects «X-262k» at start), headless and ACP', () => {
@@ -315,12 +314,13 @@ test('--model goes without the /models context suffix (GigaCode rejects «X-262k
   const modelOf = (args) => args[args.indexOf('--model') + 1];
   const session = { model: 'DeepSeek-V4.1-Flash-1017-262k' };
   assert.equal(modelOf(g.buildArgs({ prompt: 'x', session, agentCfg: {} })), 'DeepSeek-V4.1-Flash-1017');
-  assert.equal(modelOf(g.acpArgs({ session, agentCfg: {} })), 'DeepSeek-V4.1-Flash-1017');
+  assert.ok(!g.acpArgs({ session, agentCfg: {} }).includes('--model'));
+  assert.equal(modelOf(g.acpArgs({ session, agentCfg: {}, acpModel: session.model })), 'DeepSeek-V4.1-Flash-1017');
   assert.equal(modelOf(g.buildArgs({ prompt: 'x', session: { model: 'GigaChat-3.5-Ultra-Preview' }, agentCfg: {} })), 'GigaChat-3.5-Ultra-Preview', 'an id without a suffix is kept');
 });
 
-test('model grades in the run settings lose the context suffix too (a grade at «X-262k» crashes GigaCode)', () => {
+test('model grades stay in the harness configuration and do not go into the GigaCode run settings', () => {
   const file = path.join(root, 'grades-settings.json');
   launchers.gigacode.prepare({ settingsPath: file, agentCfg: { settings: { agents: { modelGrades: { review: 'GLM-5.3-Flash-262k', strong: 'GigaChat-3.5-Ultra-Preview' }, allowedGrades: ['review'] } } }, harnessMcp: { command: 'node', args: [] }, agentMcpServers: {} });
-  assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')).agents, { modelGrades: { review: 'GLM-5.3-Flash', strong: 'GigaChat-3.5-Ultra-Preview' }, allowedGrades: ['review'] });
+  assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).agents, undefined);
 });

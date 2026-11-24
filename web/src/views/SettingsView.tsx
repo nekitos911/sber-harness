@@ -8,7 +8,8 @@ import { openScreen, setState, toast, useFeature, useStore } from '../store'
 import { adoptSession } from '../lib/actions'
 import { desktopNotifyOn, setDesktopNotify } from '../lib/notify'
 import { ago, COLUMNS } from '../lib/format'
-import { FULL_ACCESS, GRADES, mainAgent, loadAgentMeta, loadSettings, modeShort, normMeta, normModels, useAgentMeta } from '../lib/agents'
+import { FULL_ACCESS, GRADE_ROLES, GRADES, mainAgent, loadAgentMeta, loadSettings, modeShort, normMeta, sameModel, useAgentMeta } from '../lib/agents'
+import { pickerModels } from '../lib/models'
 import { useNow } from '../lib/useNow'
 import type { AgentSettings, BoardColumn, BoardSettings, GitBranches, Grade, Session, Settings, TaskStatus } from '../types'
 import { Skeleton } from '../components/bits'
@@ -217,9 +218,32 @@ function ConnectionsSection(props: SectionProps) {
   const check = useIntegrationsCheck()
   return <>
     <Connections onSaved={check.recheck} />
+    <McpTimeoutsRows form={props.form} update={props.update} />
     <TrackerSection {...props} check={check} />
     <PrSection {...props} check={check} />
   </>
+}
+
+/** ACP start: the agent waits for every MCP server it is given before it answers session/new; these are the limits. */
+function McpTimeoutsRows({ form, update }: Omit<SectionProps, 'fieldError'>) {
+  if (form.mcp === undefined) return null
+  const mcp = form.mcp
+  const set = (patch: Partial<NonNullable<Settings['mcp']>>) => update({ ...form, mcp: { ...mcp, ...patch } })
+  const pick = (cur: number | undefined, preset: number[]) =>
+    [...new Set([...preset, cur ?? 0])].filter((x) => x > 0).sort((a, b) => a - b)
+      .map((x) => ({ value: String(x), label: x >= 60000 ? `${x / 60000} мин` : `${x / 1000} с` }))
+  return (
+    <div className="set-rows">
+      <Row label="Процесс на чат: подъём MCP-сервера" hint="Сколько ждать один MCP-сервер при запуске процесса чата. Не дождавшись, агент работает без него (в чате остаётся предупреждение) — вместо падения всей сессии. Действует на сообщения, которых ещё не было.">
+        <Select label="Подъём MCP-сервера на чат" value={String(mcp.acpStartTimeoutMs ?? 30000)} onChange={(v) => set({ acpStartTimeoutMs: Number(v) })}
+          options={pick(mcp.acpStartTimeoutMs, [15000, 30000, 60000, 120000])} />
+      </Row>
+      <Row label="Сервер harness: ожидание инструмента" hint="Сколько CLI ждёт ответа инструмента harness (worker_run ждёт целый прогон суб-агента). Менять не нужно, если не появляется «MCP tool timeout».">
+        <Select label="Ожидание инструмента harness" value={String(mcp.harnessTimeoutMs ?? 3600000)} onChange={(v) => set({ harnessTimeoutMs: Number(v) })}
+          options={pick(mcp.harnessTimeoutMs, [600000, 1800000, 3600000])} />
+      </Row>
+    </div>
+  )
 }
 
 function Row({ label, hint, error, children, wide }: { label: ReactNode; hint?: ReactNode; error?: string; children: ReactNode; wide?: boolean }) {
@@ -247,11 +271,14 @@ function AgentSection({ id, form, update, fieldError, primary }: SectionProps & 
   const set = (patch: Partial<AgentSettings>) => update({ ...form, agents: { ...form.agents, [id]: { ...a, ...patch } } })
   const label = labels.find((x) => x.id === id)?.label ?? (id === MAIN ? 'GigaCode' : id)
   const modeLabels = a.approvalModeLabels ?? {}
-  const catalog = normModels(a.models)
+  // the live catalogue of /api/state (what the CLI really knows) + the labels of the settings
+  const live = useStore((s) => s.agents.find((x) => x.id === id)?.models)
+  const catalog = useMemo(() => pickerModels(live, a.models), [live, a.models])
   const [gradesOpen, setGradesOpen] = useState(false)
   const acpOn = useFeature('acp')
   const reworkOn = useFeature('rework')
-  const unavailable = (m: string | undefined) => !!m && catalog.find((x) => x.id === m)?.available === false
+  const idOf = (m: string | undefined) => m ? catalog.find((x) => sameModel(x.id, m))?.id ?? m : undefined
+  const gone = (m: string | undefined) => !!m && catalog.find((x) => sameModel(x.id, m))?.available === false
 
   return (
     <section className="settings-section" id={primary ? 'set-gigacode' : `set-${id}`}>
@@ -270,8 +297,8 @@ function AgentSection({ id, form, update, fieldError, primary }: SectionProps & 
 
       {primary && (
         <div className="set-rows">
-          <Row label="Уровни моделей" hint="Какая модель стоит за каждым уровнем у внутренних агентов GigaCode.">
-            <AutoValue value={GRADES.filter((g) => a.modelGrades[g]).map((g) => `${g}: ${catalog.find((m) => m.id === a.modelGrades[g])?.label ?? a.modelGrades[g]}`).join(' · ') || 'как в CLI'}
+          <Row label="Уровни моделей" hint="Какая модель стоит за каждым уровнем у внутренних агентов harness.">
+            <AutoValue value={GRADES.filter((g) => a.modelGrades[g]).map((g) => `${g}: ${catalog.find((m) => sameModel(m.id, a.modelGrades[g]))?.label ?? a.modelGrades[g]}`).join(' · ') || 'как в CLI'}
               open={gradesOpen} onToggle={() => setGradesOpen(!gradesOpen)} />
           </Row>
         </div>
@@ -279,12 +306,12 @@ function AgentSection({ id, form, update, fieldError, primary }: SectionProps & 
       {primary && gradesOpen && (
         <>
           <h3>Уровни моделей</h3>
-          <p className="set-note">Внутренние агенты GigaCode просят модель по уровню; здесь задано, какая модель стоит за каждым.</p>
+          <p className="set-note">Субагенты просят модель по уровню; здесь задано, какая модель стоит за каждым. Без указанной модели harness сам берёт уровень по типу субагента: ревьюер — review, разведка — fast, остальные — strong.</p>
           <div className="set-rows">
             {GRADES.map((g) => (
-              <Row key={g} label={g} error={unavailable(a.modelGrades[g]) ? 'Модель недоступна: выберите другую' : undefined}>
+              <Row key={g} label={g} hint={GRADE_ROLES[g]} error={gone(a.modelGrades[g]) ? 'Модели нет в каталоге сервера: субагенты этого уровня запустятся с моделью по умолчанию' : undefined}>
                 <ModelPicker variant="field" agentId={id} label={`Модель уровня ${g}`} value={a.modelGrades[g] ?? null} placement="bottom-start" emptyText="не задана"
-                  onChange={(m) => { const grades = { ...a.modelGrades }; if (m) grades[g] = m; else delete grades[g]; set({ modelGrades: grades }) }} />
+                  onChange={(m) => { const grades = { ...a.modelGrades }; if (m) grades[g] = idOf(m)!; else delete grades[g]; set({ modelGrades: grades }) }} />
               </Row>
             ))}
             <Row label="Разрешённые уровни" hint="Какие уровни агенту можно запрашивать.">
@@ -335,7 +362,7 @@ function AgentSection({ id, form, update, fieldError, primary }: SectionProps & 
         {primary && a.allowedTools !== undefined && <AllowedToolsRow a={a} set={set} />}
         {primary && a.autoSandbox !== undefined && (
           <Row label="Песочница для «Полного доступа»"
-            hint="Выключено (быстрее): «Полный доступ» работает как авто-правки + разрешённые команды. Включено: настоящий auto в песочнице рабочей папки GigaCode — без вопросов, но запуск может быть медленнее.">
+            hint="Выключено (быстрее): «Полный доступ» работает как авто-правки, но без разрешающего списка — команды не спрашиваются. Включено: настоящий auto в песочнице рабочей папки GigaCode — запуск может быть медленнее.">
             <Switch label="Песочница для «Полного доступа»" checked={!!a.autoSandbox} onChange={(v) => set({ autoSandbox: v ? 'workspace' : null })} />
           </Row>
         )}
@@ -528,11 +555,14 @@ const QUICK_TOOLS = ['git', 'mvn', 'mvnw', 'gradle', 'gradlew', 'npm', 'npx', 'n
 /** «Разрешённые команды»: tool patterns the CLI may run without asking (--allowed-tools), with quick-add for common ones. */
 function AllowedToolsRow({ a, set }: { a: AgentSettings; set: (p: Partial<AgentSettings>) => void }) {
   const list = a.allowedTools ?? []
+  const all = list.includes('*') // what «Полный доступ» passes when the sandbox is off
   const missing = QUICK_TOOLS.filter((t) => !list.includes(t))
   return (
-    <Row label="Разрешённые команды" hint="Что CLI выполняет без вопроса в любом чате (шаблон вида run_shell_command(git)). Остальное агент попросит разрешить." wide>
-      <ChipsInput label="шаблон" values={list} onChange={(v) => set({ allowedTools: v })} />
-      {missing.length > 0 && (
+    <Row label="Разрешённые команды" hint="Что CLI выполняет без вопроса в любом чате (шаблон вида run_shell_command(git)). Остальное агент попросит разрешить. «Полный доступ» этот список не спрашивает." wide>
+      {all
+        ? <span className="set-line">Список не используется: в наборе есть <code>*</code> — разрешено всё без вопроса.</span>
+        : <ChipsInput label="шаблон" values={list} onChange={(v) => set({ allowedTools: v })} />}
+      {!all && missing.length > 0 && (
         <div className="chips quick-tools" aria-label="Быстро добавить">
           {missing.map((t) => <Chip key={t} mono onClick={() => set({ allowedTools: [...list, t] })} tip="Добавить">+ {t}</Chip>)}
         </div>
@@ -547,23 +577,26 @@ function AllowedToolsRow({ a, set }: { a: AgentSettings; set: (p: Partial<AgentS
  */
 function McpServersRow({ id, a, set }: { id: string; a: AgentSettings; set: (p: Partial<AgentSettings>) => void }) {
   const meta = useAgentMeta(id)
-  const servers = meta?.seen?.mcpServers ?? []
+  const servers = meta?.mcpServers ?? meta?.seen?.mcpServers ?? []
   if (!servers.length) return null
   const editable = a.mcpExclude !== undefined // a server that does not return the field would drop it on save
   const off = new Set(a.mcpExclude ?? [])
+  const disabled = new Set(meta?.mcpDisabled ?? []) // switched off for every agent in the config file
   return (
     <Row label="MCP-серверы для агентов" hint="Отключите ненужные или сломанные (например java-lsp), чтобы ускорить запуск." wide>
       <ul className="mcp-list">
         {servers.map((m) => {
           const ok = /connect|ok|ready|running/i.test(m.status)
-          const excluded = off.has(m.name)
+          const on = !off.has(m.name) && !disabled.has(m.name)
           return (
-            <li key={m.name} data-off={excluded || undefined}>
+            <li key={m.name} data-off={!on || undefined}>
               <span className="mcp-dot" data-ok={ok || undefined} aria-label={ok ? 'запускается' : `ошибка: ${m.status}`} />
               <span className="mono ellipsis">{m.name}</span>
-              <span className="muted ellipsis">{excluded ? 'не запускается' : m.status}</span>
-              {editable && <Switch label={`MCP ${m.name}`} checked={!excluded}
-                onChange={(v) => set({ mcpExclude: v ? [...off].filter((x) => x !== m.name) : [...off, m.name] })} />}
+              <span className="muted ellipsis">{on ? m.status : 'не запускается'}</span>
+              {!editable ? null : disabled.has(m.name)
+                ? <span className="set-hint">выключен в harness.config.local.json</span>
+                : <Switch label={`MCP ${m.name}`} checked={on}
+                    onChange={(v) => set({ mcpExclude: v ? [...off].filter((x) => x !== m.name) : [...off, m.name] })} />}
             </li>
           )
         })}
@@ -683,9 +716,9 @@ function GitSection({ form, update, fieldError }: SectionProps) {
               options={[{ value: 'agent', label: 'Через агента' }, { value: 'harness', label: 'Напрямую' }]} />
           </Row>
         )}
-        {generateOn && g.generateMessages !== undefined && (
-          <Row label="Генерировать сообщения коммитов и PR агентом" hint="GigaCode пишет заголовок и описание по изменениям и задаче — в облегчённом режиме (без MCP и навыков, быстрая модель). Выключено: только по кнопке ✨.">
-            <Switch label="Генерировать сообщения коммитов и PR агентом" checked={g.generateMessages} onChange={(v) => set({ generateMessages: v })} />
+        {generateOn && (
+          <Row label="Сообщения коммитов и PR" hint="Пишет GigaCode — кнопкой ✨ у поля «Сообщение» и в окне «Создать PR». Само по себе ничего не запускается: ни в фоне, ни при открытии окна.">
+            <span className="muted">по кнопке ✨</span>
           </Row>
         )}
       </div>
@@ -820,9 +853,11 @@ function ReviewRows({ form, update }: Omit<SectionProps, 'fieldError'>) {
   const set = (patch: Partial<NonNullable<typeof r>>) => update({ ...form, orchestration: { ...o, review: { ...r, ...patch } } })
   const agentId = r.agent ?? mainAgent(form)
   const agent = form.agents[agentId]
-  const catalog = normModels(agent?.models)
+  const live = useStore((s) => s.agents.find((x) => x.id === agentId)?.models)
+  const catalog = useMemo(() => pickerModels(live, agent?.models), [live, agent?.models])
   const grade = (r.grade ?? 'review') as Grade
   const resolved = agent?.modelGrades[grade]
+  const entry = resolved ? catalog.find((m) => sameModel(m.id, resolved)) : undefined
   const area = useRef<HTMLTextAreaElement>(null)
   const tpl = r.promptTemplate ?? ''
   const insert = (v: string) => {
@@ -832,7 +867,7 @@ function ReviewRows({ form, update }: Omit<SectionProps, 'fieldError'>) {
   return (
     <>
       <p className="set-note set-row-note">Работает независимо от содержимого /full-task: после worker_done harness запускает ревьюера другой моделью и возвращает замечания исполнителю.</p>
-      <Row label="Модель ревьюера" hint={resolved ? <>уровень {grade}: <span className="mono">{catalog.find((m) => m.id === resolved)?.label ?? resolved}</span></> : 'Уровень не настроен: модель по умолчанию CLI.'}>
+      <Row label="Модель ревьюера" hint={resolved ? <>уровень {grade}: <span className="mono">{entry?.label ?? resolved}</span>{entry?.available === false && <span className="field-warn"> · модели нет в каталоге, ревью пойдёт с моделью по умолчанию</span>}</> : 'Уровень не настроен: модель по умолчанию CLI.'}>
         <Select label="Уровень модели ревьюера" mono value={grade} onChange={(v) => set({ grade: v })} options={GRADES.map((g) => ({ value: g, label: g, hint: agent?.modelGrades[g] ?? 'не задан' }))} />
       </Row>
       <Row label="Режим ревьюера" hint="По умолчанию «План»: ревьюер только читает.">

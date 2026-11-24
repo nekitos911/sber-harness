@@ -4,9 +4,11 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
+import tls from 'node:tls';
 import { execFile } from 'node:child_process';
+import { Agent } from 'undici';
 import { CODE_ROOT } from '../server/config.js';
-import { createMcpManager, toolResultValue, loadSecrets, secretEnv, serverDefs } from '../server/mcp-client.js';
+import { createMcpManager, toolResultValue, loadSecrets, secretEnv, serverDefs, setSecret, deleteSecret, secretsSource, customServers, tlsDispatcher, systemRootCertificates } from '../server/mcp-client.js';
 import { createStore } from '../server/store.js';
 import { createBus } from '../server/bus.js';
 import { createTasks } from '../server/tasks.js';
@@ -56,6 +58,28 @@ test('toolResultValue prefers structuredContent, then JSON text, then text', () 
   assert.equal(toolResultValue({ content: [{ type: 'text', text: 'plain' }] }), 'plain');
 });
 
+test('https server without configured roots keeps undici\'s own trust', async () => {
+  // an explicit ca array replaces Node's bundle in undici: no dispatcher is what a host verified by Node itself needs
+  assert.equal(tlsDispatcher({}, {}), undefined);
+  assert.equal(tlsDispatcher({ rejectUnauthorized: true }, { mcpCa: [] }), undefined);
+  const optOut = tlsDispatcher({ rejectUnauthorized: false }, {});
+  assert.ok(optOut instanceof Agent, 'the opt-out needs a dispatcher');
+  await optOut.close();
+});
+
+test('a configured root comes with the OS store and Node\'s bundle, never alone', async () => {
+  // SberCA Root Ext lives in the Windows store only: an added root that replaces the store breaks every bank host
+  const file = path.join(dir, 'bank-root.pem');
+  fs.writeFileSync(file, tls.rootCertificates[3] + '\n');
+  const store = systemRootCertificates();
+  const agent = tlsDispatcher({}, { mcpCaFile: file });
+  assert.ok(agent instanceof Agent);
+  await agent.close();
+  // the store is a real source on Node 22.9+: the rebuilt trust is wider than Node's own bundle alone
+  assert.ok(Array.isArray(store));
+  assert.ok(new Set([...store, ...tls.rootCertificates]).size > tls.rootCertificates.length);
+});
+
 test('stdio passes a scoped value or an environment binding and can omit an inherited variable', async (t) => {
   const variable = 'HARNESS_TEST_STDIO_ACCESS';
   const previous = process.env[variable];
@@ -97,6 +121,59 @@ test('servers: config.mcpServers merged over mcpServersFrom', () => {
   assert.equal(defs.onework.url, 'http://x/mcp');
   assert.equal(defs.tracker.command, 'node');
   assert.equal(defs.tracker.timeoutMs, 10000);
+});
+
+test('settings: a secret written or removed keeps the file format, a broken JSON file is left alone', () => {
+  const file = path.join(dir, 'editable-secrets.txt');
+  const cfg = baseConfig({ mcpSecretsFile: file });
+  assert.equal(secretsSource(cfg), 'config:mcpSecretsFile');
+  fs.writeFileSync(file, '# mine\nremote/Authorization=old\n');
+  assert.equal(setSecret(cfg, 'remote/Authorization', 'Bearer new'), true);
+  assert.equal(fs.readFileSync(file, 'utf8'), '# mine\nremote/Authorization=Bearer new\n');
+  setSecret(cfg, 'other/token', 't1');
+  assert.deepEqual([...loadSecrets(cfg).values()].map((s) => s.name), ['remote/Authorization', 'other/token']);
+  deleteSecret(cfg, 'remote/Authorization');
+  assert.deepEqual([...loadSecrets(cfg).values()], [{ name: 'other/token', value: 't1' }]);
+  fs.writeFileSync(file, '{ "a": "b" }');
+  setSecret(cfg, 'c/d', 'x');
+  assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')), { a: 'b', 'c/d': 'x' });
+  fs.writeFileSync(file, '{ broken');
+  assert.equal(setSecret(cfg, 'c/d', 'x'), false);
+  deleteSecret(cfg, 'c/d');
+  assert.equal(fs.readFileSync(file, 'utf8'), '{ broken');
+  assert.throws(() => setSecret(cfg, 'bad name', 'x'), /имя секрета/);
+  assert.throws(() => setSecret(cfg, 'c/d', '  '), /пустое/);
+});
+
+test('settings: the server list keeps the switch of a server from the settings file and its own servers apart', () => {
+  const from = path.join(dir, 'servers.json');
+  fs.writeFileSync(from, JSON.stringify({ mcpServers: { remote: { url: 'http://x/mcp' }, local: { command: 'npx', args: ['-y', 'cli'] } } }));
+  const list = customServers({
+    root: CODE_ROOT,
+    mcpServersFrom: from,
+    mcpServers: { remote: { enabled: false }, own: { transport: 'stdio', command: 'node', args: ['m.js'] } },
+  });
+  const byName = Object.fromEntries(list.map((s) => [s.name, s]));
+  assert.deepEqual([byName.remote.enabled, byName.remote.fromFile, byName.remote.url], [false, true, 'http://x/mcp']);
+  assert.equal(byName.own.fromFile, undefined);
+  assert.deepEqual(byName.own.args, ['m.js']);
+});
+
+test('settings: the MCP timeouts go out and back in, a bad value is refused', async () => {
+  const h = await startTestServer();
+  try {
+    const s = (await h.api('GET', '/api/settings')).body;
+    assert.deepEqual(s.mcp, { acpStartTimeoutMs: 30000, harnessTimeoutMs: 3600000 }, 'the UI edits these two rows');
+    const bad = (body) => h.api('PUT', '/api/settings', { mcp: body }).then((r) => r.status);
+    assert.equal(await bad({ acpStartTimeoutMs: 999 }), 400);
+    assert.equal(await bad({ harnessTimeoutMs: 1.5 }), 400);
+    assert.equal(await bad({ somethingElse: 5000 }), 400);
+    const saved = (await h.api('PUT', '/api/settings', { mcp: { acpStartTimeoutMs: 5000 } })).body;
+    assert.deepEqual(saved.mcp, { acpStartTimeoutMs: 5000, harnessTimeoutMs: 3600000 }, 'only the key given changes');
+    assert.deepEqual((await h.api('GET', '/api/settings')).body.mcp, saved.mcp);
+  } finally {
+    await h.close();
+  }
 });
 
 test('missing secret: that server reports a problem, the others keep working', async () => {
@@ -154,6 +231,20 @@ test('http client: SSE responses, Mcp-Session-Id, secret headers and ${env:} ref
   } finally {
     server.close();
   }
+});
+
+test('http client: a network failure names the reason and the address, not a bare «fetch failed»', async () => {
+  const server = http.createServer((req, res) => res.end());
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const url = `http://127.0.0.1:${server.address().port}/mcp`;
+  await new Promise((r) => server.close(r)); // nothing listens there any more: connect is refused
+  const mcp = createMcpManager(baseConfig({ mcpServers: { remote: { url, timeoutMs: 5000 } } }));
+  const err = await mcp.listTools('remote').then(() => null, (e) => e);
+  assert.ok(err, 'the call fails');
+  assert.equal(err.status, 502);
+  assert.match(err.message, /MCP remote: сеть — /);
+  assert.ok(err.message.includes(url), 'the address that did not answer is in the message');
+  assert.doesNotMatch(err.message, /^MCP remote: fetch failed$/, 'the bare fetch message is gone');
 });
 
 test('importTasks: closed skipped, dedupe, change-only updates, manual status and hidden kept; transition; PR', async () => {
@@ -281,7 +372,9 @@ test('standalone MCP setup persists, keeps credentials write-only, and reconnect
     const connect = () => h.api('POST', '/api/mcp/servers/own/reconnect');
     assert.equal((await connect()).body.tools.length, 3);
     await h.api('PUT', '/api/mcp/servers/own', { enabled: false });
-    assert.equal((await connect()).body.enabled, false);
+    const off = await connect();
+    assert.equal(off.status, 400, 'a switched-off service is not connected again');
+    assert.match(off.body.error, /выключен/);
     assert.equal((await h.api('POST', '/api/mcp/servers/unknown/reconnect')).status, 404);
   } finally { await h.close(); }
 });

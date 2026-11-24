@@ -265,7 +265,7 @@ test('the person writes while the agent waits for its sub-agent: the wait ends, 
   assert.deepEqual((await h.api('POST', `/api/sessions/${main.id}/messages`, { text: 'и ещё sowa поправь' })).body, { queued: true }, 'the message itself waits in the persisted queue');
   const r = (await waiting).body;
   assert.equal(r.status, 'background');
-  assert.match(r.summary, /Человек написал тебе.*Заверши ход/s);
+  assert.match(r.summary, /Тебе написали, пока ты ждал.*Заверши ход/s);
   const helper = (await state()).sessions.find((s) => s.id === run.sessionId);
   assert.deepEqual([helper.awaitedBy ?? null, helper.askedParent, helper.released ?? null], [null, true, null]);
   // its result still reaches the caller, as a message
@@ -355,13 +355,13 @@ test('settings: read, validate, save to the local config file', async () => {
     agents: { mock: { approvalMode: 'plan', modelGrades: { default: 'm-big', fast: 'm-small' }, allowedGrades: ['default'], taskPromptTemplate: '/full-task-ui {taskUrl}{notes}' } },
     tasks: { refreshSec: 30 },
   })).body;
-  assert.deepEqual(saved.agents.mock.modelGrades, { default: 'm-big', fast: 'm-small', review: 'GLM-5.3-Flash-262k', explore: 'Qwen3.6-35B-262k' });
+  assert.deepEqual(saved.agents.mock.modelGrades, { default: 'm-big', fast: 'm-small', strong: 'DeepSeek-V4.1-Flash-1017-262k', review: 'GLM-5.3-Flash-262k', explore: 'Qwen3.6-35B-262k' });
   const local = JSON.parse(fs.readFileSync(h.configFile.replace(/\.json$/, '.local.json'), 'utf8'));
   assert.deepEqual(local.agents.mock, { approvalMode: 'plan', settings: { agents: { modelGrades: { default: 'm-big', fast: 'm-small' }, allowedGrades: ['default'] } }, taskPromptTemplate: '/full-task-ui {taskUrl}{notes}' });
   assert.equal(local.integrations.tasks.refreshSec, 30);
   const chat = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', cwd: repo })).body;
-  // grades merge over the configured defaults; the allowed list is replaced
-  assert.deepEqual(JSON.parse(fs.readFileSync(chat.settingsPath, 'utf8')).agents, { modelGrades: { default: 'm-big', fast: 'm-small', review: 'GLM-5.3-Flash-262k', explore: 'Qwen3.6-35B-262k' }, allowedGrades: ['default'] });
+  // grades are the harness's own table, not the CLI's: they never reach the CLI settings file
+  assert.equal(JSON.parse(fs.readFileSync(chat.settingsPath, 'utf8')).agents, undefined);
   await h.api('PUT', '/api/settings', { agents: { mock: { approvalMode: 'auto', taskPromptTemplate: null } } });
 });
 
@@ -452,6 +452,23 @@ test('the queue is visible and editable: a queued message can be taken back; the
   assert.equal((await h.api('POST', `/api/sessions/${s.id}/queue/send`)).status, 409, 'nothing to send');
 });
 
+test('«Сразу агенту» (cut): the message ends the running step and opens the next one; plain messages never cut', async () => {
+  const s = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', cwd: repo, prompt: '#silent 60000' })).body;
+  await waitFor(async () => (await state()).sessions.find((x) => x.id === s.id).status === 'running', { what: 'running' });
+  assert.equal((await h.api('POST', `/api/sessions/${s.id}/messages`, { text: 'в очередь, шаг идёт' })).body.cut, undefined);
+  const r = await h.api('POST', `/api/sessions/${s.id}/messages`, { text: 'сразу агенту', cut: true });
+  assert.deepEqual([r.body.queued, r.body.cut], [true, true], 'the step was cut by the request itself');
+  await waitFor(async () => (await messages(s.id)).some((m) => m.kind === 'user' && m.text === 'сразу агенту'), { timeout: 20000, what: 'the cutting message delivered' });
+  await waitFor(async () => (await messages(s.id)).some((m) => m.kind === 'user' && m.text === 'в очередь, шаг идёт'), { timeout: 30000, what: 'the earlier queue delivered after it' });
+  const msgs = await messages(s.id);
+  const cut = msgs.findIndex((m) => m.kind === 'user' && m.text === 'сразу агенту');
+  const queued = msgs.findIndex((m) => m.kind === 'user' && m.text === 'в очередь, шаг идёт');
+  assert.ok(cut >= 0 && queued > cut, 'the cutting message opens its turn, the earlier queue follows in the next');
+  await waitFor(async () => (await state()).sessions.find((x) => x.id === s.id).status === 'idle', { timeout: 30000, what: 'idle' });
+  const after = (await messages(s.id)).filter((m) => m.kind === 'user').map((m) => m.text);
+  assert.deepEqual(after, ['#silent 60000', 'сразу агенту', 'в очередь, шаг идёт'], 'nothing was lost to the cut and nothing was doubled');
+});
+
 test('the CLI reports the harness MCP server failed: a plain warning in the chat, once', async () => {
   const s = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', cwd: repo, prompt: '#noharness привет' })).body;
   await waitFor(async () => (await state()).sessions.find((x) => x.id === s.id).status === 'idle', { what: 'idle' });
@@ -522,7 +539,9 @@ test('settings: model catalogue objects, labels, presets, timeouts, flags and tr
   assert.deepEqual(Object.keys(s.integrations.tasks).sort(), ['closedStatuses', 'enabled', 'onStartTransition', 'space', 'statusMap', 'urlTemplate']);
   // default "auto": off here (no console MCP server named sourcecontrol)
   assert.deepEqual(s.integrations.pr, { enabled: 'auto', active: false, me: null, limits: { titleBytes: 100, bodyBytes: 512 } });
-  assert.ok(!JSON.stringify(s).match(/secret|token/i));
+  assert.equal(s.chat.steerAfterMs, 30000, 'a message reaches a working agent without waiting for its sub-agents');
+  // the names are a list of what the secrets file holds; the values never leave it
+  assert.ok(!/"(?:mcp)?secrets?":|"\w*[tT]oken\w*":/i.test(JSON.stringify(s)));
 
   const bad = (body) => h.api('PUT', '/api/settings', body).then((r) => r.status);
   assert.equal(await bad({ agents: { mock: { model: 42 } } }), 400);

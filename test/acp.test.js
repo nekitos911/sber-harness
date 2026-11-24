@@ -45,6 +45,10 @@ const idle = (id) => waitFor(async () => (await session(id)).status === 'idle', 
 const send = (id, text) => h.api('POST', `/api/sessions/${id}/messages`, { text });
 const said = async (id) => (await messages(id)).filter((m) => m.kind === 'assistant').map((m) => m.text);
 const records = () => fs.readFileSync(argvFile, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+/** The `update` objects of a sanitized ACP fixture: bare updates or whole JSON-RPC session/update lines; requests are skipped. */
+const fixture = (name) => fs.readFileSync(path.join(CODE_ROOT, 'test', 'fixtures', name), 'utf8').split('\n').filter(Boolean)
+  .map((l) => JSON.parse(l)).filter((m) => !m.method || m.method === 'session/update').map((m) => m.params?.update ?? m);
+const tools = (evs) => evs.filter((e) => e.type === 'tool_call').map((e) => [e.id, e.name, e.input]);
 let chat;
 
 before(async () => {
@@ -64,8 +68,14 @@ test('mapping helpers: session/update -> events, MCP servers in ACP shape', () =
   assert.deepEqual(acpEvents({ sessionUpdate: 'tool_call_update', toolCallId: 't', status: 'completed', content: [{ type: 'diff', path: 'a.txt', oldText: 'x', newText: 'y' }] }),
     [{ type: 'tool_result', id: 't', output: '--- a.txt\n+++ a.txt\n-x\n+y', isError: false }]);
   assert.deepEqual(acpEvents({ sessionUpdate: 'user_message_chunk', content: { type: 'text', text: 'old' } }), []);
-  assert.deepEqual(acpMcpServers({ command: 'node', args: ['h.js'], env: { A: '1' } }, { web: { url: 'http://x', headers: { K: 'v' } } }),
-    [{ type: 'http', name: 'web', url: 'http://x', headers: [{ name: 'K', value: 'v' }] }, { name: 'harness', command: 'node', args: ['h.js'], env: [{ name: 'A', value: '1' }] }]);
+  // the per-step usage rides in _meta of the agent's own chunks: it becomes the ring's «последний ход»
+  assert.deepEqual(acpEvents({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'x' }, _meta: { usage: { inputTokens: 10, outputTokens: 2, cachedReadTokens: 4 } } }),
+    [{ type: 'usage', contextTokens: 12, input: 10, output: 2, cacheRead: 4 }, { type: 'text', text: 'x', delta: true }]);
+  // only the harness server: a chat's own MCP list is the CLI's settings.json, and the agent waits for every server it
+  // is given before it answers session/new; `timeoutMs` (mcp.acpStartTimeoutMs) is where a dead one gives way
+  assert.deepEqual(acpMcpServers({ command: 'node', args: ['h.js'], env: { A: '1' } }, { timeoutMs: 5000 }),
+    [{ name: 'harness', command: 'node', args: ['h.js'], env: [{ name: 'A', value: '1' }], timeoutMs: 5000 }]);
+  assert.equal(acpMcpServers({ command: 'node' })[0].timeoutMs, 30000, 'a server that does not start gives way after 30 s');
 });
 
 test('a prompt streams text, thought and plan; the next message reuses the same agent session', async () => {
@@ -87,17 +97,42 @@ test('a prompt streams text, thought and plan; the next message reuses the same 
   assert.equal(records().length, 1, 'one process, one session/new');
 });
 
+test('tool cards carry the real tool and its arguments: «2 searches» announced as `Glob`/`Поиск` with {}, the ToolCall wrapper as the harness tool', () => {
+  const evs = fixture('gigacode.acp-toolcall.ndjson').flatMap(acpEvents);
+  assert.deepEqual(tools(evs).slice(0, 3), [
+    ['call_glob1', 'glob', null], // announced before the pattern was known: the name is there at once, the input follows
+    ['call_glob2', 'glob', null],
+    ['call_search3', 'search', null],
+  ]);
+  assert.deepEqual(evs.filter((e) => e.type === 'tool_input').slice(0, 3).map((e) => [e.id, e.input.pattern]),
+    [['call_glob1', '**/harness/**/*.md'], ['call_glob2', '.gigacode/agents/**/*.md'], ['call_search3', '**/harness/**/*.md']]);
+  assert.deepEqual(evs.find((e) => e.type === 'tool_input' && e.id === 'call_shell4').input, { command: 'git rev-parse --short HEAD', description: 'Show the short HEAD hash' });
+  // a wrapper whose call is not named yet (its JSON is in the title, the tool is not): the card waits for the update,
+  // and «tool» is the name the turn keeps until then
+  assert.deepEqual(tools(evs).find(([id]) => id === 'call_wrapper6'), ['call_wrapper6', 'tool', null], 'no card of the wrapper while the name is on its way');
+  const agentCall = evs.find((e) => e.type === 'tool_input' && e.id === 'call_wrapper6');
+  assert.deepEqual([agentCall.name, agentCall.input.subagent_type], ['mcp__harness__agent', 'general-purpose']);
+  assert.deepEqual(tools(evs).find(([id]) => id === 'call_ask7').slice(0, 2), ['call_ask7', 'AskUserQuestion'], 'a question is its own tool: the card says so at once');
+  assert.deepEqual(tools(evs).find(([id]) => id === 'call_search5').slice(0, 2), ['call_search5', 'tool_search']);
+  assert.deepEqual(tools(evs).find(([id]) => id === 'call_edit8').slice(0, 2), ['call_edit8', 'write_file']);
+  assert.deepEqual(evs.filter((e) => e.type === 'tool_result').map((e) => [e.id, e.isError]),
+    [['call_glob1', false], ['call_glob2', false], ['call_search3', false], ['call_shell4', false], ['call_search5', false], ['call_wrapper6', false], ['call_ask7', false]]);
+});
+
 test('a call announced with rawInput {} gets its input from the later tool_call_update (card and sub-agent chat)', async () => {
-  const lines = fs.readFileSync(path.join(CODE_ROOT, 'test', 'fixtures', 'gigacode.acp-late-input.ndjson'), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  const lines = fixture('gigacode.acp-late-input.ndjson');
   const evs = lines.flatMap(acpEvents);
-  assert.deepEqual(evs.filter((e) => e.type === 'tool_input').map((e) => e.id), ['toolu_01', 'toolu_02']);
-  assert.equal(evs.find((e) => e.type === 'tool_call').input && JSON.stringify(evs.find((e) => e.type === 'tool_call').input), '{}');
+  assert.deepEqual([...new Set(evs.filter((e) => e.type === 'tool_input').map((e) => e.id))], ['toolu_01', 'toolu_02']);
+  // both are announced as a wrapper being prepared: «tool_search» is the wrapper's own tool name (known at once), and
+  // the card of the wrapped call appears with the update that names it
+  assert.deepEqual(evs.filter((e) => e.type === 'tool_call').map((e) => [e.name, e.input]), [['tool_search', null], ['tool', null]], 'no card of the wrapper while the name is on its way');
 
   await send(chat.id, '#late');
+  // the wrapper's own call is finished before its tool is named; the sub-agent chat is opened by the next update
+  const agent = await waitFor(async () => (await messages(chat.id)).find((m) => m.tool?.id === 'toolu_02' && m.tool.subSessionId), { what: 'sub-agent chat' });
   const tool = await waitFor(async () => (await messages(chat.id)).find((m) => m.tool?.id === 'toolu_01' && m.tool.status === 'ok'), { what: 'ToolSearch done' });
   assert.deepEqual(tool.tool.input, { query: 'harness', max_results: 5 });
-  const agent = (await messages(chat.id)).find((m) => m.tool?.id === 'toolu_02');
-  assert.equal(agent.tool.input.subagent_type, 'general-purpose');
+  assert.deepEqual([agent.tool.name, agent.tool.input.subagent_type], ['mcp__harness__agent', 'general-purpose']);
   const sub = await session(agent.tool.subSessionId);
   assert.equal(sub.title, 'general-purpose · Проверка оркестрации');
   const first = (await messages(sub.id)).find((m) => m.kind === 'user');
@@ -110,6 +145,19 @@ test('an error stop reason (max_tokens) is shown although the turn closes at its
   const err = await waitFor(async () => (await messages(chat.id)).find((m) => m.kind === 'error' && /max_tokens/.test(m.text)), { what: 'stop reason error' });
   assert.equal(err.text, 'Агент остановился: max_tokens');
   await waitFor(async () => { const s = await session(chat.id); return s.status === 'error' && !s.turnClosing; }, { what: 'error status' });
+});
+
+test('the model is set over the ACP session: one the catalogue names, or a note and the agent\'s own default', async () => {
+  const fit = async (model) => {
+    const s = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'acpmock', cwd, model, prompt: 'привет' })).body;
+    await idle(s.id);
+    return messages(s.id);
+  };
+  // the catalogue's ids keep the context suffix the backend does not take in argv: the session gets the very id
+  assert.ok((await fit('GLM-5.3-Flash-262k')).some((m) => m.kind === 'assistant' && m.text.includes('ACP mock') && m.text.includes('[GLM-5.3-Flash-262k]')));
+  const gone = await fit('Nope-1.0-262k');
+  assert.ok(gone.some((m) => m.kind === 'system' && /Модели «Nope-1.0-262k» нет в каталоге сервера/.test(m.text)), JSON.stringify(gone.filter((m) => m.kind === 'system')));
+  assert.ok(gone.some((m) => m.kind === 'assistant' && m.text.includes('ACP mock') && !m.text.includes('[')), 'the turn ran with the agent\'s own default');
 });
 
 test('«Полный доступ»: a permission request is allowed once by the harness, no card; the CLI\'s question is ONE card that pauses the turn', async () => {
@@ -135,8 +183,31 @@ test('«Полный доступ»: a permission request is allowed once by the
   assert.equal((await session(full.id)).status, 'idle');
 });
 
+test('a harness MCP tool is allowed without a card in the default mode too: the agent asking «may I?» never waits', async () => {
+  const plain = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'acpmock', cwd, approvalMode: 'default', prompt: '#mcp' })).body;
+  await idle(plain.id);
+  const msgs = await messages(plain.id);
+  assert.ok(!msgs.some((m) => m.kind === 'permission'), 'no card for the harness tool');
+  assert.ok(msgs.some((m) => m.kind === 'system' && m.text === 'Разрешено автоматически: mcp__harness__ask {"question":"Куда коммитить?"}'), JSON.stringify(msgs.filter((m) => m.kind === 'system')));
+  assert.ok((await said(plain.id)).at(-1).includes('спросил harness'));
+  const call = msgs.find((m) => m.tool?.id === 't2');
+  assert.deepEqual([call.tool.name, call.tool.input], ['mcp__harness__ask', { question: 'Куда коммитить?' }], 'the card names the wrapped tool, not ToolCall');
+  assert.equal((await session(plain.id)).waitingFor ?? null, null);
+});
+
+test('«Полный доступ» leaves a line instead of a card: every permission request is answered by the harness', async () => {
+  const full = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'acpmock', cwd, approvalMode: 'auto', prompt: '#mcp' })).body;
+  await idle(full.id);
+  const msgs = await messages(full.id);
+  assert.ok(!msgs.some((m) => m.kind === 'permission'), 'no card in full access');
+  const line = msgs.find((m) => m.kind === 'system' && m.text.startsWith('Разрешено автоматически:'));
+  assert.match(line.text, /^Разрешено автоматически: mcp__harness__ask /);
+  assert.ok((await said(full.id)).some((t) => t.includes('спросил harness')), JSON.stringify(await said(full.id)));
+});
+
 test('permission request: held until answered (allow writes the file, reject is reported), the card shows the answer', async () => {
   await h.api('PATCH', `/api/sessions/${chat.id}`, { approvalMode: 'default' }); // asks (not «Полный доступ»)
+  await waitFor(async () => (await session(chat.id)).approvalMode === 'default', { what: 'default mode' });
   await send(chat.id, '#perm');
   const card = await waitFor(async () => (await messages(chat.id)).find((m) => m.kind === 'permission' && !m.permission.resolved), { what: 'permission card' });
   assert.deepEqual([card.permission.transport, card.permission.tool, card.permission.options.map((o) => o.id)], ['acp', 'Запись out.txt', ['allow', 'reject']]);

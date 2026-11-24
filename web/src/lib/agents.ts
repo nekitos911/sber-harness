@@ -6,7 +6,21 @@ import type { AgentMeta, Grade, ModelEntry, Settings } from '../types'
 /** The agent the settings lead with: the default one (mock in the demo), else GigaCode. */
 export const mainAgent = (form: Settings) => (form.defaultAgent !== 'claude' && form.agents[form.defaultAgent] ? form.defaultAgent : form.agents.gigacode ? 'gigacode' : Object.keys(form.agents).find((id) => id !== 'claude') ?? '')
 
-export const GRADES: Grade[] = ['default', 'fast', 'review', 'explore']
+// The grades the server knows (server/models.js GRADES); `strong` is the default grade of sub-agents.
+export const GRADES: Grade[] = ['default', 'fast', 'strong', 'review', 'explore']
+
+/** What each grade is for: the settings screen hint and the picker's «уровень: …» line. */
+export const GRADE_ROLES: Record<Grade, string> = {
+  default: 'модель по умолчанию, если уровень не задан',
+  fast: 'поиск и разведка, файловые помощники',
+  strong: 'основная работа субагентов',
+  review: 'ревью и аудит',
+  explore: 'глубокое исследование кода',
+}
+
+/** Same backend model: a context suffix (-262k) is not a different id. */
+export const sameModel = (a: string | null | undefined, b: string | null | undefined) =>
+  !!a && !!b && String(a).toLowerCase().replace(/-\d+[km]$/i, '') === String(b).toLowerCase().replace(/-\d+[km]$/i, '')
 
 /** Catalog entries may arrive as plain strings from older configs. */
 export const normModels = (list: (ModelEntry | string)[] | undefined): ModelEntry[] =>

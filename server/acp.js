@@ -10,6 +10,7 @@ import { resolveInside } from './fs.js';
 
 const PROTOCOL_VERSION = 1;
 const ACP_INIT_TIMEOUT_MS = 120000;
+const MCP_START_TIMEOUT_MS = 30000; // how long the agent may start one MCP server (mcpServers.<name>.timeoutMs)
 const LOAD_ATTEMPTS = 3; // session/load: tries before a new session
 const LOAD_RETRY_MS = 3000;
 
@@ -66,12 +67,24 @@ function connect(child, { onRequest, onNotify, log }) {
   };
 }
 
-/** harness + agentMcpServers in ACP shape: stdio { name, command, args, env: [{ name, value }] }, http { type, name, url, headers }. */
-export function acpMcpServers(harnessMcp, agentMcpServers = {}) {
+/**
+ * The MCP servers an ACP session gets, in ACP shape (MCP SDK schema): stdio { name, command, args, env: [{ name, value }] },
+ * http { type: 'http', name, url, headers: [{ name, value }], enabled: true }. An extra key inside a server object is
+ * fine; an extra key in session/new params is not — the agent parses them strictly and rejects the whole request.
+ *
+ * Only the harness server: the servers set up in the harness are for its own task and PR work, while a chat starts the
+ * agent's own list from its settings.json. The agent waits for every server it is given before it answers session/new,
+ * so a chat would hang on a tracker or documentation server it never uses.
+ *
+ * `timeoutMs` comes from the config (mcpServers.<name>.timeoutMs, harness's own harnessMcp.timeout): the agent gives up
+ * on a server that does not start after it and goes on with the rest (VERIFY: field name in the ACP schema).
+ */
+export function acpMcpServers(harnessMcp, { timeoutMs = MCP_START_TIMEOUT_MS } = {}) {
   const pairs = (obj) => Object.entries(obj || {}).map(([name, value]) => ({ name, value: String(value) }));
-  return Object.entries({ ...agentMcpServers, harness: harnessMcp }).map(([name, d]) => (d.command
-    ? { name, command: d.command, args: d.args || [], env: pairs(d.env) }
-    : { type: 'http', name, url: d.url || d.httpUrl, headers: pairs(d.headers) }));
+  return [{ name: 'harness', ...(harnessMcp.command
+    ? { command: harnessMcp.command, args: harnessMcp.args || [], env: pairs(harnessMcp.env) }
+    : { type: 'http', url: harnessMcp.url || harnessMcp.httpUrl, headers: pairs(harnessMcp.headers), enabled: true }),
+  timeoutMs }];
 }
 
 const textOf = (content) => (Array.isArray(content) ? content : [content]).filter(Boolean).map((c) => {
@@ -84,19 +97,106 @@ const textOf = (content) => (Array.isArray(content) ? content : [content]).filte
   return inner?.type === 'text' ? inner.text : inner ? JSON.stringify(inner) : '';
 }).join('\n');
 
+/** The step's token usage as a harness 'usage' event; GigaCode reports it in the chunk's _meta, not in the prompt response. */
+function usageFrom(update) {
+  const u = update?._meta?.usage;
+  return u && Number.isFinite(u.inputTokens)
+    ? [{ type: 'usage', contextTokens: (u.inputTokens || 0) + (u.outputTokens || 0), input: u.inputTokens || 0, output: u.outputTokens || 0, cacheRead: u.cachedReadTokens || 0 }]
+    : [];
+}
+
+const isEmptyInput = (v) => v == null || (typeof v === 'object' && !Array.isArray(v) && !Object.keys(v).length);
+
+/**
+ * An ACP tool call as the harness sees it: `{ name, input }`. GigaCode's `title` is its own card title (`Shell: git
+ * status (…)`), so the tool name comes from `_meta.toolName` and the arguments from `rawInput` or, for the ToolCall /
+ * ToolSearch wrappers, from the wrapper's own arguments (`{"prompt": …}` after `agent (harness MCP Server): `, the
+ * pattern after `Поиск `).
+ */
+export function acpToolCall(tc = {}, { label = false } = {}) {
+  const meta = tc._meta || {};
+  const title = String(tc.title ?? '');
+  const raw = isEmptyInput(tc.rawInput) ? null : tc.rawInput;
+  // the call the wrapper names is still being prepared: its title is the wrapper's (`ToolCall`, `ToolSearch: harness`),
+  // so a card under that name would hang for a minute, and the query in it is not the wrapped tool's name either — the
+  // card appears with the next update. `tool_search` is the wrapper's own tool and is never replaced.
+  const wrapper = String(meta.toolName ?? '');
+  if (/^(tool_call|toolsearch)$/i.test(wrapper) && !wrapperName(title, '')) return { name: wrapper === 'tool_call' ? 'tool' : wrapper, input: null };
+  const input = raw ?? wrapperInput(title);
+  // a bare `update` names nothing: the harness keeps the tool it announced (null = keep it)
+  if (!meta.toolName) return { name: tc.title ? title : null, kind: tc.kind ?? null, input };
+  const name = String(meta.toolName);
+  // a permission card names the call the way the agent titled it (`Запись out.txt`) — the person answers that, not `write_file`
+  const shown = label && tc.title ? title : name;
+  // `glob` / `search` / `run_shell_command`: the tool itself; `Glob: '**\/*.md'` is only its card title, and an
+  // announced call may carry nothing at all: the pattern is still readable from the title
+  if (!/^(tool_call|toolsearch)$/i.test(name)) return { name: shown, input: raw ?? fromTitle(name, title, tc.kind) };
+  const inner = wrapperName(title, name);
+  // the wrapper's own arguments (`agent (harness MCP Server): {…}`) are the wrapped call's; `ToolSearch: harness` is a query
+  if (inner !== name) return { name: label && tc.title ? title : inner, input: raw ?? toolArguments(title) };
+  // the wrapper is still on its own title (`ToolCall` / `ToolSearch: harness agent`): the call it wraps is not named yet
+  return { name: 'tool', input: null };
+}
+
+/** Arguments an empty call still spells out in its title: the pattern after `Поиск: `, the command after `Shell: `. */
+function fromTitle(name, title, kind) {
+  const sep = title.indexOf(': ');
+  if (sep < 0) return null;
+  const text = title.slice(sep + 2).trim();
+  if (!text) return null;
+  if (/shell|bash|command/i.test(name) || kind === 'execute') return { command: text.replace(/\s+\([^(]*\)$/, '') };
+  return { pattern: text.replace(/^'(.*)'$/, '$1') };
+}
+
+/** The wrapped tool's arguments: the JSON after `: ` if it is an object (`select:mcp__harness__ask` → its name only). */
+function toolArguments(title) {
+  const input = wrapperInput(title);
+  return input && typeof input === 'object' && !/^select:/i.test(title.slice(title.indexOf(':') + 1).trim()) ? input : null;
+}
+
+/** The wrapper's tool: `agent (harness MCP Server): {…}` → `mcp__harness__agent`; `select:mcp__harness__ask` → itself. */
+function wrapperName(title, fallback) {
+  const server = title.match(/^(\S+) \(([^)]*) MCP Server\)/i);
+  if (server) {
+    const id = server[2].match(/[a-z0-9-]+$/i)?.[0];
+    return id ? `mcp__${id}__${server[1]}` : server[1];
+  }
+  const selected = title.match(/^\S*:\s*(mcp__\w+)/);
+  if (selected) return selected[1];
+  const tool = title.match(/^([a-zA-Z_][\w.]{1,60})(?::|$)/);
+  return tool && !/^tool_?call$/i.test(tool[1]) ? tool[1] : fallback;
+}
+
+/** The wrapper's arguments: JSON after `: `, else `<Verb>: <arg>` (`Поиск **\/*.md` → `{ search: '**\/*.md' }`). */
+function wrapperInput(title) {
+  const json = title.match(/:\s*(\{[\s\S]*\})\s*$/)?.[1];
+  if (json) {
+    try {
+      return JSON.parse(json);
+    } catch {}
+  }
+  const sep = title.indexOf(': ');
+  return sep < 0 ? null : { [title.slice(0, sep).trim().toLowerCase()]: title.slice(sep + 2).trim() };
+}
+
 /** session/update -> the normalized events headless turns produce (plus 'plan'). Replays during session/load are skipped by the caller. */
 export function acpEvents(update) {
+  const usage = usageFrom(update);
   switch (update?.sessionUpdate) {
     case 'agent_message_chunk':
-      return update.content?.type === 'text' ? [{ type: 'text', text: update.content.text, delta: true }] : [];
+      return update.content?.type === 'text' ? [...usage, { type: 'text', text: update.content.text, delta: true }] : usage;
     case 'agent_thought_chunk':
       return update.content?.type === 'text' ? [{ type: 'thought', text: update.content.text, delta: true }] : [];
-    case 'tool_call':
-      return [{ type: 'tool_call', id: update.toolCallId, name: update.title || update.kind || 'tool', input: update.rawInput ?? null }];
+    case 'tool_call': {
+      const { name, input } = acpToolCall(update);
+      // a wrapper that has not named its tool yet: the card is «инструмент», not a call of ToolCall that hangs
+      const known = name && name !== 'tool';
+      return [{ type: 'tool_call', id: update.toolCallId, name: name || update.kind || 'tool', input: known ? input : null }];
+    }
     case 'tool_call_update': {
       // the call came with rawInput {} (announced before the model finished it); the real input follows in an update
-      const hasInput = update.rawInput != null && JSON.stringify(update.rawInput) !== '{}';
-      const out = hasInput ? [{ type: 'tool_input', id: update.toolCallId, input: update.rawInput }] : [];
+      const call = acpToolCall(update);
+      const out = call.input != null ? [{ type: 'tool_input', id: update.toolCallId, input: call.input, name: call.name && call.name !== 'tool' ? call.name : null }] : [];
       if (update.status === 'completed' || update.status === 'failed') {
         out.push({ type: 'tool_result', id: update.toolCallId, output: textOf(update.content) || (update.rawOutput != null ? JSON.stringify(update.rawOutput) : ''), isError: update.status === 'failed' });
       }
@@ -107,6 +207,23 @@ export function acpEvents(update) {
     default:
       return []; // user_message_chunk, available_commands_update, current_mode_update, ...
   }
+}
+
+/**
+ * Whether a permission request is answered by the harness itself, and with which option: the harness's own MCP tools
+ * (server `harness` in `_meta.serverId`) are pre-allowed in every mode, and in «Полный доступ» (`turn.fullAccess`)
+ * everything is; a question is never — it waits for the person. null = the user answers the card.
+ */
+export function autoApprove({ toolCall, options } = {}) {
+  // a question waits for the person in every mode: pre-allowing «may I ask?» would answer the question itself
+  const asks = Array.isArray(toolCall?.rawInput?.questions);
+  if (asks) return null;
+  const mine = toolCall?._meta?.serverId === 'harness' || /^mcp__harness__/.test(String(toolCall?._meta?.toolName ?? ''));
+  if (!mine && !toolCall?.fullAccess) return null;
+  const list = options || [];
+  const pick = ['allow_always', 'allow_once'].map((kind) => list.find((o) => o.kind === kind)).find(Boolean);
+  if (!pick) return null;
+  return { optionId: pick.optionId, why: mine ? 'инструмент harness' : 'Полный доступ — вопросы не задаются' };
 }
 
 /**
@@ -160,7 +277,7 @@ export function createAcp({ onWarm = () => {} } = {}) {
     } finally {
       fs.closeSync(err);
     }
-    const c = { sid: o.sid, agent: o.agent ?? null, cwd: o.cwd, mcp: acpMcpServers(o.ctx.harnessMcp, o.ctx.agentMcpServers), child, held: new Map(), helpers: new Map(), loading: false, turn: null, dead: false, errFile, sessionId: null };
+    const c = { sid: o.sid, agent: o.agent ?? null, cwd: o.cwd, mcp: acpMcpServers(o.ctx.harnessMcp, { timeoutMs: o.ctx.mcpTimeoutMs }), child, held: new Map(), helpers: new Map(), loading: false, turn: null, dead: false, errFile, sessionId: null };
     conns.set(o.sid, c);
     const exited = new Promise((resolve) => child.on('exit', (code, signal) => resolve({ code, signal })));
     child.on('error', (e) => log(`[acp] ${e.message}\n`));
@@ -194,19 +311,27 @@ export function createAcp({ onWarm = () => {} } = {}) {
           return;
         }
         if (!c.turn) return;
+        if (c.turn.usage) c.turn.usage.push(...usageFrom(params.update));
         for (const ev of acpEvents(params.update)) c.turn.emit(ev);
       },
       async onRequest(method, params) {
         if (method === 'session/request_permission') {
           if (!c.turn) return { outcome: { outcome: 'cancelled' } };
+          const call = acpToolCall(params.toolCall);
+          // the card's own title: the person decides on «Запись out.txt», while the event line keeps the tool's name
+          const labelled = acpToolCall(params.toolCall, { label: true });
+          // the ToolCall wrapper announces {} and carries the real arguments only here: the card may still be pending
+          if (params.toolCall?.toolCallId && call.input != null) c.turn.emit({ type: 'tool_input', id: params.toolCall.toolCallId, input: call.input, name: call.name });
+          const yes = autoApprove({ ...params, toolCall: { ...params.toolCall, fullAccess: !!c.turn.fullAccess } });
+          if (yes) {
+            c.turn.emit({ type: 'permission_auto', tool: call.name, input: call.input, why: yes.why });
+            return { outcome: { outcome: 'selected', optionId: yes.optionId } };
+          }
           const id = `p_${randomBytes(4).toString('hex')}`;
           const answer = new Promise((resolve) => c.held.set(id, resolve));
-          // GigaCode's ToolCall wrapper announces {} and carries the real arguments only here: fill the call's card too
-          const raw = params.toolCall?.rawInput;
-          if (params.toolCall?.toolCallId && raw != null && JSON.stringify(raw) !== '{}') c.turn.emit({ type: 'tool_input', id: params.toolCall.toolCallId, input: raw });
           c.turn.emit({
-            type: 'permission', id, toolId: params.toolCall?.toolCallId ?? null, tool: params.toolCall?.title || params.toolCall?.kind || 'tool',
-            input: params.toolCall?.rawInput ?? null, options: (params.options || []).map((x) => ({ id: x.optionId, label: x.name, kind: x.kind })),
+            type: 'permission', id, toolId: params.toolCall?.toolCallId ?? null, tool: labelled.name,
+            input: call.input, options: (params.options || []).map((x) => ({ id: x.optionId, label: x.name, kind: x.kind })),
           });
           return answer;
         }
@@ -233,7 +358,7 @@ export function createAcp({ onWarm = () => {} } = {}) {
         c.rpc.request('initialize', { protocolVersion: PROTOCOL_VERSION, clientCapabilities: { fs: { readTextFile: !!o.clientFs, writeTextFile: !!o.clientFs }, terminal: false } }, o.initTimeoutMs || ACP_INIT_TIMEOUT_MS),
         exited.then(({ code }) => { throw new Error(`ACP-агент завершился при запуске (код ${code})`); }),
       ]);
-      const mcpServers = acpMcpServers(o.ctx.harnessMcp, o.ctx.agentMcpServers);
+      const mcpServers = acpMcpServers(o.ctx.harnessMcp, { timeoutMs: o.ctx.mcpTimeoutMs });
       c.note = null;
       if (o.externalSessionId && init?.agentCapabilities?.loadSession) {
         c.loading = true;
@@ -259,7 +384,15 @@ export function createAcp({ onWarm = () => {} } = {}) {
         c.note = 'ACP: агент не умеет загружать сессии — начата новая; харнесс передал ей правила и краткую запись этого чата.';
         c.lostContext = true;
       }
-      if (!c.sessionId) c.sessionId = (await c.rpc.request('session/new', { cwd: o.cwd, mcpServers })).sessionId;
+      // session/new can be long (the agent cold-starts the MCP servers); the child dying is the only other outcome
+      if (!c.sessionId) {
+        const created = await Promise.race([
+          c.rpc.request('session/new', { cwd: o.cwd, mcpServers }, o.initTimeoutMs || ACP_INIT_TIMEOUT_MS),
+          exited.then(({ code }) => { throw new Error(`ACP-агент завершился при создании сессии (код ${code})`); }),
+        ]);
+        c.sessionId = created.sessionId;
+        c.models = created.models || null;
+      }
       onWarm(o.sid, true);
     } catch (e) {
       drop(o.sid);
@@ -270,13 +403,45 @@ export function createAcp({ onWarm = () => {} } = {}) {
 
   /**
    * One prompt as a turn; returns the same handle shape as runner.runTurn ({ pid, startedAt, stop, detach, done }).
-   * o = { sid, launcher, ctx, command, cwd, env, logFile, roots, externalSessionId, prompt, onEvent, initTimeoutMs, clientFs }
+   * o = { sid, launcher, ctx, command, cwd, env, logFile, roots, externalSessionId, prompt, onEvent, initTimeoutMs, clientFs,
+   *       fullAccess: the chat runs in «Полный доступ» — permission requests are answered without a card }
    */
+  /**
+   * Puts the session on the asked model when this account really has it: `session/new` answers with its own catalogue
+   * (`models.currentModelId` / `availableModels`), so an id that left the catalogue gets a note in the chat instead of a
+   * failed turn. Best effort: an agent without `session/set_model` keeps whatever it chose.
+   */
+  async function fitModel(o, c) {
+    const wanted = o.ctx.acpWantedModel ?? null;
+    const models = c.models;
+    if (!wanted || !models || c.fittedModel === wanted) return;
+    const available = Array.isArray(models.availableModels) ? models.availableModels : [];
+    const ids = available.map((m) => m?.modelId ?? m?.id).filter(Boolean);
+    const base = (id) => String(id).toLowerCase().replace(/-\d+[km]$/i, '');
+    const hit = ids.find((id) => id === wanted) ?? ids.find((id) => base(id) === base(wanted)) ?? null;
+    const current = models.currentModelId ?? null;
+    if (!hit) {
+      c.fittedModel = wanted;
+      o.onEvent({ type: 'note', text: `⚠ Модели «${wanted}» нет в каталоге сервера — ход идёт с моделью по умолчанию` });
+      return;
+    }
+    if (hit !== current) {
+      try {
+        await c.rpc.request('session/set_model', { sessionId: c.sessionId, modelId: hit }, o.initTimeoutMs / 4 || 30000);
+        c.models = { ...models, currentModelId: hit };
+      } catch (e) {
+        o.onEvent({ type: 'note', text: `⚠ Не удалось переключить сессию на «${hit}» (${e.message}) — ход идёт с моделью по умолчанию` });
+      }
+    }
+    c.fittedModel = current === hit ? wanted : hit;
+  }
+
   function turn(o) {
     const res = { code: null, signal: null, sawResult: false, timedOut: false, stopped: false, detached: false, error: null, stderrTail: '', eventCount: 0, priorOutput: false };
     let c = null;
     let stop = false;
     let settle;
+    const usage = []; // per-step usage from the chunk _meta: the turn's totals for the counter
     const done = new Promise((resolve) => { settle = resolve; });
     const emit = (ev) => {
       res.eventCount++;
@@ -288,7 +453,10 @@ export function createAcp({ onWarm = () => {} } = {}) {
       try {
         c = await ensure(o);
         clearTimeout(idleTimers.get(o.sid));
-        c.turn = { emit, roots: o.roots };
+        c.turn = { emit, roots: o.roots, usage, fullAccess: !!o.fullAccess };
+        // the model lives in the session: session/new has already told us what this account can run, so a stale id is
+        // switched (or dropped to the agent's own default) HERE, without a respawn
+        await fitModel(o, c).catch(() => {});
         if (c.sessionId) emit({ type: 'session', id: c.sessionId });
         if (c.note) {
           emit({ type: 'note', text: c.note });
@@ -306,11 +474,12 @@ export function createAcp({ onWarm = () => {} } = {}) {
         // before the result event: the turn closes at result, an error stop reason must already be known then
         if (r?.stopReason === 'cancelled') res.stopped = true;
         else if (r?.stopReason && !['end_turn', 'max_turn_requests'].includes(r.stopReason)) res.error = `Агент остановился: ${r.stopReason}`;
-        // VERIFY: GigaCode's PromptResponse.usage fields (ACP unstable: inputTokens, outputTokens, cachedReadTokens)
+        // GigaCode puts the step's usage in the chunk _meta (already emitted as 'usage'); other agents answer it here
         if (r?.usage && Number.isFinite(r.usage.inputTokens)) {
           emit({ type: 'usage', contextTokens: (r.usage.inputTokens || 0) + (r.usage.outputTokens || 0), input: r.usage.inputTokens || 0, output: r.usage.outputTokens || 0, cacheRead: r.usage.cachedReadTokens || 0 });
         }
-        emit({ type: 'result', tokensIn: r?.usage?.inputTokens || 0, tokensOut: r?.usage?.outputTokens || 0 });
+        const total = [...usage].pop();
+        emit({ type: 'result', tokensIn: total?.input ?? 0, tokensOut: total?.output ?? 0 });
       } catch (e) {
         if (stop || e.stopped) res.stopped = true;
         else {

@@ -1,5 +1,5 @@
 // HTTP server: security (Host + token), REST router, WebSocket, static web/dist (or Vite middleware with --dev).
-// Usage: node server/index.js [--dev] [--print-config]
+// Usage: node server/index.js [--dev] [--demo] [--print-config] [--check]
 // Programmatic: startServer({ root, configOverrides, configFile, dataDir, port, dev })
 import http from 'node:http';
 import fs from 'node:fs';
@@ -16,10 +16,10 @@ import { createSessions, newId, settledTool, titleFrom } from './sessions.js';
 import { createOrchestration, commonDir, render } from './orchestration.js';
 import * as git from './git.js';
 import * as wfs from './fs.js';
-import { createMcpManager, loadSecrets, secretsFile, serverDefs, connectionDefinition, connectionList, saveServerSecret } from './mcp-client.js';
+import { createMcpManager, loadSecrets, secretsFile, secretsSource, serverDefs, serversFromFile, setSecret, deleteSecret, customServers, connectionDefinition, connectionList, saveServerSecret } from './mcp-client.js';
 import { launchers, gigacodeCommand } from './launchers.js';
 import { isAlive, resolveCommand, spawnOptions } from './runner.js';
-import { createModelCatalog, scanModelRefs } from './models.js';
+import { createModelCatalog, scanModelRefs, GRADES } from './models.js';
 import { pickFolder } from './pick-folder.js';
 import { runCheck, suggestCheck } from './checks.js';
 import { codeHints, hintsLine } from './hints.js';
@@ -41,7 +41,6 @@ const MIME = {
   '.map': 'application/json', '.wasm': 'application/wasm', '.txt': 'text/plain; charset=utf-8',
 };
 const NO_BUILD_HTML = '<!doctype html><meta charset="utf-8"><title>Harness</title><body style="font-family:sans-serif;padding:2rem"><h1>UI is not built</h1><p>Run <code>npm run build</code> (or start with <code>npm run dev</code>) and reload.</p></body>';
-const GRADES = ['default', 'fast', 'review', 'explore'];
 // optional API groups this server implements (docs/ARCHITECTURE.md "Feature flags"); a flag ships with its route
 export const FEATURES = ['branches', 'fs-search', 'pr-status', 'agent-info', 'models-refresh', 'tracker-links', 'board-columns', 'review-loop',
   'subagents', 'virtual-sessions', 'worker-run', 'skills-install', 'demo', 'worktree-meta', 'open', 'sdd', 'health', 'folders', 'include-dirs', 'questions', 'permissions', 'activity', 'rework', 'fs-raw', 'tracker-import', 'pr-decline', 'task-suggest', 'recovery', 'acp', 'worktree-lazy', 'cli-history', 'prs-mine', 'git-generate', 'git-via-agent', 'git-stage', 'handoff', 'release-resolve', 'cli-adopt', 'handoff-dry-run', 'integrations-check', 'pick-folder', 'checks', 'revive', 'bind-task', 'open-file', 'pr-actions', 'pr-detail', 'pin', 'mcp-connections'];
@@ -303,10 +302,14 @@ export async function startServer(opts = {}) {
         ({ login: me, source: meSource } = who);
         if (who.warning) errors.push({ repo: null, error: who.warning });
       }
+      // a repository registered by several workspaces (main checkout + worktrees) is asked once: the first one that has an origin
+      const first = new Map(); // repo -> workspace
+      for (const ws of db.workspaces.filter((w) => w.isGit && !w.kind)) {
+        const info = await git.remoteInfo(ws.path).catch(() => ({}));
+        if (info.project && info.repository && !first.has(info.repo)) first.set(info.repo, { ws, ...info });
+      }
       const slots = limiter(4);
-      const lists = await Promise.all(db.workspaces.filter((w) => w.isGit && !w.kind).map((ws) => slots(async () => {
-        const { project, repository, repo } = await git.remoteInfo(ws.path).catch(() => ({}));
-        if (!project || !repository) return [];
+      const lists = await Promise.all([...first.values()].map(({ ws, project, repository, repo }) => slots(async () => {
         try {
           const [pulls, wts] = await Promise.all([repoPulls({ config, mcp, project, repository, author: me }), git.worktrees(ws.path).catch(() => [])]);
           return pulls.map((p) => prItem(ws, { project, repo }, p, wts)).filter((it) => scope === 'mine' || it.tracked).map(({ tracked, ...it }) => it);
@@ -315,12 +318,26 @@ export async function startServer(opts = {}) {
           return [];
         }
       })));
-      const items = lists.flat().sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+      const items = dedupePrs(lists.flat()).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
       return { me, meSource, items, errors, at: Date.now() };
     })();
     prsCache.set(scope, { at: Date.now(), data });
     data.catch(() => prsCache.delete(scope));
     return data;
+  }
+
+  /**
+   * One item per pull request: the same repository is registered both by its main checkout and by each worktree, and
+   * every copy asks the code host for the same list. The main checkout (the earliest registered) wins.
+   */
+  function dedupePrs(items) {
+    const seen = new Set();
+    return items.filter((it) => {
+      const key = `${it.repo}#${it.index}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
   }
 
   /** One pull request of `ws` as a /api/prs item; `tracked`: its head is a task branch or a worktree of the repo. */
@@ -371,7 +388,7 @@ export async function startServer(opts = {}) {
         transport: a.transport || 'headless',
         acpIdleMin: a.acpIdleMin ?? a.acpIdleTimeoutMin ?? 30,
         mcpExclude: a.mcpExclude || [],
-        mcpExcludeKey: a.mcpExcludeKey || 'mcp.excluded',
+        mcpExcludeKey: a.mcpExcludeKey || 'excludeMCPServers',
         model: a.model ?? null,
         models: a.models || [],
         modelGrades: a.settings?.agents?.modelGrades || {},
@@ -392,6 +409,12 @@ export async function startServer(opts = {}) {
         resolved: resolveAgentView(a),
       }])),
       defaultAgent: config.defaultAgent,
+      // config-wide: the same for every agent, so it lives next to them rather than inside each one
+      mcpDisabled: config.mcpDisabled || [],
+      // servers of the agent's settings file (their setup stays there) and the ones added in this screen (a credential
+      // stays a `$secret:` ref; the names the secrets file holds are a list of what exists, never the values)
+      mcpServers: customServers(config),
+      mcpSecretNames: [...new Set([...(config.secretNames || []), ...[...loadSecrets(config).values()].map((s) => s.name)])].sort(),
       // the first-run setup was finished or skipped (it is not shown again)
       user: { setupDone: !!config.user?.setupDone },
       git: { ...pick(config.git, GIT_KEYS), generateMessages: config.git.generateMessages !== false, generateTimeoutSec: config.git.generateTimeoutSec, via: config.git.via === 'harness' ? 'harness' : 'agent' },
@@ -404,6 +427,8 @@ export async function startServer(opts = {}) {
         rootAuto: !config.workspaces?.root,
       },
       session: { stallSec: config.session.stallSec, revive: { attempts: config.session.revive?.attempts ?? 3, stallWakeMin: config.session.revive?.stallWakeMin ?? 15 } },
+      // how long an agent may spend on one MCP server: its start in ACP, and the harness server's own (a whole sub-agent run)
+      mcp: { acpStartTimeoutMs: config.mcp?.acpStartTimeoutMs ?? 30000, harnessTimeoutMs: config.mcp?.harnessTimeoutMs ?? 3600000 },
       sessions: { autoArchiveDays: config.sessions.autoArchiveDays },
       history: { adopt: config.history.adopt !== false, adoptDays: config.history.adoptDays },
       // «Разрешать всегда в этом проекте»: allow-list patterns per workspace id (stored in the db, not the config)
@@ -414,6 +439,8 @@ export async function startServer(opts = {}) {
         suggested: Object.fromEntries(db.workspaces.filter((w) => !w.kind && w.isGit).map((w) => [w.id, suggestCheck(w.path)]).filter(([, c]) => c)),
       },
       recovery: { autoResume: !!config.recovery.autoResume, message: config.recovery.message },
+      // how long a person's message waits for a step that only waits for sub-agents (0 = until the step ends by itself)
+      chat: { steerAfterMs: config.chat?.steerAfterMs ?? 0 },
       ide: config.ide ?? null,
       orchestration: {
         reviewMode: config.orchestration.reviewMode, subagents: config.orchestration.subagents, workerMayCommit: !!config.orchestration.workerMayCommit, review: config.orchestration.review,
@@ -430,11 +457,17 @@ export async function startServer(opts = {}) {
   const isStrMap = (v) => isObj(v) && Object.values(v).every((x) => typeof x === 'string');
   const isStrList = (v) => Array.isArray(v) && v.every((x) => typeof x === 'string');
 
+  let pendingMcpDisabled = null; // config-wide MCP list from the latest settings save (not per agent)
+
   function agentPatch(id, a) {
     const cur = config.agents[id] || fail(400, `неизвестный агент «${id}»`);
     if (!isObj(a)) fail(400, `agents.${id}: нужен объект`);
     const p = {};
     const where = (k) => `agents.${id}.${k}`;
+    if ('mcpDisabled' in a) {
+      if (!isStrList(a.mcpDisabled)) fail(400, `${where('mcpDisabled')}: нужен массив имён MCP-серверов`);
+      pendingMcpDisabled = a.mcpDisabled.map((x) => x.trim()).filter(Boolean);
+    }
     if ('approvalMode' in a) {
       if (typeof a.approvalMode !== 'string' || (cur.approvalModes?.length && !cur.approvalModes.includes(a.approvalMode))) {
         fail(400, `${where('approvalMode')} — одно из: ${(cur.approvalModes || []).join(', ')}`);
@@ -447,6 +480,12 @@ export async function startServer(opts = {}) {
       p.model = a.model?.trim() || null;
     }
     if ('models' in a) p.models = normalizeModels(a.models);
+    if ('modelsDiscovery' in a) {
+      const md = a.modelsDiscovery;
+      // discovery runs headless: "auto" needs a CLI action sandbox the run file does not enable, so the mode is explicit
+      if (!isObj(md) || Object.keys(md).some((k) => !['approvalMode', 'maxAgeHours'].includes(k))) fail(400, `${where('modelsDiscovery')}: { approvalMode?: string, maxAgeHours?: number }`);
+      p.modelsDiscovery = md;
+    }
     if ('approvalModeLabels' in a) {
       if (!isStrMap(a.approvalModeLabels)) fail(400, `${where('approvalModeLabels')}: нужен объект «режим → подпись»`);
       p.approvalModeLabels = a.approvalModeLabels;
@@ -484,8 +523,12 @@ export async function startServer(opts = {}) {
       p.mcpExclude = a.mcpExclude;
     }
     if ('mcpExcludeKey' in a) {
-      if (typeof a.mcpExcludeKey !== 'string' || !/^[\w-]+(\.[\w-]+)*$/.test(a.mcpExcludeKey)) fail(400, `${where('mcpExcludeKey')}: путь ключа, например mcp.excluded`);
+      if (typeof a.mcpExcludeKey !== 'string' || !/^[\w-]+(\.[\w-]+)*$/.test(a.mcpExcludeKey)) fail(400, `${where('mcpExcludeKey')}: путь ключа, например excludeMCPServers`);
       p.mcpExcludeKey = a.mcpExcludeKey;
+    }
+    if ('mcpDisabled' in a) {
+      if (!isStrList(a.mcpDisabled)) fail(400, `${where('mcpDisabled')}: нужен массив имён MCP-серверов`);
+      pendingMcpDisabled = a.mcpDisabled.map((x) => x.trim()).filter(Boolean);
     }
     if ('allowedTools' in a) {
       if (!isStrList(a.allowedTools) || a.allowedTools.some((x) => !x.trim())) fail(400, `${where('allowedTools')}: нужен массив непустых строк`);
@@ -532,7 +575,9 @@ export async function startServer(opts = {}) {
       p[k] = a[k];
     }
     if ('modelGrades' in a) {
-      if (!isObj(a.modelGrades) || Object.entries(a.modelGrades).some(([g, v]) => !GRADES.includes(g) || (v !== null && typeof v !== 'string'))) {
+      // configs written before the `strong` grade keep their own keys: an unknown one is a typo, not a stale config
+      const keys = Object.keys(a.modelGrades || {});
+      if (!isObj(a.modelGrades) || keys.some((g) => !GRADES.includes(g)) || Object.values(a.modelGrades).some((v) => v !== null && typeof v !== 'string')) {
         fail(400, `${where('modelGrades')}: ключи ${GRADES.join('/')}, значения — строки`);
       }
       (p.settings ||= { agents: {} }).agents.modelGrades = a.modelGrades;
@@ -588,6 +633,10 @@ export async function startServer(opts = {}) {
       if ('closedStatuses' in t) {
         if (!isStrList(t.closedStatuses)) fail(400, 'integrations.tasks.closedStatuses: нужен массив строк');
         p.closedStatuses = t.closedStatuses;
+      }
+      if ('includeClosed' in t) {
+        if (typeof t.includeClosed !== 'boolean') fail(400, 'integrations.tasks.includeClosed: нужно true или false');
+        p.includeClosed = t.includeClosed;
       }
       out.tasks = { ...out.tasks, ...p };
     }
@@ -684,16 +733,66 @@ export async function startServer(opts = {}) {
 
   function persistConfig(patch) {
     const next = Object.fromEntries(Object.entries(patch).map(([k, v]) => [k, deepMerge(config[k], v)]));
-    writeAtomic(config.localConfigFile, `${JSON.stringify(deepMerge(readJsonFile(config.localConfigFile), patch), null, 2)}\n`);
+    try {
+      writeAtomic(config.localConfigFile, `${JSON.stringify(deepMerge(readJsonFile(config.localConfigFile), patch), null, 2)}\n`);
+    } catch (e) {
+      // the screen may keep working in memory, but nothing says «saved» when the next start will not have it
+      fail(500, `не удалось записать ${config.localConfigFile}: ${e.message}`);
+    }
     Object.assign(config, next);
+  }
+
+  /** One MCP server as the settings screen sends it; literals that look like credentials are refused (they go to the secrets file). */
+  function mcpServerPatch(name, s) {
+    const where = (k) => `mcpServers.${name}.${k}`;
+    if (!/^[\w.\-]+$/.test(name)) fail(400, `имя MCP-сервера «${name}»: буквы, цифры, . - _`);
+    if (!isObj(s)) fail(400, `mcpServers.${name}: нужен объект`);
+    const allowed = ['enabled', 'transport', 'url', 'command', 'args', 'headers', 'env', 'timeoutMs', 'cwd', 'fromFile'];
+    const extra = Object.keys(s).filter((k) => !allowed.includes(k));
+    if (extra.length) fail(400, `${where(extra[0])}: такого поля нет (можно ${allowed.join(', ')})`);
+    if ('transport' in s && !['stdio', 'http'].includes(s.transport)) fail(400, `${where('transport')}: "stdio" или "http"`);
+    if ('url' in s && typeof s.url !== 'string') fail(400, `${where('url')}: нужна строка`);
+    if ('command' in s && typeof s.command !== 'string') fail(400, `${where('command')}: нужна строка`);
+    if ('args' in s && !isStrList(s.args)) fail(400, `${where('args')}: нужен массив строк`);
+    if ('headers' in s && !isStrMap(s.headers)) fail(400, `${where('headers')}: нужен объект «заголовок → строка»`);
+    if ('env' in s && !isStrMap(s.env)) fail(400, `${where('env')}: нужен объект «переменная → строка»`);
+    if ('timeoutMs' in s && !(Number.isInteger(s.timeoutMs) && s.timeoutMs >= 1000 && s.timeoutMs <= 600000)) fail(400, `${where('timeoutMs')}: целое число 1000..600000`);
+    if ('enabled' in s && typeof s.enabled !== 'boolean') fail(400, `${where('enabled')}: true или false`);
+    const known = serverDefs(config)[name];
+    // A server the agent's own settings file also defines keeps its connection details there: a switch alone must not need a copy.
+    const base = { ...(known && !s.command && !s.url ? { transport: known.transport, url: known.url, command: known.command } : {}), ...s };
+    const transport = base.transport ?? (base.command ? 'stdio' : 'http');
+    if (transport === 'http' && !String(base.url || '').trim()) fail(400, `${where('url')}: для http нужен адрес`);
+    if (transport === 'stdio' && !String(base.command || '').trim()) fail(400, `${where('command')}: для stdio нужна команда`);
+    const literals = findLiteralSecrets(s, `mcpServers.${name}`);
+    if (literals.length) fail(400, `${literals[0]}: похоже на секрет — положите значение в файл секретов и сошлитесь на него как $secret:<имя>`);
+    // A server of the agent's settings file keeps its connection there: an unchanged copy would go stale behind it.
+    const { fromFile, ...rest } = s;
+    const { servers: fromSettings } = serversFromFile(config);
+    if (known && !s.command && !s.url && fromSettings[name]) return { enabled: s.enabled !== false };
+    return { ...rest, transport, ...(s.command ? { command: s.command } : {}), ...(s.url ? { url: s.url } : {}) };
+  }
+
+  /** `mcpServers` from the screen replaces the config's own servers (the agent's settings file is not touched). */
+  function mcpServersPatch(list) {
+    if (!Array.isArray(list)) fail(400, 'mcpServers: нужен массив серверов');
+    const out = {};
+    for (const s of list) {
+      const name = typeof s?.name === 'string' ? s.name.trim() : '';
+      out[name] = mcpServerPatch(name, Object.fromEntries(Object.entries(s).filter(([k]) => k !== 'name')));
+    }
+    return out;
   }
 
   async function saveSettings(body) {
     const patch = {};
+    pendingMcpDisabled = null; // config-wide list: lives outside agents, written as is (deepMerge would concatenate arrays)
     if (body.agents !== undefined) {
       if (!isObj(body.agents)) fail(400, 'agents: нужен объект');
       patch.agents = Object.fromEntries(Object.entries(body.agents).map(([id, a]) => [id, agentPatch(id, a)]));
     }
+    const disabledMcp = pendingMcpDisabled;
+    pendingMcpDisabled = null;
     if (body.defaultAgent !== undefined) {
       if (!config.agents[body.defaultAgent]) fail(400, `неизвестный агент «${body.defaultAgent}»`);
       patch.defaultAgent = body.defaultAgent;
@@ -730,10 +829,23 @@ export async function startServer(opts = {}) {
       }
       patch.session = { ...(ss.stallSec !== undefined ? { stallSec: ss.stallSec } : {}), ...(rv ? { revive: rv } : {}) };
     }
+    if (body.mcp !== undefined) {
+      const mm = body.mcp;
+      const ok = isObj(mm) && Object.entries(mm).every(([k, v]) => (k === 'acpStartTimeoutMs' || k === 'harnessTimeoutMs') && Number.isInteger(v) && v >= 1000);
+      if (!ok) fail(400, 'mcp: { acpStartTimeoutMs: целое число ≥ 1000, harnessTimeoutMs: целое число ≥ 1000 }');
+      patch.mcp = { ...config.mcp, ...mm };
+    }
     if (body.sessions !== undefined) {
       const d = body.sessions?.autoArchiveDays ?? 0; // null = off, stored as 0
       if (!isObj(body.sessions) || Object.keys(body.sessions).some((k) => k !== 'autoArchiveDays') || !Number.isInteger(d) || d < 0) fail(400, 'sessions: { autoArchiveDays: целое число ≥ 0 или null (0/null — выключено) }');
       patch.sessions = { autoArchiveDays: d };
+    }
+    if (body.chat !== undefined) {
+      const ms = body.chat?.steerAfterMs ?? 0;
+      if (!isObj(body.chat) || Object.keys(body.chat).some((k) => k !== 'steerAfterMs') || !Number.isInteger(ms) || ms < 0 || ms > 600000) {
+        fail(400, 'chat: { steerAfterMs: целое число 0..600000 (мс; 0 — не прерывать ожидание) }');
+      }
+      patch.chat = { steerAfterMs: ms };
     }
     if (body.history !== undefined) {
       const hh = body.history;
@@ -776,15 +888,26 @@ export async function startServer(opts = {}) {
     if (body.workspaces !== undefined) {
       // GET returns rootResolved/rootAuto too: a settings round trip sends them back — read-only, ignored
       const w = isObj(body.workspaces) ? (({ rootResolved, rootAuto, ...rest }) => rest)(body.workspaces) : body.workspaces;
-      const rootOk = (r) => r === null || (typeof r === 'string' && path.isAbsolute(expandHome(r)) && fs.existsSync(expandHome(r)) && fs.statSync(expandHome(r)).isDirectory());
+      const rootOk = (r) => r == null || (typeof r === 'string' && path.isAbsolute(expandHome(r)) && fs.existsSync(expandHome(r)) && fs.statSync(expandHome(r)).isDirectory());
       if (!isObj(w) || Object.keys(w).some((k) => !['root', 'repos'].includes(k)) || ('root' in w && !rootOk(w.root)) || ('repos' in w && !isStrList(w.repos))) {
         fail(400, 'workspaces: { root: существующая абсолютная папка или null (авто), repos: string[] }');
       }
-      patch.workspaces = w;
+      // root: null means "auto" and must be written as null — deepMerge would keep the previous explicit root,
+      // so «Авто» never takes effect
+      patch.workspaces = { ...w, ...('root' in w ? { root: typeof w.root === 'string' ? expandHome(w.root) : null } : {}) };
     }
     const integrations = integrationsPatch(body);
     if (Object.keys(integrations).length) patch.integrations = integrations;
-    persistConfig(patch);
+    // whole maps: a removed server or name must disappear, which deepMerge would keep
+    const mcpServers = body.mcpServers !== undefined ? mcpServersPatch(body.mcpServers) : undefined;
+    const secretNames = body.mcpSecretNames !== undefined ? (isStrList(body.mcpSecretNames) ? body.mcpSecretNames.map((n) => n.trim()).filter(Boolean) : fail(400, 'mcpSecretNames: нужен массив имён секретов')) : undefined;
+    const next = Object.fromEntries(Object.entries(patch).map(([k, v]) => [k, deepMerge(config[k], v)]));
+    const local = deepMerge(readJsonFile(config.localConfigFile), patch);
+    if (disabledMcp) { config.mcpDisabled = disabledMcp; next.mcpDisabled = disabledMcp; local.mcpDisabled = disabledMcp; }
+    if (mcpServers) { config.mcpServers = mcpServers; next.mcpServers = mcpServers; local.mcpServers = mcpServers; }
+    if (secretNames) { config.secretNames = secretNames; next.secretNames = secretNames; local.secretNames = secretNames; }
+    writeAtomic(config.localConfigFile, `${JSON.stringify(local, null, 2)}\n`);
+    Object.assign(config, next);
     scheduleSync();
     schedulePrs();
     if (patch.workspaces) {
@@ -839,7 +962,8 @@ export async function startServer(opts = {}) {
       id, resolved: resolveAgentView(a), auth: meta?.auth ?? 'unknown', seen: meta ? seen : null, catalog: catalog.info(id), models: catalog.merged(id),
       commands: shippedStatus(a, 'commands'), skills: shippedStatus(a, 'skills'), userCommands: userCommands(a), identity: identityView(a), sandboxBroken: meta?.sandboxBroken ?? null,
       // what the CLI reported at its last init, for the per-agent MCP toggles
-      mcpServers: (meta?.mcpServers || []).map((m) => ({ name: m.name, status: m.status, excluded: (a.mcpExclude || []).includes(m.name) })),
+      mcpServers: (meta?.mcpServers || meta?.seen?.mcpServers || []).map((m) => ({ name: m.name, status: m.status, excluded: (a.mcpExclude || []).includes(m.name) })),
+      mcpDisabled: config.mcpDisabled || [],
       modelRefs: scanModelRefs(a.modelRefsScan, catalog.merged(id)), // read-only: the harness never edits these files
     };
   }
@@ -1479,10 +1603,14 @@ export async function startServer(opts = {}) {
     const m = sessions.messages(params.id).find((x) => x.id === params.mid) || fail(404, `сообщение ${params.mid} не найдено`);
     return { output: m.tool?.output ?? null };
   });
+  // `cut: true` — «Сразу агенту»: the message ends the step it found (nothing is cut without it)
   route('POST', '/api/sessions/:id/messages', ({ params, body }) => {
-    notGarbled(check(body, { text: 'string' }).text);
-    return sessions.deliver(params.id, { from: 'user', text: body.text });
+    const { text, cut } = check(body, { text: 'string', cut: 'boolean?' });
+    notGarbled(text);
+    return sessions.deliver(params.id, { from: 'user', text, cut: cut === true });
   });
+  // the agent's own «/context» answer as numbers (the ring's breakdown); slow on a cold agent, the UI has its own timeout
+  route('GET', '/api/sessions/:id/context', ({ params }) => sessions.contextUsage(params.id));
   route('POST', '/api/sessions/:id/permission', ({ params, body }) => sessions.permission(params.id, check(body, { permissionId: 'string', optionId: 'string', note: 'string?' })));
   route('POST', '/api/sessions/:id/stop', ({ params }) => sessions.stop(params.id));
   route('POST', '/api/sessions/:id/revive', ({ params }) => sessions.revive(params.id)); // «Повторить»: continue a broken chat
@@ -1687,9 +1815,13 @@ export async function startServer(opts = {}) {
 
   // ---- the agent CLI's own recorded chats (sessions started outside the harness) ----
   const history = createHistory(config);
-  // CLI chats are ordinary chats: adopted on start, every 60 s while the UI is open, and on demand
+  // CLI chats are ordinary chats: adopted on start, every 60 s while the UI is open, and on demand (`adoptDays` = the
+  // window, 0 = every record ever written; history keeps records older than `adoptDays` away from the default pass)
   const adopter = createAdopter({ config, store, sessions, history });
-  route('POST', '/api/history/adopt', () => adopter.adopt());
+  route('POST', '/api/history/adopt', ({ body }) => {
+    const days = body?.adoptDays;
+    return adopter.adopt(days == null ? undefined : Number(days));
+  });
   setImmediate(() => adopter.adopt().catch((e) => console.error('[adopt]', e.message)));
   const adoptTimer = setInterval(() => { if (wss.clients.size > 0) adopter.adopt().catch(() => {}); }, 60000);
   adoptTimer.unref?.();
@@ -1706,8 +1838,9 @@ export async function startServer(opts = {}) {
     const title = msgs.find((m) => m.kind === 'user')?.text.replace(/\s+/g, ' ').trim().slice(0, 80) || `История ${rec.id}`;
     const s = await sessions.create({ kind: 'chat', agent: params.agent, cwd, title });
     sessions.importMessages(s.id, msgs);
-    // the next message continues that CLI session (--resume <id>), so no harness preamble is added
-    return sessions.update(s.id, { externalSessionId: rec.id, historyId: rec.id });
+    // the next message continues that CLI session (--resume <id>), so no harness preamble is added (origin 'cli': the
+    // adoption pass leaves a record the harness opened itself alone instead of showing both)
+    return sessions.update(s.id, { origin: 'cli', externalSessionId: rec.id, historyId: rec.id });
   });
 
   // files
@@ -1771,8 +1904,56 @@ export async function startServer(opts = {}) {
     persistConfig({ mcpServers: { [params.name]: { [field]: { [key]: reference } } } });
     return { saved: true };
   });
-  route('POST', '/api/mcp/servers/:name/reconnect', async ({ params }) => (await mcp.status(params.name))[0]);
   route('GET', '/api/mcp/servers', () => mcp.status());
+  /** «Переподключить» у сервиса: initialize + tools/list by the server's own config, with the secrets read now. → its row */
+  route('POST', '/api/mcp/servers/:name/reconnect', async ({ params }) => {
+    const def = serverDefs(config)[params.name] || fail(404, `MCP-сервер «${params.name}» не настроен (mcpServers)`);
+    const row = { name: params.name, enabled: def.enabled, transport: def.transport, ok: false, tools: [] };
+    if (!row.enabled) fail(400, `MCP-сервер «${params.name}» выключен (mcpServers.${params.name}.enabled)`);
+    try {
+      row.tools = (await mcp.listTools(params.name)).map((t) => ({ name: t.name, description: t.description || '' }));
+      row.ok = true;
+    } catch (e) {
+      return { ...row, error: e.message, ...(e.problem ? { problem: e.message } : {}) };
+    }
+    return row;
+  });
+  /**
+   * «MCP-серверы» in the settings screen: where the secrets file is and which names it holds (never values), which
+   * servers come from the agent's own settings and which were added here. Saved through PUT /api/settings.
+   */
+  route('GET', '/api/mcp/config', () => {
+    const fromFile = serversFromFile(config);
+    return {
+      secrets: {
+        path: secretsFile(config),
+        source: secretsSource(config), // env:HARNESS_MCP_SECRETS | env:CONSOLE_MCP_SECRETS | config:mcpSecretsFile | default
+        exists: fs.existsSync(secretsFile(config)),
+        names: [...loadSecrets(config).values()].map((s) => s.name).sort(),
+        writable: !/^env:/.test(secretsSource(config)), // a path from the environment is the operator's, not the screen's
+        // how to name a secret so that a server `name` picks it up without a $secret: reference
+        ownPrefix: { server: '<сервер>', meaning: 'секреты вида <сервер>/<Имя> уходят серверу в заголовках (http) или в env (stdio)' },
+      },
+      serversFrom: { path: fromFile.path, names: Object.keys(fromFile.servers).sort(), error: fromFile.error },
+      custom: customServers(config), // config.mcpServers, $secret: refs as written
+    };
+  });
+  route('PUT', '/api/mcp/secrets/:name', ({ params, body }) => {
+    const { value } = check(body, { value: 'string' });
+    if (!setSecret(config, params.name, value)) return fail(400, `файл секретов ${secretsFile(config)} — некорректный JSON, правку отклонили, чтобы его не потерять`);
+    return { name: params.name.trim(), names: [...loadSecrets(config).values()].map((s) => s.name).sort() };
+  });
+  route('DELETE', '/api/mcp/secrets/:name', ({ params }) => {
+    deleteSecret(config, params.name);
+    return { names: [...loadSecrets(config).values()].map((s) => s.name).sort() };
+  });
+  /** «Проверить» у своего сервера: initialize + tools/list with the definition as typed (secrets resolved). */
+  route('POST', '/api/mcp/check', async ({ body }) => {
+    check(body, { name: 'string', transport: 'string?', url: 'string?', command: 'string?', args: 'array?', timeoutMs: 'number?' });
+    const tools = await mcp.probe({ ...body, name: body.name.trim(), transport: body.transport || (body.command ? 'stdio' : 'http') })
+      .catch((e) => fail(e.status || 502, e.message));
+    return { name: body.name.trim(), ok: true, tools };
+  });
   /**
    * «Проверить подключение» of the tracker and the code host: is their MCP server defined (the harness's config or the
    * agent's ~/.gigacode/settings.json), does it answer, has it the tools the harness calls. → { tasks, pr, servers }
@@ -1825,7 +2006,7 @@ export async function startServer(opts = {}) {
     sessions.mcpSeen(req.headers['x-harness-session']); // GigaCode connected the harness's MCP server for this session
     return orch.toolsFor(req.headers['x-harness-session']); // per caller: a depth-limited sub-agent has no `agent`
   });
-  route('GET', '/api/agent/worker_wait', ({ query }) => orch.waitRun(check(query, { sessionId: 'string' }).sessionId, query.timeoutMs, { release: query.release === '1' }));
+  route('GET', '/api/agent/worker_wait', ({ query, req }) => orch.waitRun(check(query, { sessionId: 'string' }).sessionId, query.timeoutMs, { release: query.release === '1', caller: req.headers['x-harness-session'] || null }));
   // the asking session's own `ask` call waits here for the answer (harness-mcp polls it; stateless across restarts)
   route('GET', '/api/agent/ask_wait', ({ query, req }) => orch.askWait(req.headers['x-harness-session'] || fail(400, 'нужен заголовок x-harness-session'), query.timeoutMs));
   route('POST', '/api/agent/:tool', ({ params, body, req }) => orch.call(params.tool, body, req.headers['x-harness-session'] || null));
@@ -2157,9 +2338,47 @@ export function describeConfig(config) {
   };
 }
 
+/**
+ * «Can this machine run the harness?» — the checks a fresh install can fail on, each with what to do about it.
+ * @returns {{ ok: boolean, checks: { name: string, ok: boolean, detail: string }[] }}
+ */
+export function checkSetup(config, { nodeVersion = process.versions.node } = {}) {
+  const checks = [];
+  const add = (name, ok, detail) => checks.push({ name, ok, detail });
+  const major = Number(String(nodeVersion).split('.')[0]);
+  add('node', major >= 22, `node ${nodeVersion}${major >= 22 ? '' : ' — нужен Node >= 22 (/docs/GUIDE.md → «Быстрый старт»)'}`);
+  add('ui build', fs.existsSync(path.join(config.root, 'web', 'dist', 'index.html')),
+    fs.existsSync(path.join(config.root, 'web', 'dist', 'index.html')) ? 'web/dist собран' : 'web/dist нет — выполните npm run build (или npm run dev)');
+  const enabled = Object.entries(config.agents || {}).filter(([, a]) => a?.enabled !== false);
+  add('agents', enabled.length > 0, enabled.length ? `включены: ${enabled.map(([id]) => id).join(', ')}` : 'нет ни одного включённого агента');
+  for (const [id, a] of enabled) {
+    // mock is the demo agent and needs nothing installed; for the rest an unresolved launcher is what a fresh machine hits
+    if (a.launcher === 'mock') continue;
+    const view = resolveAgentView(a);
+    add(`agent ${id}`, view.ok, view.ok ? `${view.node ?? view.command ?? ''}${view.entry ? ` ${view.entry}` : ''}` : `${view.error} (agents.${id}.command в harness.config.local.json)`);
+  }
+  const from = process.env.CONSOLE_MCP_SETTINGS || config.mcpServersFrom;
+  if (from) {
+    const file = path.resolve(config.root, expandHome(from));
+    add('user MCP settings', fs.existsSync(file),
+      fs.existsSync(file) ? `${file} (серверы оттуда сливаются с своими)` : `${file} нет — это нормально: MCP будут только свои. Свой файл задайте в mcpServersFrom или CONSOLE_MCP_SETTINGS`);
+  }
+  const defs = serverDefs(config);
+  for (const [name, def] of Object.entries(defs)) {
+    const where = def.transport === 'http' ? def.url : [def.command, ...(def.args || [])].filter(Boolean).join(' ');
+    add(`mcp ${name}`, true, where || 'пустое определение');
+  }
+  return { ok: checks.every((c) => c.ok), checks };
+}
+
 const isMain = process.argv[1] && samePath(fileURLToPath(import.meta.url), process.argv[1]);
 if (isMain && process.argv.includes('--print-config')) {
   console.log(JSON.stringify(describeConfig(loadConfig()), null, 2));
+} else if (isMain && process.argv.includes('--check')) {
+  const result = checkSetup(loadConfig());
+  for (const c of result.checks) console.log(`${c.ok ? 'ok  ' : 'FAIL'}  ${c.name}: ${c.detail}`);
+  console.log(result.ok ? 'Готово к запуску.' : 'Есть пункты, без которых харнес не запустится (см. FAIL выше).');
+  process.exit(result.ok ? 0 : 1);
 } else if (isMain) {
   const dev = process.argv.includes('--dev');
   const demo = process.argv.includes('--demo');

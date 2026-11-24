@@ -61,7 +61,35 @@ export function TopBar({ onCommand }: { onCommand: () => void }) {
           </button>
         )}
       </div>
+      <WindowControls />
     </header>
+  )
+}
+
+/** The desktop shell removes the native title bar and draws its own controls in the app's top bar. */
+export function WindowControls() {
+  const desktop = useStore((s) => s.desktop)
+  if (!desktop) return null
+  // GTK shells (Linux) draw round-ish controls a little larger than Windows' hairlines
+  const other = desktop.platform !== 'win32'
+  return (
+    <div className="win-controls" data-look={other ? 'linux' : 'win'}>
+      <button type="button" className="win-btn" aria-label="Свернуть" data-tip="Свернуть" onClick={() => desktop.minimize()}>
+        <svg viewBox="0 0 12 12" aria-hidden><path d={other ? 'M2 6h8' : 'M2.5 6h7'} /></svg>
+      </button>
+      {desktop.maximizable && (
+        <button type="button" className="win-btn" aria-label={desktop.maximized ? 'Восстановить' : 'На весь экран'} data-tip={desktop.maximized ? 'Восстановить' : 'На весь экран'} onClick={() => desktop.toggleMaximize()}>
+          {desktop.maximized
+            ? <svg viewBox="0 0 12 12" aria-hidden><rect x="2.5" y="4.5" width="5" height="5" rx={other ? '1.2' : '.6'} /><path d="M4.5 4.5v-2h5v5h-2" /></svg>
+            : <svg viewBox="0 0 12 12" aria-hidden><rect x="2.5" y="2.5" width="7" height="7" rx={other ? '1.6' : '.8'} /></svg>}
+        </button>
+      )}
+      {desktop.closable && (
+        <button type="button" className="win-btn win-close" aria-label="Закрыть" data-tip="Закрыть" onClick={() => desktop.close()}>
+          <svg viewBox="0 0 12 12" aria-hidden><path d={other ? 'M3.2 3.2l5.6 5.6M8.8 3.2l-5.6 5.6' : 'M3 3l6 6M9 3l-6 6'} /></svg>
+        </button>
+      )}
+    </div>
   )
 }
 

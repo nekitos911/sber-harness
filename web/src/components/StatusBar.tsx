@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Check, RefreshCw, X } from 'lucide-react'
 import { api, errorText } from '../api'
-import { openScreen, setState, useFeature, useStore } from '../store'
+import { openScreen, setState, useFeature, useStore, toast } from '../store'
 import { mainAgent, useAgentMeta, useSettings } from '../lib/agents'
 import { InstallFile } from '../views/SettingsView'
 import { Button, Popover } from './ui'
@@ -50,13 +50,18 @@ export function StatusBar() {
     return () => { ++version; window.removeEventListener('mcp-changed', refresh) }
   }, [conn])
 
+  // the connections are per call: «переподключить» is a fresh connect by the server's own config, with the secrets as of now
   const reconnect = async (name: string) => {
     setPending((names) => [...names, name])
     try {
       const row = await api<McpServer>('POST', '/mcp/servers/' + encodeURIComponent(name) + '/reconnect')
       setMcp((rows) => rows?.map((old) => old.name === name ? row : old) ?? null)
+      const label = row.roles?.map((role) => PURPOSE[role]).filter(Boolean).join(' · ') || name
+      if (row.ok && !row.problem) toast(`${label}: подключено, инструментов ${row.tools?.length ?? 0}`, 'ok')
+      else toast(`${label}: ${row.problem ?? row.error ?? 'не отвечает'}`, 'error')
     } catch (e) {
       setMcp((rows) => rows?.map((old) => old.name === name ? { ...old, ok: false, problem: undefined, error: errorText(e) } : old) ?? null)
+      toast(`${name}: ${errorText(e)}`, 'error')
     } finally { setPending((names) => names.filter((n) => n !== name)) }
   }
   const enabled = mcp?.filter((m) => m.enabled) ?? []
@@ -87,7 +92,8 @@ export function StatusBar() {
                 {canReconnect && <Button size="sm" variant="ghost" aria-label={'Переподключить ' + m.name} busy={pending.includes(m.name)}
                   icon={<RefreshCw />} onClick={() => void reconnect(m.name)}>Переподключить</Button>}
                 {error && <div className="sb-mcp-err" role="status">
-                  {/UNABLE_TO_VERIFY_LEAF_SIGNATURE|SELF_SIGNED_CERT|CERT_UNTRUSTED/i.test(error) && <p>Не удалось проверить цепочку сертификатов. Проверьте доверенный CA на этом компьютере.</p>}
+                  {/UNABLE_TO_VERIFY_LEAF_SIGNATURE|SELF_SIGNED_CERT|CERT_UNTRUSTED/i.test(error)
+                    && <p>Не удалось проверить цепочку сертификатов. Если корень есть в хранилище Windows, проверьте, что Node не ниже 22.9 (иначе хранилище ему не видно). Если корня нет ни в хранилище, ни у Node — укажите его файлом: <code>mcpCaFile</code> в <code>harness.config.local.json</code> ведёт на PEM, после чего Harness перезапускается; добавленный корень дополняет хранилище, а не заменяет его.</p>}
                   {error}
                 </div>}
               </div>

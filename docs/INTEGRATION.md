@@ -11,20 +11,24 @@
 | PR в sourcecontrol | `server/integrations/pr.js` | `integrations.pr.*` | "Create PR" на панели Changes |
 
 Правила: не редактируйте `harness.config.json`; настройки конкретной машины кладите в `harness.config.local.json` (в gitignore)
-или правьте их на экране "Settings". Секреты — только в файле секретов (`CONSOLE_MCP_SECRETS` / `HARNESS_MCP_SECRETS`;
-формат: строки `server/Name=value` или одно голое значение = `onework/Authorization`). Внутренние имена хостов и коды проектов
+или правьте их на экране "Settings". Секреты — только в файле секретов (`CONSOLE_MCP_SECRETS` / `HARNESS_MCP_SECRETS`
+или `mcpSecretsFile`; формат: строки `server/Name=value`, JSON-объект или одно голое значение = `onework/Authorization`).
+Путь и имена показывает «Настройки» → «MCP-серверы» → «Файл секретов», там же значение можно записать; если путь задан
+переменной окружения, файл только читается, правку делают руками. Внутренние имена хостов и коды проектов
 — только в локальном конфиге, не в репозитории.
 
 ## 0. Подготовка
 
 ```powershell
 node -v                      # >= 22
-npm install                  # through the internal npm mirror
-npm test; npm run build      # everything green
+npm install                  # через внутреннее зеркало npm
+npm test; npm run build      # всё зелёное
+npm run check                # чего не хватает этой машине (FAIL) и что найдено
 node server/index.js --print-config
 ```
+`npm run check` проверяет Node, `web/dist`, лаунчер каждого включённого агента и наличие файла пользовательских MCP-настроек;
 `--print-config` показывает найденные `node.exe` / `cli-entry.js` GigaCode, MCP-серверы (из `~/.gigacode/settings.json`)
-и какие секреты есть (только имена).
+и какие секреты есть (только имена). Установка с нуля и шаблон `harness.config.local.json` — `docs/INSTALL.md`.
 
 ## 1. Фикстуры: замените реконструкции настоящими образцами
 

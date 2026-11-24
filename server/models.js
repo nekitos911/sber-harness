@@ -53,6 +53,80 @@ const family = (id) => id.match(/^[A-Za-z]+/)?.[0].toLowerCase();
 export const baseId = (id) => String(id).toLowerCase().replace(/-\d+[km]$/i, ''); // "-262k" context suffix is optional
 const suffix = (id) => String(id).match(/-(\d+[km])$/i)?.[1] ?? null;
 
+/** The catalogue entry an id names: the same backend model with or without its context suffix ("X-262k" ≈ "X"). */
+export const catalogueHit = (ids, id) => {
+  if (!id) return null;
+  const want = baseId(id);
+  return [...ids].find((k) => baseId(k) === want) ?? null;
+};
+
+/** Grades the harness knows (the review loop, the UI, agents.<id>.settings.agents.modelGrades). */
+export const GRADES = ['default', 'fast', 'strong', 'review', 'explore'];
+
+/**
+ * The model grade of an agent profile by its role: reviewers get `review`, search/exploration helpers `fast` and only a
+ * profile that merely explores (`explore`, read-only) `explore`, file workers `fast`. The name and the description
+ * decide; the tools help only for a profile with a read-only `plan` approval and no writing tools. A profile that names
+ * no role is null: nothing to derive, the caller's model decides.
+ */
+export function profileGrade(meta = {}) {
+  const name = String(meta.name || '').toLowerCase();
+  const description = String(meta.description || '').toLowerCase();
+  const tools = (meta.tools || []).map((t) => String(t).toLowerCase());
+  const readOnly = tools.length > 0 && !tools.some((t) => !/^(read|grep|glob|search|find|list|fetch|web|mcp__)/.test(t));
+  const explore = /explor|разведк/.test(name) || /explor|разведк/.test(description);
+  if (/review|ревью|реценз|аудит|audit/.test(name) || /review|ревью|реценз|аудит|audit/.test(description)) return 'review';
+  if (explore) return meta.approvalMode === 'plan' || (readOnly && meta.approvalMode !== 'auto') ? 'explore' : 'fast';
+  if (/file-worker|file_worker/.test(name)) return 'fast';
+  if (meta.approvalMode === 'plan' && readOnly) return 'review';
+  return null;
+}
+
+/**
+ * Picks the model for a sub-agent: one place for worker_run / the `agent` tool, worker_start and the harness review.
+ * `wanted` is what the caller asked for — empty, a grade name or a model id:
+ *   - a grade takes its model from the catalogue; a grade whose model is gone runs with no model (the CLI default),
+ *     never as an error;
+ *   - an explicit id keeps the catalogue's own spelling (context suffixes do not make another model), else stays as typed;
+ *   - empty: the grade of the (agent) profile (a reviewer `review`), else `fallback` — the session's own model, i.e. the
+ *     orchestrator's; then a grade that is there, else the CLI default — a sub-agent always starts.
+ * Without a discovered catalogue (`known` empty) nothing is checked and grades resolve by their config alone.
+ */
+export function resolveSubagentModel({ agentCfg = {}, wanted = null, grade = null, known = new Set(), fallback = null }) {
+  const grades = agentCfg.settings?.agents?.modelGrades || {};
+  const model = (g) => catalogueHit(known, grades[g] ?? null);
+  const name = String(wanted ?? '').trim();
+  // «inherit» is not a model id but «take mine»: GigaCode kills the process on a foreign id ("not present in the current
+  // backend catalogue"), so such a value goes the way of an empty one — the profile's grade, then the caller's model
+  if (name && name.toLowerCase() !== 'inherit') {
+    if (Object.hasOwn(grades, name)) {
+      // a grade the caller asked for is obeyed literally: its model or, when that model left the catalogue, the CLI
+      // default and a note — never silently another family
+      const id = grades[name] || null;
+      if (!id) return { model: null, grade: name, note: `Уровень «${name}» не настроен — запуск с моделью по умолчанию` };
+      const hit = model(name);
+      if (hit) return { model: hit, grade: name, note: null };
+      if (!known.size) return { model: id, grade: name, note: null }; // never discovered: the CLI decides
+      return { model: null, grade: name, note: `Модель уровня «${name}» (${id}) не найдена в каталоге — запуск с моделью по умолчанию` };
+    }
+    return { model: catalogueHit(known, name) ?? name, grade: null, note: null };
+  }
+  // the profile's role grade; then the caller's own model (the orchestrator's) — the harness has no one default model:
+  // a renamed catalogue must not quietly move a sub-agent to another workhorse; then any grade that is there
+  if (grade && grades[grade]) {
+    const hit = model(grade);
+    if (hit) return { model: hit, grade, note: null };
+    if (!known.size) return { model: grades[grade], grade, note: null };
+  }
+  if (fallback) return { model: catalogueHit(known, fallback) ?? fallback, grade: null, note: null };
+  for (const g of GRADES) {
+    if (!grades[g]) continue;
+    const hit = model(g);
+    if (hit) return { model: hit, grade: g, note: null };
+  }
+  return { model: null, grade: null, note: null };
+}
+
 /**
  * Model ids referenced by agent/command files (agents.<id>.modelRefsScan): frontmatter `model:` values that look like ids
  * and tokens of a catalogue model family (Qwen, GLM, ...). available: in the discovered catalogue, null = not discovered.
@@ -99,10 +173,11 @@ export function createModelCatalog({ config, store, getUrl }) {
       }
       // /models needs no MCP servers: the light run first (quickArgs, e.g. --safe-mode), the full one only if it found nothing
       const quick = db.agentMeta?.[agent]?.quickArgsBroken ? [] : agentCfg.quickArgs ?? launcher.defaults?.quickArgs ?? [];
+      const approval = md.approvalMode ? { approvalMode: md.approvalMode } : {};
       let res = null;
       for (const extraArgs of quick.length ? [quick, []] : [[]]) {
         const out = await runHelper({
-          config, store, getUrl, agent, kind: 'discovery', prompt: md.prompt, extraArgs, onHandle: (handle) => { entry.handle = handle; },
+          config, store, getUrl, agent, kind: 'discovery', prompt: md.prompt, extraArgs, ...approval, onHandle: (handle) => { entry.handle = handle; },
         });
         const models = parseModelIds(out.resultText || out.text, md.pattern);
         if (models.length) return save(agent, { models, at: Date.now() });
@@ -166,10 +241,21 @@ export function createModelCatalog({ config, store, getUrl }) {
     return [...byBase.values()].map((e) => ({ ...e, available: known ? known.has(baseId(e.id)) : null }));
   }
 
-  /** Models known to be unavailable (fresh successful discovery only); `has()` matches with or without the suffix. */
+  /** Models known to be unavailable (fresh successful discovery only); `has()` matches with or without the suffix.
+   *  The model the agent is configured with is never reported missing: a bare context suffix (`X-262k` vs `X`) is the
+   *  same backend model, and hiding it would silently switch the agent to something else. */
   function unavailable(agent) {
-    const gone = isFresh(agent) ? new Set(merged(agent).filter((e) => e.available === false).map((e) => baseId(e.id))) : new Set();
+    const selected = config.agents[agent]?.model;
+    const gone = isFresh(agent)
+      ? new Set(merged(agent).filter((e) => e.available === false && e.id !== selected).map((e) => baseId(e.id)))
+      : new Set();
     return { has: (id) => !!id && gone.has(baseId(id)), size: gone.size };
+  }
+
+  /** Ids a fresh successful discovery lists (empty: never discovered — nothing can be called missing). */
+  function known(agent) {
+    const m = meta(agent);
+    return isFresh(agent) ? new Set((m.catalog?.models || []).map((x) => x.id)) : new Set();
   }
 
   return {
@@ -180,6 +266,7 @@ export function createModelCatalog({ config, store, getUrl }) {
     ensureFresh,
     merged,
     unavailable,
+    known,
     isFresh,
     info: (agent) => {
       const c = meta(agent).catalog;

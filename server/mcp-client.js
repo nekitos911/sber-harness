@@ -5,8 +5,10 @@
 // Secrets (docs/ARCHITECTURE.md "Console MCP"): resolved at call time, never logged or returned by an API.
 import fs from 'node:fs';
 import path from 'node:path';
+import tls from 'node:tls';
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
+import { Agent } from 'undici';
 import { deepMerge, expandHome } from './config.js';
 import { resolveCommand, endChild, spawnOptions } from './runner.js';
 
@@ -14,15 +16,81 @@ const PROTOCOL = '2025-06-18';
 const CLIENT_INFO = { name: 'sber-harness', version: '0.1.0' };
 const fail = (status, message, extra = {}) => { throw Object.assign(new Error(message), { status, ...extra }); };
 
+/** fetch() throws a bare «fetch failed»; the reason (refused, DNS, reset, proxy, expired certificate) is only in `cause`. */
+export function networkReason(e) {
+  for (let c = e?.cause, depth = 0; c && depth < 4; c = c.cause, depth++) {
+    if (typeof c.code === 'string') return c.code === 'CERT_HAS_EXPIRED' ? 'срок сертификата сервера истёк' : c.code;
+    const inner = c.errors?.find?.((x) => x?.code || x?.message);
+    if (inner) return inner.code || inner.message;
+    if (c.message) return c.message;
+  }
+  return e?.message || String(e);
+}
+
+/**
+ * The machine's own trust, for a root that is not in Node's bundle: `mcpCa` / `mcpCaFile` (PEM text or a file, one per
+ * server or for all) and `rejectUnauthorized` on a server definition (the explicit opt-out). Returns undefined when nothing
+ * is configured: plain fetch follows Node's own bundle, which is what a Windows-store root needs — passing an explicit `ca`
+ * array REPLACES that bundle in undici, so hosts that verify fine without one fail with UNABLE_TO_VERIFY_LEAF_SIGNATURE.
+ * A configured root therefore comes with the store as well: SberCA Root Ext is not in Node's bundle, and a bank host
+ * verified through it fails once the added root replaces the store.
+ */
+export function tlsDispatcher(cfg = {}, config = {}) {
+  const files = [config.mcpCaFile, cfg.caFile].filter(Boolean).map((f) => path.resolve(config.root || process.cwd(), expandHome(f)));
+  const pems = [config.mcpCa, cfg.ca].flat().filter((p) => typeof p === 'string' && p.trim());
+  const rejectUnauthorized = cfg.rejectUnauthorized !== false;
+  if (rejectUnauthorized && !files.length && !pems.length) return undefined;
+  // an explicit ca list replaces the store: the store and the bundle are only added to reach a host next to a bank root
+  const ca = [...new Set([...systemRootCertificates(), ...tlsRootCertificates()])];
+  for (const f of files) {
+    const pem = fs.readFileSync(f, 'utf8').replace(/^\uFEFF/, '');
+    if (!pem.includes('-----BEGIN CERTIFICATE-----')) fail(500, `MCP TLS: в ${f} нет PEM-сертификата`);
+    ca.push(pem);
+  }
+  ca.push(...pems);
+  return new Agent({ connect: { ca, rejectUnauthorized } });
+}
+
+/** Root certificates Node trusts by itself ({@link tls.rootCertificates}); node:https does not export them. */
+export const tlsRootCertificates = () => tls.rootCertificates || [];
+
+/** Roots from the OS store (Windows, macOS, Linux). Node 22.9+ has them; before that the platform store is invisible. */
+export const systemRootCertificates = () => {
+  try {
+    return tls.getCACertificates?.('system') || [];
+  } catch {
+    return [];
+  }
+};
+
 /** Tool result -> value: structuredContent, else JSON of the first text content, else that text. */
 export function toolResultValue(result) {
-  if (result?.structuredContent !== undefined) return result.structuredContent;
+  if (result?.structuredContent !== undefined) return unwrapTextEnvelope(result.structuredContent);
   const text = Array.isArray(result?.content) ? result.content.find((c) => c.type === 'text')?.text : undefined;
   if (text === undefined) return result;
+  let value;
   try {
-    return JSON.parse(text);
+    value = JSON.parse(text);
   } catch {
     return text;
+  }
+  return unwrapTextEnvelope(value);
+}
+
+/**
+ * Some HTTP servers (onework) report a markdown answer TWICE: as content[{type:"text",text}] and as structuredContent
+ * {"result":[{...}]}. The envelope is not data the callers can map, so the inner text (or its JSON) is returned instead;
+ * otherwise every markdown parser sees a JSON wrapper and comes out empty.
+ */
+function unwrapTextEnvelope(value) {
+  const inner = Array.isArray(value?.result) && value.result.every((c) => c?.type === 'text') && !Array.isArray(value.content)
+    ? value.result.find((c) => typeof c?.text === 'string')?.text
+    : undefined;
+  if (typeof inner !== 'string') return value;
+  try {
+    return JSON.parse(inner);
+  } catch {
+    return inner;
   }
 }
 
@@ -33,6 +101,14 @@ export function secretsFile(config) {
   if (fromEnv) return path.resolve(expandHome(fromEnv));
   if (config.mcpSecretsFile) return path.resolve(config.root, expandHome(config.mcpSecretsFile));
   return path.join(config.dataDir, 'mcp-secrets.json');
+}
+
+/** Where the secrets file path comes from: an env var wins over the config key, which wins over the default. */
+export function secretsSource(config) {
+  if (process.env.HARNESS_MCP_SECRETS) return 'env:HARNESS_MCP_SECRETS';
+  if (process.env.CONSOLE_MCP_SECRETS) return 'env:CONSOLE_MCP_SECRETS';
+  if (config.mcpSecretsFile) return 'config:mcpSecretsFile';
+  return 'default';
 }
 
 const canon = (name) => String(name).replace(/\//g, '_').toLowerCase();
@@ -146,6 +222,50 @@ export function secretEnv(config) {
   return env;
 }
 
+const SECRET_NAME = /^[\w.\-/]{1,80}$/;
+
+/**
+ * Adds or replaces one secret in the secrets file, keeping the file's format: a JSON map stays JSON, `name=value`
+ * lines stay lines. Returns false when the file is JSON but broken — such a file is never overwritten.
+ */
+export function setSecret(config, name, value) {
+  const clean = String(name).trim();
+  if (!SECRET_NAME.test(clean)) fail(400, 'имя секрета: буквы, цифры и . - _ / (например sourcecontrol/Authorization)');
+  if (typeof value !== 'string' || !value.trim()) fail(400, 'значение секрета пустое');
+  const file = secretsFile(config);
+  let text = '';
+  try { text = fs.readFileSync(file, 'utf8').replace(/^﻿/, ''); } catch {}
+  let next;
+  if (text.trim().startsWith('{')) {
+    let map;
+    try { map = JSON.parse(text); } catch { return false; }
+    next = `${JSON.stringify({ ...map, [clean]: value }, null, 2)}\n`;
+  } else {
+    const kept = text.split(/\r?\n/).filter((l) => l.trim() && l.split('=')[0].trim() !== clean);
+    next = `${[...kept, `${clean}=${value}`].join('\n')}\n`;
+  }
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, next, { encoding: 'utf8', mode: 0o600 });
+  return true;
+}
+
+/** Removes one secret by name, keeping the file's format. Missing file or broken JSON: nothing to do. */
+export function deleteSecret(config, name) {
+  const clean = String(name).trim();
+  const file = secretsFile(config);
+  let text = '';
+  try { text = fs.readFileSync(file, 'utf8').replace(/^﻿/, ''); } catch { return; }
+  if (text.trim().startsWith('{')) {
+    let map;
+    try { map = JSON.parse(text); } catch { return; }
+    delete map[clean];
+    fs.writeFileSync(file, `${JSON.stringify(map, null, 2)}\n`, 'utf8');
+    return;
+  }
+  const lines = text.split(/\r?\n/).filter((l) => l.trim() && l.split('=')[0].trim() !== clean);
+  fs.writeFileSync(file, lines.length ? `${lines.join('\n')}\n` : '', 'utf8');
+}
+
 /** Replaces ${env:NAME}, ${secret:scope/header}, $secret:scope/header in every string of `value`. */
 function resolveRefs(value, secrets) {
   if (typeof value === 'string') {
@@ -164,23 +284,43 @@ function resolveRefs(value, secrets) {
 // ---- server definitions ----
 
 export function serverDefs(config) {
-  const from = process.env.CONSOLE_MCP_SETTINGS || config.mcpServersFrom;
-  let fromFile = {};
-  if (from) {
-    try {
-      fromFile = JSON.parse(fs.readFileSync(path.resolve(config.root, expandHome(from)), 'utf8').replace(/^﻿/, '')).mcpServers || {};
-    } catch (e) {
-      if (e.code !== 'ENOENT') console.error(`[mcp] cannot read mcpServersFrom ${from}: ${e.message}`);
-    }
-  }
+  const { servers: fromFile } = serversFromFile(config);
   const defs = {};
   for (const name of new Set([...Object.keys(fromFile), ...Object.keys(config.mcpServers || {})])) {
     const cfg = deepMerge(fromFile[name] || {}, config.mcpServers?.[name] || {});
     // gemini/qwen settings format: { type: "http", url, headers } | { httpUrl } | { command, args, env }
     const http = cfg.transport ? cfg.transport === 'http' : /^(http|streamable-http|sse)$/i.test(cfg.type || '') || !!cfg.httpUrl || (!!cfg.url && !cfg.command);
-    defs[name] = { ...cfg, transport: http ? 'http' : 'stdio', url: cfg.url || cfg.httpUrl, enabled: cfg.enabled !== false };
+    defs[name] = { ...cfg, name, transport: http ? 'http' : 'stdio', url: cfg.url || cfg.httpUrl, enabled: cfg.enabled !== false };
   }
   return defs;
+}
+
+/** `mcpServers` of the agent's own settings file (mcpServersFrom); `error` when that file exists but cannot be read. */
+export function serversFromFile(config) {
+  const from = process.env.CONSOLE_MCP_SETTINGS || config.mcpServersFrom;
+  if (!from) return { path: null, servers: {}, error: null };
+  const file = path.resolve(config.root, expandHome(from));
+  try {
+    return { path: file, servers: JSON.parse(fs.readFileSync(file, 'utf8').replace(/^﻿/, '')).mcpServers || {}, error: null };
+  } catch (e) {
+    if (e.code === 'ENOENT') return { path: file, servers: {}, error: null };
+    console.error(`[mcp] cannot read mcpServersFrom ${from}: ${e.message}`);
+    return { path: file, servers: {}, error: `не читается ${from}: ${e.message}` };
+  }
+}
+
+/** Servers the person added in the settings screen (config.mcpServers), with their `$secret:` refs left as written. */
+export function customServers(config) {
+  const fromFile = serversFromFile(config).servers;
+  return Object.entries(config.mcpServers || {}).map(([name, cfg]) => {
+    // the switch of a server the settings file defines; that file keeps the rest of its setup
+    const own = { enabled: cfg.enabled !== false, args: cfg.args || [], headers: cfg.headers || {}, env: cfg.env || {}, ...(cfg.timeoutMs ? { timeoutMs: cfg.timeoutMs } : {}) };
+    const full = { transport: cfg.transport === 'http' ? 'http' : 'stdio', url: cfg.url || '', command: cfg.command || '', ...own };
+    if (!fromFile[name]) return { name, ...full };
+    const known = serverDefs(config)[name];
+    const local = { ...(cfg.command ? { command: cfg.command } : {}), ...(cfg.url ? { url: cfg.url } : {}), ...(cfg.transport ? { transport: cfg.transport } : {}) };
+    return { name, transport: known?.transport || full.transport, url: known?.url || '', command: known?.command || '', ...own, ...local, fromFile: true };
+  });
 }
 
 // ---- transports ----
@@ -206,7 +346,7 @@ function stdioTransport(name, cfg, root) {
   let stderr = '';
   let dead = false;
 
-  const send = (msg) => child.stdin.write(`${JSON.stringify(msg)}\n`);
+  const send = (msg, done) => child.stdin.write(`${JSON.stringify(msg)}\n`, done);
   const die = (err) => {
     if (dead) return;
     dead = true;
@@ -255,7 +395,7 @@ function stdioTransport(name, cfg, root) {
         send({ jsonrpc: '2.0', id, method, params });
       });
     },
-    notify: (method, params) => send({ jsonrpc: '2.0', method, ...(params ? { params } : {}) }),
+    notify: (method, params) => new Promise((resolve) => send({ jsonrpc: '2.0', method, ...(params ? { params } : {}) }, resolve)),
     close() {
       dead = true;
       endChild(child); // a late taskkill /T on a reused pid killed the next server we had just spawned
@@ -275,20 +415,24 @@ function parseSse(text, id) {
   return null;
 }
 
-function httpTransport(name, cfg) {
+/** Streamable HTTP transport; `getHeaders` lets a not yet saved server be checked with its own headers. */
+function httpTransport(name, cfg, getHeaders = () => cfg.headers) {
   let sessionId = null;
   let initialized = false;
   let seq = 0;
+  const dispatcher = cfg.dispatcher;
 
   async function post(body, ms) {
-    const headers = { 'content-type': 'application/json', accept: 'application/json, text/event-stream', ...cfg.headers };
+    const headers = { 'content-type': 'application/json', accept: 'application/json, text/event-stream', ...getHeaders() };
     if (sessionId) headers['mcp-session-id'] = sessionId;
     if (initialized) headers['mcp-protocol-version'] = PROTOCOL;
     let res;
     try {
-      res = await fetch(cfg.url, { method: 'POST', headers, body: JSON.stringify(body), signal: AbortSignal.timeout(ms) });
+      res = await fetch(cfg.url, { method: 'POST', headers, body: JSON.stringify(body), signal: AbortSignal.timeout(ms), ...(dispatcher ? { dispatcher } : {}) });
     } catch (e) {
-      throw e.name === 'TimeoutError' ? timeoutError(name, body.method, ms) : rpcError(name, { message: e.cause?.code || e.message });
+      // a bare «fetch failed» says nothing about what to fix: name the reason and the address that did not answer
+      if (e.name === 'TimeoutError') throw timeoutError(name, body.method, ms);
+      throw Object.assign(new Error(`MCP ${name}: сеть — ${networkReason(e)} (${cfg.url})`), { status: 502, network: true });
     }
     sessionId = res.headers.get('mcp-session-id') || sessionId;
     if (!res.ok) {
@@ -311,7 +455,7 @@ function httpTransport(name, cfg) {
     },
     notify: (method, params) => post({ jsonrpc: '2.0', method, ...(params ? { params } : {}) }, 10000).catch(() => {}),
     close() {
-      if (sessionId) fetch(cfg.url, { method: 'DELETE', headers: { 'mcp-session-id': sessionId, ...cfg.headers } }).catch(() => {});
+      if (sessionId) fetch(cfg.url, { method: 'DELETE', headers: { 'mcp-session-id': sessionId, ...cfg.headers }, ...(dispatcher ? { dispatcher } : {}) }).catch(() => {});
     },
   };
 }
@@ -338,16 +482,22 @@ export function createMcpManager(config) {
       ...resolved,
       headers: http ? injected : resolved.headers,
       env: http ? resolved.env : { ...(def.managed ? {} : secretEnv(config)), ...injected },
+      ...(http ? { dispatcher: tlsDispatcher(def, config) } : {}),
     };
   }
 
   async function withClient(name, fn) {
     const cfg = prepared(name);
+    return await talk(name, cfg, fn);
+  }
+
+  /** Connects with an already resolved server config (secrets applied), initializes and closes. */
+  async function talk(name, cfg, fn) {
     const ms = cfg.timeoutMs || 15000;
     const t = cfg.transport === 'http' ? httpTransport(name, cfg) : stdioTransport(name, cfg, config.root);
     try {
       await t.request('initialize', { protocolVersion: PROTOCOL, capabilities: {}, clientInfo: CLIENT_INFO }, ms);
-      t.notify('notifications/initialized');
+      await t.notify('notifications/initialized');
       return await fn((method, params) => t.request(method, params, ms));
     } finally {
       t.close();
@@ -377,6 +527,34 @@ export function createMcpManager(config) {
     listTools,
     callTool,
     toolsSeen: (name) => seen.get(name) ?? null,
+    /** Connects a definition that is not saved yet (the settings form): same secret scoping and TLS as a saved server. */
+    async probe(def) {
+      const secrets = loadSecrets(config);
+      const owners = Object.keys({ ...serverDefs(config), [def.name]: def }).sort((a, b) => b.length - a.length);
+      const own = scopedSecrets(secrets, owners, def.name);
+      const http = def.transport === 'http';
+      const resolved = resolveRefs({ env: def.env || {}, headers: def.headers || {}, args: def.args || [], url: def.url || '' }, secrets);
+      const injected = mergedFields(def.transport, own, http ? resolved.headers : resolved.env);
+      const cfg = {
+        ...def,
+        ...resolved,
+        url: resolved.url,
+        headers: http ? injected : resolved.headers,
+        env: http ? resolved.env : { ...(def.managed ? {} : secretEnv(config)), ...injected },
+        ...(http ? { dispatcher: tlsDispatcher(def, config) } : {}),
+      };
+      const tools = await talk(def.name, cfg, async (request) => {
+        const list = [];
+        let cursor;
+        do {
+          const r = await request('tools/list', cursor ? { cursor } : {});
+          list.push(...(r?.tools || []));
+          cursor = r?.nextCursor;
+        } while (cursor);
+        return list;
+      });
+      return tools.map((t) => ({ name: t.name, description: t.description || '' }));
+    },
     async status(onlyName) {
       // the harness calls only its integrations' servers and the ones in its own config; the rest of the user's GigaCode
       // servers (mcpServersFrom: java-lsp, …) are the agents' business — not started here on every page load

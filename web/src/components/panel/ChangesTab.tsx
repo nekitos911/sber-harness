@@ -11,10 +11,9 @@ import type { GitCommit, GitFile, GitSuggest, Settings } from '../../types'
 import { Disclosure, Menu, MenuButton, type MenuItem } from '../ui'
 import { openPrSettings, usePr } from '../../lib/pr'
 import { Skeleton } from '../bits'
-import { GenerateStatus, useGenerate, type Generated } from '../GenerateMessage'
+import { GenerateStatus, useGenerate } from '../GenerateMessage'
 import { AgentGitLine } from '../AgentGit'
 import { currentVia, gitAction, type GitVia } from '../../lib/agentGit'
-import { useSettings } from '../../lib/agents'
 import { BranchPicker } from '../pickers/BranchPicker'
 import { openFolder } from '../WorktreeMenu'
 import { flowState } from '../../lib/flow'
@@ -22,7 +21,7 @@ import { touchedRoots, type Root } from '../../lib/toolRun'
 import { loadWorktreesOf } from '../../ws'
 
 // what the agent wrote per change set: a remount (tab switch, panel toggle) shows it again without a new run
-const generatedCache = new Map<string, Generated>()
+const generatedCache = new Map<string, { title: string; body: string }>()
 
 const STATUS_LABEL: Record<GitFile['status'], string> = { M: 'изменён', A: 'добавлен', D: 'удалён', R: 'переименован', '?': 'новый, не в git', U: 'конфликт' }
 const TITLE_MAX = 72
@@ -37,7 +36,7 @@ const join = (g: { title: string; body: string }) => (g.body ? `${g.title}\n\n${
  * upstream; one message box (✨ writes it); a split «Закоммитить» button; staged and unstaged files; commits folded below.
  */
 /** `inline`: a worktree of a chat in the projects folder, shown inside that chat's panel (never the folder list again). */
-export function ChangesTab({ cwd, inline = false, agentBusy = false }: { cwd: string; inline?: boolean; agentBusy?: boolean }) {
+export function ChangesTab({ cwd, inline = false }: { cwd: string; inline?: boolean }) {
   const prEnabled = useStore((s) => s.integrations.pr)
   const prSupported = useFeature('pr-status')
   const stageOn = useFeature('git-stage')
@@ -53,12 +52,6 @@ export function ChangesTab({ cwd, inline = false, agentBusy = false }: { cwd: st
   const touched = useRef(!!saved) // once the user edits, prefill never overwrites their text
   const generated = useRef(false) // the box holds the agent's text: the template prefill no longer replaces it
   const gen = useGenerate(cwd, 'commit')
-  const settings = useSettings()
-  const autoGen = gen.on && settings?.git.generateMessages !== false
-  // an agent at work here (or the folder chat that edits this worktree: `agentBusy`): the change set moves all the time — its
-  // build logs grow every second — and every move started a new GigaCode run for the message. Once it stops: one run.
-  const agentHere = useStore((s) => s.sessions.some((x) => x.status === 'running' && normPath(x.worktreePath ?? x.cwd) === normPath(cwd)))
-  const quiet = !agentBusy && !agentHere
   const [busy, setBusy] = useState<'commit' | 'push' | null>(null)
   const [query, setQuery] = useState<string | null>(null) // null = the search field is closed
   const [menu, setMenu] = useState<'more' | 'split' | null>(null)
@@ -86,31 +79,28 @@ export function ChangesTab({ cwd, inline = false, agentBusy = false }: { cwd: st
     return () => { live = false }
   }, [cwd, filesSig, branch, ready])
 
-  // The change set: sorted paths with their status and the diff stat. A new one may get a new message.
+  // The change set: sorted paths with their status and the diff stat. The ✨ message belongs to one change set.
   const commitFiles = status?.files.filter((f) => !f.service) ?? []
   const statSig = commitFiles.map((f) => `${f.status}${f.path}:${f.added}/${f.removed}`).sort().join('|')
   const changeSig = `${normPath(cwd)}|${statSig}|${status?.totals?.added}/${status?.totals?.removed}`
   const hasChanges = commitFiles.length > 0
-  const generate = async (sig: string) => {
+  // a message the agent wrote is kept for its change set: coming back to the panel shows it instead of the template
+  const generatedSig = useRef<string | null>(null)
+  useEffect(() => {
+    const cached = generatedCache.get(changeSig)
+    if (!cached || touched.current || generatedSig.current === changeSig) return
+    generatedSig.current = changeSig
+    generated.current = true
+    setMsg(join(cached))
+  }, [changeSig])
+  const generate = async () => {
     const r = await gen.run()
     if (!r || touched.current) return // never over what the person typed meanwhile
-    generatedCache.set(sig, r)
+    generatedCache.set(changeSig, r)
+    generatedSig.current = changeSig
     generated.current = true
     setMsg(join(r))
   }
-  // Auto: once per change set, 800 ms after it settles, while the box is untouched and the panel is on screen.
-  const askedFor = useRef<string | null>(null)
-  useEffect(() => {
-    if (!autoGen || !quiet || !hasChanges || touched.current || askedFor.current === changeSig) return
-    const cached = generatedCache.get(changeSig)
-    if (cached) { askedFor.current = changeSig; generated.current = true; setMsg(join(cached)); return }
-    const t = window.setTimeout(() => {
-      if (document.visibilityState !== 'visible' || touched.current) return
-      askedFor.current = changeSig
-      void generate(changeSig)
-    }, 800)
-    return () => window.clearTimeout(t)
-  }, [autoGen, quiet, hasChanges, changeSig]) // eslint-disable-line react-hooks/exhaustive-deps
 
   if (git?.error) return inline ? <p className="muted wpanel-section">{git.error}</p> : <LinkedWorktrees cwd={cwd} error={git.error} />
   if (!status) return <div className="wpanel-section"><Skeleton rows={4} /></div>
@@ -252,13 +242,13 @@ export function ChangesTab({ cwd, inline = false, agentBusy = false }: { cwd: st
             onKeyDown={(e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !primaryDisabled) { e.preventDefault(); primary() } }} />
           {gen.on && (
             <button type="button" className="icon-btn icon-btn-sm scm-gen" aria-label="Сгенерировать сообщение" data-tip="Сгенерировать: GigaCode напишет по изменениям и задаче"
-              disabled={gen.running} onClick={() => { touched.current = false; saveDraft(draftKey, null); void generate(changeSig) }}>
+              disabled={gen.running} onClick={() => { touched.current = false; saveDraft(draftKey, null); void generate() }}>
               <Sparkles className={gen.running ? 'spinner' : undefined} />
             </button>
           )}
         </div>
         {title.length > TITLE_MAX && <p className="scm-hint">Первая строка — заголовок: <span className="num">{title.length}/{TITLE_MAX}</span>, лучше короче.</p>}
-        <GenerateStatus g={gen} onRetry={() => void generate(changeSig)} />
+        <GenerateStatus g={gen} onRetry={() => void generate()} />
       </>}
 
       <div className="split-btn">
@@ -515,7 +505,8 @@ function LinkedWorktrees({ cwd, error }: { cwd: string; error: string }) {
       {seenLine}
     </div>
     {/* its changes, commit and push right in the chat: no leaving the work to look at them */}
-    <ChangesTab key={current.path} cwd={current.path} inline agentBusy={running} />
+    <div className="linked-current" data-tip={current.path}>Изменения в <strong>{current.repo ?? basename(current.path)}</strong> <span className="mono muted">{basename(current.path)}</span></div>
+    <ChangesTab key={current.path} cwd={current.path} inline />
     </>
   )
 }

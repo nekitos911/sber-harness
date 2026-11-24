@@ -48,6 +48,7 @@ export function loadConfig({ root = CODE_ROOT, overrides = {}, dataDir, configFi
   cfg.host ||= '127.0.0.1';
   cfg.agents ||= {};
   cfg.agentMcpServers ||= {};
+  cfg.mcpDisabled ||= [];
   cfg.mcpServers ||= {};
   cfg.integrations ||= {};
   cfg.git = { defaultBase: 'main', excludeFromCommit: ['.superpowers/', '.gigacode/tmp/', '*.class', '*.log'], networkTimeoutSec: 120, generateMessages: true, generateTimeoutSec: 120, via: 'agent', ...cfg.git };
@@ -70,6 +71,12 @@ export function loadConfig({ root = CODE_ROOT, overrides = {}, dataDir, configFi
     ...cfg.board,
   };
   for (const a of Object.values(cfg.agents)) if (a && a.models !== undefined) a.models = normalizeModels(a.models);
+  // a person's message does not wait for a step that only waits for sub-agents: after `steerAfterMs` those calls end
+  // (the sub-agents go on in the background, their results come as messages). 0 = off
+  cfg.chat = { steerAfterMs: 30000, ...cfg.chat };
+  // ACP: how long the agent may start one MCP server before it goes on without it (mcp.acpStartTimeoutMs), and the
+  // harness server's own — it starts slower and `worker_run` waits for a whole sub-agent run
+  cfg.mcp = { acpStartTimeoutMs: 30000, harnessTimeoutMs: 3600000, ...cfg.mcp };
   cfg.shell = resolveShell(cfg.shell);
   return cfg;
 }

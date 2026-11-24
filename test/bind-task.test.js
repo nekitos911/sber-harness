@@ -82,11 +82,19 @@ test('a task naming an API path: the harness finds it in the code and tells the 
 });
 
 test('links in the tracker task\'s fields («Внешние ссылки»): collected, and a link into a repository cloned here points at its local copy', async () => {
-  const { parseIssue, fieldLinks, urlsIn } = await import('../server/integrations/tasks.js');
+  const { parseIssue, fieldLinks, urlsIn, getExternal } = await import('../server/integrations/tasks.js');
   // the «Внешние ссылки» tab comes from its own tool in whatever shape: every address in the answer counts
   assert.deepEqual(urlsIn('{"links":[{"url":"https://git.example/repos/specs/browse/a.md","title":"Спека"}]} и (https://wiki.example/x).'), ['https://git.example/repos/specs/browse/a.md', 'https://wiki.example/x']);
   const { localCopyOf } = await import('../server/hints.js');
-  // the field's format is assumed like the other fields of sbertrack_getIssue (VERIFY on the target: GIGACODE-FACTS)
+  // the shape the tracker's getIssue really answers with: a link attribute, and a text attribute «Статус;адрес»
+  const real = parseIssue('# PROJ-2 — Задача\n\n- **Status**: qa\n\nописание\n\n### Attributes\n\n'
+    + '**БТ Сбертрек** (`br_st`, text)\n  Утвержден;https://tracker.example/swtr/units/current/unit/PROJ-129\n\n'
+    + '**Внешние ссылки** (`external_link`, external_link)\n  https://git.example/projects/P/repos/specs/browse/api/templates.md\n\n'
+    + '**Архитектура Сбертрек** (`arch_st`, text)\n  —');
+  assert.deepEqual(fieldLinks(real), [
+    { name: 'БТ Сбертрек', url: 'https://tracker.example/swtr/units/current/unit/PROJ-129' },
+    { name: 'Внешние ссылки', url: 'https://git.example/projects/P/repos/specs/browse/api/templates.md' },
+  ]);
   const issue = parseIssue('# PROJ-1 — Поле в шаблон\n\n- **Status**: todo\n- **Внешние ссылки**: https://git.example/projects/P/repos/specs/browse/api/templates.md, https://wiki.example/x\n\nописание\n\n### Attributes\n\n- **Component**: task-service');
   assert.deepEqual(fieldLinks(issue), [
     { name: 'Внешние ссылки', url: 'https://git.example/projects/P/repos/specs/browse/api/templates.md' },
@@ -100,4 +108,23 @@ test('links in the tracker task\'s fields («Внешние ссылки»): col
   assert.equal(localCopyOf('https://gitlab.example/team/specs/-/blob/main/api/templates.md', repos), path.join(specs, 'api', 'templates.md'));
   assert.equal(localCopyOf('https://git.example/team/specs.git', repos), specs, 'the repository itself');
   assert.equal(localCopyOf('https://wiki.example/x', repos), null);
+
+  // the details reach the task: links from the issue itself, and the tracker is not asked for a tool it does not have
+  const task = { id: 't1', externalId: 'PROJ-2', description: '' };
+  const patch = {};
+  const store = { get: () => task, update: (_id, p) => Object.assign(patch, p), addLog() {} };
+  const calls = [];
+  const fakeMcp = {
+    listTools: () => { throw new Error('no tool guessing'); },
+    callTool: async (_server, tool, args) => { calls.push(tool); return fakeMcp.answers[tool](args); },
+    answers: {
+      getIssue: () => ({ content: [{ type: 'text', text: '# PROJ-2 — Задача\n\n- **Status**: qa\n\nописание\n\n### Attributes\n\n**Внешние ссылки** (`external_link`, external_link)\n  https://git.example/projects/P/repos/specs/browse/api/templates.md' }] }),
+      listLinks: () => ({ content: [{ type: 'text', text: 'no links\n' }] }),
+    },
+  };
+  const cfg = { integrations: { tasks: { enabled: true, format: 'onework-markdown', server: 'onework', tools: { get: 'getIssue', links: 'listLinks' } } } };
+  const details = await getExternal({ config: cfg, mcp: fakeMcp, tasks: store, task });
+  assert.deepEqual(calls, ['getIssue', 'listLinks']);
+  assert.deepEqual(patch.externalLinks, [{ name: 'Внешние ссылки', url: 'https://git.example/projects/P/repos/specs/browse/api/templates.md' }]);
+  assert.deepEqual(details.links, []);
 });

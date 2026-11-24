@@ -32,9 +32,12 @@
  *     and GIGACODE_PACKAGE_LAUNCHER (the shim path); without them it prints to stderr and exits 0 with no stdout.
  *   - argv: [...nodeArgs, cliEntry, (--resume <id>)?, -p, <prompt>, --approval-mode, <mode>, --output-format, stream-json, (--model <m>)?]
  *   - settings: env GIGACODE_SYSTEM_SETTINGS_PATH -> runs/<sid>/settings.json =
- *     { agents: { modelGrades, allowedGrades }, chatRecording: true, mcpServers: { harness, ...agentMcpServers } }.
- *     Never `permissions`. agents.gigacode.inheritUserMcp copies ~/.gigacode/settings.json mcpServers in as well
- *     (whether the CLI merges or replaces mcpServers is unconfirmed).
+ *     { chatRecording: true, mcpServers: { harness, ...agentMcpServers } }.
+ *     Never `agents.modelGrades`/`allowedGrades`: the CLI validates those ids against its own catalogue and exits 1
+ *     when one is missing; grades are the harness's own lookup (server/models.js).
+ *     No `permissions` key: the allow-list travels as --allowed-tools. The CLI merges mcpServers from the run file
+ *     with the user's ~/.gigacode/settings.json (verified live), same-name keys win; a `servers` key is ignored.
+ *     agents.gigacode.inheritUserMcp additionally copies the user's servers into the run file (not needed for merging).
  *   - stream-json is Qwen-Code / Claude style (test/fixtures/gigacode.*.ndjson): system/init, assistant, user
  *     (tool results), stream_event (goal_state, ignored), result (usage = run total). Events with a non-null
  *     parent_tool_use_id belong to a built-in sub-agent and are tagged parentToolId (kept out of the main chat).
@@ -44,6 +47,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { CODE_ROOT } from './config.js';
+import { serverDefs } from './mcp-client.js';
 import { writeAtomic } from './store.js';
 import { locate, resolveCommand } from './runner.js';
 
@@ -53,6 +57,26 @@ import { locate, resolveCommand } from './runner.js';
 
 const asText = (v) => (typeof v === 'string' ? v : v == null ? '' : JSON.stringify(v));
 const num = (v) => (Number.isFinite(v) ? v : 0);
+
+const isEmptyInput = (v) => v == null || (typeof v === 'object' && !Array.isArray(v) && !Object.keys(v).length);
+
+/**
+ * A tool_use of GigaCode's ToolCall / ToolSearch wrappers as the harness shows it: `{ name, input }`. The wrapper only
+ * means «call this tool»; the card is about the tool itself (`mcp__harness__agent`, `glob`), with its own arguments —
+ * `input.toolName`/`input.tool_name` (or a server-qualified `input.description`, e.g. `agent (harness MCP Server)`),
+ * `input.arguments`/`input.args`/`input.input`.
+ */
+export function unwrapToolCall(name, input) {
+  const wrapper = String(name ?? '');
+  if (!/^(tool_?call|tool_?search)$/i.test(wrapper)) return { name: wrapper || 'tool', input: input ?? null };
+  const i = input && typeof input === 'object' ? input : {};
+  const field = String(i.toolName ?? i.tool_name ?? i.name ?? i.tool ?? '').trim();
+  const described = String(i.description ?? '').replace(/^(\S+) \(([^)]*) MCP Server\)$/i, (m, tool, server) => `${server}__${tool}`);
+  const inner = field || described;
+  if (!inner) return { name: wrapper, input: input ?? null };
+  const args = i.arguments ?? i.args ?? i.input ?? null;
+  return { name: /^tool_?search$/i.test(inner) ? 'tool_search' : inner, input: isEmptyInput(args) ? null : args };
+}
 
 function contentText(c) {
   if (Array.isArray(c)) return c.map((p) => (typeof p === 'string' ? p : p?.text ?? '')).join('');
@@ -113,7 +137,10 @@ export function normalize(o, state = {}) {
       for (const b of blocks) {
         if (b?.type === 'text' && b.text && !state.streamedText) body.push({ type: 'text', text: b.text, delta: false });
         else if (b?.type === 'thinking' && b.thinking && !state.streamedText) body.push({ type: 'thought', text: b.thinking, delta: false });
-        else if (b?.type === 'tool_use') body.push({ type: 'tool_call', id: String(b.id ?? ''), name: String(b.name ?? 'tool'), input: b.input ?? {} });
+        else if (b?.type === 'tool_use') {
+          const call = unwrapToolCall(b.name, b.input);
+          body.push({ type: 'tool_call', id: String(b.id ?? ''), name: call.name, input: call.input ?? {} });
+        }
       }
       // the main agent's context after this step (a built-in sub-agent's steps are its own context)
       if (o.message?.usage && !o.parent_tool_use_id) body.push(contextUsage(o.message.usage, state.usageStyle === 'anthropic'));
@@ -151,9 +178,11 @@ export function normalize(o, state = {}) {
       if (text) body.push({ type: 'thought', text, delta: o.delta === true });
       break;
     }
-    case 'tool_use':
-      body.push({ type: 'tool_call', id: String(o.tool_id ?? o.id ?? ''), name: String(o.tool_name ?? o.name ?? 'tool'), input: o.parameters ?? o.input ?? {} });
+    case 'tool_use': {
+      const call = unwrapToolCall(o.tool_name ?? o.name, o.parameters ?? o.input);
+      body.push({ type: 'tool_call', id: String(o.tool_id ?? o.id ?? ''), name: call.name, input: call.input ?? {} });
       break;
+    }
     case 'tool_result':
       body.push({
         type: 'tool_result',
@@ -199,15 +228,16 @@ function userMcpServers(file = USER_SETTINGS) {
   }
 }
 
-/** Per-session settings.json for the Gemini-CLI family. Never contains `permissions`. */
+/** Per-session settings.json for the Gemini-CLI family. Never contains the CLI's `permissions` block. */
 /**
- * agents.<id>.mcpExclude under agents.<id>.mcpExcludeKey (default "mcp.excluded"; Gemini-style "excludeMCPServers" —
- * VERIFY which one GigaCode honours): servers the harness runs do not start (each headless turn starts every server).
+ * agents.<id>.mcpExclude under agents.<id>.mcpExcludeKey (default "excludeMCPServers", verified on the target
+ * 2026-11-18: a one-shot run with it started no java-lsp and printed no MCP warning): servers the harness runs do not
+ * start — GigaCode merges the user's settings.json, so a server missing from the run file still starts without it.
  */
 function mcpExclusion(agentCfg, rest) {
   const list = (agentCfg.mcpExclude || []).filter((x) => x !== 'harness');
   if (!list.length) return {};
-  const [head, ...tail] = (agentCfg.mcpExcludeKey || 'mcp.excluded').split('.');
+  const [head, ...tail] = (agentCfg.mcpExcludeKey || 'excludeMCPServers').split('.');
   if (!tail.length) return { [head]: list };
   const obj = { ...(rest[head] || {}) };
   let cur = obj;
@@ -216,21 +246,46 @@ function mcpExclusion(agentCfg, rest) {
   return { [head]: obj };
 }
 
-/** chatRecording false: the harness's own helper runs (model discovery, commit messages) leave no CLI chat record. */
-export function sessionSettings({ agentCfg, harnessMcp, agentMcpServers, chatRecording = true }) {
-  const { permissions, agents, mcpServers, ...rest } = agentCfg.settings || {};
+/**
+ * Servers the harness starts for an agent: config.agentMcpServers plus the enabled ones from mcpServersFrom
+ * (~/.gigacode/settings.json), the way the CLI sees them; config.mcpDisabled (or the server's own enabled: false) removes
+ * one. The names travel along as `name`: the run settings override the user's definition by name, and its arguments win.
+ */
+export function agentMcpServersFor(config) {
+  const skip = new Set(config.mcpDisabled || []);
+  const out = {};
+  for (const [name, d] of Object.entries(serverDefs(config))) {
+    if (name === 'harness' || skip.has(name) || !d.enabled) continue;
+    const { name: _name, transport, url, enabled: _enabled, ...rest } = d;
+    out[name] = { ...rest, name, ...(transport === 'http' ? { url } : {}) };
+  }
+  return { ...out, ...(config.agentMcpServers || {}) };
+}
+
+/** chatRecording false: the harness's own helper runs (model discovery, commit messages) leave no CLI chat record.
+ * `harnessTimeoutMs` (mcp.harnessTimeoutMs) is how long the CLI waits for the harness server: `worker_run` waits for a
+ * whole sub-agent run. */
+export function sessionSettings({ agentCfg, harnessMcp, agentMcpServers, chatRecording = true, harnessTimeoutMs = 3600000 }) {
+  // `agents` (modelGrades/allowedGrades) is the HARNESS's own grade table: the CLI would validate every id against
+  // its account catalogue and refuse to start on a mismatch. The harness picks the sub-agent model itself.
+  const { permissions: _own, agents: _grades, mcpServers, ...rest } = agentCfg.settings || {};
+  // GigaCode merges `mcpServers` from the run file with the user's ~/.gigacode/settings.json; the same keys win, so the
+  // harness entry is added on top. Never write a whole server list here: a `servers` sibling key is ignored by the CLI,
+  // and `trust: true` on a stdio server denies every tool call headlessly.
+  const harness = { ...harnessMcp };
+  delete harness.trust;
+  const exclusion = mcpExclusion(agentCfg, rest);
   return {
     ...rest,
     // opt-in: GigaCode allows a real `auto` only under an action sandbox (restricts tools to the workspace; VERIFY)
     ...(agentCfg.autoSandbox ? { tools: { ...rest.tools, sandbox: agentCfg.autoSandbox } } : {}),
-    ...mcpExclusion(agentCfg, rest),
-    agents: { ...agents, modelGrades: agents?.modelGrades || {}, allowedGrades: agents?.allowedGrades || [] },
     chatRecording,
     mcpServers: {
       ...(agentCfg.inheritUserMcp ? userMcpServers(agentCfg.userSettingsPath) : {}),
       ...agentMcpServers,
-      harness: { ...harnessMcp, trust: true, timeout: 3600000 }, // worker_run waits for a whole sub-agent run
+      harness: { ...harness, timeout: harnessTimeoutMs }, // worker_run waits for a whole sub-agent run
     },
+    ...exclusion, // last: rest may already carry that top-level key (e.g. mcp.excluded) and must not win
   };
 }
 
@@ -372,6 +427,13 @@ export function resolveGigacode(agentCfg) {
 const INCLUDE_FLAG = '--include-directories'; // the headless form of the interactive /dir add
 
 /**
+ * The id the GigaCode CLI takes for `--model`: without the context suffix. `/models` and the CLI's own catalogue list
+ * `DeepSeek-V4.1-Flash-1017-262k`, the backend knows the model as `DeepSeek-V4.1-Flash-1017`, and an id with the suffix
+ * kills the process at start ("not present in the current backend catalogue") — headless turns and ACP alike.
+ */
+const cliModel = (defaults, model) => (model && defaults.stripModelSuffix ? String(model).replace(/-\d+[km]$/i, '') : model);
+
+/**
  * The approval mode the CLI is given. GigaCode headless rejects `auto` without an action sandbox ("Auto approval is
  * allowed only under an active action sandbox"), so approvalModeMap (gigacode/qwen default { auto: 'auto-edit' })
  * maps it, unless agents.<id>.autoSandbox is set (then the run settings enable the sandbox and `auto` is kept).
@@ -384,11 +446,15 @@ export const DEFAULT_ALLOWED_TOOLS = ['git', 'mvn', 'mvnw', 'gradle', 'gradlew',
 export const READ_ONLY_ALLOWED_TOOLS = ['git status', 'git diff', 'git log', 'git show', 'git branch', 'git ls-files', 'git rev-parse', 'git blame', 'dir', 'ls', 'type', 'cat', 'findstr', 'rg', 'where']
   .map((c) => `run_shell_command(${c})`); // VERIFY on the target: a «git status» pattern matches by prefix
 
+export const FULL_ACCESS_MODES = ['auto', 'auto-full'];
+
 /** The turn's allow-list: the agent's list (auto-edit/default turns) + the chat's + one-turn grants, deduplicated. */
 function allowedList(defaults, { session, agentCfg }) {
   const mode = cliApprovalMode(defaults, agentCfg, session.approvalMode || agentCfg.approvalMode);
   const agentList = session.readOnly ? READ_ONLY_ALLOWED_TOOLS : agentCfg.allowedTools ?? defaults.allowedTools ?? [];
-  const base = ['auto-edit', 'default'].includes(mode) ? agentList : []; // auto+sandbox needs none, plan only reads
+  // auto+sandbox needs none (the CLI asks nobody there), plan only reads. No `*` shorthand: whether GigaCode takes it is
+  // unverified (docs/GIGACODE-FACTS.md, п. 13), and a list is what the CLI is known to accept.
+  const base = ['auto-edit', 'default'].includes(mode) ? agentList : [];
   return [...new Set([...base, ...(session.allowedTools || []), ...(session.grantsOnce || [])])];
 }
 
@@ -398,14 +464,17 @@ export function cliApprovalMode(defaults, agentCfg, mode) {
   return (agentCfg.approvalModeMap ?? defaults.approvalModeMap ?? {})[mode] ?? mode;
 }
 
-/**
- * The id the CLI takes for --model. GigaCode: /models lists ids WITH the context suffix («DeepSeek-V4.1-Flash-1017-262k»), the
- * CLI wants them without — passing the listed id crashes it at start («not present in the current backend catalogue»).
- */
-const cliModel = (defaults, model) => (model && defaults.stripModelSuffix ? String(model).replace(/-\d+[km]$/i, '') : model);
+/** The ACP process gets no sandbox (`tools.sandbox` is a run-file key), so a sandboxed `auto` must not become `auto-edit`. */
+function acpApprovalMode(defaults, agentCfg, mode) {
+  const unsandboxed = { ...defaults, autoSandbox: null };
+  const unsandboxedAgent = { ...agentCfg, autoSandbox: null };
+  return mode === 'auto' && cliApprovalMode(defaults, agentCfg, mode) !== 'auto'
+    ? cliApprovalMode(unsandboxed, unsandboxedAgent, mode)
+    : cliApprovalMode(defaults, agentCfg, mode);
+}
 
 function geminiFamily(id, defaults, resolve) {
-  return {
+  const base = {
     id,
     defaults,
     dirFlag: INCLUDE_FLAG,
@@ -437,11 +506,14 @@ function geminiFamily(id, defaults, resolve) {
       return args;
     },
     /** transport "acp": one long-lived process per session; the prompt goes over JSON-RPC, not argv. VERIFY GigaCode --acp. */
-    acpArgs({ session, agentCfg }) {
+    acpArgs(ctx) {
+      const { session, agentCfg } = ctx;
       const args = ['--acp'];
-      const mode = cliApprovalMode(defaults, agentCfg, session.approvalMode || agentCfg.approvalMode);
+      const mode = acpApprovalMode(defaults, agentCfg, session.approvalMode || agentCfg.approvalMode);
       if (mode) args.push('--approval-mode', mode);
-      const model = cliModel(defaults, session.model || agentCfg.model);
+      // the session's own catalogue decides, not the argv (sessions.js fittingModel); when a checked id does go in, it
+      // goes in the CLI's spelling — the catalogue lists «…-262k», the CLI takes «…» only
+      const model = cliModel(defaults, ctx.acpModel ?? null);
       if (model) args.push('--model', model);
       for (const dir of session.includeDirs || []) args.push(INCLUDE_FLAG, dir);
       return args;
@@ -450,14 +522,13 @@ function geminiFamily(id, defaults, resolve) {
       const name = agentCfg.settingsEnv || defaults.settingsEnv;
       return name ? { [name]: settingsPath } : {};
     },
+    envKeys: (ctx) => [ctx.agentCfg.settingsEnv || defaults.settingsEnv].filter(Boolean),
     prepare(ctx) {
-      const st = sessionSettings(ctx);
-      // a grade pointing at «X-262k» crashes the CLI like --model does: grades get the id the CLI takes
-      st.agents.modelGrades = Object.fromEntries(Object.entries(st.agents.modelGrades).map(([g, m]) => [g, cliModel(defaults, m)]));
-      writeAtomic(ctx.settingsPath, JSON.stringify(st, null, 2));
+      writeAtomic(ctx.settingsPath, JSON.stringify(sessionSettings(ctx), null, 2));
     },
     parse: normalize,
   };
+  return base;
 }
 
 const claude = {
@@ -487,25 +558,31 @@ const claude = {
 
 /**
  * «/name args» the way the CLI's interactive mode sends it: the text of the command file — <cwd>/<home>/commands/<name>.md
- * (the project's own) first, else agents.<id>.commandsDir or ~/<home>/commands — frontmatter dropped, {{args}} / $ARGUMENTS
- * replaced by the arguments, or the invocation added after the text when it has neither (VERIFY: GigaCode's own rule).
- * «a:b» is <dir>/a/b.md. null = the CLI handles it itself: no such file (a built-in command, a skill), a .toml one, or
- * shell / file injections (!{…}, @{…}) the harness does not run. → { name, file, text }
+ * (the project's own) first, then agents.<id>.commandsDir, then ~/<home>/commands — frontmatter dropped, {{args}} /
+ * $ARGUMENTS replaced by the arguments; a command without them gets the arguments at its own «Задача:» line, or after the
+ * text when it has no such line (VERIFY: GigaCode's own rule). «a:b» is <dir>/a/b.md. null = the CLI handles it itself: no
+ * such file (a built-in command, a skill), a .toml one, or shell / file injections (!{…}, @{…}) the harness does not run.
+ * → { name, file, text }
  */
 export function expandCommand(prompt, { cwd, home = null, commandsDir = null }) {
-  const m = /^\/([\w.-]+(?::[\w.-]+)*)(?=\s|$)/.exec(prompt);
+  const m = /^\/([\w.:-]+)(?=\s|$)/.exec(prompt);
   if (!m) return null;
   const name = m[1];
   const args = prompt.slice(m[0].length).trim();
   const rel = `${name.split(':').join(path.sep)}.md`;
-  const user = commandsDir ? commandsDir.replace(/^~(?=[\\/]|$)/, os.homedir()) : home && path.join(os.homedir(), home, 'commands');
-  const file = [cwd && home && path.join(cwd, home, 'commands', rel), user && path.join(user, rel)].find((f) => f && fs.existsSync(f));
+  // the project's own command first, then the agent's folder: a commandsDir set in the settings must not hide it
+  const dirs = [cwd && home && path.join(cwd, home, 'commands'), commandsDir?.replace(/^~(?=[\\/]|$)/, os.homedir()), home && path.join(os.homedir(), home, 'commands')];
+  const file = dirs.filter(Boolean).map((d) => path.join(d, rel)).find((f) => fs.existsSync(f));
   if (!file) return null;
   const body = fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '').replace(/^---\r?\n[\s\S]*?\r?\n---[ \t]*(\r?\n|$)/, '');
   if (/!\{|@\{/.test(body)) return null;
+  // {{args}} / $ARGUMENTS wherever they are; a command without them still has its own place for the task — the «Задача:»
+  // line (full-task.md is 48 000 characters long: at the end the task would be the least visible part of it)
   const slot = /\{\{args\}\}|\$ARGUMENTS/g;
-  const text = slot.test(body) ? body.replace(slot, () => args) : args ? `${body.trimEnd()}\n\n${prompt}` : body;
-  return { name, file, text: text.trim() };
+  const hasSlot = slot.test(body);
+  const marked = !hasSlot && args ? body.replace(/^([ \t]*Задача:[ \t]*)(?:\r?\n|$)/m, (all, head) => `${head}\n${args}\n`) : null;
+  const text = hasSlot ? body.replace(slot, () => args) : marked || (args ? `${body.trimEnd()}\n\n${prompt}` : body);
+  return { name, file, text: text.replace(/^\s+|\s+$/gu, '') };
 }
 
 // A custom command reaches the model as text and the model loads it with the skill tool, first
@@ -513,12 +590,34 @@ export function expandCommand(prompt, { cwd, home = null, commandsDir = null }) 
 // first step's place and the command never ran: this line goes between the command and the preamble.
 const commandHint = (name) => `[harness] Это сообщение — команда /${name}. Если её инструкций ещё нет выше в твоём контексте, твой первый шаг — загрузить её инструментом skill ({"skill":"${name}"}) и дальше работать по ней. Справка харнеса ниже её не заменяет: инструменты harness ищи, когда они понадобятся.`;
 
+const gigacodeLauncher = () => {
+  const base = geminiFamily('gigacode', {
+    quickArgs: ['--safe-mode'], compressCommand: '/compress', contextCommand: '/context', command: 'gigacode', settingsEnv: 'GIGACODE_SYSTEM_SETTINGS_PATH', firstEventTimeoutMs: 120000,
+    continueArgs: ['-c'], approvalModeMap: { auto: 'auto-edit' }, allowedToolsFlag: '--allowed-tools', allowedTools: DEFAULT_ALLOWED_TOOLS, autoSandbox: null,
+    partialMessagesFlag: null /* opt-in: on the target 2 of 3 tool calls then came without arguments (VERIFY) */, stripModelSuffix: true,
+    // process env after the settings file: an agent gets its own data folder (extension store, secrets) under the run
+    // folder. Two GigaCode processes on one ~/.gigacode lock each other out («store is busy», «protected storage is
+    // unavailable») — the second one used to start anyway and lost its MCP servers. QWEN_HOME is the one the CLI reads.
+    env: (ctx) => ({
+      ...(ctx.agentCfg.settingsEnv || 'GIGACODE_SYSTEM_SETTINGS_PATH' ? { [ctx.agentCfg.settingsEnv || 'GIGACODE_SYSTEM_SETTINGS_PATH']: ctx.settingsPath } : {}),
+      QWEN_HOME: path.join(path.dirname(ctx.settingsPath), 'home'),
+    }),
+    envKeys: () => ['GIGACODE_SYSTEM_SETTINGS_PATH', 'QWEN_HOME'],
+    // an outside env may carry the agent's store of the harness itself (a test run, an agent terminal): the launcher's
+    // own choice has to win over that leftover
+    // its MCP tools are deferred: a call by a guessed name («harness_worker_done») is refused until tool_search registers them
+    toolsHint: 'Инструменты harness здесь отложенные: перед первым вызовом найди их через tool_search по слову «harness»; точные имена — mcp__harness__worker_done, mcp__harness__ask, mcp__harness__agent, mcp__harness__send_message.', commandHint,
+    commandsHome: '.gigacode',
+  }, (cfg) => resolveGigacode(cfg));
+  // a family launcher already has env/envKeys of its own: these replace them
+  const own = { env: base.defaults.env, envKeys: base.defaults.envKeys };
+  return Object.assign(base, own);
+};
+
 export const launchers = {
   // cold start (hundreds of tools, ~9 MCP servers) can take 30-60 s before system/init
   // quickArgs: one-off helper runs (commit/PR messages) start without MCP/skills/hooks (VERIFY --safe-mode on the target)
-  gigacode: geminiFamily('gigacode', { quickArgs: ['--safe-mode'], compressCommand: '/compress', contextCommand: '/context', command: 'gigacode', settingsEnv: 'GIGACODE_SYSTEM_SETTINGS_PATH', firstEventTimeoutMs: 120000, continueArgs: ['-c'], approvalModeMap: { auto: 'auto-edit' }, allowedToolsFlag: '--allowed-tools', allowedTools: DEFAULT_ALLOWED_TOOLS, autoSandbox: null, partialMessagesFlag: null /* opt-in: on the target 2 of 3 tool calls then came without arguments (VERIFY) */, stripModelSuffix: true,
-    // its MCP tools are deferred: a call by a guessed name («harness_worker_done») is refused until tool_search registers them
-    toolsHint: 'Инструменты harness здесь отложенные: перед первым вызовом найди их через tool_search по слову «harness»; точные имена — mcp__harness__worker_done, mcp__harness__ask, mcp__harness__agent, mcp__harness__send_message.', commandHint, commandsHome: '.gigacode' }, (cfg) => resolveGigacode(cfg)),
+  gigacode: gigacodeLauncher(),
   qwen: geminiFamily('qwen', { command: 'qwen', settingsEnv: 'QWEN_CODE_SYSTEM_SETTINGS_PATH', firstEventTimeoutMs: 30000, approvalModeMap: { auto: 'auto-edit' }, allowedToolsFlag: '--allowed-tools', allowedTools: DEFAULT_ALLOWED_TOOLS }),
   gemini: geminiFamily('gemini', { command: 'gemini', settingsEnv: 'GEMINI_CLI_SYSTEM_SETTINGS_PATH', firstEventTimeoutMs: 30000 }),
   claude,
@@ -526,6 +625,7 @@ export const launchers = {
     command: [process.execPath, path.join(CODE_ROOT, 'scripts', 'mock-agent.js')],
     settingsEnv: 'MOCK_AGENT_SETTINGS_PATH',
     firstEventTimeoutMs: 15000,
+    contextCommand: '/context', // answers with a fixed breakdown, like GigaCode
     allowedToolsFlag: '--allowed-tools', // the mock behaves like GigaCode
     commandHint,
   }),

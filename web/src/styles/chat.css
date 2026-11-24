@@ -91,6 +91,7 @@
 .tool-st { width: 13px; height: 13px; flex-shrink: 0; color: var(--ink-4); }
 .tool-st[data-s="running"] { color: var(--lamp-run); }
 .tool-st[data-s="error"] { color: var(--lamp-fail); }
+.tool-st[data-s="bg"] { color: var(--ink-3); }
 .tool[data-s="error"] .tool-name { color: var(--lamp-fail); }
 .tool-body { display: grid; gap: 4px; margin: 4px 0 6px 20px; padding: 8px 10px 10px; border: 1px solid var(--rule); border-radius: var(--r-2); background: var(--deck); }
 .tool-label { font-size: 11px; color: var(--ink-3); }
@@ -250,6 +251,7 @@
   font-size: 11.5px; line-height: 1.55; color: var(--ink-3); white-space: pre-wrap; overflow-wrap: anywhere;
 }
 .agent-wait { font-size: 12px; }
+.agent-live { flex-shrink: 0; font-size: 11.5px; } /* «работает» / «закончил · 2 мин назад»: a background run goes on past the turn */
 .agent-result { display: grid; gap: 4px; font-size: 13.5px; }
 .agent-result[data-error] { color: var(--lamp-fail); }
 
@@ -380,6 +382,15 @@ svg.step-icon.spinner { color: var(--lamp-run); }
 .ask-card[data-flash], .perm-card[data-flash] { animation: card-flash 1.2s var(--ease-out); }
 @keyframes card-flash { 0%, 40% { box-shadow: 0 0 0 3px var(--signal-soft), 0 0 0 1px var(--signal); } 100% { box-shadow: none; } }
 @media (prefers-reduced-motion: reduce) { .ask-card[data-flash], .perm-card[data-flash] { animation: none; outline: 2px solid var(--signal); } }
+/* the agent's own /context breakdown: one bar per category, scaled to the window */
+.ctx-cats { display: grid; gap: 4px; padding-top: 8px; border-top: 1px solid var(--rule); }
+.ctx-cats-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; font-size: 12px; }
+.ctx-cats-head .num { font-size: 11px; }
+.ctx-cats ul { display: grid; gap: 2px; margin: 0; padding: 0; list-style: none; }
+.ctx-cat { position: relative; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 2px 6px; font-size: 12px; border-radius: 2px; overflow: hidden; }
+.ctx-cat-fill { position: absolute; inset: 0 auto 0 0; background: var(--deck-3); z-index: 0; }
+.ctx-cat-label { position: relative; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ctx-cat .num { position: relative; color: var(--ink-3); flex-shrink: 0; }
 /* the queue above the composer: what the agent gets next, each line can be taken back */
 .composer-queue { display: grid; gap: 2px; padding: 6px 10px 4px; border-bottom: 1px solid var(--rule); font-size: 12.5px; }
 .cq-head { display: flex; align-items: center; gap: 8px; color: var(--ink-3); font-size: 11.5px; }

@@ -4,14 +4,18 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
+import { spawn } from 'node:child_process';
 import { CODE_ROOT } from './config.js';
-import { launchers } from './launchers.js';
-import { runTurn, isAlive, sameProcess } from './runner.js';
-import { baseId } from './models.js';
+import { agentMcpServersFor, FULL_ACCESS_MODES, launchers } from './launchers.js';
+import { runTurn, isAlive, sameProcess, spawnOptions, endChild } from './runner.js';
+import { baseId, catalogueHit } from './models.js';
 import { secretEnv } from './mcp-client.js';
 import { readRegistry } from './registry.js';
 import { createAcp } from './acp.js';
+import { parseContextUsage, contextBreakdown } from './context-usage.js';
+import { steerNotice } from './steer.js';
 import * as git from './git.js';
+import { backgroundLaunch, backgroundResult, outputFileIn } from './background-agents.js';
 
 const fail = (status, message) => { throw Object.assign(new Error(message), { status }); };
 // Windows caps a whole command line at 32767 UTF-16 units (Linux one argument at 128 KiB): a longer prompt goes in a file
@@ -46,7 +50,7 @@ const tail = (text) => (text ? `\n\nstderr:\n${text.slice(-2000).trim()}` : '');
 const fence = (lines) => `\`\`\`text\n${lines.join('\n')}\n\`\`\``;
 const REGISTRY_POLL_MS = 2000;
 const QUESTION_TOOLS = ['ask_user_question', 'ask_user', 'AskUserQuestion']; // VERIFY the real GigaCode name
-export const FULL_ACCESS_MODES = new Set(['auto', 'yolo', 'bypassPermissions']); // «Полный доступ» (as web/src/lib/agents.ts)
+export { FULL_ACCESS_MODES }; // upstream's place; the list itself stays in launchers.js (one source for both modules)
 // confirmed: `GigaCode requires permission to use "run_shell_command", but that permission was declined (...)`
 // What a CLI writes when it refused a call for lack of permission (GigaCode: «requires permission to use "X", but that
 // permission was declined (non-interactive mode cannot prompt for confirmation)»). Never bare words such as «permission»
@@ -88,7 +92,7 @@ export const contextSize = (v) => {
 /** A tool call whose turn ended without its result (stopped, crashed, the harness restarted): never «running» again. */
 export const UNFINISHED_TOOL = 'Ход закончился без результата этого вызова.';
 const MCP_GRACE_MS = 60000; // GigaCode connects its MCP servers at start: a minute with no word from them is none
-export const MCP_MISSING = '⚠ Похоже, агенту не подключились MCP-серверы: за этот запуск GigaCode ни разу не обратился к инструментам harness (вероятно, onework и sourcecontrol тоже недоступны — агент их не найдёт). Частая причина — параллельно работающий GigaCode в терминале держит хранилище расширений (ExtensionStoreBusy). Меню чата «Ещё» → «Сбросить статус» перезапустит процесс агента, контекст сохранится.';
+export const MCP_MISSING = '⚠ Похоже, агенту не подключились MCP-серверы: за этот запуск GigaCode ни разу не обратился к инструментам harness (вероятно, onework и sourcecontrol тоже недоступны — агент их не найдёт). Частая причина — параллельно работающий процесс агента (GigaCode держит свои файлы на время старта, в stderr при этом бывает «store is busy» или «protected storage is unavailable»). Меню чата «Ещё» → «Сбросить статус» перезапустит процесс агента, контекст сохранится.';
 
 /**
  * The queued messages as one prompt. A slash command («/full-task …») works only as the prompt's first word: queued
@@ -187,6 +191,19 @@ export function interruptReason({ startedAt, bootTime, crashed }) {
 const utf8Locale = () => (process.platform !== 'win32' && !process.env.LANG && !process.env.LC_ALL ? { LANG: 'C.UTF-8', LC_ALL: 'C.UTF-8' } : {});
 
 /**
+ * What a CLI turn gets beyond the harness's own env: the launcher's choice (settings file, the agent's data folder) wins
+ * over an outside QWEN_HOME / GIGACODE_HOME — a harness started from a test run or an agent terminal would otherwise put
+ * every agent on one store, where they lock each other out («store is busy»).
+ */
+export function sessionEnv(ctx, launcher = launchers[ctx.agentCfg.launcher] || {}) {
+  const own = launcher.env?.(ctx) || {};
+  const drop = new Set(launcher.envKeys?.(ctx) || []);
+  const env = { ...process.env, ...ctx.agentCfg.env, ...secretEnv(ctx.config), ...ctx.exe?.env };
+  for (const k of drop) if (!(k in own)) delete env[k];
+  return { ...env, ...(ctx.harnessMcp?.env || {}), ...own };
+}
+
+/**
  * node-pty's Windows kill() asks a forked helper for the console's processes and, when that fails because the shell is
  * already gone, process.kill()s the shell's pid ~5 s later - a pid Windows may have given to another process by then
  * (it killed agents and git runs of other sessions). Closing the pseudoconsole ends the attached processes anyway.
@@ -219,7 +236,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
       }
     },
   });
-  const hooks = { preamble: () => '', turnEnded: () => {} };
+  const hooks = { preamble: () => '', turnEnded: () => {}, turnClosed: () => {}, midTurn: () => {} };
 
   const find = (sid) => db.sessions.find((s) => s.id === sid);
   const get = (sid) => find(sid) || fail(404, `сессия ${sid} не найдена`);
@@ -294,7 +311,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     }
   }
 
-  /** Grades whose model a fresh discovery no longer lists are left out (the CLI then uses its default model). */
+  /** Grades whose model a fresh discovery no longer lists (reported once per session on the first turn). */
   function droppedGrades(s) {
     const gone = catalog?.unavailable(s.agent) ?? { has: () => false };
     const grades = config.agents[s.agent]?.settings?.agents?.modelGrades || {};
@@ -314,33 +331,58 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
   }
 
   function runConfig(s, cfg) {
-    const agentCfg = sandboxed(s, cfg);
-    const dropped = droppedGrades(s);
-    if (!dropped.length) return agentCfg;
-    const names = new Set(dropped.map(([g]) => g));
-    const agents = agentCfg.settings?.agents || {};
-    return {
-      ...agentCfg,
-      settings: {
-        ...agentCfg.settings,
-        agents: {
-          ...agents,
-          modelGrades: Object.fromEntries(Object.entries(agents.modelGrades || {}).filter(([g]) => !names.has(g))),
-          allowedGrades: (agents.allowedGrades || []).filter((g) => !names.has(g)),
-        },
-      },
-    };
+    return sandboxed(s, cfg);
+  }
+
+  /**
+   * A model the CLI would refuse at start (headless: `--model`; ACP: `session/set_model`) — judged by OUR discovery only
+   * so the user hears about it before the turn. Returns `{ model, fitted }`: `fitted` says the catalogue answered at all
+   * (only then a mismatch is certain), and a gone model leaves the CLI with its default one. Reported once per session:
+   * the same notice on every turn is noise.
+   */
+  function fittingModel(s, agentCfg, model) {
+    if (!model || agentCfg.transport !== 'acp' || !catalog) return { model, fitted: false };
+    const known = catalog.known(s.agent);
+    if (!known.size) return { model, fitted: false };
+    // the catalogue answers «is this model here»; its ids keep the context suffix («…-262k») the backend does not know —
+    // launchers.js strips it, so a hit keeps the requested id
+    if (catalogueHit(known, model)) return { model, fitted: false };
+    const note = `⚠ Модели «${model}» нет в каталоге сервера — запуск с моделью по умолчанию`;
+    if (!store.messages(s.id).some((m) => m.text === note)) addMessage(s, { kind: 'system', text: note });
+    return { model: null, fitted: false };
+  }
+
+  /** «Полный доступ»: permission requests are not put to the person (headless: the pre-allowed list is `*`; ACP: the
+   * requests are answered as they come). A question is still the agent's own card: it waits for the answer in any mode.
+   * `effectiveApprovalMode` is what the CLI of the LAST turn ran with — after a mode change it describes a different
+   * mode, so it counts only while the chat has no mode of its own. */
+  function fullAccess(s) {
+    const requested = s.approvalMode || config.agents[s.agent]?.approvalMode;
+    if (requested) return FULL_ACCESS_MODES.includes(requested);
+    return FULL_ACCESS_MODES.includes(s.effectiveApprovalMode);
   }
 
   function turnCtx(s, agentCfg, prompt) {
+    const cfg = sandboxed(s, agentCfg);
+    const fit = fittingModel(s, cfg, s.model || cfg.model);
+    const wanted = s.model || cfg.model;
+    // ACP takes the model over the session (`session/new` names this account's catalogue), never over the process argv:
+    // a `--model` the CLI rejects kills the process before it can say which ids it has (launchers.js acpArgs).
+    const acpModel = cfg.transport === 'acp' && !fit.fitted ? wanted : fit.model;
     return {
       prompt,
       session: s,
-      agentCfg: runConfig(s, agentCfg),
+      agentCfg: fit.fitted ? { ...cfg, model: fit.model } : cfg,
+      acpModel,
+      acpWantedModel: wanted,
       settingsPath: s.settingsPath,
       mcpConfigPath: path.join(runDir(s.id), 'mcp.json'),
       harnessMcp: { command: process.execPath, args: [path.join(CODE_ROOT, 'mcp', 'harness-mcp.js')], env: harnessEnv(s) },
-      agentMcpServers: config.agentMcpServers || {},
+      // ACP gives the agent the harness server only (a chat's own MCP list comes from the CLI's settings.json), and the
+      // one field that keeps a slow start from eating the whole init timeout
+      mcpTimeoutMs: config.mcp?.acpStartTimeoutMs,
+      harnessTimeoutMs: config.mcp?.harnessTimeoutMs,
+      agentMcpServers: agentMcpServersFor(config),
     };
   }
 
@@ -424,9 +466,15 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
   // ---- chat turns ----
 
   /** Built-in sub-agent activity (parent_tool_use_id) -> compact lines on the parent tool call, not the main chat. */
-  const SUBAGENT_TOOLS = /^(agent|fork)$/i;
+  const SUBAGENT_TOOLS = /^(agent|fork|mcp__\w*__agent)$/i; // the built-in agent/fork and the harness's own `agent` tool
   // harness `agent` calls whose stream line has not come yet: parent id -> [{ prompt, workerId, at }] (see adoptVirtual)
   const adopted = new Map();
+  const virtualId = (sid, toolId) => `${sid}~${toolId}`;
+
+  /**
+   * A harness `agent` call of a parent, by the prompt it was started with (taken once): the stream may name that call
+   * as the built-in sub-agent, and the copy it opens has to give way to the real chat (see adoptVirtual).
+   */
   function takeAdopted(parentId, prompt) {
     const list = (adopted.get(parentId) || []).filter((x) => Date.now() - x.at < 10 * 60000);
     // ACP may never send the arguments: a copy without them is the next started call, by order (as adoptVirtual does)
@@ -435,13 +483,13 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     if (list.length) adopted.set(parentId, list); else adopted.delete(parentId);
     return hit?.workerId ?? null;
   }
+
   /** The copy goes; the parent's tool line opens the real chat (in place: the running turn writes this message again). */
   function replaceCopy(v, workerId) {
     const line = [...(runtime(v.parentId).cur?.tools?.values() ?? []), ...store.messages(v.parentId)].find((m) => m.tool?.subSessionId === v.id);
     if (line) { line.tool.subSessionId = workerId; updateMessage(get(v.parentId), line); }
-    api.remove(v.id, { force: true });
+    if (!v.background) api.remove(v.id, { force: true }); // a background one keeps working: only its card opens the real chat
   }
-  const virtualId = (sid, toolId) => `${sid}~${toolId}`;
 
   /** Level 1: a built-in sub-agent call (agent/fork tool) becomes a read-only chat nested under its parent. */
   /** Title, model and first message of a sub-agent chat, from the agent/fork call's input. */
@@ -526,12 +574,17 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
   function closeVirtual(s, ev) {
     const v = find(virtualId(s.id, ev.id));
     if (!v?.virtual) return;
-    addMessage(v, { kind: ev.isError ? 'error' : 'assistant', text: ev.output || '(no output)' });
+    // a background one only answered «launched»: that is not its result
+    const bg = backgroundLaunch(ev.output);
+    addMessage(v, { kind: ev.isError ? 'error' : bg ? 'system' : 'assistant', text: ev.output || '(no output)' });
     Object.assign(v, { status: ev.isError ? 'failed' : 'done', preview: (ev.output || '').slice(-200), lastActivityAt: Date.now() });
     // a call the CLI refused before it ran (a deferred harness tool called without tool_search: «not found in registry»)
     // was no sub-agent: no row of its own beside the parent; the parent's step says it
     if (ev.isError && /not found in registry/i.test(ev.output || '')) v.archived = true;
+    // a background sub-agent works on outside this stream, and its own output file settles it (pollBackground)
+    if (bg) Object.assign(v, { background: true, backgroundFile: bg.outputFile, status: 'running', preview: '', backgroundLaunch: ev.output });
     emit(v); // stays beside its parent until the parent's turn ends (settleVirtuals), like Orca
+    if (bg) watchBackground(s);
   }
 
   /** A headless permission card (in the PARENT for a sub-agent's denial: it is the parent's next turn that retries). */
@@ -553,7 +606,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     const why = (ev.output.split('\n').find((l) => /GigaCode sandbox:/i.test(l)) || ev.output).trim().slice(0, 300);
     db.agentMeta[s.agent] = { ...db.agentMeta[s.agent], sandboxBroken: { at: Date.now(), error: why } };
     store.save();
-    addMessage(s, { kind: 'system', text: `⚠ Песочница GigaCode не работает на этой машине: ${why}. Следующие ходы — без песочницы («Полный доступ» = «Авто-правки» + разрешённые команды).` });
+    addMessage(s, { kind: 'system', text: `⚠ Песочница GigaCode не работает на этой машине: ${why}. Следующие ходы — без песочницы: «Полный доступ» работает как авто-правки без вопросов, «Авто-правки» — с разрешёнными командами.` });
   }
 
   function subagentProgress(s, c, ev) {
@@ -586,6 +639,10 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
   function applyEvent(s, ev) {
     if (!find(s.id)) return; // deleted while running
     const r = runtime(s.id);
+    // A process of a turn that is already over (it lingers after its result) can still emit: its output belongs to its
+    // own turn, and applying it here would close the turn that is running now (its `result` would take the queue).
+    if (ev.turn != null && ev.turn !== r.turn) return;
+    if (r.closedEarly) return;
     const c = r.cur;
     s.lastActivityAt = Date.now();
     if (ev.type !== 'auth') {
@@ -680,7 +737,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
           setWaiting(s, 'answer');
           break;
         }
-        if (FULL_ACCESS_MODES.has(s.approvalMode || config.agents[s.agent]?.approvalMode)) {
+        if (fullAccess(s)) {
           // «Полный доступ»: the person chose not to be asked — allowed once, no card (never «always»: that writes CLI settings)
           const allow = ev.options.find((o) => /allow_once/i.test(o.kind ?? ''))
             ?? ev.options.find((o) => /^allow$/i.test(o.kind ?? o.id))
@@ -691,6 +748,9 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
         setWaiting(s, 'permission');
         break;
       }
+      case 'permission_auto': // the harness answered session/request_permission itself: a line, not a card
+        addMessage(s, { kind: 'system', text: `Разрешено автоматически: ${ev.tool}${ev.input != null ? ` ${inputSummary(ev.input)}` : ''}` });
+        break;
       case 'permission_cancelled': // Stop: held requests were answered "cancelled"
         for (const m of store.messages(s.id)) {
           if (m.kind === 'permission' && m.permission.transport === 'acp' && !m.permission.resolved) {
@@ -765,10 +825,21 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
           break;
         }
         const m = c.tools.get(ev.id);
-        if (!m) break;
-        m.tool = { ...m.tool, input: ev.input };
+        if (!m) {
+          // the wrapper finished before it named the wrapped tool (ACP): the call was announced as «tool», so its chat
+          // opens here, on the update that names the sub-agent
+          const name = ev.name || null;
+          if (!name || !SUBAGENT_TOOLS.test(name)) break;
+          openVirtual(s, { ...ev, name }, c);
+          addMessage(s, { kind: 'tool', text: name, tool: { id: ev.id, name, input: ev.input, output: null, status: 'running', subSessionId: virtualId(s.id, ev.id) } });
+          break;
+        }
+        const name = ev.name || m.tool.name;
+        const sub = m.tool.subSessionId ?? (SUBAGENT_TOOLS.test(name) ? openVirtual(s, { ...ev, name }, c) : null);
+        m.text = m.text === m.tool.name ? name : m.text; // the card shows the tool it really was (not the wrapper)
+        m.tool = { ...m.tool, input: ev.input, name, ...(sub && !m.tool.subSessionId ? { subSessionId: sub } : {}) };
         updateMessage(s, m);
-        if (m.tool.subSessionId) fillVirtual(c, m.tool.subSessionId, m.tool.name, ev.input);
+        if (sub) fillVirtual(c, sub, m.tool.name, ev.input);
         break;
       }
       case 'tool_result': {
@@ -822,6 +893,22 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     updateMessage(s, prev);
   }
 
+  /**
+   * A turn killed for silence: the usual cause is a start that loads its MCP servers. Say where that time is configured
+   * and what shortens it, instead of leaving «Нет вывода за N с» as the whole explanation.
+   */
+  function firstEventHint(s, ms) {
+    const a = config.agents[s.agent] || {};
+    const servers = Object.keys(a.mcpExclude?.length ? agentMcpServersFor({ ...config, mcpDisabled: [...(config.mcpDisabled || []), ...a.mcpExclude] }) : agentMcpServersFor(config));
+    const lines = [
+      `Пока агент запускался, он подключал MCP-серверы — это же время считается ожиданием первого ответа (agents.${s.agent}.firstEventTimeoutMs, сейчас ${Math.round(ms / 1000)} с).`,
+    ];
+    if (servers.length) lines.push(`Подключены: ${servers.join(', ')}. Медленный или недоступный сервер задерживает старт: уберите его из agents.${s.agent}.mcpExclude или mcpDisabled — тогда старт станет быстрее.`);
+    if (s.origin === 'cli') lines.push('Этот чат продолжает сессию самого CLI (общие MCP-серверы пользователя и хранилище расширений): закрытый терминал с GigaCode на той же машине держит это хранилище — тогда старт ждёт его освобождения.');
+    lines.push('Если старт действительно долгий, поднимите agents.' + s.agent + '.firstEventTimeoutMs в Настройках и отправьте сообщение снова.');
+    return `\n${lines.join('\n')}`;
+  }
+
   function runTurnEnded(s, r, stopped, reviving = false) {
     if (s.origin === 'cli') s.cliSyncAfter = Date.now() + 15000; // the CLI records this turn too: not «CLI-side activity»
     try {
@@ -842,16 +929,80 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     }
   }
 
-  /** The parent's turn is over: a sub-agent still running failed with it; all of them are archived now. */
+  /**
+   * A built-in `agent` call with run_in_background answers at once and the sub-agent works outside this stream: the call
+   * is not «running» any more, while the work (and its chat) is. The CLI writes that sub-agent's own steps and its final
+   * result into a file of its own, so its chat ends when the result is there — not when the turn that started it ends.
+   */
+  const backgroundTool = (tool) => !!tool && !!backgroundLaunch(tool.output);
+
+  /** One look at a background sub-agent's output file: a result there settles its chat. */
+  function pollBackground(s, id) {
+    const v = find(id);
+    if (!v?.background || v.status !== 'running') return false;
+    const m = [...(runtime(s.id).cur?.tools?.values() ?? []), ...store.messages(s.id)].find((x) => x.tool?.subSessionId === v.id);
+    // the file comes with the call's answer: a chat stored before this was known takes it from the card
+    const file = v.backgroundFile || outputFileIn(m?.tool?.output);
+    if (!file) return false;
+    const res = backgroundResult(file);
+    if (!res) return false;
+    // its chat keeps the launch note (a system line) and gets the result: the chat is the report
+    addMessage(v, { kind: res.isError ? 'error' : 'assistant', text: res.output });
+    Object.assign(v, { backgroundFile: file, status: res.isError ? 'failed' : 'done', preview: res.output.slice(-200), lastActivityAt: Date.now() });
+    emit(v);
+    if (m) {
+      m.tool = { ...m.tool, output: res.output, status: res.isError ? 'error' : 'ok', stillRunning: false };
+      updateMessage(s, m);
+    }
+    // done with it, and the parent's turn is over: the chat goes to the archive as any settled one — the parent's card
+    // keeps the answer and still opens it
+    if (!runtime(s.id).running) retireVirtual(v);
+    return true;
+  }
+
+  /**
+   * A background sub-agent works while its parent's turn may end at any time: a result that comes later settles its
+   * chat (and the parent's card) from the CLI's own file. The first look is taken at once, the rest every few seconds.
+   */
+  function watchBackground(s) {
+    const r = runtime(s.id);
+    const live = () => db.sessions.filter((v) => v.virtual && v.parentId === s.id && v.background && v.status === 'running' && !v.archived);
+    if (r.bgTimer) return; // one poll per chat: it watches every background sub-agent of this parent
+    const look = () => {
+      for (const v of live()) pollBackground(s, v.id);
+      if (!live().length) {
+        clearInterval(r.bgTimer);
+        r.bgTimer = null;
+      }
+    };
+    r.bgTimer = setInterval(look, 3000);
+    r.bgTimer.unref?.();
+    setTimeout(look, 0).unref?.(); // its result may already be in the file
+  }
+
+  /**
+   * The parent's turn is over: a sub-agent still running failed with it; all of them are archived now. A background one
+   * works on — its card says so, and its chat stays until its own output file settles it.
+   */
   function settleVirtuals(s) {
     settleTools(s);
+    for (const m of [...(runtime(s.id).cur?.tools?.values() ?? []), ...store.messages(s.id)]) {
+      if (!m.tool?.subSessionId || !backgroundTool(m.tool)) continue;
+      const v = find(m.tool.subSessionId);
+      const live = v?.status === 'running';
+      // the call answered — the turn's end is not its end; the chat (and its answer) stays
+      updateMessage(s, { ...m, tool: { ...m.tool, ...(live ? { status: 'ok', stillRunning: true } : { stillRunning: false }) } });
+    }
     for (const v of db.sessions.filter((x) => x.virtual && x.parentId === s.id && !x.archived)) {
+      if (v.background) continue;
       if (v.status === 'running') {
         Object.assign(v, { status: 'failed', lastActivityAt: Date.now() });
         emit(v);
       }
       retireVirtual(v);
     }
+    // a background sub-agent's result may already be in its file: watchBackground takes that look at once
+    if (db.sessions.some((v) => v.virtual && v.parentId === s.id && v.background && v.status === 'running' && !v.archived)) watchBackground(s);
   }
 
   /** Questions / permission requests of a session that is archived never stay open (its cards in the parent do). */
@@ -905,6 +1056,46 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     armLinger(s);
   }
 
+  /**
+   * A person's message to a working agent does not wait for the step to end by itself (chat.steerAfterMs). What holds the
+   * step is a call waiting for sub-agents — the message goes next turn, the sub-agents go on in the background. When the
+   * step merely works by itself, its own commands are never cut: the message comes right after it. 0 = never.
+   */
+  function armSteer(s) {
+    const r = runtime(s.id);
+    clearTimeout(r.steerTimer);
+    r.steerTimer = null;
+    const ms = config.chat?.steerAfterMs ?? 0;
+    if (!r.running || !(ms > 0)) return;
+    r.steerTimer = setTimeout(() => {
+      r.steerTimer = null;
+      if (!r.running) return; // the step ended (startTurn resets this)
+      if (!(hooks.waits?.(s) > 0)) return; // its own work goes on to its end
+      // A person's message ends its wait at once (personWrote) and the step goes on with it. Any other message — the
+      // coordinator's reply, the person's writing that came before the call started — cannot be read in this turn
+      // (ACP: one session/prompt): the call ends, the sub-agents go on in the background, and the step, done with its
+      // own work, ends by itself — nothing is cut
+      if (s.queue?.some((q) => q.from === 'user')) cutStep(s.id);
+      else hooks.endWaits?.(s);
+    }, ms);
+    r.steerTimer.unref?.();
+  }
+
+  /** The step ends now, its own message first in the queue: the person's message starts the next turn on the same context. */
+  function cutStep(sid) {
+    const s = find(sid);
+    const r = runtime(sid);
+    const found = s?.queue?.find((q) => q.from === 'user');
+    if (!s || !r.running || !found) return false;
+    r.cutAt = r.turn; // the step's closing marks the message (finishTurn): its turn is told why it was cut
+    r.stopRequested = true;
+    r.handle?.stop();
+    r.slotWake?.();
+    if (s.status === 'running') s.status = 'stopped';
+    emit(s);
+    return true;
+  }
+
   /** The process may linger after result (a queued message waits for it) at most agents.<id>.exitGraceMs. */
   function armLinger(s) {
     const r = runtime(s.id);
@@ -924,13 +1115,57 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     r.slotWake = null;
   }
   // «Unable to update lock within the stale threshold»: GigaCode's file lock lost to another process starting at the same
-  // time (seen 2026-11-21, ACP, exit 1 before any event)
-  const START_BUSY = /ExtensionStoreBusyError|store is busy|EBUSY|resource busy or locked|Unable to update lock within the stale threshold|Lock file is already being held/i;
+  // time (seen 2026-11-21, ACP, exit 1 before any event). «protected storage is unavailable»: its secret store lost the
+  // same race — the second process cannot write there, so waiting and starting again is the whole fix.
+  const START_BUSY = /ExtensionStoreBusyError|store is busy|EBUSY|resource busy or locked|Unable to update lock within the stale threshold|Lock file is already being held|protected storage is unavailable/i;
+
+  /**
+   * The previous turn's process is still closing (turnClosing: its `result` came, it waits at most exitGraceMs), and a
+   * new turn is about to start over the same session state. Starting it now is what the CLI would do if it ran both:
+   * the lingering process follows `turnFiles(s, r.turn)`, so after `r.turn + 1` its late output (its closing `result`
+   * first) lands in the new turn's file — its assistant message carries turn 2 and the new turn closes before it began,
+   * leaving the queue to a turn that is no longer followed (two messages to a working chat could disappear). The
+   * lingering process is followed to its end instead (as after a restart: reattach), and the queue starts after that.
+   */
+  function followLinger(s) {
+    const r = runtime(s.id);
+    const turn = r.turn; // the process follows exactly the turn its output file belongs to
+    if (!r.handle) return null;
+    if (!latestTurnFile(s.id) || !s.pid) {
+      r.handle?.terminate?.('post_result_linger');
+      return null;
+    }
+    const handle = runTurn({
+      launcher: launchers[s.launcherId],
+      ...turnFiles(s, turn),
+      turn,
+      reattach: { pid: s.pid, offset: s.turnOffset || 0, startedAt: s.pidStartedAt ?? null },
+      onEvent: () => {}, // its turn is over: its transcript is recorded, only its exit matters now
+      onOffset: () => {},
+    });
+    r.handle = handle;
+    return handle.done;
+  }
 
   async function startTurn(s) {
     const r = runtime(s.id);
-    if (r.running || (!s.queue?.length && !r.retryItems)) return;
-    // a turn retried without the sandbox runs the same messages again (they are in the transcript already)
+    if (r.running || !(s.queue?.length || r.retryItems)) return;
+    if (r.closedEarly) {
+      // the previous process is still closing: follow it to its end, the queue starts after (finishLingered)
+      if (!r.lingerFollow) {
+        r.lingerFollow = true; // once: a process that cannot be followed is killed, not followed again in a loop
+        followLinger(s)?.then(() => {
+          r.lingerFollow = false;
+          if (find(s.id) && s.queue?.length) startTurn(s);
+        });
+      }
+      return;
+    }
+    clearTimeout(r.steerTimer);
+    r.steerTimer = null; // a new turn: the previous step's deadline is gone (steerAt stays: the notice of this turn)
+    // The queue is taken and the turn is marked running HERE, before the first await: a message delivered while this turn
+    // starts (the next click, a coordinator's reply) is then queued for the turn after, never run twice in one prompt.
+    // A turn retried without the sandbox runs the same messages again (they are in the transcript already).
     const retry = r.retryItems;
     r.retryItems = null;
     const items = retry || s.queue.splice(0);
@@ -940,6 +1175,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     s.turnCount = r.turn;
     r.flags = {};
     s.turnFlags = {};
+    s.queued = s.queue.length;
     r.cur = { assistant: null, thought: null, raw: null, tools: new Map(), subTools: new Map(), gotText: false };
     // re-queued items (their process never started) are in the transcript already
     const userMsgs = retry ? [] : items.filter((it) => !it.recorded).map((it) => addMessage(s, { kind: 'user', text: it.text, from: it.from, ...(it.options ? { options: it.options } : {}) }));
@@ -963,21 +1199,18 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
         throw Object.assign(new Error(`Модели «${model}» нет в каталоге сервера (проверено ${new Date(catalog.info(s.agent).at).toLocaleString('ru-RU')}). Выберите другую модель — сообщение уйдёт с ней.`), { action: 'pick-model' });
       }
       const dropped = droppedGrades(s);
-      const note = dropped.length && `⚠ Недоступные модели убраны из грейдов, CLI возьмёт модель по умолчанию: ${dropped.map(([g, id]) => `${g} → ${id}`).join(', ')}`;
+      const note = dropped.length && `⚠ Недоступные модели: ${dropped.map(([g, id]) => `${g} → ${id}`).join(', ')} — субагент на этом уровне запустится с моделью по умолчанию`;
       if (note && !store.messages(s.id).some((m) => m.text === note)) addMessage(s, { kind: 'system', text: note });
       let prompt = promptOf(items);
       // «/full-task …» goes as the command's own text, as the CLI's interactive mode sends it: no `skill` step for the model
-      // to skip, no same-named skill in its place. Headless: only what fits the command line with the preamble — a longer
-      // one is left to the CLI (else it would go as a file the model reads in pieces).
+      // to skip, no same-named skill in its place.
       let cmd = agentCfg.expandCommands !== false ? launcher.expandCommand?.(prompt, { cwd: s.cwd, agentCfg }) ?? null : null;
-      if (cmd && agentCfg.transport !== 'acp' && cmd.text.length > ARGV_PROMPT_MAX - 8000) cmd = null;
       if (cmd) {
         prompt = cmd.text;
         // the person's message stays as typed; the text the agent got is under it (folded in the chat)
         const said = userMsgs.find((m) => m.text.trimStart().startsWith(`/${cmd.name}`)) || store.messages(s.id).findLast((m) => m.kind === 'user' && m.text.trimStart().startsWith(`/${cmd.name}`));
         if (said) updateMessage(s, Object.assign(said, { command: { name: cmd.name, file: cmd.file, text: cmd.text } }));
-      }
-      if (!s.externalSessionId) {
+      } else if (!s.externalSessionId) {
         const pre = hooks.preamble(s);
         // a slash command only works as the first word of the prompt; the rest becomes its $ARGUMENTS
         // ...and the CLI's own word on loading that command comes before the preamble, or the preamble's steps go first
@@ -988,6 +1221,9 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
         const peers = hooks.peerContext?.(s);
         if (peers) prompt += '\n\n' + peers;
       }
+      // the message that ended the previous step's long wait: the agent knows why its calls ended (a slash command stays first)
+      const notice = s.externalSessionId || retry ? '' : steerNotice(items[0], r);
+      if (notice) prompt = cmd ? `${prompt}\n\n${notice}` : prompt.startsWith('/') ? `${prompt.split('\n', 1)[0]}\n\n${notice}\n\n${prompt.slice(prompt.indexOf('\n') + 1)}` : `${notice}\n\n${prompt}`;
       s.worktreeRulesSent = true;
       // the project's allow rules (allow_project) join the session's own on every turn
       const projectTools = (s.workspaceId && db.prefs?.allowedToolsByWorkspace?.[s.workspaceId]) || [];
@@ -1020,14 +1256,14 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
       if (r.stopRequested) throw Object.assign(new Error('stopped before start'), { beforeStart: true }); // stopped while waiting for its slot
       launcher.prepare(ctx);
       r.registryTimer = setInterval(() => pollRegistry(s), REGISTRY_POLL_MS);
-      const env = { ...process.env, ...agentCfg.env, ...secretEnv(config), ...exe.env, ...launcher.env(ctx), ...ctx.harnessMcp.env };
+      const env = sessionEnv({ ...ctx, config, exe }, launcher);
       const firstEventTimeoutMs = agentCfg.firstEventTimeoutMs || launcher.defaults.firstEventTimeoutMs || 30000;
       if (agentCfg.transport === 'acp') {
         if (!launcher.acpArgs) throw new Error(`у лаунчера «${launcher.id}» нет режима ACP; укажите agents.${s.agent}.transport = "headless"`);
         handle = acp.turn({
           sid: s.id, agent: s.agent, launcher, ctx, command: exe, cwd: s.cwd, env, logFile: turnFiles(s, r.turn).logFile, roots: [s.cwd, ...(s.includeDirs || []), attachmentsDir(s.id)],
-          idleMs: (agentCfg.acpIdleMin ?? agentCfg.acpIdleTimeoutMin ?? 30) * 60000,
-          externalSessionId: s.externalSessionId, prompt, initTimeoutMs: firstEventTimeoutMs, onEvent: (ev) => applyEvent(s, ev), clientFs: !!agentCfg.acpClientFs,
+          idleMs: (agentCfg.acpIdleMin ?? agentCfg.acpIdleTimeoutMin ?? 30) * 60000, fullAccess: fullAccess(turnSession), clientFs: !!agentCfg.acpClientFs,
+          externalSessionId: s.externalSessionId, prompt, initTimeoutMs: firstEventTimeoutMs, onEvent: (ev) => applyEvent(s, ev),
           // its CLI session would not load: the new one gets the harness's rules and what this chat was about
           recap: () => [hooks.preamble(s), recapText(store.messages(s.id), r.turn)].filter(Boolean).join('\n\n'),
         });
@@ -1041,6 +1277,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
           firstEventTimeoutMs,
           authTimeoutMs: agentCfg.authTimeoutMs || 600000,
           ...turnFiles(s, r.turn),
+          turn: r.turn,
           onEvent: (ev) => applyEvent(s, ev),
           onOffset: (off) => saveOffset(s, off),
         });
@@ -1092,6 +1329,57 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     return contextSize(entry?.context ?? String(model).match(/-(\d+[km])$/i)?.[1]);
   }
 
+  /**
+   * A one-shot `--print` run of the agent (server/context-usage.js): its stdout as text, no extra MCP servers and no
+   * transcript — for questions like «/context» that answer without a conversation.
+   */
+  function printPrompt(s, agentCfg, prompt) {
+    const { launcher, exe } = resolveAgent(s.agent, s.launcherId);
+    const dir = path.join(store.dataDir, 'chats', 'probe', s.agent);
+    fs.mkdirSync(dir, { recursive: true });
+    const fake = { ...s, id: `probe-${s.agent}`, externalSessionId: null, mcp: [] };
+    const ctx = turnCtx({ ...fake, settingsPath: path.join(dir, 'settings.json') }, agentCfg, prompt);
+    launcher.prepare(ctx);
+    return new Promise((resolve, reject) => {
+      let out = '';
+      let err = '';
+      let settled = false;
+      const state = {}; // one turn's parse state: the normalized text events are the answer
+      const child = spawn(exe.file, [...exe.args, ...launcher.buildArgs({ ...ctx, prompt })], spawnOptions({ cwd: s.cwd, env: sessionEnv({ ...ctx, config, exe }, launcher) }, { group: true }));
+      let buf = '';
+      child.stdout.setEncoding('utf8');
+      child.stdout.on('data', (chunk) => {
+        buf += chunk;
+        let nl;
+        while ((nl = buf.indexOf('\n')) >= 0) {
+          const line = buf.slice(0, nl).trim();
+          buf = buf.slice(nl + 1);
+          if (!line) continue;
+          let obj;
+          try { obj = JSON.parse(line); } catch { continue; }
+          for (const ev of launcher.parse(obj, state)) {
+            if ((ev.type === 'text' || ev.type === 'raw') && typeof ev.text === 'string') out += ev.delta ? ev.text : `\n${ev.text}\n`;
+          }
+        }
+      });
+      child.stderr.setEncoding('utf8');
+      child.stderr.on('data', (c) => { err = (err + c).slice(-4000); });
+      child.on('error', (e) => { if (!settled) { settled = true; reject(e); } });
+      child.on('exit', (code) => {
+        if (settled) return;
+        settled = true;
+        if (code === 0) return resolve(out);
+        reject(Object.assign(new Error(`агент завершился с кодом ${code}${err.trim() ? `: ${err.trim().split('\n').slice(-3).join(' ')}` : ''}`), { status: 502 }));
+      });
+      setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        endChild(child);
+        reject(Object.assign(new Error('агент не ответил о контексте вовремя'), { status: 504 }));
+      }, Math.max(60000, agentCfg.firstEventTimeoutMs || 0)).unref?.();
+    });
+  }
+
   function turnFiles(s, n) {
     const dir = runDir(s.id);
     return { logFile: path.join(dir, 'stderr.log'), outFile: path.join(dir, `turn-${n}.out.ndjson`), errFile: path.join(dir, `turn-${n}.err.txt`) };
@@ -1123,6 +1411,8 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
       startTurn(s);
       return null;
     }
+    const n = Number(outFile.match(/turn-(\d+)\.out\.ndjson$/)[1]);
+    r.turn = s.turnCount = Math.max(r.turn, n);
     r.running = true;
     r.unadopted = !ours;
     r.flags = { ...s.turnFlags }; // what orchestration already handled in this turn (e.g. worker_done)
@@ -1136,11 +1426,11 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     if (ours) addMessage(s, { kind: 'system', text: 'переподключено после перезапуска' });
     s.phase = s.turnOffset ? 'streaming' : 'starting';
     emit(s);
-    const n = Number(outFile.match(/turn-(\d+)\.out\.ndjson$/)[1]);
     r.registryTimer = setInterval(() => pollRegistry(s), REGISTRY_POLL_MS);
     const handle = runTurn({
       launcher,
       ...turnFiles(s, n),
+      turn: n,
       reattach: { pid: ours ? s.pid : null, offset: s.turnOffset || 0, startedAt: s.pidStartedAt ?? null },
       onEvent: (ev) => applyEvent(s, ev),
       onOffset: (off) => saveOffset(s, off),
@@ -1152,6 +1442,8 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
 
   function finishTurn(s, res) {
     const r = runtime(s.id);
+    // the process of a turn that is already over (followed to its end) exits while the next turn runs: not its business
+    if (!r.running || (res.turn != null && res.turn !== r.turn)) return;
     mcpCheck(s, r);
     if (r.closedEarly) return finishLingered(s, r, res);
     clearInterval(r.registryTimer);
@@ -1161,7 +1453,14 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     r.pausedForAnswer = false;
     const woken = r.reviveKill; // stopped by the harness to wake a silent turn, not by the person
     r.reviveKill = null;
-    const stopped = (res.stopped || r.stopRequested) && !paused && !woken;
+    const steered = r.turn === r.cutAt; // ended by the deadline of a message, not by the person
+    r.cutAt = null;
+    if (steered) {
+      const item = s.queue?.find((q) => q.from === 'user');
+      if (item) item.steer = { cut: true, at: r.turn };
+      r.steerAt = r.turn;
+    }
+    const stopped = (res.stopped || r.stopRequested) && !paused && !woken && !steered;
     const unadopted = r.unadopted;
     r.stopRequested = false;
     r.unadopted = false;
@@ -1171,6 +1470,8 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     if (stopped) {
       status = 'stopped'; // already set by stop(); a late exit never overwrites it
       addMessage(s, { kind: 'system', text: 'Остановлено пользователем' });
+    } else if (steered) {
+      status = 'idle'; // the person's message starts the next turn: nothing was stopped by the person
     } else if (woken) {
       status = 'idle';
     } else if (unadopted && !res.sawResult) {
@@ -1185,7 +1486,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
       status = 'error';
     } else if (res.timedOut) {
       const ms = config.agents[s.agent]?.firstEventTimeoutMs || launchers[s.launcherId]?.defaults.firstEventTimeoutMs;
-      addMessage(s, { kind: 'error', text: `Нет вывода за ${Math.round(ms / 1000)} с — ход остановлен.${tail(res.stderrTail)}` });
+      addMessage(s, { kind: 'error', text: `Нет вывода за ${Math.round(ms / 1000)} с — ход остановлен.${tail(res.stderrTail)}${firstEventHint(s, ms)}` });
       status = 'error';
     } else if (!res.sawResult && !res.eventCount && /include-partial-messages/i.test(res.stderrTail) && !db.agentMeta[s.agent]?.partialUnsupported && r.lastItems) {
       // an older CLI without live deltas: remember, and run the same turn again without the flag (never loops)
@@ -1231,6 +1532,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     const reviving = !!reason && !stopped && revivable(s) && !s.queue.length && scheduleRevive(s, reason);
     if (!reason && status !== 'error' && s.revive) s.revive = null; // a turn that went well: the count starts over
     emit(s);
+    hooks.turnClosed?.(s); // a call of this turn that is no longer polled stops being marked as waited for
     runTurnEnded(s, r, stopped, reviving);
     store.flush(); // a finished turn is never lost to a crash right after it
     if (s.archiveOnSettle && !s.archived) return api.archive(s.id, true); // a settled helper (subagentRetention)
@@ -1243,6 +1545,9 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     clearTimeout(r.lingerTimer);
     clearInterval(r.registryTimer);
     Object.assign(r, { lingerTimer: null, closedEarly: false, running: false, handle: null, stopRequested: false, unadopted: false });
+    clearTimeout(r.steerTimer);
+    r.steerTimer = null; // its turn ended by itself: no cut, and its message reads normally
+    r.cutAt = null;
     if (!find(s.id)) return;
     const killed = res.killReason === 'post_result_linger';
     try {
@@ -1497,6 +1802,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     hooks,
     find,
     get,
+    ignoreCli,
     resolveAgent,
     registryDir,
     list: () => db.sessions,
@@ -1511,6 +1817,13 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     },
     /** Models a fresh discovery says are gone for this agent. */
     unavailableModels: (agent) => catalog?.unavailable(agent) ?? { has: () => false },
+    /** The model catalogue of an agent (orchestration picks sub-agent models by grade); a server without one: no-op. */
+    modelsFor: (agent) => catalog ?? {
+      ensureFresh: () => Promise.resolve(),
+      known: () => new Set(),
+      merged: () => [],
+      unavailable: () => ({ has: () => false, size: 0 }),
+    },
     /** orchestration marks what happened during the current turn: 'reported' | 'communicated' */
     flag(sid, name) {
       runtime(sid).flags[name] = true;
@@ -1534,7 +1847,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
       if (!['chat', 'terminal'].includes(kind)) fail(400, 'kind: "chat" или "terminal"');
       const role = o.role || 'solo';
       if (!['solo', 'coordinator', 'worker', 'reviewer'].includes(role)) fail(400, 'role: solo, coordinator, worker или reviewer');
-      for (const k of ['agent', 'cwd', 'workspaceId', 'title', 'prompt', 'approvalMode', 'model', 'command', 'branch']) {
+      for (const k of ['agent', 'cwd', 'workspaceId', 'title', 'prompt', 'approvalMode', 'model', 'command', 'branch', 'origin']) {
         if (o[k] != null && typeof o[k] !== 'string') fail(400, `${k}: нужна строка`);
       }
       const ws = o.workspaceId ? db.workspaces.find((w) => w.id === o.workspaceId) || fail(404, `рабочая папка ${o.workspaceId} не найдена`) : null;
@@ -1571,7 +1884,9 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
         cwd,
         ...(await (async () => {
           const place = await placeFor(cwd, false, true, ws);
-          return { workspaceId: place.system ? null : ws?.id ?? place.workspaceId, worktreePath: place.worktreePath, system: place.system };
+          // the chat's own cwd is not a session in the database yet: the worktree it sits in still names its project
+          const own = place.system || place.workspaceId ? null : (await placeFor(cwd, false, true));
+          return { workspaceId: place.system ? null : ws?.id ?? place.workspaceId ?? own?.workspaceId ?? null, worktreePath: place.worktreePath, system: place.system };
         })()),
         branch: o.branch ?? null,
         role,
@@ -1579,6 +1894,8 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
         taskId: o.taskId ?? null,
         status: 'idle',
         externalSessionId: null,
+        // a chat of the agent CLI (adopted or opened from its record): continued with --resume, no harness preamble
+        ...(o.origin ? { origin: o.origin } : {}),
         settingsPath: kind === 'chat' ? path.join(runDir(id), 'settings.json') : null,
         model: o.model || null,
         approvalMode: o.approvalMode || null,
@@ -1697,7 +2014,7 @@ ${note.trim()}` : text });
       return continueTurn(s, reason);
     },
 
-    deliver(sid, { from = 'user', text, options, report = false }) {
+    deliver(sid, { from = 'user', text, options, report = false, cut = false }) {
       const s = get(sid);
       if (s.virtual) fail(409, 'внутренний субагент — писать можно только в родительский чат');
       if (typeof text !== 'string' || !text.trim()) fail(400, 'нужен текст сообщения');
@@ -1706,6 +2023,10 @@ ${note.trim()}` : text });
         if (!r.pty) fail(409, 'терминал не запущен');
         r.pty.write(`${text}\r`);
         return { queued: false };
+      }
+      if (typeof options?.midTurn === 'function' && r.running && !r.closedEarly) {
+        // e.g. the caller's wait is cut right now: its next message must not wait for the turn's end
+        try { options.midTurn(); } catch (e) { console.error('[sessions] midTurn failed:', e); }
       }
       const asked = s.waitingFor === 'answer';
       if (asked || s.waitingFor === 'permission') s.waitingFor = null; // answered (by anyone)
@@ -1725,7 +2046,13 @@ ${note.trim()}` : text });
         if (held.reject) acp.answer(sid, held.id, held.reject);
         r.handle?.stop();
       }
-      if (r.running && from === 'user' && !asked) hooks.personWrote?.(s); // it waits for sub-agents: they go on, it reads this next
+      // a person writes to an agent that only waits for sub-agents: they go on, it reads this next
+      if (r.running && from === 'user' && !asked) hooks.personWrote?.(s);
+      // ACP, one awaited session/prompt per turn: a message from another session to a chat that waits inside a call to
+      // its own sub-agents cannot be read until that call returns, whatever its queue. So the wait ends now (midTurn
+      // already tried from outside; this covers the calls started after the message arrived): the sub-agents go on.
+      // A person's message is not this case: it may be the answer to that very call (takeAnswer below).
+      if (r.running && from !== 'user' && !asked && hooks.waits?.(s) > 0) hooks.personWrote?.(s);
       if (r.running && !held && hooks.takeAnswer?.(s, { from, text })) {
         // its `ask` call waits for exactly this: the agent gets it as that call's result, in the same turn
         addMessage(s, { kind: 'user', text, from });
@@ -1742,15 +2069,34 @@ ${note.trim()}` : text });
       // pending «archive once settled» would have archived it again with this very message still queued (dropped)
       if (s.archived || s.archiveOnSettle) Object.assign(s, { archived: false, archivedAt: null, archiveOnSettle: false });
       s.queue.push({ id: newId('q'), from, text, at: Date.now(), ...(options ? { options } : {}), ...(report ? { report: true } : {}) });
+      // «Сразу агенту»: the message ends the step it found and opens the next turn — what was queued before it follows in
+      // the turn after. The person asks for the cut itself: nothing is cut otherwise.
+      if (cut && from === 'user' && r.running) {
+        // в начало очереди, порядок остальных не меняется: за ним идут сообщения, поставленные раньше
+        s.queue.unshift(s.queue.pop());
+        s.queued = s.queue.length;
+        emit(s);
+        return { queued: true, cut: cutStep(sid) };
+      }
       if (!r.running) {
+        // its own turn takes this message; one that is already starting (startTurn marked it running) reads the queue
+        // after, and this message goes with the next turn
+        const idle = s.queue.length === 1;
         startTurn(s);
-        return { queued: false };
+        return { queued: !idle };
       }
       s.queued = s.queue.length;
       if (r.closedEarly) armLinger(s);
+      // a message to an agent that only waits for its sub-agents is not left behind that wait (the sub-agents go on);
+      // one that does not (midTurn of a session whose call waited for this one already ended it) keeps the deadline
+      else if (!asked) { if (hooks.personWrote?.(s) === false) armSteer(s); }
+      else if (from !== 'user' && hooks.waits?.(s) > 0) armSteer(s); // a call it asked inside is still waited on
       emit(s);
       return { queued: true };
     },
+
+    /** The step ends now (the person's message first): see cutStep. */
+    cutStep,
 
     /** A queued message taken back before the agent got it (DELETE /api/sessions/:id/queue/:qid). */
     unqueue(sid, qid) {
@@ -1819,8 +2165,12 @@ ${note.trim()}` : text });
         killPty(old);
         spawnPty(s, pty);
       } else if (!r.running) {
+        // a fresh CLI session rather than --resume: the next turn's process reads settings.json and the MCP servers
+        // again (the person has just changed them). The chat keeps its transcript; the old CLI record is not adopted.
+        if (s.externalSessionId) ignoreCli(s);
+        s.externalSessionId = null;
         s.status = 'idle';
-        acp.drop(sid); // a new process on the next message: its MCP servers start again, the context loads (session/load)
+        acp.drop(sid);
         emit(s);
       }
       return s;
@@ -1890,6 +2240,8 @@ ${note.trim()}` : text });
       ignoreCli(s);
       const r = runtime(sid);
       clearInterval(r.registryTimer);
+      clearInterval(r.bgTimer); // a removed chat watches nothing
+      r.bgTimer = null;
       r.handle?.stop();
       const p = r.pty;
       r.pty = null;
@@ -1986,6 +2338,25 @@ ${note.trim()}` : text });
 
     /** A prompt on a warm ACP process of `agent` in a hidden session (null when none is warm). */
     acpPrompt: (agent, text) => acp.helperPrompt(agent, text),
+
+    /**
+     * The agent's own «/context» answer as numbers (server/context-usage.js): a hidden session on a warm ACP process,
+     * a `--print` run otherwise. Not a turn: no transcript message, no extra process of the chat's own.
+     */
+    async contextUsage(sid) {
+      const s = get(sid);
+      const agentCfg = config.agents[s.agent];
+      if (!agentCfg) fail(404, `агент ${s.agent} не найден`);
+      const command = agentCfg.contextCommand ?? launchers[agentCfg.launcher]?.defaults.contextCommand;
+      if (!command) fail(400, `у агента ${s.agent} нет команды разбивки контекста`);
+      const timeout = Math.max(30000, agentCfg.firstEventTimeoutMs || 0);
+      const ask = () => (agentCfg.transport === 'acp' ? acp.helperPrompt(s.agent, command, timeout) : null);
+      const viaAcp = await Promise.resolve(ask()).catch(() => null);
+      const text = viaAcp || (await printPrompt(s, agentCfg, command));
+      const report = parseContextUsage(text);
+      if (!report) fail(502, 'агент не сообщил размер контекстного окна');
+      return contextBreakdown(report, s.context?.tokens ?? null);
+    },
 
     /** A CLI history transcript as the past of a harness chat (marked imported; turn 0). */
     importMessages(sid, msgs, turn = 0) {

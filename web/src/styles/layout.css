@@ -9,14 +9,36 @@
 .app[data-sidebar="false"] { --sb-w: 0px; }
 
 .topbar {
-  grid-column: 1 / -1; display: flex; align-items: stretch; min-width: 0;
+  grid-column: 1 / -1; position: relative; display: flex; align-items: stretch; min-width: 0;
+  padding-right: calc(var(--win-btns, 0px) + 6px); /* the window buttons sit in this strip, at the very edge */
   border-bottom: 1px solid var(--rule); background: var(--ground);
+  -webkit-app-region: drag; user-select: none;
 }
+/* the app's own window buttons: one strip of the title bar, at the window's right edge (all three platforms) */
+.app[data-desktop] { --win-btns: 138px; }
+.app[data-desktop][data-platform="darwin"] { --win-btns: 0px; }
+/* anything you can act on stays clickable inside the draggable bar */
+.topbar button, .topbar a, .topbar input, .topbar [role="tab"] { -webkit-app-region: no-drag; }
 .topbar-left { display: flex; align-items: center; gap: 2px; padding: 0 6px 0 12px; flex-shrink: 0; width: max(var(--sb-w), 132px); border-right: 1px solid var(--rule); }
 .app[data-rail] .topbar-left { width: auto; border-right: 0; } /* the 48 px rail: no divider at 132 px that lines up with nothing */
 .topbar-left .brand-mark { width: 16px; height: 16px; margin-right: 8px; color: var(--ink); }
 .topbar-right { display: flex; align-items: center; gap: 2px; padding: 0 6px; flex-shrink: 0; }
 .topbar-right .btn { height: 24px; font-size: 12px; color: var(--ink-3); }
+
+/* the resize frame Windows draws into the top edge would sit over the buttons; the window is still resizable by its edges */
+html[data-desktop="win32"] .topbar { border-top: 0; }
+
+/* the three window buttons: one 46 px strip at the window's right edge, as tall as the title bar itself */
+.win-controls { position: absolute; inset: 0 0 0 auto; display: flex; align-items: stretch; -webkit-app-region: no-drag; }
+.win-btn { width: 46px; display: grid; place-items: center; padding: 0; border: 0; background: none; color: var(--ink-3); cursor: default; }
+.win-btn svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.1; stroke-linecap: round; }
+.win-btn:hover { background: var(--hover, rgba(127, 127, 127, 0.16)); color: var(--ink); }
+.win-btn:focus-visible { outline: 2px solid var(--accent, #4c8dff); outline-offset: -2px; }
+.win-close:hover { background: #c42b1c; color: #fff; }
+/* Linux: round buttons with a little air around the glyph, the way GTK draws them */
+.win-controls[data-look="linux"] .win-btn { width: 40px; height: 24px; margin: auto 3px; padding: 0; border-radius: 50%; background: transparent; }
+.win-controls[data-look="linux"] .win-btn:hover { background: var(--hover, rgba(127, 127, 127, 0.22)); }
+.win-controls[data-look="linux"] .win-close:hover { background: #c42b1c; }
 
 .statusbar {
   grid-column: 1 / -1; display: flex; align-items: center; gap: 14px; padding: 0 10px; min-width: 0;

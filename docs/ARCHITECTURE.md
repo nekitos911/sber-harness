@@ -75,8 +75,7 @@ data/                          runtime state (gitignored)
       "settingsEnv": "GIGACODE_SYSTEM_SETTINGS_PATH",
       "settings": { "agents": { "modelGrades": {}, "allowedGrades": [] }, "chatRecording": true },
       "inheritUserMcp": false,                           // copy ~/.gigacode/settings.json mcpServers into the run file
-      // taskPromptTemplate / freePromptTemplate / reworkPromptTemplate: not set — the task goes as its text;
-      // a person's own command (e.g. "/full-task {taskUrl}{notes}") goes into harness.config.local.json (the first-run setup does it)
+      "taskPromptTemplate": "/full-task {taskUrl}{notes}",
       "firstEventTimeoutMs": 120000,                     // cold start with ~9 MCP servers takes 30-60 s
       "env": {}
     },
@@ -506,11 +505,20 @@ POST   /api/fs/pick-folder { title?, initial? } -> { path | null }   // флаг
        // (tasks.tools.find/get, pr.tool). Сервер меняется в PUT /api/settings: integrations.tasks.server / integrations.pr.server.
                                     (only the servers the harness calls: integrations.tasks/pr.server and its own
                                     config.mcpServers — servers that come only from mcpServersFrom are not started)
+GET    /api/mcp/config          -> { secrets: { path, source, exists, names, writable }, serversFrom: { path, names, error },
+                                     custom: [{ name, enabled, transport, url, command, args, headers, env, fromFile? }] }
+PUT    /api/mcp/secrets/:name   { value } -> { name, names }: writes one secret into the secrets file (400 on a bad name,
+                                    an empty value or broken JSON — that file is never overwritten)
+DELETE /api/mcp/secrets/:name   -> { names }
+POST   /api/mcp/check           { name, transport?, url?, command?, args?, timeoutMs? } -> { name, ok: true, tools }
+                                    (a server as typed in the form, not necessarily saved: initialize + tools/list)
 
 GET    /api/settings            -> { agents: { <id>: { approvalMode, approvalModes, approvalModeLabels, model, models,
                                      modelGrades: { default?, fast?, review?, explore? }, allowedGrades, taskPromptTemplate,
                                      taskPromptPresets, freePromptTemplate, firstEventTimeoutMs, inheritUserMcp, enabled } },
                                      defaultAgent, git: {...}, tasks: { refreshSec }, user: { setupDone: boolean },
+                                     mcpDisabled: string[], mcpServers: [{ name, enabled, transport, url, command, args,
+                                                     headers, env, fromFile? }], mcpSecretNames: string[],
                                      integrations: { tasks: { enabled, space, urlTemplate, statusMap, closedStatuses },
                                                      pr: { enabled, limits } } }
                                  Model entries everywhere (config, /api/state agents[].models, /api/settings) are objects
@@ -563,7 +571,7 @@ POST   /api/notifications/read-all
 },
 "tasks": {
   "promptTemplate": "{key}: {title}\n\n{description}\n\nСсылка: {taskUrl}{notes}"
-  // per agent override: agents.<id>.taskPromptTemplate (e.g. a person's "/full-task {taskUrl}{notes}", set in the local config); see "Prompt templates"
+  // per agent override: agents.<id>.taskPromptTemplate (gigacode: "/full-task {taskUrl}{notes}"); see "Prompt templates"
 }
 ```
 - Ключ задачи `{key}` = `externalId` КОРНЕВОЙ задачи (поднимаясь по parentId), если она пришла из трекера (например,
@@ -623,16 +631,17 @@ POST   /api/notifications/read-all
   `MCP_SECRET_<NAME>` для каждого секрета, `HARNESS_URL`, `HARNESS_TOKEN`, `HARNESS_SESSION_ID`. Без окружения identity
   CLI пишет только в stderr и завершается с кодом 0 → сообщается как «exited without any output».
 - Настройки сессии `<dataDir>/runs/<sid>/settings.json` (UTF-8, один и тот же путь на каждом ходе, удаляется вместе с сессией):
-  `{ "agents": { "modelGrades": {...}, "allowedGrades": [...] }, "chatRecording": true, "mcpServers": { harness, ...agentMcpServers } }`.
+  `{ "chatRecording": true, "mcpServers": { harness, ...agentMcpServers } }` (форк: `agents.modelGrades`/`allowedGrades`
+  сюда никогда не попадают — CLI сверяет эти id с собственным каталогом и падает с кодом 1 при расхождении; уровни —
+  собственная таблица harness, `server/models.js`). ACP: модель ставится через `session/set_model` из каталога, который
+  возвращает `session/new`, а не через argv `--model`.
   Никогда `permissions`. `inheritUserMcp: true` дополнительно копирует mcpServers из пользовательского `~/.gigacode/settings.json` (слияние или
   замена — не подтверждено). Ошибка записи → error, и рабочее дерево, созданное для этого запуска, удаляется.
 - Режимы подтверждения `plan | default | auto-edit | auto` (проверяются). Для возобновления нужны `chatRecording`, тот же cwd, путь к
   настройкам и лаунчер (смена лаунчера отвергается).
 - Поток: стиль Qwen-Code / Claude; холодный старт (`system/init`) может занимать 30–60 с → `firstEventTimeoutMs` 120000 и
   `session.phase: 'starting'` для UI. Фатальные ошибки: пустой stdout + код 1 + stderr. Предупреждения: stderr при коде 0.
-- Команда задачи: по умолчанию не задана (задача уходит текстом, `tasks.promptTemplate`); своя команда, например
-  `taskPromptTemplate: "/full-task {taskUrl}{notes}"`, задаётся в `harness.config.local.json` (это делает мастер первого запуска) —
-  слэш-команды работают только как первое слово.
+- Команда задачи: `taskPromptTemplate: "/full-task {taskUrl}{notes}"` — слэш-команды работают только как первое слово.
 
 ### Шаблоны промптов
 Один проход с заменяющей ФУНКЦИЕЙ (текст задачи может содержать `$&`, `$'`, `$$`); подставленный текст больше не раскрывается;
@@ -694,8 +703,8 @@ POST   /api/notifications/read-all
 - `GET /api/tasks/:id/rework-preview?notes=&agent=` → `{ text, agent, sessionId }`: именно то сообщение, которое доработка
   отправила бы сейчас (её исполнителю или исполнителю, которого она запустила бы), так что предпросмотр в UI равен отправленному тексту.
 - Доработка (форма FOLLOW_UP пользователя `/full-task <url> Задача готова, но нужны правки: <text>`):
-  `POST /api/tasks/:id/rework { notes, agent? }` (флаг `rework`). Промпт = `agents.<id>.reworkPromptTemplate` (со своей
-  командой — `"/full-task {taskUrl} Задача готова, но нужны правки: {notes}"`, по умолчанию `"{key} {title}: нужны правки: {notes}"`;
+  `POST /api/tasks/:id/rework { notes, agent? }` (флаг `rework`). Промпт = `agents.<id>.reworkPromptTemplate` (gigacode
+  `"/full-task {taskUrl} Задача готова, но нужны правки: {notes}"`, общий по умолчанию `"{key} {title}: нужны правки: {notes}"`;
   `{notes}` — текст как введён, отрисовка за один проход; задаётся в /api/settings, должен содержать `{notes}`; значение по умолчанию
   лаунчера gigacode — форма /full-task даже без значения в конфиге). `/api/settings` → `agents.<id>.reworkPromptPresets`:
   сначала действующее значение по умолчанию, затем `agents.<id>.reworkPromptPresets` из конфига, затем общий шаблон
@@ -716,6 +725,16 @@ title: '<subagent_type> · <model|grade>', status: running|done|failed, model, c
 первое сообщение `user` и tool_result как финальное сообщение ассистента; `GET /api/sessions/<virtualId>/messages` работает,
 для неё отправляются WS-события `msg`. `POST …/messages` в виртуальную сессию → 409 «внутренний субагент — писать можно
 только в родительский чат». Карточка инструмента родителя хранит ссылку на неё (`tool.subSessionId`).
+
+**Фоновый встроенный субагент** (`run_in_background: true` у того же `agent`) — особый случай: вызов отвечает сразу
+(«Background agent launched successfully … output_file: <путь>.jsonl», разбор — `server/background-agents.js`), шаги
+субагента идут не в поток родителя, а в этот файл, и в поток родителя он больше не попадает. Поэтому виртуальная сессия
+получает `background: true, backgroundFile` и **не** закрывается концом хода родителя: заметка о запуске — строка
+`system`, а чат остаётся `running`, пока в его файле не появится строка `{"type":"result",…}`. Файл опрашивает одна
+таймер-проверка на родителя (раз в несколько секунд, плюс сразу при запуске и при завершении хода: `watchBackground`);
+результат становится сообщением `assistant` (или `error`) в чате субагента, карточка родителя получает ответ и
+`stillRunning: false`, а чат уходит в архив как любой закрытый (`orchestration.subagentRetention`) — карточка продолжает
+его открывать. Пока субагент работает, шагов в его чате нет: CLI пишет их только в свой файл — это сказано в карточке.
 
 ### Автоматически: оркестратор сам использует субагентов harness (без ручной команды)
 `orchestration.subagents: "harness" | "builtin"` (по умолчанию `"harness"`, отдаётся в /api/settings). В режиме `"harness"`:
@@ -767,11 +786,25 @@ model/approvalMode по умолчанию берутся из frontmatter (яв
 (сохраняется), а каждый такой субагент получает `awaitedBy: null, askedParent: true, released: true`. Ожидающий `worker_wait` сразу
 возвращает `{ done: true, status: 'background' }` с текстом «Человек написал тебе… Заверши ход: сообщение придёт следующим». Субагент
 продолжает работу, его итог придёт сообщением через `reportToAsker`. Ответ человека на `ask` самого агента этого не делает.
+Так же ждёт и чужая реплика: сообщение, пришедшее агенту, который сам только ждёт субагентов (`send_message` координатора, отчёт,
+ответ), не остаётся за этим ожиданием — вызовы сразу заканчиваются (`released: true`), а реплика читается следующим ходом. Иначе
+координатор, отвечающий на «Ответь ему: send_message», писал бы в очередь занятого помощника, и тот бы её не видел.
+Ход, который держится только ожиданием субагентов, не тянется до их конца и по таймеру `chat.steerAfterMs` (по умолчанию 30 с,
+0 — выключено; в /api/settings как `chat: { steerAfterMs }`, 0..600000): `armSteer` в `deliver` ставит дедлайн на сообщение человека;
+к дедлайну, если `sessions.hooks.waits` (ожидающие вызовы) ещё есть, `releaseWaits` заканчивает их (`released` не ставится — итог придёт сообщением), а `cutStep` при необходимости обрывает ход.
+Следующий ход читает сообщение и, если ход оборван таймером, получает в начале промпта `STEER_NOTICE` («ход прерван, вызванные вызовы
+не получены»). Ход, который работает сам (свои команды, чтение), не обрывается никогда — сообщение идёт сразу после него, так что
+длинная сборка не рвётся.
 Синхронное ожидание ограничено: `harness-mcp` ждёт не дольше `HARNESS_SYNC_WAIT_MIN` (по умолчанию 5 мин, меньше таймаута вызова
 у CLI), затем `worker_wait?release=1` переводит субагента в фон (`status: 'background'`, итог придёт сообщением). Если CLI всё же
 оборвал вызов раньше (`tool_result` с ошибкой у `agent` / `worker_run`, например «Request timed out»; GigaCode пишет вызов
 `mcp__harness__agent` в поток как `agent`), его ожидаемые субагенты переводятся в фон так же (`waitAbandoned`). Без этого итог
 субагента уходил в оборванный вызов и до агента не доходил.
+
+Ручной обрыв шага — только по просьбе человека: `POST /api/sessions/:id/messages { text, cut: true }` (кнопка с молнией,
+Ctrl+Enter) ставит сообщение в начало очереди и вызывает `cutStep` (`cutAt = turn`, `stopRequested`, `handle.stop()`), а
+`finishTurn` помечает прочитанное сообщение `steer: { cut: true }` — в начале следующего хода агент получает `STEER_NOTICE`.
+Без `cut` сообщение просто встаёт в конец очереди и шаг не трогает.
 Транспорт: `POST /api/agent/worker_run` сразу возвращает `{ sessionId }`; затем `mcp/harness-mcp.js` длинным опросом вызывает
 `GET /api/agent/worker_wait?sessionId=&timeoutMs=25000`, пока исполнитель не завершится, и на каждом опросе отправляет MCP `notifications/progress` (когда
 клиент передал progressToken), чтобы вызов инструмента не истёк по таймауту; settings.json сессии задаёт
@@ -814,8 +847,9 @@ model/approvalMode по умолчанию берутся из frontmatter (яв
 - Режим подтверждения дочернего исполнителя: у вызывающего «Полный доступ» — тот же полный доступ, что бы ни просили аргумент
   или профиль (человека не спрашивают; профиль `plan` получает в задании «Работай только на чтение…»); иначе аргумент, иначе из
   профиля, иначе режим вызывающего. По ACP harness сам отвечает на запросы разрешений при полном доступе.
-- Без полного доступа у вызывающего профиль `plan` запускается как `default` + `readOnly` (белый список `READ_ONLY_ALLOWED_TOOLS`: git status/diff/log/show…,
-  dir/type/rg): режим plan в GigaCode отказывается от инструментов harness («Plan mode is active. The tool "mcp__harness__worker_done"
+- Профиль `plan` запускается как `default` + `readOnly` (белый список `READ_ONLY_ALLOWED_TOOLS`: git status/diff/log/show…,
+  dir/type/rg) и у вызывающего с полным доступом тоже: иначе помощник «в плане» получил бы разрешения вызывающего и каждый
+  его шаг стал бы карточкой разрешения у человека. Режим plan в GigaCode отказывается от инструментов harness («Plan mode is active. The tool "mcp__harness__worker_done"
   cannot be executed because it modifies the system»). tools/list помечает не изменяющие инструменты `annotations.readOnlyHint`.
 - Панель исполнителей чата перечисляет каждого неархивного дочернего, пока идёт ход чата; после него — только тех, кто ещё
   работает или ждёт (завершённый в своём рабочем дереве остаётся в боковой панели неархивированным).
@@ -1160,11 +1194,35 @@ activity{tool,since} tokensIn tokensOut settledAt`. Правила чтения:
 - Сервер с отсутствующим секретом остаётся в списке с `problem: "missing secret <name>"`; остальные серверы продолжают работать
   (никакого 401, который обнуляет всю карту).
 - stdio-серверы: подключение на каждый вызов (запуск → initialize → вызов → закрытие); таймаут на каждый вызов.
+- HTTPS-серверы (`mcp-client.js`, `tlsDispatcher`): по умолчанию запрос идёт без своего диспетчера, то есть с корнями Node
+  (`tls.rootCertificates`). Явный `ca` в undici **заменяет** эти корни, поэтому корень, установленный в хранилище Windows,
+  без настройки работает, а с «подставленным» списком — нет (`UNABLE_TO_VERIFY_LEAF_SIGNATURE`). Свой диспетчер собирается
+  только когда что-то задано: `mcpCa` / `mcpCaFile` (и `ca` / `caFile` у сервера) — тогда список — это хранилище ОС
+  (`tls.getCACertificates('system')`, Node 22.9+), корни Node и заданные PEM; `SberCA Root Ext` есть только в хранилище,
+  поэтому подставленный корень без него ломает каждый внутренний хост. Либо `rejectUnauthorized: false` у сервера —
+  осознанный отказ от проверки.
 - `node server/index.js --print-config` печатает разрешённую конфигурацию: пути (и существуют ли они), режимы подтверждения,
   период обновления, какие секреты присутствуют (только имена, никогда значения). При старте любая строка конфигурации, похожая
   на токен/пароль (длинное значение с высокой энтропией под ключом вроде token/secret/password/authorization), вызывает громкое предупреждение.
+- `node server/index.js --check` (`npm run check`) — «запустится ли на этой машине»: версия Node, собранный `web/dist`,
+  разрешение лаунчера каждого включённого агента (`mock` не требует установки), наличие файла `mcpServersFrom` (нет файла —
+  не ошибка), список включённых MCP-серверов с адресом или командой. Код выхода 1, если есть `FAIL`. Ничего не запускает.
 - Переменная окружения `HARNESS_CONFIG` выбирает файл конфигурации (по умолчанию `harness.config.json` + `.local`), чтобы рабочие и тестовые
   конфигурации никогда не смешивались.
+
+### Экран «Настройки» → «MCP-серверы»
+
+Читает `GET /api/mcp/config`: путь файла секретов, откуда он взят (`env:HARNESS_MCP_SECRETS` | `env:CONSOLE_MCP_SECRETS` |
+`config:mcpSecretsFile` | `default`), существует ли он, имена секретов (никогда значения), `writable` (false при пути из env),
+путь и имена файла `mcpServersFrom`, и список серверов. Секреты: `PUT` / `DELETE /api/mcp/secrets/:name` — `setSecret` /
+`deleteSecret` в `server/mcp-client.js` держат формат файла (JSON остаётся JSON, строки `name=value` остаются строками) и не
+перезаписывают битый JSON; имя — `[\w.\-/]{1,80}`.
+
+Список серверов = `customServers(config)`: свои серверы (`config.mcpServers`) как есть плюс серверы из `mcpServersFrom` с
+`fromFile: true`. Сохранение идёт общим `PUT /api/settings` полем `mcpServers`: запись сервера из файла настроек агента сводится
+к `{ enabled }` (подключение остаётся в том файле, копия бы от него отстала), своя — `{ transport, command, url, ... }`.
+Литералы, похожие на креды (`findLiteralSecrets`), отклоняются с 400: значение идёт в файл секретов, в конфиг — `$secret:<имя>`.
+`POST /api/mcp/check` проверяет сервер как он введён в форме (ещё не сохранён): `initialize` + `tools/list`.
 
 ## Где работает чат: папка проектов, любая папка, дополнительные каталоги
 
@@ -1239,7 +1297,10 @@ allowedToolsByWorkspace: { <workspaceId>: string[] } }` (неизвестные 
 **Разрешения, транспорт ACP (`agents.<id>.transport: "acp"`, ПРОВЕРИТЬ для GigaCode `--acp`).** Один долгоживущий процесс на
 сессию (`<cli> --acp [--approval-mode m] [--model m] [--include-directories …]`), JSON-RPC 2.0 поверх stdio (ndjson):
 `initialize` (clientCapabilities fs.read/write true, terminal false) → `session/new {cwd, mcpServers:[harness + agentMcpServers]}`
-(или `session/load {sessionId}`, когда агент поддерживает loadSession и у нас есть externalSessionId) → на каждое сообщение
+(или `session/load {sessionId}`, когда агент поддерживает loadSession и у нас есть externalSessionId). Чат начинает работу с одним
+сервером `harness`: трекер и PR ему не нужны, чтобы открыться, а `harness` несёт `timeoutMs` — сколько CLI готов ждать ответа
+инструмента (`mcp.harnessTimeoutMs`, по умолчанию 3600000, 0 — без таймаута). Свои MCP-серверы человек подключает в
+`~/.gigacode/settings.json`: их читает сам CLI. Дальше на каждое сообщение
 `session/prompt {sessionId, prompt:[{type:'text',text}]}`; уведомления `session/update` отображаются в те же Message
 (agent_message_chunk → дельта текста ассистента, agent_thought_chunk → рассуждение, tool_call/tool_call_update → инструмент (вызов может прийти с rawInput {}, а его настоящий ввод — в более позднем
 tool_call_update: карточка, а для вызовов agent — название чата субагента и сообщение задачи, заполняются тогда), plan →
@@ -1259,6 +1320,9 @@ tool_call_update: карточка, а для вызовов agent — назв�
 (проверка в конце хода и при `result`). «Сбросить статус» у неработающего чата отпускает его процесс ACP: следующее сообщение
 запустит новый (MCP заново, контекст через `session/load`). Очередь склеивается `promptOf`: сообщение со слэш-командой идёт первым.
 Флаги возможностей: `questions`, `permissions`, `acp`.
+Два таймаута MCP настраиваются в «Настройки → Подключения» (`mcp.acpStartTimeoutMs`, по умолчанию 30000, — сколько ждать первых
+событий от `initialize` нового процесса ACP; `mcp.harnessTimeoutMs`, по умолчанию 3600000, — `timeoutMs` сервера `harness`,
+сколько CLI ждёт ответа инструмента; оба обязаны быть положительными числами, PUT `/api/settings` возвращает их в `mcp`).
 
 Состояние реализации: вопросы (а–в), безголовые разрешения и транспорт ACP реализованы (флаги `questions`,
 `permissions`, `acp`; `server/acp.js`, `scripts/mock-acp-agent.js`). Замечания по ACP: процесс запускается со stdio-каналами
@@ -1273,8 +1337,8 @@ load или агент без `loadSession` → `session/new` + системна
 хранится и возвращается как 0, и `acpIdleTimeoutMin`) и заново загружается через `session/load` на следующем сообщении (заметка — только если load не удался); `transport`
 и `acpIdleMin` есть в /api/settings. Обнаружение моделей агента ACP спрашивает тёплый процесс в скрытой дополнительной сессии
 (без холодного старта); если его нет, работает в безголовом режиме, как раньше. Исключения MCP для запусков harness: `agents.<id>.mcpExclude`
-(никогда не `harness`) записываются в настройки запуска под ключом `agents.<id>.mcpExcludeKey` (по умолчанию `mcp.excluded`, альтернатива
-`excludeMCPServers`; ПРОВЕРИТЬ, какой из них учитывает GigaCode); `GET /api/agents/:id/info` → `mcpServers: [{ name, status,
+(никогда не `harness`) записываются в настройки запуска под ключом `agents.<id>.mcpExcludeKey` (по умолчанию `excludeMCPServers`,
+можно указать `mcp.excluded`); `GET /api/agents/:id/info` → `mcpServers: [{ name, status,
 excluded }]` из последнего init для переключателей. Замечания: ответ карточки вопроса — обычное сообщение
 (`POST /api/sessions/:id/messages` с «Ответ на вопрос «…»: …»); любая доставка в сессию снимает `waitingFor`
 'answer'/'permission'; открытая карточка вопроса сессии получает `question.answered: true, answer, answeredAt` (текст
@@ -1531,8 +1595,10 @@ running И phase !== 'auth' И нет событий в течение `session.
 `fast`, когда она задана; без преамбулы harness, без сессии, ничего не записывается в список чатов; таймаут
 `git.generateTimeoutSec` (по умолчанию 120). Если быстрые аргументы приводят к сбою CLI до любого события, повтор один раз без них
 (и запоминается `agentMeta.quickArgsBroken`). Разбирается первый JSON `{…}` ответа; ограничения применяются (обрезка по границе
-символа). Сбой → 502 с причиной (UI сохраняет предзаполнение по шаблону). Конфигурация `git.generateMessages:
-true` (UI генерирует автоматически; false = только ручная кнопка). `/api/git/suggest` без ключа задачи: `commit.title` = ''
+символа). Сбой → 502 с причиной (UI сохраняет предзаполнение по шаблону). Вызов единственный — кнопка ✨ у поля «Сообщение»
+и в окне «Создать PR»: сами по себе панель «Изменения» и окно PR агента не запускают (ни в фоне по изменению набора файлов,
+ни при открытии окна), иначе каждый ход агента в рабочем дереве собирал бы новое сообщение. `git.generateMessages` остаётся
+в конфиге ради совместимости и на поведение не влияет. `/api/git/suggest` без ключа задачи: `commit.title` = ''
 (без запасного варианта из имени ветки) и `commit.body` = '' (без списка файлов).
 
 ## Коммит / push / PR через агента (его хуки и навыки выполняются)
@@ -1560,8 +1626,9 @@ true` (UI генерирует автоматически; false = только 
 ## Чаты CLI — обычные чаты (отдельного экрана нет)
 
 Пользователь хочет, чтобы диалоги, начатые в CLI GigaCode, можно было продолжить в UI и никогда не терять — а не отдельный список.
-- Усыновление: при старте, каждые 60 с, пока подключён клиент UI, и по требованию (`POST /api/history/adopt`)
-  читатель истории (server/history.js) сканирует записи чатов CLI, обновлённые в пределах `history.adoptDays` (по умолчанию 14), и для каждого
+- Усыновление: при старте, каждые 60 с, пока подключён клиент UI, и по требованию (`POST /api/history/adopt { adoptDays? }`:
+  окно `adoptDays` в днях, `0` — все записи за всё время; проходы по разным окнам идут параллельно и дублируются только внутри
+  одного окна). Читатель истории (server/history.js) сканирует записи чатов CLI, обновлённые в пределах `history.adoptDays` (по умолчанию 14), и для каждого
   настоящего чата (≥ 1 сообщение пользователя; не `*.runtime.json`; не принадлежащего сессии harness — его sessionId не равен externalSessionId ни одной
   сессии harness; не служебного запуска — cwd вне dataDir harness, первый пользовательский текст не промпт помощника
   (/models, /context, /compress, HARNESS_GENERATE_MESSAGE); название без преамбулы harness) создаёт или обновляет
@@ -1605,8 +1672,8 @@ true` (UI генерирует автоматически; false = только 
   же, что выше, ответ дополнительно несёт `trackerError`. Раньше такой случай становился свободным чатом с ссылкой вместо названия, без
   задачи, отчёта и уведомлений (так работает и кнопка «Передать агенту» на доске: она отправляет ссылку задачи);
 - иначе (свободный текст или трекер выключен) → чат в корне проектов (роль worker-подобная solo, название из
-  текста), чей первый промпт = `agents.<id>.freePromptTemplate` (со своей командой — `"/full-task {text}{notes}"`,
-  по умолчанию `"{text}{notes}"`; те же правила шаблонов, слэш первым) + преамбула корня (выбрать репозитории по SDD/задаче или спросить;
+  текста), чей первый промпт = `agents.<id>.freePromptTemplate` (по умолчанию для gigacode `"/full-task {text}{notes}"`,
+  общий `"{text}{notes}"`; те же правила шаблонов, слэш первым) + преамбула корня (выбрать репозитории по SDD/задаче или спросить;
   рабочие деревья создавать по своим правилам).
 - Текст рядом с ключом/ссылкой попадает в `notes` («<ссылка> и проверь кеш» → notes «и проверь кеш»). Ключ/ссылка, которую трекер не может
   импортировать (неизвестная, трекер недоступен), возвращается к чату со свободным текстом с `trackerError` в ответе. `approvalMode` /

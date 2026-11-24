@@ -81,7 +81,8 @@ test('worker_run: a nested ephemeral chat with the profile, the caller gets the 
   assert.deepEqual([child.role, child.model, child.approvalMode, child.readOnly, child.title, child.taskId], ['worker', 'GLM-5.3-Flash-262k', 'default', true, 'java-reviewer · Проверь diff #done всё чисто', null]);
   assert.deepEqual([child.report.status, child.report.summary, child.waiter], ['done', 'всё чисто', true]);
   const first = (await messages(child.id)).find((m) => m.kind === 'user');
-  assert.match(first.text, /^Ты ревьюер Java-кода\.\n\n## Задание\nПроверь diff #done всё чисто$/);
+  // the profile's own words first, then what the run is restricted to, then the task
+  assert.match(first.text, /^Ты ревьюер Java-кода\.\n\nРаботай только на чтение[^\n]*\n\n## Задание\nПроверь diff #done всё чисто$/);
   assert.ok(!(await state()).tasks.some((t) => /Проверь diff/.test(t.title)), 'no board task for a sub-agent');
 
   const quiet = await chat('#run java-reviewer просто посмотри');
@@ -127,7 +128,8 @@ test('worker_run over MCP: progress notifications while waiting; past its wait t
   const caller = await chat('caller');
   await waitFor(async () => (await state()).sessions.find((s) => s.id === caller.id).status === 'idle');
   const mcp = spawn(process.execPath, [path.join(CODE_ROOT, 'mcp', 'harness-mcp.js')], {
-    env: { ...process.env, HARNESS_URL: h.srv.url, HARNESS_TOKEN: h.srv.token, HARNESS_SESSION_ID: caller.id },
+    // the harness's own env would override URL and token: this child talks to the test server
+    env: { HARNESS_URL: h.srv.url, HARNESS_TOKEN: h.srv.token, HARNESS_SESSION_ID: caller.id },
     stdio: ['pipe', 'pipe', 'inherit'],
   });
   const lines = [];
@@ -144,7 +146,7 @@ test('worker_run over MCP: progress notifications while waiting; past its wait t
     mcp.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'worker_run', arguments: { spec: '#silent', timeoutMin: 0.02 }, _meta: { progressToken: 'p1' } } })}\n`);
     const reply = await waitFor(() => lines.find((l) => l.id === 1), { timeout: 15000, what: 'tool reply' });
     const result = JSON.parse(reply.result.content[0].text);
-    assert.equal(result.status, 'background', 'not «timeout» and a result nobody receives');
+    assert.equal(result.status, 'background', `not «timeout» and a result nobody receives: ${reply.result.content[0].text}`);
     assert.match(result.summary, /итог придёт тебе отдельным сообщением/);
     assert.ok(result.sessionId);
     assert.ok(lines.some((l) => l.method === 'notifications/progress' && l.params.progressToken === 'p1'));
@@ -239,7 +241,20 @@ test('read-only sub-agents get a read-only allow-list; the harness marks its non
   assert.deepEqual(['worker_done', 'ask', 'send_message', 'worker_inspect', 'agent', 'worker_start'].map(hint), [true, true, true, true, false, false]);
 });
 
-test('a sub-agent of a «Полный доступ» caller never asks: its own mode and a plan profile give way (read-only said in words)', async () => {
+test('a built-in sub-agent started with run_in_background: its chat stays past the turn and settles on the result in its output file', async () => {
+  const caller = await chat('#subagentbg');
+  const kid = async () => (await state()).sessions.find((s) => s.parentId === caller.id);
+  // the call answered «launched» at once: the chat is not archived with the turn and says it works in the background
+  await waitFor(async () => (await kid())?.background, { what: 'the background chat' });
+  assert.equal((await kid()).virtual, true);
+  // its result lands in the output file after the turn: the chat gets it as the answer, the parent's card shows it
+  await waitFor(async () => (await messages((await kid()).id)).some((m) => m.kind === 'assistant' && m.text.includes('Контракт miszh сверён')), { timeout: 30000, what: 'the answer in the sub-agent chat' });
+  const card = await waitFor(async () => (await messages(caller.id)).find((m) => m.kind === 'tool' && m.tool?.name === 'agent' && m.tool.output?.includes('Контракт miszh')), { timeout: 30000, what: 'the card' });
+  assert.deepEqual([card.tool.status, card.tool.stillRunning], ['ok', false]);
+  assert.equal((await kid()).status, 'done');
+});
+
+test('a sub-agent of a «Полный доступ» caller never asks: its own mode gives way, a plan profile stays read-only', async () => {
   const caller = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', cwd: root, approvalMode: 'auto', prompt: '#run helper посмотри #done ок' })).body;
   await waitFor(async () => (await messages(caller.id)).some((m) => m.kind === 'assistant' && m.text.includes('worker_run result:')), { timeout: 20000, what: 'helper done' });
   const helper = (await state()).sessions.find((s) => s.parentId === caller.id);
@@ -248,8 +263,9 @@ test('a sub-agent of a «Полный доступ» caller never asks: its own 
   const strict = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', cwd: root, approvalMode: 'auto', prompt: '#run java-reviewer глянь #done ок' })).body;
   await waitFor(async () => (await messages(strict.id)).some((m) => m.kind === 'assistant' && m.text.includes('worker_run result:')), { timeout: 20000, what: 'reviewer done' });
   const reviewer = (await state()).sessions.find((s) => s.parentId === strict.id);
-  // the caller's «Полный доступ» wins: no prompts for the person; the profile's «read only» is said in the task instead
-  assert.deepEqual([reviewer.approvalMode, !!reviewer.readOnly], ['auto', false]);
+  // the caller's «Полный доступ» wins over a mode of the helper's own — but not over «только на чтение»: otherwise the
+  // «plan» helper is let into everything the caller may do and every step of it asks the person
+  assert.deepEqual([reviewer.approvalMode, !!reviewer.readOnly], ['default', true]);
   assert.match((await messages(reviewer.id)).find((m) => m.kind === 'user').text, /Работай только на чтение/);
 });
 

@@ -70,7 +70,14 @@ export function MinePrs() {
         </div>
       ) : (
         <div className="prs-list">
-          {repos.length === 0 && (
+          {repos.length === 0 && repoErrors.length > 0 && (
+            <div className="empty">
+              <TriangleAlert className="empty-icon" aria-hidden />
+              <h2>Репозитории не ответили</h2>
+              <p>{scope === 'mine' ? 'Список пуст, потому что ни один репозиторий не отдал данные — причина ниже.' : 'PR веток задач неизвестны: ни один репозиторий не отдал данные — причина ниже.'}</p>
+            </div>
+          )}
+          {repos.length === 0 && repoErrors.length === 0 && (
             <div className="empty">
               <GitPullRequest className="empty-icon" aria-hidden />
               <h2>Открытых PR нет</h2>

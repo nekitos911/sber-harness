@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { normalize, contextUsage } from '../server/launchers.js';
 
-const fixture = (name) => fs.readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+// a fixture may open with `//` comment lines saying where the capture came from
+const fixture = (name) => fs.readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8').split('\n').filter((l) => l.trim() && !l.trim().startsWith('//')).map((l) => JSON.parse(l));
 const run = (objs) => {
   const state = {};
   return objs.flatMap((o) => normalize(o, state)).filter((e) => e.type !== 'meta');
@@ -59,6 +60,16 @@ test('gigacode: built-in sub-agent events are tagged with the parent tool call',
     { type: 'text', text: 'Ревью пройдено.', delta: false },
     { type: 'result', text: 'Ревью пройдено.', isError: false, tokensIn: 2000, tokensOut: 50 },
   ]);
+});
+
+test('gigacode: a background sub-agent call answers at once, its output_file in the answer', () => {
+  const events = run(fixture('gigacode.subagent-background.ndjson')).filter((e) => e.type !== 'session');
+  assert.deepEqual(events.map((e) => e.type), ['tool_call', 'tool_result']);
+  assert.equal(events[0].name, 'agent');
+  assert.equal(events[0].input.run_in_background, true);
+  assert.equal(events[1].isError, false);
+  assert.match(events[1].output, /^Background agent launched successfully/);
+  assert.match(events[1].output, /output_file: C:\\Users\\dev\\\.gigacode\\projects\\/);
 });
 
 test('gigacode: slash command expands into the skill tool; a tool error is a tool result with isError', () => {

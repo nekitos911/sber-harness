@@ -14,6 +14,7 @@ let h;
 let wsDemo;
 let wsLedger;
 let task;
+const repos = {};
 
 const pull = (index, repo, head, author, title = `PR ${index}`) => ({
   index, title, state: 'open', pr_creator: author, head: { name: head }, base: { name: 'develop' }, mergeable: true,
@@ -29,7 +30,6 @@ before(async () => {
   }
   fs.writeFileSync(path.join(fixtures, 'sourcecontrol.git_get_user.json'), JSON.stringify({ login: 'ivanov', name: 'Иван Иванов' }));
   writePulls([]);
-  const repos = {};
   for (const name of ['demo-service', 'ledger-service']) {
     repos[name] = makeRepo(path.join(root, name));
     gitIn(repos[name], 'remote', 'add', 'origin', `ssh://git@code.example:7998/PROJ/${name}.git`);
@@ -80,6 +80,16 @@ test('GET /api/prs?scope=mine: my open PRs of every repository, linked to tasks;
   writePulls([]);
   assert.equal((await h.api('GET', '/api/prs?scope=mine')).body.items.length, 2, 'cached for 3 minutes');
   assert.equal((await h.api('GET', '/api/prs?scope=mine&refresh=1')).body.items.length, 0);
+});
+
+test('a repository registered twice (main checkout + worktree) lists each of its PRs once', async () => {
+  writePulls([pull(600, 'demo-service', 'feature/дубль', 'ivanov')]);
+  const wt = path.join(root, 'demo-service-BPMNT-1');
+  gitIn(repos['demo-service'], 'worktree', 'add', '-b', 'BPMNT-1', wt);
+  const copy = (await h.api('POST', '/api/workspaces', { path: wt })).body; // a worktree of the same repository, second registration
+  assert.notEqual(copy.id, wsDemo.id);
+  const r = (await h.api('GET', '/api/prs?scope=mine&refresh=1')).body;
+  assert.deepEqual(r.items.map((i) => [i.repo, i.index, i.workspaceId]), [['PROJ/demo-service', 600, wsDemo.id]], 'the first registration keeps the row');
 });
 
 test('scope=tracked: PRs of task branches and worktrees, whoever opened them', async () => {

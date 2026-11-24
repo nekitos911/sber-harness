@@ -73,9 +73,9 @@
         },
         "chatRecording": true
       },
-      "modelsDiscovery": { "prompt": "/models", "maxAgeHours": 24 },
+      "modelsDiscovery": { "prompt": "/models", "approvalMode": "plan", "maxAgeHours": 24 },
       "modelRefsScan": ["~/.gigacode/agents/*.md", "~/.gigacode/commands/*.md"],
-      "history": { "dirs": ["~/.gigacode/tmp/*/chats"], "command": null },
+      "history": { "dirs": ["~/.gigacode/projects/*/chats"], "command": null },
       "inheritUserMcp": false,
       "agentToolHook": null,
       "firstEventTimeoutMs": 120000,
@@ -96,15 +96,17 @@
       "approvalMode": "auto",
       "approvalModes": ["plan", "default", "auto-edit", "auto"],
       "modelsDiscovery": { "prompt": "/models", "maxAgeHours": 24 },
+      "history": { "dirs": ["~/.gigacode/tmp/*/chats"], "command": null },
       "settings": {
         "agents": {
           "modelGrades": {
-            "default": "Qwen3.8-Flash-Next-262k",
+            "default": "DeepSeek-V4.1-Flash-1017-262k",
             "fast": "DeepSeek-V4.1-Flash-1017-262k",
+            "strong": "DeepSeek-V4.1-Flash-1017-262k",
             "review": "GLM-5.3-Flash-262k",
             "explore": "Qwen3.6-35B-262k"
           },
-          "allowedGrades": ["default", "fast", "review", "explore"]
+          "allowedGrades": ["default", "fast", "strong", "review", "explore"]
         },
         "chatRecording": true
       }
@@ -112,6 +114,7 @@
   },
   "agentMcpServers": {},
   "mcpServersFrom": "~/.gigacode/settings.json",
+  "mcpDisabled": ["java-lsp"],
   "mcpServers": {
     "mock-tracker": {
       "enabled": false,

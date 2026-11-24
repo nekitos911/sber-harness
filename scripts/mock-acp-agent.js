@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 // Fake ACP agent (Agent Client Protocol over ndjson stdio) for tests: `mock-acp-agent.js --acp [...]`.
 // Prompt directives: #perm (tool call that asks for permission, then writes out.txt via fs/write_text_file),
-// #read <path> (fs/read_text_file), #slow (streams ~4 s, honours session/cancel), #die (exits mid-turn), #maxtokens (ends with stopReason max_tokens).
+// #mcp (a harness MCP tool behind GigaCode's ToolCall wrapper asking for permission), #late (the fixture's tool-call
+// stream), #read <path> (fs/read_text_file), #slow (streams ~4 s, honours session/cancel), #die (exits mid-turn),
+// #maxtokens (ends with stopReason max_tokens).
 // loadSession: true; sessions live in MOCK_AGENT_STATE_DIR (acp-<id>.json), a load replays the history.
 // MOCK_AGENT_ARGV_FILE: appends { acp: true, argv, mcpServers } on session/new|load.
 import fs from 'node:fs';
@@ -26,6 +28,9 @@ const update = (sessionId, u) => send({ method: 'session/update', params: { sess
 const say = (sessionId, text) => update(sessionId, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } });
 const cancelled = new Set();
 const loadedHere = new Set();
+// the catalogue `/models` prints: the table's first column, minus the header and the rule
+const MODELS = fs.readFileSync(new URL('../test/fixtures/gigacode.models.txt', import.meta.url), 'utf8').split('\n')
+  .map((l) => l.match(/^\|\s*([^|]+?)\s*\|/)?.[1]).filter((id) => id && id !== 'ID' && !/^-+$/.test(id));
 let clientFs = false; // initialize: does the client (the harness) offer to read and write files for us?
 const record = (params) => {
   if (process.env.MOCK_AGENT_ARGV_FILE) fs.appendFileSync(process.env.MOCK_AGENT_ARGV_FILE, `${JSON.stringify({ acp: true, pid: process.pid, argv: process.argv.slice(2), mcpServers: params.mcpServers, clientFs, env: { HARNESS_SESSION_ID: process.env.HARNESS_SESSION_ID } })}\n`);
@@ -46,7 +51,8 @@ async function prompt({ sessionId, prompt: parts }) {
   fs.writeFileSync(stateFile(sessionId), JSON.stringify(st));
   cancelled.delete(sessionId);
   update(sessionId, { sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'думаю' } });
-  say(sessionId, `${loadedHere.has(sessionId) ? 'loaded, ' : ''}ACP mock, turn ${st.turns}.`);
+  const on = st.model ? ` [${st.model}]` : ''; // session/set_model: which model the turn really runs on
+  say(sessionId, `${loadedHere.has(sessionId) ? 'loaded, ' : ''}ACP mock, turn ${st.turns}.${on}`);
   update(sessionId, { sessionUpdate: 'plan', entries: [{ content: 'ответить', status: 'in_progress', priority: 'high' }] });
   // the message itself, not the harness's record of the chat before it (that one repeats old directives)
   if (/#die\b/.test(text.split('\n\n').at(-1))) process.exit(3);
@@ -69,10 +75,10 @@ async function prompt({ sessionId, prompt: parts }) {
   if (/#perm\b/.test(text)) {
     const file = path.join(st.cwd, 'out.txt');
     // like GigaCode's ToolCall wrapper: announced with {}, the arguments only in the permission request
-    update(sessionId, { sessionUpdate: 'tool_call', toolCallId: 't1', title: 'Запись out.txt', kind: 'edit', status: 'pending', rawInput: {} });
+    update(sessionId, { sessionUpdate: 'tool_call', toolCallId: 't1', title: 'Запись out.txt', kind: 'edit', status: 'pending', rawInput: {}, _meta: { toolName: 'write_file' } });
     const answer = await request('session/request_permission', {
       sessionId,
-      toolCall: { toolCallId: 't1', title: 'Запись out.txt', kind: 'edit', rawInput: { path: file } },
+      toolCall: { toolCallId: 't1', title: 'Запись out.txt', kind: 'edit', rawInput: { path: file }, _meta: { toolName: 'write_file' } },
       options: [{ optionId: 'allow', name: 'Разрешить', kind: 'allow_once' }, { optionId: 'reject', name: 'Запретить', kind: 'reject_once' }],
     });
     if (answer.outcome.outcome === 'cancelled') return { stopReason: 'cancelled' };
@@ -100,10 +106,27 @@ async function prompt({ sessionId, prompt: parts }) {
     for (let i = 0; i < 20 && !cancelled.has(sessionId); i++) await sleep(100); // goes on unless the client cancels
     if (cancelled.has(sessionId)) return { stopReason: 'cancelled' };
   }
+  if (/#mcp\b/.test(text)) {
+    // a harness tool behind the same wrapper; the harness pre-allows its own tools in every mode
+    update(sessionId, { sessionUpdate: 'tool_call', toolCallId: 't2', title: 'ToolCall', kind: 'other', status: 'pending', rawInput: {}, _meta: { toolName: 'tool_call' } });
+    const answer = await request('session/request_permission', {
+      sessionId,
+      toolCall: { toolCallId: 't2', kind: 'other', title: '{"question":"Куда коммитить?"}', rawInput: { question: 'Куда коммитить?' }, _meta: { toolName: 'mcp__harness__ask' } },
+      options: [{ optionId: 'always', name: 'Always Allow', kind: 'allow_always' }, { optionId: 'once', name: 'Allow', kind: 'allow_once' }],
+    });
+    const allowed = answer.outcome.outcome === 'selected';
+    update(sessionId, { sessionUpdate: 'tool_call_update', toolCallId: 't2', status: allowed ? 'completed' : 'failed', content: [{ type: 'content', content: { type: 'text', text: allowed ? `разрешено: ${answer.outcome.optionId}` : 'cancelled' } }] });
+    say(sessionId, allowed ? ' спросил harness' : ' не спросил');
+  }
   if (/#late\b/.test(text)) {
-    // tool calls announced with rawInput {} whose input arrives in a later tool_call_update
+    // tool calls announced with rawInput {} whose input arrives in a later tool_call_update. The permission the wrapper
+    // asks for is answered like the real CLI's own wrapper does: the harness pre-allows its MCP tools in every mode
     const lines = fs.readFileSync(new URL('../test/fixtures/gigacode.acp-late-input.ndjson', import.meta.url), 'utf8').split('\n').filter(Boolean);
-    for (const l of lines) update(sessionId, JSON.parse(l));
+    for (const l of lines) {
+      const u = JSON.parse(l);
+      update(sessionId, u);
+      if (u.sessionUpdate === 'session/request_permission') await request('session/request_permission', { ...u, sessionId });
+    }
   }
   say(sessionId, ' Done.');
   return { stopReason: /#maxtokens\b/.test(text) ? 'max_tokens' : 'end_turn' };
@@ -115,7 +138,16 @@ const handlers = {
     record(params);
     const sessionId = randomUUID();
     fs.writeFileSync(stateFile(sessionId), JSON.stringify({ turns: 0, cwd: params.cwd, history: [] }));
-    return { sessionId };
+    // like GigaCode: the session names this account's catalogue and which model it runs with; the model is switched over
+    // the session (session/set_model), not by the process argv
+    return { sessionId, models: { currentModelId: MODELS[0], availableModels: MODELS.map((id) => ({ modelId: id, name: id })) } };
+  },
+  // the real agent takes an id this account has: one that left the catalogue is an error the harness has to handle
+  'session/set_model': (params) => {
+    if (!MODELS.includes(params.modelId)) throw Object.assign(new Error(`unknown model ${params.modelId}`), { code: -32602 });
+    const st = JSON.parse(fs.readFileSync(stateFile(params.sessionId), 'utf8'));
+    fs.writeFileSync(stateFile(params.sessionId), JSON.stringify({ ...st, model: params.modelId }));
+    return null;
   },
   'session/load': async (params) => {
     record(params);

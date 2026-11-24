@@ -296,12 +296,12 @@ function tailFile(file, offset, maxLine, onLine, onOffset) {
  *   reattach: follow an already running turn (not our child): it ends at its `result` event or when the pid is gone;
  *   the exit code is then unknown (null); stop() kills it only after re-checking its identity (sameProcess).
  *   pid null = not adopted (unknown or reused pid): only the output already in the file is read.
- * @returns {{ pid, startedAt, stop(), detach(), done: Promise<{code, signal, sawResult, timedOut, stopped, detached, error, stderrTail, eventCount}> }}
+ * @returns {{ pid, startedAt, turn, stop(), detach(), done: Promise<{code, signal, sawResult, timedOut, stopped, detached, error, stderrTail, eventCount}> }}
  */
-export function runTurn({ launcher, ctx, command, cwd, env, firstEventTimeoutMs, authTimeoutMs = 600000, logFile, outFile, errFile, onEvent, onOffset, maxLine = MAX_LINE, reattach = null }) {
+export function runTurn({ launcher, ctx, command, cwd, env, firstEventTimeoutMs, authTimeoutMs = 600000, logFile, outFile, errFile, onEvent, onOffset, maxLine = MAX_LINE, turn = null, reattach = null }) {
   const log = fs.createWriteStream(logFile, { flags: 'a' });
   log.on('error', () => {}); // best-effort: the run folder may be gone (session deleted right after the spawn)
-  const res = { code: null, signal: null, sawResult: false, timedOut: false, stopped: false, killReason: null, detached: false, error: null, stderrTail: '', eventCount: 0, priorOutput: (reattach?.offset ?? 0) > 0 };
+  const res = { turn, code: null, signal: null, sawResult: false, timedOut: false, stopped: false, killReason: null, detached: false, error: null, stderrTail: '', eventCount: 0, priorOutput: (reattach?.offset ?? 0) > 0 };
   let child = null;
   let pid = reattach?.pid ?? null;
   let startedAt = reattach?.startedAt ?? null;
@@ -455,6 +455,7 @@ export function runTurn({ launcher, ctx, command, cwd, env, firstEventTimeoutMs,
   return {
     pid,
     startedAt,
+    turn,
     stop() {
       if (!reattach) return kill('stop');
       res.stopped = true;

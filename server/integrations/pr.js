@@ -27,7 +27,8 @@
  *    its tools were listed, offers `tool`).
  *  repoPulls({ config, mcp, project, repository, author? }) -> raw open pull requests of one repository (author: the
  *    server's own filter, and the items' pr_creator/author checked here as well); prMe({ config, mcp }) -> my login
- *    from `meTool` (default git_get_user, called with {}; login|username|name; cached 24 h).
+ *    from `meTool` (default git_get_user, called with { username: meArg ?? the OS account name }; login|username|name;
+ *    cached 24 h).
  *  `args` is a template: a string that is exactly "{var}" is replaced by the value (type kept), other strings get
  *  "{var}" substituted; nested objects/arrays are processed recursively.
  *  Vars: repo project repository branch head base title body cwd.
@@ -62,28 +63,30 @@ export function prEnabled(config, mcp = null) {
   return !tools || tools.includes(cfg.tool);
 }
 
-let meCache = null; // { server, at, me }
-/** My login on the code host (meTool, default git_get_user with {}); cached 24 h. */
+let meCache = null; // { server, at, who }
 /**
  * My login on the code host → { login, source: 'config' | 'tool' | 'os', warning? }: integrations.pr.me wins; else the
- * meTool (git_get_user); if that fails, the OS account name (corporate logins usually equal it) with a warning.
+ * meTool (git_get_user) is asked about the login the harness runs under (integrations.pr.meArg, default the OS account
+ * name — a corporate login equals it), and its answer is the code host's own id; if that fails, the OS name itself
+ * with a warning.
  */
 export async function prMe({ config, mcp }) {
   const cfg = config.integrations.pr;
   if (cfg.me) return { login: String(cfg.me), source: 'config' };
   if (meCache?.server === cfg.server && Date.now() - meCache.at < 86400000) return meCache.who;
   const tool = cfg.meTool || 'git_get_user';
+  const osLogin = os.userInfo().username;
+  const probe = cfg.meArg ? String(cfg.meArg) : osLogin;
   let who;
   try {
-    const v = toolResultValue(await mcp.callTool(cfg.server, tool, {}));
+    const v = toolResultValue(await mcp.callTool(cfg.server, tool, { username: probe }));
     const o = v?.user && typeof v.user === 'object' ? v.user : v;
     // VERIFY the real shape of git_get_user; a text answer is searched for "login: <x>"
     const me = (typeof o === 'object' && (o?.login || o?.username || o?.name)) || (typeof v === 'string' && v.match(/(?:login|username)["'\s:=]+([\w.@-]+)/i)?.[1]) || null;
     if (!me) throw new Error(`${tool}: в ответе нет login/username/name`);
     who = { login: String(me), source: 'tool' };
   } catch (e) {
-    const login = os.userInfo().username;
-    who = { login, source: 'os', warning: `${e.message} — использую имя пользователя ОС «${login}»; если PR не видны, укажите integrations.pr.me` };
+    who = { login: osLogin, source: 'os', warning: `${e.message} — использую имя пользователя ОС «${osLogin}»; если PR не видны, укажите integrations.pr.me` };
   }
   meCache = { server: cfg.server, at: Date.now(), who };
   return who;

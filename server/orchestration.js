@@ -8,6 +8,7 @@ import * as git from './git.js';
 import { jobStep } from './jobs.js';
 import { FULL_ACCESS_MODES, newId, subagentTitle } from './sessions.js';
 import { launchers } from './launchers.js';
+import { GRADES, profileGrade, resolveSubagentModel } from './models.js';
 import { runCheck } from './checks.js';
 import { codeHints, hintsLine, localCopyOf } from './hints.js';
 
@@ -62,10 +63,10 @@ export function parseProfile(text) {
 }
 
 export const NO_SUBAGENTS = 'Субагенты не запускают своих субагентов: выполни это сам или верни запрос оркестратору';
-// the fallback matters: told only «не используй встроенный agent», an agent without the harness tool skipped its reviewers
 // «not found in registry» spelled out: GigaCode's MCP tools are deferred, and an agent that called mcp__harness__agent
 // without tool_search took that answer for «there is none» and fell back to unseen built-in background sub-agents
 // a worktree once got 948 compiled classes and two test logs of 20 000+ lines: every new file there is a change to commit
+// told only «не используй встроенный agent», an agent without the harness tool skipped its reviewers: the fallback matters
 export const WORKTREE_RULE = 'Перед каждой правкой, включая shell, вызови worktree_claim сервера harness с путями относительно корня дерева (его возвращает worktree_peers). Редактируй только после ok=true. При конфликте оставь файл владельцу. Резерв действует до конца хода. При совместной работе согласуйте одного исполнителя для коммита и переключения ветки.';
 export const TEMP_FILES = 'Временные файлы (логи прогонов, вывод тестов, скомпилированные классы, распакованные архивы) создавай вне репозитория, в системной временной папке, и не оставляй в рабочем дереве: всё новое в нём попадает в изменения задачи.';
 export const SUBAGENT_CONTEXT ='Ты работаешь внутри harness. Его инструменты (mcp__harness__agent, mcp__harness__ask, mcp__harness__worker_done, mcp__harness__send_message) отложенные: перед первым вызовом загрузи их через tool_search по слову «harness». Ответ «Tool ... not found in registry» значит «ещё не загружен» — сделай tool_search «harness» и повтори вызов. Субагентов запускай инструментом mcp__harness__agent с теми же аргументами, что у встроенного agent (subagent_type, prompt, model) — harness откроет каждого субагента отдельным чатом и вернёт тебе его результат так же. Несколько субагентов параллельно — по одному вызову mcp__harness__agent на шаг, каждый с run_in_background: true: они работают одновременно, а результаты придут сообщениями (несколько вызовов в одном шаге GigaCode может отклонить как «tool_call bridge refused … name» — тогда повтори их по одному). Нужен субагент в фоне (ты продолжаешь, человек может тебе писать) — mcp__harness__agent с run_in_background: true: он работает своим чатом, его результат придёт тебе сообщением. Встроенный agent в фоне не запускай: ни harness, ни человек такого субагента не видят, а с концом хода его работа может пропасть. Только если и после tool_search «harness» инструмента нет — запускай встроенным agent (не в фоне) и напиши об этом одной строкой в отчёте; не отказывайся из-за этого от субагентов и ревьюеров. Вопросы человеку — через mcp__harness__ask (варианты в options): вызов ждёт ответа и возвращает его; если вернулся без ответа — заверши ход.';
@@ -302,6 +303,10 @@ export function createOrchestration({ config, store, bus, tasks, sessions, addWo
     jobStep('Проверка агента');
     sessions.resolveAgent(agent);
     if (!o.spec) promptTemplate(agent);
+    // a grade takes its model from the catalogue, else the session's own model; a gone model is a note, not a failure
+    if (o.model) await loadKnown(agent);
+    const pick = pickModel(agent, { wanted: o.model ?? null, fallback: caller?.model ?? null });
+    const model = pick.model;
 
     const run = (async () => {
       let cwd = o.cwd ? path.resolve(o.cwd) : ws ? ws.path : caller?.cwd || config.root;
@@ -331,7 +336,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions, addWo
       try {
         s = await sessions.create({
           kind: 'chat', agent, cwd, workspaceId: ws?.id, title, role: 'worker',
-          parentId: caller?.id ?? null, taskId: task?.id ?? null, model: o.model, ...(o.approvalMode ? { approvalMode: o.approvalMode } : {}), branch, inWorktree, includeDirs, autoIncludeDirs: true, atRoot: o.atRoot === true, repoHints: o.repoHints,
+          parentId: caller?.id ?? null, taskId: task?.id ?? null, model, ...(o.approvalMode ? { approvalMode: o.approvalMode } : {}), branch, inWorktree, includeDirs, autoIncludeDirs: true, atRoot: o.atRoot === true, repoHints: o.repoHints,
           persistent: !!caller && (placement !== 'current' || !task),
         });
         sessions.update(s.id, { placement, ...(auto ? { placementAuto: true } : {}), ...(name ? { worktreeName: name } : {}), ...(o.workspace ? { placementWorkspace: o.workspace } : {}), ...(o.retryOf ? { retryOf: o.retryOf } : {}) });
@@ -358,6 +363,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions, addWo
         if (made?.created) await git.removeWorktree(made.repo, made.wt.path).catch(() => {});
         throw e;
       }
+      modelNote(s.id, task, pick.note, pick.grade);
       if (!task) {
         if (caller && made) sessions.patch(caller.id, { includeDirs: [...(caller.includeDirs || []), cwd] }, { strict: false });
         return s;
@@ -536,30 +542,65 @@ export function createOrchestration({ config, store, bus, tasks, sessions, addWo
   }
   const atDepthLimit = (s) => !!s && subagentDepth(s) >= Number(config.orchestration?.maxSubagentDepth ?? 1);
 
+  /** Refreshes the catalogue of an agent before a sub-agent gets a model by grade (fresh = no extra CLI run). */
+  async function freshKnown(agent) {
+    const catalog = sessions.modelsFor(agent);
+    try {
+      await Promise.race([catalog.ensureFresh(agent), new Promise((r) => setTimeout(r, 5000))]);
+    } catch {}
+    return catalog.known(agent);
+  }
+
+  /** The grade of a sub-agent type: reviewers `review`, explorers `explore`, file workers `fast` (null = no role). */
+  const profileRoleGrade = (profile) => profileGrade(profile?.meta || {});
+
+  /**
+   * The model a sub-agent runs with (models.js resolveSubagentModel): `wanted` is empty, a grade or an id; empty takes
+   * the role grade, else `fallback` — the session's own model, i.e. the orchestrator's.
+   * `known` empty = no fresh catalogue: nothing is checked, grades resolve by their config.
+   */
+  function pickModel(agent, { wanted = null, grade = null, fallback = null } = {}) {
+    const cfg = config.agents[agent] || {};
+    return resolveSubagentModel({ agentCfg: cfg, wanted, grade, known: knownCache.get(agent) ?? new Set(), fallback });
+  }
+  /** worker_run / worker_start talk to the server synchronously: the freshest catalogue a previous run already fetched. */
+  const knownCache = new Map();
+  async function loadKnown(agent) {
+    const known = await freshKnown(agent);
+    knownCache.set(agent, known);
+    return known;
+  }
+  /** «Модель уровня «review» (X) не найдена в каталоге — запуск с моделью по умолчанию»: chat note and, with a task, its log. */
+  function modelNote(sessionId, task, note, grade) {
+    if (!note) return;
+    if (sessionId) sessions.note(sessionId, note);
+    if (task) tasks.addLog(task.id, 'harness', note, 'model', { grade, warning: true });
+  }
+
   async function workerRun(a, caller) {
     if (!caller) fail(400, 'worker_run вызывается только из сессии harness (заголовок x-harness-session)');
     if (typeof a.spec !== 'string' || !a.spec.trim()) fail(400, 'нужно задание (spec)');
     const agent = caller.kind === 'chat' && config.agents[caller.agent] ? caller.agent : config.defaultAgent;
     const agentCfg = config.agents[agent] || {};
     const profile = a.profile ? loadProfile(agentCfg, a.profile) : null;
-    let model = a.model ?? profile?.meta.model ?? null;
-    const grades = agentCfg.settings?.agents?.modelGrades || {};
-    if (model && grades[model]) model = grades[model]; // a grade name ("review") -> its model id
-    if (model && sessions.unavailableModels(agent).has(model)) model = null; // the CLI default instead of a doomed run
-    // no mode of its own (argument, profile): the caller's — a «Полный доступ» coordinator's helpers do not ask either
-    // «Полный доступ» of the caller wins: its helpers never ask the person (a read-only profile is told so in words below);
+    await loadKnown(agent);
+    // a caller's model wins; the profile's own model is a grade too (a reviewer profile says `model: review`), otherwise
+    // the profile's role decides; a plain helper runs on the orchestrator's own model
+    const pick = pickModel(agent, { wanted: a.model ?? profile?.meta?.model ?? null, grade: profileRoleGrade(profile), fallback: caller.model || null });
+    const model = pick.model;
+    // «Полный доступ» of the caller wins: its helpers never ask the person (a plan profile keeps its read-only run);
     // otherwise a mode of its own (argument, profile), else the caller's
     const callerMode = caller.approvalMode ?? config.agents[caller.agent]?.approvalMode ?? null;
-    const callerFull = [...FULL_ACCESS_MODES].includes(callerMode); // a Set here; an array in an older copy works too
+    // a Set here; an array in an older copy works too
+    const callerFull = (FULL_ACCESS_MODES instanceof Set ? FULL_ACCESS_MODES.has(callerMode) : [...FULL_ACCESS_MODES].includes(callerMode));
     const asked = a.approvalMode ?? profile?.meta.approvalMode ?? null;
-    const readOnlyWanted = asked === 'plan';
-    let mode = callerFull ? callerMode : asked ?? callerMode;
-    if (mode && agentCfg.approvalModes?.length && !agentCfg.approvalModes.includes(mode)) mode = null;
     // GigaCode's plan mode refuses the harness's own tools («Plan mode is active. The tool "mcp__harness__worker_done"
     // cannot be executed because it modifies the system»): such a sub-agent could never report or ask. «Read only» =
-    // default mode + a read-only allow-list (headless declines every other change by itself).
-    const readOnly = mode === 'plan';
-    if (readOnly) mode = 'default';
+    // default mode + a read-only allow-list (headless declines every other change by itself) — in full access too, or the
+    // helper would be let into everything the caller may do
+    const readOnly = asked === 'plan';
+    let mode = readOnly ? 'default' : callerFull ? callerMode : asked ?? callerMode;
+    if (mode && agentCfg.approvalModes?.length && !agentCfg.approvalModes.includes(mode)) mode = null;
     // a child in its own worktree or repository is persistent (a per-service orchestrator); a same-worktree helper is
     // ephemeral: archived once settled and depth-limited
     const other = a.workspace ? await knownWorkspace(a.workspace) : null;
@@ -604,11 +645,12 @@ export function createOrchestration({ config, store, bus, tasks, sessions, addWo
         title: a.title || subagentTitle(a.profile || 'agent', a.description || a.spec),
       });
       if (!persistent && (s.worktreePath ?? s.cwd) !== (caller.worktreePath ?? caller.cwd)) sessions.update(s.id, { persistent: true });
+      modelNote(s.id, null, pick.note, pick.grade);
       // awaitedBy: the caller waits inside worker_run/agent — a question of this child must reach it there (ask, waitRun)
       // background: nobody waits inside a call — its result comes to the caller as a message (reportToAsker)
       const background = a.background === true || a.run_in_background === true;
       sessions.update(s.id, { ...(background ? { awaitedBy: null, askedParent: true } : { awaitedBy: caller.id }), ...(readOnly ? { readOnly: true } : {}) });
-      const readOnlyNote = callerFull && readOnlyWanted ? 'Работай только на чтение: ничего не создавай и не меняй (кроме отчёта через worker_done).' : null;
+      const readOnlyNote = readOnly ? 'Работай только на чтение: ничего не создавай и не меняй (кроме отчёта через worker_done).' : null;
       sessions.deliver(s.id, { from: caller.id, text: [profile?.body, readOnlyNote, `## Задание\n${a.spec}`].filter(Boolean).join('\n\n') });
     } catch (e) {
       // never an orphan: no sub-agent chat or worktree stays behind a failed start
@@ -620,10 +662,10 @@ export function createOrchestration({ config, store, bus, tasks, sessions, addWo
     return { sessionId: s.id, placement: a.worktree ? worktree : `${worktree} (auto)`, ...(a.background === true || a.run_in_background === true ? { background: true } : {}) };
   }
 
-  async function waitRun(sessionId, timeoutMs = 25000, { release = false } = {}) {
+  async function waitRun(sessionId, timeoutMs = 25000, { release = false, caller = null } = {}) {
     // stateless: the answer comes from the persisted report, so a caller that keeps polling survives a restart
     const s = sessions.get(sessionId);
-    if (!s.report) {
+    if (!s.report && !s.released) {
       await new Promise((resolve) => {
         const timer = setTimeout(resolve, Math.min(Math.max(Number(timeoutMs) || 0, 0), 60000));
         timer.unref?.(); // a long-poll cut by a harness shutdown must not keep the process alive
@@ -632,44 +674,67 @@ export function createOrchestration({ config, store, bus, tasks, sessions, addWo
     }
     const now = sessions.find(sessionId);
     if (now?.report) return { done: true, sessionId, status: now.report.status, summary: clipResult(now.report.summary, sessionId) };
+    // The caller's call waits here (the long-poll) and is gone the moment it answers: whatever this child says later comes
+    // as a message. Marked before every exit that is not its report, or the result goes to a call nobody holds any more.
+    const handOver = () => sessions.update(sessionId, { awaitedBy: null, askedParent: true });
+    if (now?.released) {
+      // a message came to the caller of this very call (the person's writing, the coordinator's reply): the call ends
+      // now, the sub-agent goes on, its result comes as a message. Before the poll branch: the release must reach the
+      // call whatever it was doing when the message arrived
+      sessions.update(sessionId, { released: null });
+      handOver();
+      return {
+        done: true, sessionId, status: 'background',
+        summary: 'Тебе написали, пока ты ждал этого субагента. Субагент продолжает работу в фоне, его итог придёт тебе отдельным сообщением. Заверши ход сейчас: сообщение придёт следующим.',
+      };
+    }
     const q = now?.pendingQuestion;
     if (q) {
       // the child asked its waiting parent: the call returns with the question; the child's result comes later as a message
-      sessions.update(sessionId, { pendingQuestion: null, awaitedBy: null, askedParent: true });
+      handOver();
       const choices = q.options?.length ? `\nВарианты: ${q.options.map((o) => `«${o}»`).join(', ')}` : '';
       return {
         done: true, sessionId, status: 'asked',
         summary: `Субагент спрашивает: ${q.text}${choices}\nОтветь ему: send_message to "${sessionId}". Он продолжит работу, а его итог придёт тебе отдельным сообщением.`,
       };
     }
-    if (release && now && !now.report && now.awaitedBy) {
-      // the bridge waited as long as a CLI's tool call may last: the sub-agent goes on, its result comes as a message
-      sessions.update(sessionId, { awaitedBy: null, askedParent: true });
+    if (release && now && !now.report) {
+      // a poll that is over in this same request: the sub-agent goes on, its result comes as a message. Release cuts the
+      // call even at timeout 0 — the bridge's last poll of an expired wait: the answer must say «background», not «running»
+      if (Number(timeoutMs) > 0) return { done: false, sessionId, status: now.status ?? 'running' };
+      // the caller's last poll, with nobody left to hand the result to (a wait that ended, an ended turn): the sub-agent
+      // goes to the background — askedParent makes its report come to the caller as a message instead of to a dead call
+      const asked = !!now.awaitedBy;
+      handOver();
       return {
         done: true, sessionId, status: 'background',
-        summary: 'Субагент работает дольше, чем может длиться вызов инструмента: он продолжает в фоне, его итог придёт тебе отдельным сообщением. Продолжай свою работу или заверши ход.',
-      };
-    }
-    if (now?.released) {
-      // the person wrote to the waiting caller: the call ends now, the sub-agent goes on, its result comes as a message
-      sessions.update(sessionId, { released: null });
-      return {
-        done: true, sessionId, status: 'background',
-        summary: 'Человек написал тебе, пока ты ждал этого субагента. Субагент продолжает работу в фоне, его итог придёт тебе отдельным сообщением. Заверши ход сейчас: сообщение человека придёт следующим.',
+        summary: asked
+          ? 'Субагент работает дольше, чем может длиться вызов инструмента: он продолжает в фоне, его итог придёт тебе отдельным сообщением. Продолжай свою работу или заверши ход.'
+          : 'Время ожидания вышло: субагент продолжает работу в фоне, его итог придёт тебе отдельным сообщением. Заверши ход сейчас.',
       };
     }
     return { done: false, sessionId, status: now?.status ?? null };
   }
 
-  /** A child that asked its parent mid-run reports its result as a message: the parent's call already returned. */
+  /** The caller's call waits here (a long-poll, or a cut by its deadline). */
+  function wake(sid) {
+    for (const resolve of runWaiters.get(sid) || []) resolve();
+    runWaiters.delete(sid);
+  }
   /** What reaches the caller's context of a helper's report: ~4000 characters; the rest stays in the helper's chat. */
   const RESULT_MAX = 4000;
   const clipResult = (text, sid) => (String(text ?? '').length > RESULT_MAX ? `${String(text).slice(0, RESULT_MAX)}\n… (обрезано: полный отчёт — worker_inspect ${sid} или чат субагента)` : String(text ?? ''));
 
+  /** A child that asked its parent mid-run reports its result as a message: the parent's call already returned. */
   function reportToAsker(s, { status, summary }) {
     if (!s?.askedParent || !s.parentId || !sessions.find(s.parentId)) return;
     sessions.update(s.id, { askedParent: false });
-    sessions.deliver(s.parentId, { from: s.id, text: fromSession(s, `Result (${status}):\n${clipResult(summary, s.id)}`), report: true });
+    sessions.deliver(s.parentId, { from: s.id, options: { midTurn: () => wake(s.parentId) }, report: true, text: fromSession(s, `Result (${status}):\n${clipResult(summary, s.id)}`) });
+  }
+  /** The call is over (the deadline of chat.steerAfterMs): the sub-agent goes on, its result comes as a message. */
+  function endCall(sid) {
+    sessions.update(sid, { awaitedBy: null, askedParent: true, released: null });
+    wake(sid);
   }
 
   // ---- harness review loop (orchestration.reviewMode "harness") ----
@@ -759,9 +824,12 @@ export function createOrchestration({ config, store, bus, tasks, sessions, addWo
     const prev = task.review?.workerSessionId === worker.id ? task.review : null;
     const round = (prev?.round || 0) + 1;
     const agent = rc.agent || worker.agent;
-    const agentCfg = config.agents[agent] || fail(400, `агент ревью «${agent}» не настроен`);
-    const gradeModel = agentCfg.settings?.agents?.modelGrades?.[rc.grade] || null;
-    const model = gradeModel && !sessions.unavailableModels(agent).has(gradeModel) ? gradeModel : null; // else the CLI default
+    if (!config.agents[agent]) fail(400, `агент ревью «${agent}» не настроен`);
+    // the reviewer's model by grade (default "review"): gone from the catalogue = the CLI default plus a note in the log
+    await loadKnown(agent);
+    const pick = pickModel(agent, { wanted: rc.grade ?? 'review', fallback: worker.model || null });
+    const model = pick.model;
+    const agentCfg = config.agents[agent];
     const mode = rc.approvalMode && (!agentCfg.approvalModes?.length || agentCfg.approvalModes.includes(rc.approvalMode)) ? rc.approvalMode : null;
     const key = tasks.key(task);
     const text = render(rc.promptTemplate || '{key}: review the changes on {branch} against {base} and finish with worker_done; end the summary with VERDICT: APPROVED or VERDICT: CHANGES_REQUESTED.', {
@@ -778,6 +846,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions, addWo
       sessions.deliver(reviewer.id, { from: 'harness', text });
     }
     tasks.addLog(task.id, 'harness', `Ревью, раунд ${round}: начато${model ? ` (${model})` : ''}`, 'review', { round, sessionId: reviewer.id, model: model ?? null });
+    modelNote(null, task, pick.note, pick.grade);
   }
 
   function reviewerDone(summary, reviewer) {
@@ -1202,19 +1271,49 @@ export function createOrchestration({ config, store, bus, tasks, sessions, addWo
     return true;
   };
 
-  // the person writes while the agent only waits inside agent/worker_run: its sub-agents go on in the background (their
-  // results come as messages) and the waiting calls end at once — the message (queued, persisted) is read next turn,
-  // not after the sub-agent's whole run
-  /** Its sub-agents now report as messages; a poll still waiting for them returns «background» at once. */
+  /**
+   * The step of a coordinator that only waits inside agent/worker_run is not the work: a message to it (someone's reply,
+   * the person's writing) ends that wait at once — the sub-agents go on in the background (their results come as
+   * messages) and the message, queued and persisted, is read next turn, not after the sub-agent's whole run.
+   * @param {object} s the waiting caller
+   */
   function releaseAwaited(s) {
+    let any = false;
     for (const k of db.sessions.filter((x) => x.awaitedBy === s.id && !x.report)) {
+      any = true;
+      sessions.update(k.id, { awaitedBy: null, askedParent: true, released: true }); // released: its result is asked for, not pushed
+      for (const resolve of runWaiters.get(k.id) || []) resolve();
+      runWaiters.delete(k.id);
+    }
+    return any;
+  }
+  sessions.hooks.personWrote = (s) => releaseAwaited(s);
+  /**
+   * A call of another session waits for this one (worker_run / agent): a message to it ends that call now, the sender
+   * reads the reply next turn, not after a whole run — the same thing a person's own writing does to a coordinator.
+   */
+  function releaseCall(s) {
+    // nothing reports within the turn: the call has no result left to hand over, its end is only the turn's own
+    const kids = db.sessions.filter((x) => x.awaitedBy === s.id && !x.report);
+    if (s.report || !kids.length) return false;
+    for (const k of kids) {
       sessions.update(k.id, { awaitedBy: null, askedParent: true, released: true });
       for (const resolve of runWaiters.get(k.id) || []) resolve();
       runWaiters.delete(k.id);
     }
+    return true;
   }
-  sessions.hooks.personWrote = releaseAwaited;
-  sessions.hooks.waitAbandoned = releaseAwaited;
+  sessions.hooks.waitAbandoned = (s) => releaseAwaited(s);
+  /** What holds the step: the calls of this turn that wait for a sub-agent (chat.steerAfterMs ends exactly them). */
+  sessions.hooks.waits = (s) => db.sessions.filter((x) => x.awaitedBy === s.id && !x.report).length;
+  /** The deadline of chat.steerAfterMs: those calls end here, the sub-agents go on. */
+  sessions.hooks.endWaits = (s) => {
+    for (const k of db.sessions.filter((x) => x.awaitedBy === s.id && !x.report)) endCall(k.id);
+  };
+  // the turn is over: a call it no longer waits in (a poll with release) is off every wait from now on
+  sessions.hooks.turnClosed = (s) => {
+    for (const k of db.sessions.filter((x) => x.awaitedBy === s.id)) sessions.update(k.id, { awaitedBy: null, askedParent: true });
+  };
 
   sessions.hooks.notify = notify;
   sessions.hooks.sessionChanged = syncAgentState;
@@ -1380,7 +1479,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions, addWo
         agent: str('agent id from the config'), workspace: str('workspace id or name to run in'),
         worktree: str('placement; omit it for the automatic choice: current when you work in the task\'s repository, else new-top-level (a new worktree in the task\'s repository). current (this worktree) | new-child (a new worktree of your repository, nested under yours) | new-top-level (a new worktree in another repository: workspace or the task\'s); new = new-child', { enum: ['current', 'new', 'new-child', 'new-top-level'] }),
         name: str('short worktree name for a new worktree (e.g. ft-core); its folder is <repo>-worktrees/<name>'),
-        branch: str('branch for a new worktree (default from the task key)'), model: str('model id'),
+        branch: str('branch for a new worktree (default from the task key)'), model: str(`omit it (the harness picks the model by the sub-agent type); else a grade: ${GRADES.join(', ')}`),
       }),
       run: async (a, c) => {
         let task = null;
@@ -1397,9 +1496,9 @@ export function createOrchestration({ config, store, bus, tasks, sessions, addWo
     },
     {
       name: 'worker_run',
-      description: 'Run a sub-agent in its own harness chat and wait for its result (synchronous, like the built-in agent tool). profile = an agent profile name (~/.gigacode/agents/<profile>.md).',
+      description: 'Run a sub-agent in its own harness chat and wait for its result (synchronous, like the built-in agent tool). profile = an agent profile name (~/.gigacode/agents/<profile>.md). Omit `model`: the harness picks it by the sub-agent type (reviewer -> review, explorer -> explore, file worker -> fast, else default); a grade whose model left the catalogue runs with the default model and a note.',
       inputSchema: obj({
-        profile: str('agent profile name'), spec: str('the assignment'), model: str('model id or grade name'),
+        profile: str('agent profile name'), spec: str('the assignment'), model: str(`omit it (the harness picks the model by the sub-agent type and profile); else a grade: ${GRADES.join(', ')}`),
         approvalMode: str('approval mode'), title: str('chat title'),
         worktree: str('current or new; omit it for the automatic choice (new when workspace is another repository, else current)', { enum: ['current', 'new'] }), workspace: str('another repository (workspace name): a persistent child there'),
         name: str('short worktree name for worktree new'), timeoutMin: { type: 'number', description: 'minutes to wait (default 60)' },
@@ -1409,9 +1508,9 @@ export function createOrchestration({ config, store, bus, tasks, sessions, addWo
     },
     {
       name: 'agent',
-      description: 'Start a sub-agent (same arguments as the built-in agent tool). The harness opens it as a separate chat and returns its result.',
+      description: 'Start a sub-agent (same arguments as the built-in agent tool). The harness opens it as a separate chat and returns its result. Omit `model`: the harness picks it by the sub-agent type (reviewer -> review, explorer -> explore, file worker -> fast, else default).',
       inputSchema: obj({
-        subagent_type: str('agent type / profile name'), prompt: str('the task for the sub-agent'), model: str('model id or grade name'),
+        subagent_type: str('agent type / profile name'), prompt: str('the task for the sub-agent'), model: str(`omit it (the harness picks the model by the sub-agent type); else a grade: ${GRADES.join(', ')}`),
         description: str('short description'), approvalMode: str('approval mode'),
         worktree: str('current or new; omit it for the automatic choice (new when workspace is another repository, else current)', { enum: ['current', 'new'] }), workspace: str('another repository (workspace name): the sub-agent works there — for a task, in the task\'s worktree of that repository (made once, then shared: its reviewer lands in the same one)'),
         timeoutMin: { type: 'number', description: 'minutes to wait (default 60)' },
@@ -1431,13 +1530,14 @@ export function createOrchestration({ config, store, bus, tasks, sessions, addWo
     },
     {
       name: 'send_message',
-      description: 'Send a message to a session id, "parent", "user" or a group of your workers: "@all" (live), "@idle", "@worktree:<path>" (every session in that worktree). Wakes the target; a working one gets it at the end of its turn.',
+      description: 'Send a message to a session id, "parent", "user" or a group of your workers: "@all" (live), "@idle", "@worktree:<path>" (every session in that worktree). Any chat is reachable, not only your own workers — a session of another person or worktree gets it as a message from you. Wakes the target; a working one gets it at the end of its turn — at once when it only waits for its sub-agents.',
       inputSchema: obj({ to: str('session id | "parent" | "user" | "@all" | "@idle" | "@worktree:<path>"'), body: str('message text') }, ['to', 'body']),
       run: (a, c) => {
         if (c) sessions.flag(c.id, 'communicated');
         // more work for its own settled helper: the next result goes to the parent as a message, as the first one did
-        // (it had no caller left to hear it: a re-tasked reviewer's answer reached nobody)
-        const retask = (t) => { if (c && t.parentId === c.id && t.ephemeral && t.report) sessions.update(t.id, { report: null, askedParent: true, awaitedBy: null }); };
+        // (it had no caller left to hear it: a re-tasked reviewer's answer reached nobody). A helper still waited for by
+        // a call of the parent keeps the mark: the message to it ends that call (sessions.deliver)
+        const retask = (t) => { if (c && t.parentId === c.id && t.report) sessions.update(t.id, { report: null, askedParent: true }); };
         if (String(a.to).startsWith('@')) {
           const targets = groupTargets(a.to, c);
           for (const t of targets) { retask(t); sessions.deliver(t.id, { from: c?.id ?? 'user', text: c ? fromSession(c, a.body) : a.body }); }
@@ -1449,9 +1549,17 @@ export function createOrchestration({ config, store, bus, tasks, sessions, addWo
           return { delivered: 'user' };
         }
         const target = parent || sessions.find(a.to) || fail(404, `сессия ${a.to} не найдена`);
-        retask(target);
-        const r = sessions.deliver(target.id,{ from: c?.id ?? 'user', text: c ? fromSession(c, a.body) : a.body });
-        return { delivered: target.id, queued: r.queued };
+        // a session the caller did not start: another person's chat, a sibling's, a nested one. Writing to it is not
+        // running work in its name — it gets the text as a message from the sender, whoever that is. Only a hidden
+        // sub-agent cannot be written to directly (the rule is the parent chat's).
+        if (!c || target.id !== c.id) {
+          if (target.virtual && target.parentId !== c?.id) fail(409, `${target.id} — внутренний субагент, писать можно в его родительский чат`);
+          if (target.kind === 'terminal') fail(400, `${target.id} — терминал, а не чат агента`);
+          retask(target);
+          const r = sessions.deliver(target.id, { from: c?.id ?? 'user', text: c ? fromSession(c, a.body) : a.body, options: { midTurn: () => (target.awaitedBy && sessions.find(target.awaitedBy) ? releaseCall(sessions.find(target.awaitedBy)) : false) } });
+          return { delivered: target.id, queued: r.queued };
+        }
+        fail(400, 'нельзя написать самому себе');
       },
     },
     {
@@ -1462,12 +1570,15 @@ export function createOrchestration({ config, store, bus, tasks, sessions, addWo
     },
     {
       name: 'worker_stop',
-      description: 'Stop one of your workers (its running turn; a persistent worker keeps its chat).',
+      description: 'Stop one of your workers (its running turn; a persistent worker keeps its chat). The harness still answers whatever the turn had already asked in its name (your question, a permission card), so nothing is left waiting.',
       inputSchema: obj({ session_id: str('worker session id') }, ['session_id']),
       run: (a, c) => {
         const w = ownDescendant(c, a.session_id);
         if (!sessions.isRunning(w.id) || w.status === 'stopped') return { stopped: false, status: 'stop_unknown', sessionStatus: w.status }; // already stopped (maybe still unwinding)
         sessions.stop(w.id);
+        // its `ask` call ended with the turn: whatever it asked the coordinator is answered by the stop, not by the person
+        dropAsk(w.id);
+        if (w.pendingQuestion) sessions.update(w.id, { pendingQuestion: null });
         return { stopped: true };
       },
     },
@@ -1497,8 +1608,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions, addWo
           // child finishes — which it cannot without the answer. The wait returns the question instead (waitRun).
           const at = Date.now();
           sessions.update(c.id, { waitingFor: 'answer', pendingQuestion: { text: a.question, options: options ?? null, at } });
-          for (const resolve of runWaiters.get(c.id) || []) resolve();
-          runWaiters.delete(c.id);
+          wake(c.id);
           // nobody picked it up (the parent's call already timed out): it goes as an ordinary message after all
           setTimeout(() => {
             if (sessions.find(c.id)?.pendingQuestion?.at !== at || !sessions.find(parent.id)) return;

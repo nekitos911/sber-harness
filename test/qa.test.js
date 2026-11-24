@@ -65,6 +65,22 @@ test('escalations: one open per session (count/time updated), plain text with ac
   await settled(w.id);
 });
 
+test('send_message reaches a session that is not a worker of the caller: a peer chat, a sibling, a nested one', async () => {
+  const [a, b] = [
+    (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', cwd: repo })).body,
+    (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', cwd: repo })).body,
+  ];
+  const sent = (from, to) => h.api('POST', '/api/agent/send_message', { to, body: 'привет из соседнего чата' }, { 'x-harness-session': from });
+  assert.equal((await sent(a.id, b.id)).status, 200, 'a peer chat of another person');
+  await waitFor(async () => (await messages(b.id)).some((m) => m.kind === 'user' && m.text.includes('привет из соседнего чата')), { what: 'the message in the other chat' });
+  await settled(b.id);
+  // a session nobody started from: the harness tools have no caller to attribute it to
+  assert.equal((await h.api('POST', '/api/agent/send_message', { to: b.id, body: 'без отправителя' })).status, 200);
+  await waitFor(async () => (await messages(b.id)).some((m) => m.kind === 'user' && m.text.includes('без отправителя')), { what: 'the anonymous message' });
+  await settled(b.id);
+  await settled(a.id);
+});
+
 test('error kinds: «not started» only before any output; signed exit codes; titles from the first message', async () => {
   const s = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', cwd: repo, prompt: '#crash' })).body;
   await waitFor(async () => (await session(s.id)).status === 'error', { what: 'first error' });
@@ -221,4 +237,21 @@ test('context ring: session.context from the latest step, contextLimit from the 
   const agents = (await state()).agents;
   assert.deepEqual([agents.find((a) => a.id === 'gigacode').compressCommand, agents.find((a) => a.id === 'gigacode').contextCommand], ['/compress', '/context']);
   assert.equal(agents.find((a) => a.id === 'mock').compressCommand, null);
+});
+
+test('the ring breakdown: GET /sessions/:id/context parses the agent\'s own /context, adds the reported total', async () => {
+  const s = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', cwd: repo, prompt: '#usage' })).body;
+  await settled(s.id);
+  const r = await h.api('GET', `/api/sessions/${s.id}/context`);
+  assert.equal(r.status, 200, r.body?.error);
+  assert.equal(r.body.limit, 262100);
+  assert.equal(r.body.used, 120500); // the session's own count, not the probe's start-up estimate
+  assert.equal(r.body.partial, true);
+  assert.deepEqual(r.body.items.map((x) => [x.label, x.tokens]), [
+    ['System prompt', 5200], ['Built-in tools', 14200], ['Memory files', 17600], ['Skills', 13600], ['Startup context', 1200],
+  ]);
+  assert.equal(r.body.unaccounted, 120500 - 51800);
+  assert.equal((await h.api('GET', '/api/sessions/s_nope/context')).status, 404);
+  // the probe is not a turn: the chat's transcript and the number of its own runs are untouched
+  assert.equal((await messages(s.id)).filter((m) => m.kind === 'user').length, 1);
 });

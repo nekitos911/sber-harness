@@ -38,6 +38,26 @@ const textOf = (content) => {
   return content?.text ?? '';
 };
 
+/** Text of a message: older records keep it in `content`, newer ones in `parts` ({ text } | { functionCall } | { functionResponse }). */
+const partsOf = (m) => (Array.isArray(m?.message?.parts) ? m.message.parts : null);
+
+/** The folder GigaCode repeats on a line of its own above a user message (older builds: the first message only). */
+const FOLDER_LINE = (line) => /^(?:[a-z]:[\\/]|\\\\)/i.test(line.trim()) && path.isAbsolute(line.trim());
+
+/** A user message as the person wrote it: the folder line the CLI keeps above it left out. */
+function withoutFolderLine(text) {
+  const lines = text.split(/\r?\n/);
+  return lines.length > 1 && FOLDER_LINE(lines[0]) ? lines.slice(1).join('\n') : text;
+}
+
+/** A stored tool result: { output, error } of a functionResponse's response, as text. */
+const resultOf = (response) => {
+  if (response == null) return null;
+  if (typeof response === 'string') return { text: response, error: false };
+  const text = response.output ?? response.content ?? response.result ?? response;
+  return { text: typeof text === 'string' ? text : JSON.stringify(text), error: !!(response.isError ?? response.error) };
+};
+
 /** One file -> a record { id, projectHash, cwd, startedAt, updatedAt, model, messages } or { raw: true, ... }. */
 export function parseHistoryFile(file, text) {
   const base = path.basename(file).replace(/\.(jsonl?|ndjson)$/i, '');
@@ -52,15 +72,17 @@ export function parseHistoryFile(file, text) {
     if (lines.length && lines.every(Boolean)) rec = { sessionId: lines.find((l) => l.sessionId)?.sessionId, messages: lines.filter((l) => l.type || l.role) };
   }
   if (!rec) return { id: base, raw: true, text: text.slice(0, 20000), projectHash: dirHash, messages: [] };
-  const stamps = rec.messages.map((m) => Date.parse(m.timestamp)).filter(Number.isFinite);
+  const msgs = rec.messages;
+  const stamps = msgs.map((m) => Date.parse(m.timestamp)).filter(Number.isFinite);
   return {
     id: String(rec.sessionId || rec.id || base),
     projectHash: rec.projectHash || dirHash,
-    cwd: rec.cwd || rec.projectRoot || null,
+    // GigaCode repeats the folder on every line
+    cwd: rec.cwd || rec.projectRoot || msgs.find((m) => typeof m.cwd === 'string')?.cwd || null,
     startedAt: Date.parse(rec.startTime) || stamps[0] || null,
     updatedAt: Date.parse(rec.lastUpdated) || stamps.at(-1) || null,
-    model: rec.model || rec.messages.findLast?.((m) => m.model)?.model || null,
-    messages: rec.messages,
+    model: rec.model || msgs.findLast?.((m) => m.model)?.model || null,
+    messages: msgs,
   };
 }
 
@@ -68,21 +90,41 @@ export function parseHistoryFile(file, text) {
 export function historyMessages(rec, agent) {
   if (rec.raw) return [{ id: 'h_raw', kind: 'system', text: `Нераспознанный формат истории (${rec.id}):\n${rec.text}`, at: null, imported: true }];
   const out = [];
+  const results = new Map(); // call id -> { text, error, at }: the tool_result lines of GigaCode records
+  for (const m of rec.messages) {
+    if (String(m.type || '').toLowerCase() !== 'tool_result') continue;
+    for (const p of partsOf(m) || []) if (p?.functionResponse) results.set(p.functionResponse.id, { ...resultOf(p.functionResponse.response), at: Date.parse(m.timestamp) || null });
+  }
   rec.messages.forEach((m, i) => {
     const at = Date.parse(m.timestamp) || null;
     const id = (k) => `h_${i}_${k}`;
-    const type = String(m.type || m.role || '').toLowerCase();
-    if (type === 'user') {
-      out.push({ id: id('u'), kind: 'user', text: textOf(m.content), from: 'user', at, imported: true });
+    const type = String(m.type || m.role || m.message?.role || '').toLowerCase();
+    const parts = partsOf(m);
+    if (type === 'user' && m.provenance !== 'tool_result') {
+      const text = withoutFolderLine(textOf(parts ? parts.map((p) => p?.text ?? '').join('') : m.content));
+      if (!text.trim()) return; // the harness's own tool results and reminders are not what the person wrote
+      out.push({ id: id('u'), kind: 'user', text, from: 'user', at, imported: true });
       return;
     }
-    if (!['gemini', 'assistant', 'model'].includes(type)) return; // info/error events of the CLI are skipped
+    if (!['gemini', 'assistant', 'model', 'system'].includes(type)) return; // info/error events of the CLI are skipped
+    if (type === 'system' && !parts?.some((p) => p?.text?.trim())) return; // attribution snapshots and the like
     for (const t of m.thoughts || []) {
       const text = typeof t === 'string' ? t : [t.subject, t.description].filter(Boolean).join(': ');
       if (text) out.push({ id: id(`t${out.length}`), kind: 'thought', text, at, imported: true });
     }
-    const said = textOf(m.content);
-    if (said) out.push({ id: id('a'), kind: 'assistant', text: said, at, imported: true });
+    const said = textOf(parts ? parts.filter((p) => p?.text && !p.thought).map((p) => p.text).join('') : m.content);
+    if (said.trim()) out.push({ id: id('a'), kind: 'assistant', text: said, at, imported: true });
+    if (parts) {
+      // newer records: the call is a part, its result is a separate tool_result line
+      for (const c of parts.filter((p) => p?.functionCall).map((p) => p.functionCall)) {
+        const done = results.get(c.id);
+        out.push({
+          id: id(`c${out.length}`), kind: 'tool', text: c.name, at, imported: true,
+          tool: { id: c.id || id('c'), name: c.name, input: c.args ?? null, output: done?.text ?? null, status: done ? (done.error ? 'error' : 'ok') : 'running' },
+        });
+      }
+      return;
+    }
     for (const c of m.toolCalls || []) {
       const output = c.resultDisplay ?? c.result ?? null;
       out.push({
@@ -92,6 +134,17 @@ export function historyMessages(rec, agent) {
     }
   });
   return out.map((m) => ({ ...m, agent }));
+}
+
+/** Where the record itself says the CLI ran: its field, else the first line of the first user message (older writes). */
+export function historyFolder(rec) {
+  const first = rec.messages?.find((m) => String(m.type || m.role || '').toLowerCase() === 'user');
+  const own = first && [first.cwd, first.projectRoot].find((v) => typeof v === 'string' && v.trim());
+  if (own) return own.trim();
+  const parts = first && partsOf(first);
+  const text = first ? textOf(parts ? parts.map((p) => p?.text ?? '').join('') : first.content) : '';
+  const line = text.split(/\r?\n/).map((l) => l.trim()).find(Boolean);
+  return line && path.isAbsolute(line) ? line : null;
 }
 
 /** Per-agent history readers (async) with a file-mtime cache and a per-folder index of explicit cwds. */
@@ -116,6 +169,27 @@ export function createHistory(config) {
     let files = [];
     try { files = (await fs.promises.readdir(dir)).filter((f) => /\.(jsonl?|ndjson)$/i.test(f)); } catch {}
     return (await Promise.all(files.map((name) => readRec(path.join(dir, name))))).filter(Boolean);
+  }
+
+  /** The record's own idea of its folder: its fields, else the last line of the first user message. */
+  const folderOf = (m) => historyFolder({ messages: [m] });
+
+  /**
+   * Where the folder is: GigaCode repeats `cwd` on every line (older builds carried it on the first user message and
+   * named the chats folder by its sha256), Gemini names it in the record. A named folder that does not hash to the path
+   * name is taken for what it says only when it exists; otherwise the record belongs to no known folder.
+   */
+  async function resolveFolder(rec) {
+    const first = rec.messages.find((m) => String(m.type || m.role || '').toLowerCase() === 'user');
+    const value = rec.cwd || (first && folderOf(first));
+    if (!value) return rec;
+    for (const candidate of [value, value.replace(/\\\\/g, '\\')]) {
+      if (sha256(candidate) !== rec.projectHash) continue;
+      if (path.isAbsolute(candidate) && fs.existsSync(candidate)) return { ...rec, cwd: candidate };
+      break; // a relative folder: the only place it can be is the session's cwd
+    }
+    if (rec.cwd && path.isAbsolute(rec.cwd) && fs.existsSync(rec.cwd)) return rec;
+    return { ...rec, cwd: null, projectHash: null };
   }
 
   /** Records of `agent`; with `wanted(hash, cwds)` only the folders it accepts are read (the others: a stat). */
@@ -180,13 +254,14 @@ export function createHistory(config) {
     async recent(sinceMs) {
       const out = [];
       for (const agent of agentsWithHistory()) {
-        for (const rec of await records(agent)) if ((rec.updatedAt || 0) >= sinceMs) out.push({ agent, rec });
+        for (const rec of await records(agent)) if ((rec.updatedAt || 0) >= sinceMs) out.push({ agent, rec: await resolveFolder(rec) });
       }
       return out;
     },
     async get(agent, id) {
       if (!config.agents[agent]) fail(404, `агент ${agent} не найден`);
-      return (await records(agent)).find((r) => r.id === id) || fail(404, `сессия истории ${id} не найдена`);
+      const rec = (await records(agent)).find((r) => r.id === id) || fail(404, `сессия истории ${id} не найдена`);
+      return resolveFolder(rec);
     },
   };
 }

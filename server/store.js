@@ -28,8 +28,11 @@ export function writeAtomic(file, data, backup = false) {
     fs.renameSync(tmp, file);
   } catch {
     // Windows: rename fails while another process (AV, indexer) holds the target; plain write still keeps the data.
-    fs.writeFileSync(file, data);
-    fs.rmSync(tmp, { force: true });
+    try {
+      fs.writeFileSync(file, data);
+    } finally {
+      fs.rmSync(tmp, { force: true });
+    }
   }
 }
 
@@ -108,6 +111,10 @@ export function createStore(dataDir) {
     let failed = false;
     let later = false;
     const keys = new Set(dirty);
+    if (full) {
+      keys.add('db'); // a full flush (turn end, close, a signal) always writes what is in memory now
+      dirty.add('db');
+    }
     if (full) for (const sid of journalSize.keys()) if (transcripts.has(sid)) keys.add(`t:${sid}`); // an evicted one stays journaled
     for (const key of keys) {
       const [file, data] = fileFor(key);
@@ -253,6 +260,8 @@ export function createStore(dataDir) {
     close() {
       flush();
       closed = true;
+      clearTimeout(timer);
+      timer = null;
       process.off('exit', onExit);
     },
   };

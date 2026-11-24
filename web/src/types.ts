@@ -131,6 +131,7 @@ export interface Session {
   // the context after the last turn; lastTurn = that turn's own usage (older drafts sent input/output/cached flat)
   context?: { tokens: number; at?: number; lastTurn?: { input?: number; output?: number; cacheRead?: number } | null; input?: number; output?: number; cached?: number } | null
   contextLimit?: number | null // the model's window
+  background?: boolean // a built-in sub-agent started with run_in_background: settled by its own output file, not by its parent's turn
   cliModel?: string | null // the model the CLI reported at the turn start (when the chat uses the default)
   cliImportedAt?: number | null // an adopted CLI chat the harness continued (null: untouched history)
   mcpStatus?: { name: string; status: string }[] // MCP servers as the CLI reported them at the turn's start
@@ -179,6 +180,7 @@ export interface ToolCall {
   status: 'running' | 'ok' | 'error'
   progress?: string[] // built-in sub-agent activity under this call (agent tool), last lines
   subSessionId?: string | null // the virtual chat of that sub-agent
+  stillRunning?: boolean // a background sub-agent of this call is still at work after the parent's turn ended
 }
 
 export interface Message {
@@ -244,6 +246,8 @@ export interface AgentMeta {
   userCommands?: string[] // the person's own commands and skills in the agent's folders (the first-run setup offers them)
   skills?: Record<string, 'installed' | 'missing' | 'different'>
   models?: ModelEntry[]
+  mcpServers?: { name: string; status: string; excluded?: boolean }[]
+  mcpDisabled?: string[]
   seen: {
     models: string[]
     slashCommands: string[]
@@ -296,7 +300,7 @@ export interface SubAgent {
   settledAt?: number | null
 }
 
-export type Grade = 'default' | 'fast' | 'review' | 'explore'
+export type Grade = 'default' | 'fast' | 'strong' | 'review' | 'explore'
 
 export interface AgentSettings {
   approvalMode: string | null
@@ -321,6 +325,26 @@ export interface AgentSettings {
   autoSandbox?: 'workspace' | 'workspace-offline' | null // «Полный доступ» as real auto under the CLI sandbox (slower)
 }
 
+export interface McpServerSettings {
+  name: string // key in config.mcpServers and the mcpServers entry the agent gets
+  enabled?: boolean
+  transport?: 'stdio' | 'http'
+  url?: string
+  command?: string
+  args?: string[]
+  headers?: Record<string, string> // values may be $secret:<имя>
+  env?: Record<string, string>
+  timeoutMs?: number
+  fromFile?: boolean // the server comes from the agent's own settings file; only the switch is saved
+}
+
+/** GET /api/mcp/config: where the MCP secrets live (names only) and which servers are known. */
+export interface McpConfigInfo {
+  secrets: { path: string; source: string; exists: boolean; names: string[]; writable: boolean; ownPrefix?: { server: string; meaning: string } }
+  serversFrom: { path: string | null; names: string[]; error: string | null }
+  custom: McpServerSettings[]
+}
+
 export interface Settings {
   user?: { setupDone?: boolean } // the first-run setup was finished or skipped
   // «Проверка перед готово»: the project's own command the harness runs after the agent reports (suggested: from the repo's files)
@@ -332,22 +356,29 @@ export interface Settings {
   session?: { stallSec?: number; revive?: { attempts: number; stallWakeMin: number } }
   recovery?: { autoResume?: boolean; message?: string } // interrupted sessions after a restart
   sessions?: { autoArchiveDays?: number | null } // archive chats idle longer than this (null = never)
+  chat?: { steerAfterMs?: number } // a person's message ends a step that only waits for sub-agents after this (0 = never)
   agents: Record<string, AgentSettings>
   defaultAgent: string
+  mcpDisabled?: string[] // MCP servers of the agent's own settings file, switched off for every agent
+  mcp?: { acpStartTimeoutMs?: number; harnessTimeoutMs?: number } // how long the agent may start one MCP server / the harness one
+  mcpServerState?: { name: string; enabled: boolean }[] // switches for those servers; their setup stays in that file
+  mcpServers?: McpServerSettings[] // servers of that file plus the ones added in «Настройки» → «MCP» (fromFile marks the former)
+  mcpSecretNames?: string[] // names of the secrets those servers use (never the values)
   git: {
     defaultBase?: string
     branchTemplate?: string
     portBranchTemplate?: string
     commitTitleTemplate?: string
     prTitleTemplate?: string
-    generateMessages?: boolean // the agent writes commit / PR messages (auto on open); false = only on «✨»
+    // the key is still sent back by the server for older configs; nothing runs by itself — messages are written on «✨» only
+    generateMessages?: boolean
     via?: 'agent' | 'harness' // commit / push / PR through the agent (its hooks and skills run) or git from the harness
   }
   tasks: { refreshSec: number }
   orchestration?: { reviewMode?: 'builtin' | 'harness'; subagents?: 'harness' | 'builtin'; workerMayCommit?: boolean; review?: ReviewSettings; subagentRetention?: 'archive' | 'keep'; maxSubagentDepth?: number }
   board?: BoardSettings
   integrations?: {
-    tasks?: { enabled?: boolean; space?: string | string[]; urlTemplate?: string; statusMap?: Record<string, string>; closedStatuses?: string[]; onStartTransition?: string | null }
+    tasks?: { enabled?: boolean; space?: string | string[]; urlTemplate?: string; statusMap?: Record<string, string>; closedStatuses?: string[]; includeClosed?: boolean; onStartTransition?: string | null }
     // enabled «auto» = on when the sourcecontrol MCP server is there; active = whether it is on right now
     pr?: { enabled?: boolean | 'auto'; active?: boolean; me?: string | null; limits?: { titleBytes?: number; bodyBytes?: number } }
   }

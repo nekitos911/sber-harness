@@ -503,9 +503,8 @@ function PrDialog({ cwd, base: initBase }: { cwd: string; base?: string }) {
   }
   const [preview, setPreview] = useState(false)
   const [busy, run, step] = useBusy()
-  // the agent writes title and description (feature git-generate): on open when nothing was typed, and on «✨»
+  // the agent writes title and description (feature git-generate): only on «✨» — no background run while the dialog sits open
   const gen = useGenerate(cwd, 'pr', base || null)
-  const settings = useSettings()
   const typed = useRef(!!saved)
   const generated = useRef(false)
   const generate = async () => {
@@ -515,9 +514,6 @@ function PrDialog({ cwd, base: initBase }: { cwd: string; base?: string }) {
     setTitle(r.title)
     setBody(r.body)
   }
-  useEffect(() => {
-    if (gen.on && settings?.git.generateMessages !== false && !saved) void generate()
-  }, [gen.on]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     api<GitSuggest>('GET', `/git/suggest${qs({ cwd })}`).then((s) => {

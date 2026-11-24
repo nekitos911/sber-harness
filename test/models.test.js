@@ -4,13 +4,15 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { parseModelIds } from '../server/models.js';
+import { parseModelIds, profileGrade, resolveSubagentModel } from '../server/models.js';
 import { startTestServer, tmpDir, rmrf, waitFor } from './helpers.js';
 
 const root = tmpDir();
 after(() => rmrf(root));
 const IDS = ['Qwen3.8-Flash-Next-262k', 'DeepSeek-V4.1-Flash-1017-262k', 'GLM-5.3-Flash-262k', 'Qwen3.6-35B-262k', 'GigaChat-3.5-Ultra-Preview-128k'];
 const discovery = { agents: { mock: { modelsDiscovery: { prompt: '/models', maxAgeHours: 24 } } } };
+// the grades a sub-agent gets by its type; the ids are the ones the mock CLI lists (fixtures/gigacode.models.txt)
+const GRADED = { default: 'DeepSeek-V4.1-Flash-1017', fast: 'DeepSeek-V4.1-Flash-1017', strong: 'DeepSeek-V4.1-Flash-1017', review: 'GLM-5.3-Flash-262k', explore: 'Qwen3.6-35B-262k' };
 
 test('parser: markdown table, bullet list, plain lines, single table rows, custom pattern; no dates/codes/urls', () => {
   const table = parseModelIds(fs.readFileSync(new URL('./fixtures/gigacode.models.txt', import.meta.url), 'utf8'));
@@ -21,6 +23,58 @@ test('parser: markdown table, bullet list, plain lines, single table rows, custo
   assert.deepEqual(parseModelIds('| Qwen3.6-35B-262k | 262k |'), [{ id: 'Qwen3.6-35B-262k', context: '262k' }]);
   assert.deepEqual(parseModelIds('updated 2026-11-17, code ABCD-EFGH, see https://x.example/m-1-2'), []);
   assert.deepEqual(parseModelIds('model=alpha-one; model=beta-two', 'model=([a-z-]+)'), [{ id: 'alpha-one' }, { id: 'beta-two' }]);
+});
+
+test('sub-agent model by grade: role grade, an explicit grade or id, a gone model is a note and the default', () => {
+  const agentCfg = { settings: { agents: { modelGrades: GRADED } } };
+  const known = new Set(IDS);
+  const pick = (o) => resolveSubagentModel({ agentCfg, known, ...o });
+
+  // an empty model: the profile's role grade; with no role — the caller's own model (the orchestrator's), not a grade
+  assert.deepEqual(pick({ grade: 'review' }), { model: 'GLM-5.3-Flash-262k', grade: 'review', note: null });
+  assert.deepEqual(pick({ grade: 'explore' }), { model: 'Qwen3.6-35B-262k', grade: 'explore', note: null });
+  assert.deepEqual(pick({ fallback: 'DeepSeek-V4.1-Flash-1017-262k' }), { model: 'DeepSeek-V4.1-Flash-1017-262k', grade: null, note: null });
+  // no role and no model of the caller: a grade that is there, else none (the CLI default) — still a start
+  assert.deepEqual(pick({}), { model: 'DeepSeek-V4.1-Flash-1017-262k', grade: 'default', note: null });
+  const noDefault = { settings: { agents: { modelGrades: { review: 'GLM-5.3-Flash-262k' } } } };
+  assert.deepEqual(resolveSubagentModel({ agentCfg: noDefault, known, fallback: 'Model-From-The-Caller-262k' }), { model: 'Model-From-The-Caller-262k', grade: null, note: null });
+  assert.deepEqual(resolveSubagentModel({ agentCfg: noDefault, known }), { model: 'GLM-5.3-Flash-262k', grade: 'review', note: null });
+
+  // the config id without the context suffix takes the catalogue's own spelling
+  assert.deepEqual(pick({ wanted: 'fast' }), { model: 'DeepSeek-V4.1-Flash-1017-262k', grade: 'fast', note: null });
+  // an explicit id is matched with or without the suffix, an unknown one is passed as typed
+  assert.equal(pick({ wanted: 'glm-5.3-flash' }).model, 'GLM-5.3-Flash-262k');
+  assert.equal(pick({ wanted: 'Some-New-Model-262k' }).model, 'Some-New-Model-262k');
+  // «inherit» is not an id: the sub-agent keeps its own model, same as with nothing asked — the CLI dies on such an argv
+  // («The selected model 'inherit' is not present in the current backend catalogue»)
+  assert.deepEqual(pick({ wanted: 'inherit', grade: 'review' }), { model: 'GLM-5.3-Flash-262k', grade: 'review', note: null });
+  assert.deepEqual(pick({ wanted: 'Inherit', fallback: 'DeepSeek-V4.1-Flash-1017-262k' }), { model: 'DeepSeek-V4.1-Flash-1017-262k', grade: null, note: null });
+
+  // a grade whose model left the catalogue: no model (the CLI default) plus a note naming the grade and the model, never an error
+  const gone = pick({ wanted: 'strong', known: new Set(['GLM-5.3-Flash-262k']) });
+  assert.equal(gone.model, null);
+  assert.equal(gone.note, 'Модель уровня «strong» (DeepSeek-V4.1-Flash-1017) не найдена в каталоге — запуск с моделью по умолчанию');
+  // the catalogue changed under us: a role grade gone from it still starts the sub-agent on a grade that is there
+  assert.deepEqual(pick({ grade: 'review', known: new Set(['Qwen3.6-35B-262k']) }), { model: 'Qwen3.6-35B-262k', grade: 'explore', note: null });
+  // every grade model gone: the caller's own model, else none (the CLI default) — still a start, never an error
+  assert.deepEqual(pick({ grade: 'review', fallback: 'Model-From-The-Caller-262k', known: new Set(['Brand-New-Model-262k']) }), { model: 'Model-From-The-Caller-262k', grade: null, note: null });
+  assert.deepEqual(pick({ grade: 'review', known: new Set(['Brand-New-Model-262k']) }), { model: null, grade: null, note: null });
+  const noGradesThere = { settings: { agents: { modelGrades: { review: 'Gone-A-262k', fast: 'Gone-B-262k' } } } };
+  assert.deepEqual(resolveSubagentModel({ agentCfg: noGradesThere, grade: 'review', fallback: 'Model-From-The-Caller-262k', known: new Set(['Brand-New-Model-262k']) }), { model: 'Model-From-The-Caller-262k', grade: null, note: null });
+  assert.deepEqual(resolveSubagentModel({ agentCfg: noGradesThere, grade: 'review', known: new Set(['Brand-New-Model-262k']) }), { model: null, grade: null, note: null });
+  // no discovery at all: nothing is called missing, grades resolve by their config
+  assert.deepEqual(pick({ wanted: 'review', known: new Set() }), { model: 'GLM-5.3-Flash-262k', grade: 'review', note: null });
+
+  // profiles by role: reviewers review, searchers fast, a read-only explorer explore, file workers fast, a plain one no role
+  assert.equal(profileGrade({ name: 'java-reviewer' }), 'review');
+  assert.equal(profileGrade({ name: 'helper', description: 'Independent review of the diff' }), 'review');
+  assert.equal(profileGrade({ name: 'auditor', tools: ['Read', 'Grep', 'Glob'], approvalMode: 'plan' }), 'review');
+  assert.equal(profileGrade({ name: 'explore', approvalMode: 'plan' }), 'explore');
+  assert.equal(profileGrade({ name: 'repository-explorer', description: 'Finds the code', approvalMode: 'plan', tools: ['read_file', 'grep_search'] }), 'explore');
+  assert.equal(profileGrade({ name: 'browser-explorer', description: 'Finds the code', approvalMode: 'auto', tools: ['read_file', 'run_shell_command'] }), 'fast');
+  assert.equal(profileGrade({ name: 'browser-file-worker' }), 'fast');
+  assert.equal(profileGrade({ name: 'general-purpose', description: 'General-purpose agent', approvalMode: 'auto', tools: ['read_file', 'run_shell_command'] }), null);
+  assert.equal(profileGrade({ name: 'backend-engineer', tools: ['Read', 'Edit', 'Bash'] }), null);
 });
 
 test('discovery through the agent CLI, availability against config entries, grades and pick-model cards', async () => {
@@ -45,17 +99,11 @@ test('discovery through the agent CLI, availability against config entries, grad
     assert.ok(info.catalog.at > 0 && info.catalog.error === null);
     assert.equal(info.models.length, merged.length);
 
-    // run settings: the grade pointing at the missing model is left out, with one ⚠ note per session
+    // the grades are the harness's own table (the CLI would validate ids it does not know): not in its settings file
     const s = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', cwd: root, prompt: 'hi' })).body;
-    const settings = JSON.parse(fs.readFileSync(s.settingsPath, 'utf8')).agents;
-    assert.ok(!('review' in settings.modelGrades) && !settings.allowedGrades.includes('review'), JSON.stringify(settings));
-    assert.equal(settings.modelGrades.fast, 'DeepSeek-V4.1-Flash-1017-262k');
+    const settings = JSON.parse(fs.readFileSync(s.settingsPath, 'utf8'));
+    assert.equal(settings.agents, undefined);
     await waitFor(async () => (await h.api('GET', '/api/state')).body.sessions.find((x) => x.id === s.id).status === 'idle');
-    await h.api('POST', `/api/sessions/${s.id}/messages`, { text: 'again' });
-    await waitFor(async () => (await h.api('GET', `/api/sessions/${s.id}/messages`)).body.filter((m) => m.kind === 'assistant' && /turn 2/.test(m.text)).length > 0);
-    const notes = (await h.api('GET', `/api/sessions/${s.id}/messages`)).body.filter((m) => m.text.startsWith('⚠ Недоступные модели'));
-    assert.equal(notes.length, 1);
-    assert.match(notes[0].text, /review → Old-Model-1-128k/);
 
     // a session pinned to a model the fresh catalogue does not list: a pick-model card instead of a doomed spawn
     await h.api('PATCH', `/api/sessions/${s.id}`, { model: 'Old-Model-1-128k' });
@@ -63,6 +111,50 @@ test('discovery through the agent CLI, availability against config entries, grad
     const card = await waitFor(async () => (await h.api('GET', `/api/sessions/${s.id}/messages`)).body.find((m) => m.kind === 'error'));
     assert.equal(card.action, 'pick-model');
     assert.match(card.text, /Old-Model-1-128k/);
+  } finally {
+    await h.close();
+  }
+});
+
+test('sub-agents by API: the model follows the profile grade, a gone grade model is a note, `strong` saves as a grade', async () => {
+  const agentsDir = path.join(root, 'агенты');
+  fs.mkdirSync(agentsDir, { recursive: true });
+  const profile = (name, extra) => fs.writeFileSync(path.join(agentsDir, `${name}.md`), `---\nname: ${name}\n${extra}---\nТело профиля.\n`);
+  profile('code-reviewer-qwen', 'description: Reviews a diff and reports findings\napprovalMode: plan\ntools:\n  - read_file\n  - grep_search\n');
+  profile('browser-explorer', 'description: Finds the code and the files behind a feature\napprovalMode: auto\ntools:\n  - read_file\n  - run_shell_command\n');
+  profile('implementer', 'description: Implements one step of a task and runs its tests\napprovalMode: auto\ntools:\n  - read_file\n  - run_shell_command\n');
+  const h = await startTestServer({ agents: { mock: { modelsDiscovery: discovery.agents.mock.modelsDiscovery, agentsDir } } });
+  try {
+    assert.equal((await h.api('PUT', '/api/settings', { agents: { mock: { modelGrades: GRADED } } })).status, 200);
+    // a grade saved from the settings screen is accepted, including the new one
+    const strong = (await h.api('GET', '/api/settings')).body.agents.mock.modelGrades.strong;
+    assert.equal(strong, 'DeepSeek-V4.1-Flash-1017', 'the new grade is saved like any other');
+    assert.equal((await h.api('PUT', '/api/settings', { agents: { mock: { modelGrades: { turbo: 'x' } } } })).status, 400, 'an unknown grade is still a typo');
+    await h.api('POST', '/api/agents/mock/models/refresh');
+
+    const caller = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', cwd: root })).body;
+    const hdr = { 'x-harness-session': caller.id };
+    const child = async (body) => {
+      const r = await h.api('POST', '/api/agent/worker_run', body, hdr);
+      assert.equal(r.status, 200, JSON.stringify(r.body));
+      return r.body.sessionId;
+    };
+    const modelOf = async (sid) => (await h.api('GET', '/api/state')).body.sessions.find((s) => s.id === sid).model;
+    // the profile names the role and the grade it works on; a caller's model as the fallback needs its own profile
+    assert.equal(await modelOf(await child({ profile: 'code-reviewer-qwen', spec: '#done ок' })), 'GLM-5.3-Flash-262k', 'a reviewer runs on the review grade');
+    assert.equal(await modelOf(await child({ profile: 'browser-explorer', spec: '#done нашёл' })), 'DeepSeek-V4.1-Flash-1017-262k', 'search runs on fast');
+    assert.equal(await modelOf(await child({ profile: 'implementer', spec: '#done сделал' })), 'DeepSeek-V4.1-Flash-1017-262k', 'no role: the default grade');
+    // an explicit id keeps the catalogue spelling; a context suffix is the same model
+    assert.equal(await modelOf(await child({ profile: 'implementer', model: 'deepseek-v4.1-flash-1017', spec: '#done ок' })), 'DeepSeek-V4.1-Flash-1017-262k');
+
+    // a grade with no model in the catalogue: the CLI default plus a note in the chat
+    assert.equal((await h.api('PUT', '/api/settings', { agents: { mock: { modelGrades: { ...GRADED, review: 'Gone-Model-9-128k' } } } })).status, 200);
+    await h.api('POST', '/api/agents/mock/models/refresh');
+    const sid = await child({ model: 'review', spec: '#done ок' });
+    assert.equal(await modelOf(sid), null);
+    const msgs = (await h.api('GET', `/api/sessions/${sid}/messages`)).body;
+    const note = msgs.find((m) => m.kind === 'system' && m.text.startsWith('Модель уровня'));
+    assert.match(note.text, /«review» \(Gone-Model-9-128k\) не найдена в каталоге — запуск с моделью по умолчанию/);
   } finally {
     await h.close();
   }

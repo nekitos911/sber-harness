@@ -259,7 +259,7 @@ export function ChatView({ id, active }: { id: string; active: boolean }) {
               <span className="grow" />
               {reviveOn && <button type="button" className="btn btn-sm btn-primary" onClick={() => void tryApi('POST', `/sessions/${session.id}/revive`)} data-tip="Продолжить с того места, где оборвался"><RotateCcw />Повторить</button>}
               <button type="button" className="btn btn-sm" onClick={() => void showLog()}>Лог</button>
-              <button type="button" className="btn btn-sm" onClick={reset}>Сбросить статус</button>
+              <button type="button" className="btn btn-sm" onClick={reset} data-tip="Новый процесс CLI: настройки и MCP-серверы читаются заново">Сбросить статус</button>
             </div>
           )}
           {session.archived ? (

@@ -20,12 +20,14 @@ export function runHelper({ config, store, getUrl, agent, kind, prompt, extraArg
   const agentCfg = config.agents[agent] || fail(404, `агент ${agent} не найден`);
   const launcher = launchers[agentCfg.launcher] || fail(400, `неизвестный лаунчер «${agentCfg.launcher}»`);
   const exe = launcher.resolve(agentCfg);
+  // a helper run has no action sandbox, so a real `auto` is refused: an explicit discovery mode wins, then auto-edit
+  const mode = approvalMode || launcher.defaults.approvalModeMap?.auto || 'auto-edit';
   const dir = path.join(store.dataDir, 'chats', 'helper', kind, agent);
   fs.mkdirSync(dir, { recursive: true });
   const env = { HARNESS_URL: getUrl(), HARNESS_TOKEN: store.token, HARNESS_SESSION_ID: '' };
   const ctx = {
     prompt,
-    session: { id: `${kind}-${agent}`, externalSessionId: null, approvalMode, model },
+    session: { id: `${kind}-${agent}`, externalSessionId: null, approvalMode: mode, model },
     agentCfg,
     settingsPath: path.join(dir, 'settings.json'),
     mcpConfigPath: path.join(dir, 'mcp.json'),

@@ -2,7 +2,8 @@
 
 Документ для агента (или разработчика), который продолжает работу. Прочитайте его первым, затем `AGENTS.md`, `docs/INTEGRATION.md`
 (что делать на целевой машине), `docs/GIGACODE-FACTS.md` (факты и открытые вопросы о GigaCode/MCP) и
-`docs/ARCHITECTURE.md` (полный контракт: данные, REST, WS, инструменты агентов, поведение).
+`docs/ARCHITECTURE.md` (полный контракт: данные, REST, WS, инструменты агентов, поведение). `docs/FORK.md` говорит,
+где это дерево расходится с апстримом и как забирать его исправления — на GitHub отсюда ничего не уходит.
 
 ## 1. Что это
 
@@ -37,7 +38,8 @@
 - `skills/harness-orchestration/SKILL.md`: протокол для агентов; устанавливается в GigaCode как скилл.
 - `commands/full-task-harness.md`: необязательная обёртка (в авто-режиме не нужна).
 - `scripts/`: `mock-agent.js` (поддельный headless GigaCode; директивы ниже), `mock-acp-agent.js`, `mock-mcp.js` (поддельные
-  onework/sourcecontrol, с режимом `--fixtures`), `mcp-call.js` (ручные вызовы MCP).
+  onework/sourcecontrol, с режимом `--fixtures`), `mcp-call.js` (ручные вызовы MCP), `desktop.js` + `desktop-app.js` (окно
+  приложения вместо вкладки браузера).
 - `test/`: ~30 файлов `node:test`, настоящий git во временных папках с кириллицей и пробелами, `test/fixtures/` (stream, onework,
   sourcecontrol, sdd; фикстуры GigaCode реконструированы, см. `test/fixtures/README.md`).
 
@@ -91,11 +93,38 @@
 - Чат: ходы в стиле Orca (таймер, текущее действие, "Reasoned", группы шагов, "Changed N files", "New"), поле ввода
   прокручивает вниз при отправке.
 
+### Окно вместо браузера (`npm run desktop`)
+
+Окно — тонкая оболочка Electron, харнес и агенты остаются под обычным Node (`node:sqlite`, `@lydell/node-pty` в Electron 24
+отсутствуют). Два файла:
+
+- `scripts/desktop.js` — точка входа `npm run desktop` (= `node scripts/desktop.js --ui`). Из терминала запускает Electron с
+  собственным файлом и флагом `--harness-desktop`; внутри Electron показывает окно (`serve` из `desktop-app.js`); без `--ui` —
+  просто сервер под Node.
+- `scripts/desktop-app.js` — выбор порта (`pickPort`: от порта конфига вверх, проба `listen`), каталог данных
+  (`desktopDataDir`: занят живым харнесом → `data/<slug>-<порт>`), запуск сервера (`startHarness`: ожидание `/api/health` со своим
+  pid, до 20 с), остановка по `SIGINT` (`stopHarness`), окно (`showWindow`: 1440×900, без меню, заголовок фиксирован
+  `page-title-updated` → `preventDefault`, внешние ссылки — в системный браузер).
+
+Ярлык `start-harness.cmd` (Windows) и `start-harness.sh` (Linux, macOS) запускают это окно (при необходимости дотягивают
+`npm install` / `npm run build`). Прежняя версия `start-harness.cmd` открывала вкладку браузера с `timeout /t 2` — на холодном
+старте получался белый экран, эта причина убрана совсем.
+
+Кроссплатформенность: бинарник Electron берётся из пакета (`require('electron')` — путь к `dist/electron.exe` на Windows,
+`dist/electron` на Linux и macOS), сервер запускается тем `node`, что выбран в `nodeCommand` (Electron-овый бинарник в этой роли
+не используется ни на одной ОС), окно одинаково закрывается по `window-all-closed`/`activate`. `process.kill(pid, 'SIGINT')` в
+Windows завершает процесс сразу (сигналов там нет) — сервер это трактует как прерванный ход.
+
+Порядок событий, важный при доработках: `app.whenReady()` → `openUrl` (присоединение или свой сервер) → окно. Ранний
+`app.quit()` и «окно мигнуло и закрылось» — это ошибка в этой цепочке: `serve` не должен возвращаться до создания окна, а
+`harness` должен быть присвоен до `before-quit`.
+
 ## 4. Что проверено и как
 
 | Что | Как проверено |
 |---|---|
 | Весь сервер (≈170 тестов): запуск, поток, оркестрация, субагенты, ревью, доска, git, переносы, ветки, MCP, интеграции, долговечность, восстановление, ACP, папки, внимание, разрешения | `npm test` в Windows (Node 24) и Linux (Node 22, Docker) |
+| Окно приложения (Electron 45 из зеркала Nexus): окно показывает живой UI, сервер поднимается на свободном порту, `/api/health` отвечает, закрытие окна гасит свой сервер | вручную на этой машине (`npm run desktop`, ярлык `start-harness.cmd`); `test/desktop.test.js` покрывает порт, каталог данных, старт/остановку сервера без окна |
 | Независимый аудит | отдельное ревью кода сервера (найдено и исправлено 11 ошибок с регрессионными тестами) и отдельный QA-проход по UI на 7 ширинах (768–1920), тёмная/светлая темы — замечания исправлены |
 | Реальная машина (частично) | агент пользователя: запуск через `node.exe`+`cli-entry.js`, MCP-серверы, `auto` + песочница и тексты отказов (см. GIGACODE-FACTS "Confirmed") |
 | Полный цикл чата, `--resume`, инструменты harness MCP внутри агента | вживую, с Claude Code вместо GigaCode |
@@ -126,6 +155,7 @@ MCP, инструмент вопросов, текст отказа, `--acp`, `/
 ```bash
 npm test                     # all tests
 npm run dev                  # server + Vite HMR (http://127.0.0.1:4777)
+npm run desktop              # the UI in its own window (Electron); `-- --demo`, `-- --port 4790` work too
 npm run demo                 # offline demo: mock agent, onework/sourcecontrol from fixtures, test repositories (port 4778)
 node server/index.js --print-config   # resolved paths, launcher, models, secrets (names only)
 node scripts/mcp-call.js <server> --list | <tool> '<json>'

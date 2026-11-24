@@ -102,6 +102,19 @@ export interface State extends Prefs {
   dialog: DialogRequest | null
   back: Loc[]
   forward: Loc[]
+  desktop: DesktopBridge | null // set only in the desktop window, which has no native title bar of its own
+}
+
+/** What the desktop shell lets the app do with its own window (preload only supplies it in the desktop window). */
+export interface DesktopBridge {
+  platform: string
+  maximizable: boolean
+  closable: boolean
+  maximized: boolean
+  minimize: () => void
+  toggleMaximize: () => void
+  close: () => void
+  onMaximized: (fn: (value: boolean) => void) => (() => void) | void
 }
 
 export const tabKey = (t: Tab): string => {
@@ -155,6 +168,7 @@ let state: State = {
   tasks: [], sessions: [], workspaces: [], notifications: [], agents: [], defaultAgent: null, shell: '',
   integrations: { tasks: false, pr: false },
   messages: {}, subagents: {}, worktrees: {}, git: {}, agentMeta: {}, settings: null, settingsCategory: 'Рабочее место', prs: {}, prsMine: {}, sdd: {}, recentFolders: [], slowStarts: {}, agentGit: {}, sbOverlay: false, panelOverlay: false, history: {}, recovery: null, features: [], dirty: {}, toasts: [], jobs: [], focusTaskId: null, dialog: null, back: [], forward: [],
+  desktop: (window as unknown as { harnessDesktop?: DesktopBridge }).harnessDesktop ?? null, // the shell's preload, if this page runs in its window
 }
 
 const listeners = new Set<() => void>()

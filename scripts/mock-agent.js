@@ -3,12 +3,14 @@
 //   mock-agent.js [--resume <id>] -p <prompt> --approval-mode <m> --output-format stream-json [--model <id>]  (GigaCode argv)
 // Prompt directives (ignored in messages delivered from other sessions, i.e. prompts starting "[harness] Message from"):
 //   #spawn <spec>   worker_start({ spec, task: true })          #done <summary>  worker_done(done)   #fail  worker_done(failed)
-//   #ask <q> | <option> | ...   ask({ question, options })   #crash  exit 1 with stderr   #silent  sleep, no output
+//   #ask <q> | <option> | ...   ask({ question, options })   #crash  exit 1 with stderr   #silent [ms]  sleep, no output
 //   #slow           stream slowly for ~5 s          #raw   print two non-JSON lines
 //   #nooutput       stderr only, exit 0 (silent failure)   #warn  stderr warning on a normal run
 //   #auth [ms]      login link on stderr, a wait (default 2000 ms), then a normal run
 //   #run <profile> <spec>   worker_run (a sub-agent in its own chat); waits, then says "worker_run result: <summary>"
 //   #runwt <profile> <spec> the same in a new worktree (a persistent child)
+//   #cutagent <type> <prompt>  agent(), then gives up on the call; #waitagent  agent() and long-polls it like the bridge
+//   #hang <ms>      the step works on its own (no output) for that long — a command of its own
 //   #usage          an assistant step with usage   #deny <tool>    a tool call the CLI denies in headless mode   #question <q> | <option> | ...   its own question tool
 // "/models" answers with test/fixtures/gigacode.models.txt; --model outside that list fails like GigaCode (stderr, exit 1).
 // MOCK_AGENT_ARGV_FILE: appends { argv (incl. node flags), env (GIGACODE_*, settings path, MCP_SECRET_*) } per run.
@@ -106,15 +108,17 @@ if (has(/#nopartial\b/) && argv.includes('--include-partial-messages')) {
 const stickyDir = process.env.MOCK_AGENT_STATE_DIR || path.join(os.tmpdir(), 'harness-mock-agent');
 const sticky = resume && path.join(stickyDir, `${resume.replace(/[^\w-]/g, '_')}.crash`);
 if (sticky && has(/#crashalways\b/)) { fs.mkdirSync(stickyDir, { recursive: true }); fs.writeFileSync(sticky, '1'); }
-// #busy <name> <n>: the first n starts collide (ExtensionStoreBusyError); #busylock: GigaCode's stale-lock error instead
-const busy = lines.map((l) => l.match(/^\s*#busy(lock)?\s+(\S+)\s+(\d+)/)).find(Boolean);
+// #busy <name> <n>: the first n starts collide (ExtensionStoreBusyError); #busylock: GigaCode's stale-lock error instead;
+// #busysecret: its protected storage (secrets) is unavailable — the same race, another message
+const busy = lines.map((l) => l.match(/^\s*#busy(lock|secret)?\s+(\S+)\s+(\d+)/)).find(Boolean);
 if (busy) {
   const counter = path.join(stickyDir, `busy-${busy[2]}`);
   fs.mkdirSync(stickyDir, { recursive: true });
   const n = Number(fs.existsSync(counter) ? fs.readFileSync(counter, 'utf8') : 0);
   if (n < Number(busy[3])) {
     fs.writeFileSync(counter, String(n + 1));
-    if (busy[1]) process.stderr.write('Error: Unable to update lock within the stale threshold\n    at file:///C:/Program%20Files/.gigacode/lib/chunks/c-TD633MIT.js:4:12738\n    at FSReqCallback.oncomplete (node:fs:196:5)\n');
+    if (busy[1] === 'secret') process.stderr.write('An unexpected critical error occurred:\nSecretPersistenceError: GigaCode protected storage is unavailable.\n    at EncryptedFilePayloadStore.replace (file:///C:/Program%20Files/.gigacode/lib/chunks/c-MLJJDN3T.js:8:3304)\n');
+    else if (busy[1]) process.stderr.write('Error: Unable to update lock within the stale threshold\n    at file:///C:/Program%20Files/.gigacode/lib/chunks/c-TD633MIT.js:4:12738\n    at FSReqCallback.oncomplete (node:fs:196:5)\n');
     else process.stderr.write('An unexpected critical error occurred:\nExtensionStoreBusyError: Extension store is busy at C:\\Users\\u\\.gigacode\\extension-store.\n');
     process.exit(1);
   }
@@ -136,8 +140,12 @@ if (has(/#auth\b/)) {
   await sleep(Number(ms ?? 2000)); // `#auth <ms>`: how long the login takes
 }
 if (has(/#silent\b/)) {
-  await sleep(120000);
-  process.exit(0);
+  // a call that waits for a sub-agent (#waitagent) keeps the turn going on its own, sleeping after it
+  const silentMs = Number(lines.map((l) => l.match(/#silent\s+(\d+)/)).find(Boolean)?.[1] ?? 120000);
+  if (!has(/#waitagent\b/)) {
+    await sleep(silentMs);
+    process.exit(0);
+  }
 }
 
 const stateDir = process.env.MOCK_AGENT_STATE_DIR || path.join(os.tmpdir(), 'harness-mock-agent');
@@ -207,6 +215,28 @@ if (prompt === '/models') {
   emit({ type: 'result', status: 'success', result: modelsText, stats: { input_tokens: 1, output_tokens: 1 } });
   process.exit(0);
 }
+if (prompt === '/context') {
+  // the shape of GigaCode's own answer (docs/GIGACODE-FACTS.md): a window line and indented categories
+  const contextText = [
+    '## Context Usage  ',
+    '',
+    '*No API response yet. Send a message to see actual usage.*',
+    '',
+    '**Estimated pre-conversation overhead**  ',
+    `Model: ${model}  Context window: 262.1k tokens  `,
+    '',
+    '  System prompt                       5.2k tokens (2.0%)  ',
+    '  Built-in tools                     14.2k tokens (5.4%)  ',
+    '  Memory files                       17.6k tokens (6.7%)  ',
+    '  Skills                             13.6k tokens (5.2%)  ',
+    '  Startup context                     1.2k tokens (0.4%)  ',
+    '',
+    '*Run /context detail for per-item breakdown.*',
+  ].join('\n');
+  emit({ type: 'message', role: 'assistant', content: contextText, delta: true });
+  emit({ type: 'result', status: 'success', result: contextText, stats: { input_tokens: 1, output_tokens: 1 } });
+  process.exit(0);
+}
 
 async function say(text, delayMs = 0) {
   for (const chunk of text.match(/\S+\s*/g) || [text]) {
@@ -240,8 +270,21 @@ if (has(/#subagent\b/)) {
     if (ev.type !== 'result') emit(ev);
   }
 }
+if (has(/#subagentbg\b/)) {
+  // a built-in sub-agent started with run_in_background: the call answers at once, its result lands in its own file
+  const capture = new URL('../test/fixtures/gigacode.subagent-background.ndjson', import.meta.url);
+  const file = path.join(process.cwd(), 'subagent-bg.jsonl');
+  const [call, result] = fs.readFileSync(capture, 'utf8').split('\n').filter((l) => l.trim() && !l.trim().startsWith('//')).map((l) => JSON.parse(l));
+  const line = { ...result, message: { ...result.message, content: [{ ...result.message.content[0], content: result.message.content[0].content.replace(/output_file: .*/, `output_file: ${file}`) }] } };
+  for (const { session_id, uuid, ...ev } of [call, line]) emit(ev);
+  fs.writeFileSync(file, `${JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: 'Контракт miszh сверён: 2 маршрута, 3 схемы.' })}\n`);
+}
 
-if (delivered) await say(`Received: ${prompt.split('\n')[1]?.slice(0, 120) || ''}`);
+if (delivered) {
+  // a message from another session is not «the current turn is over»: its directives run like any others
+  await say(`Received: ${prompt.split('\n')[1]?.slice(0, 120) || ''}`);
+  await directives((prompt.match(/^\s*#(?:waitagent|cutagent|agentmcp|spawn|runwt|run)\s+\S+\s+.+$/gm) || []).map((l) => l.trim()));
+}
 if (has(/#bigoutput\b/)) {
   emit({ type: 'tool_use', tool_name: 'run_shell_command', tool_id: 'big_1', parameters: { command: 'cat big.log' } });
   emit({ type: 'tool_result', tool_id: 'big_1', status: 'success', output: `${'строка лога\n'.repeat(10000)}КОНЕЦ` });
@@ -270,12 +313,14 @@ if (question) {
   emit({ type: 'tool_use', tool_name: 'ask_user_question', tool_id: 'q_1', parameters: { questions: [{ question: q, options: options.map((label) => ({ label })), multiSelect: false }] } });
   emit({ type: 'tool_result', tool_id: 'q_1', status: 'error', output: 'question tool is not available in non-interactive mode' });
 }
+// the turn's own work runs first (#hang), then the call waits: it must not be swallowed by the busy case below
+const ownWork = lines.map((l) => l.match(/^#hang\s+(\d+)/)).filter(Boolean).pop();
+if (ownWork) await sleep(Number(ownWork[1]));
 // GigaCode reports usage per model step on its assistant events (input includes the cached part)
 if (has(/#usage\b/)) emit({ type: 'assistant', message: { role: 'assistant', content: [], usage: { input_tokens: 120000, output_tokens: 500, cache_read_input_tokens: 100000, total_tokens: 120500 } } });
 if (has(/#raw\b/)) process.stdout.write('plain line 1\nplain line 2\n');
 if (has(/#slow\b/)) await say('slow '.repeat(20), 250);
 
-const rest = [];
 async function runSubagent(profile, spec, extra = {}) {
   // exactly what the harness MCP bridge does for worker_run: start, then long-poll (across harness restarts)
   const id = `run_${++toolSeq}`;
@@ -295,9 +340,35 @@ async function cutAgentTool(type, prompt) {
   const id = `agent_${++toolSeq}`;
   const args = { subagent_type: type, description: 'probe', prompt };
   emit({ type: 'tool_use', tool_name: 'agent', tool_id: id, parameters: args });
-  await api('POST', '/api/agent/agent', args); // started and waited for (awaitedBy) — then the CLI gives up on the call
+  // started and waited for (awaitedBy) — then the CLI gives up on the call; a message to this caller ends that wait
+  // first (the bridge returns at once), and a call already over is not cut once more
+  const r = await api('POST', '/api/agent/agent', args);
+  const s = (await api('GET', '/api/state')).sessions.find((x) => x.id === r.sessionId);
+  if (s && !s.awaitedBy) {
+    emit({ type: 'tool_result', tool_id: id, status: 'success', output: JSON.stringify({ status: 'background', sessionId: r.sessionId }) });
+    return say(' agent call ended by a message to this chat');
+  }
   emit({ type: 'tool_result', tool_id: id, status: 'error', output: 'Request timed out' });
   return say(' agent call timed out');
+}
+
+/** #waitagent <type> <prompt>: the call starts and long-polls like the bridge's own worker_run, so a reply to the caller
+ *  ends this call at once instead of being queued behind it. A `#hang` after it comes first: the call then waits while
+ *  THIS step is busy with its own work, and only chat.steerAfterMs can end that wait. */
+async function waitAgentTool(type, prompt) {
+  const id = `agent_${++toolSeq}`;
+  const args = { subagent_type: type, description: 'probe', prompt };
+  emit({ type: 'tool_use', tool_name: 'agent', tool_id: id, parameters: args });
+  const busy = [...prompt.matchAll(/#hang\s+(\d+)/g)].pop();
+  if (busy) await sleep(Number(busy[1]));
+  try {
+    const r = await runAndWait('agent', args);
+    emit({ type: 'tool_result', tool_id: id, status: 'success', output: JSON.stringify(r) });
+    return say(` agent result: ${r.summary}`);
+  } catch (e) {
+    emit({ type: 'tool_result', tool_id: id, status: 'error', output: e.message });
+    return say(` agent failed: ${e.message}`);
+  }
 }
 
 /** #agentlate <type> <prompt>: the same tool, ACP-style — the harness gets the call first, the stream line comes later and without arguments. */
@@ -324,21 +395,28 @@ async function runAgentTool(type, prompt) {
   }
 }
 
-for (const l of lines) {
-  const am = l.match(/#agentmcp\s+(\S+)\s+(.+)/);
-  if (am) { await runAgentTool(am[1], am[2].trim()); continue; }
-  const late = l.match(/#agentlate\s+(\S+)\s+(.+)/);
-  if (late) { await lateAgentTool(late[1], late[2].trim()); continue; }
-  const cut = l.match(/#cutagent\s+(\S+)\s+(.+)/);
-  if (cut) { await cutAgentTool(cut[1], cut[2].trim()); continue; }
-  const m = l.match(/#spawn\s+(.+)/);
-  const run = l.match(/#run\s+(\S+)\s+(.+)/);
-  const runwt = l.match(/#runwt\s+(\S+)\s+(.+)/); // a sub-agent in a new worktree (persistent)
-  if (m) await harness('worker_start', { spec: m[1].trim(), task: true });
-  else if (runwt) await runSubagent(runwt[1], runwt[2].trim(), { worktree: 'new' });
-  else if (run) await runSubagent(run[1], run[2].trim());
-  else rest.push(l);
+const REST = [];
+async function directives(list) {
+  for (const l of list) {
+    const am = l.match(/#agentmcp\s+(\S+)\s+(.+)/);
+    if (am) { await runAgentTool(am[1], am[2].trim()); continue; }
+    const late = l.match(/#agentlate\s+(\S+)\s+(.+)/);
+    if (late) { await lateAgentTool(late[1], late[2].trim()); continue; }
+    const cut = l.match(/#cutagent\s+(\S+)\s+(.+)/);
+    if (cut) { await cutAgentTool(cut[1], cut[2].trim()); continue; }
+    const wait = l.match(/#waitagent\s+(\S+)\s+(.+)/);
+    if (wait) { await waitAgentTool(wait[1], wait[2].trim()); continue; }
+    const m = l.match(/#spawn\s+(.+)/);
+    const run = l.match(/#run\s+(\S+)\s+(.+)/);
+    const runwt = l.match(/#runwt\s+(\S+)\s+(.+)/); // a sub-agent in a new worktree (persistent)
+    if (m) await harness('worker_start', { spec: m[1].trim(), task: true });
+    else if (runwt) await runSubagent(runwt[1], runwt[2].trim(), { worktree: 'new' });
+    else if (run) await runSubagent(run[1], run[2].trim());
+    else REST.push(l);
+  }
 }
+await directives(lines);
+const rest = REST;
 const restText = rest.join('\n');
 // the last occurrence wins: a worker preamble echoes the task title before the prompt itself
 const last = (re) => [...restText.matchAll(re)].pop();
@@ -360,6 +438,10 @@ if (review) {
 }
 else if (/#fail\b/.test(restText)) await harness('worker_done', { summary: 'mock failure', status: 'failed' });
 else if (done) await harness('worker_done', { summary: done[1].trim() || 'completed', status: 'done' });
+
+// #hang <ms>: the step works on its own (no call, no output) and ends when it ends — a command of its own, say
+const hang = last(/#hang\s+(\d+)/g); // the caller's own work (a #hang inside a sub-agent's spec is the sub-agent's)
+if (hang && !ownWork) await sleep(Number(hang[1]));
 
 await say(' Done.');
 emit({ type: 'result', status: 'success', stats: { input_tokens: 10, output_tokens: 5, tool_calls: toolSeq + 1 } });

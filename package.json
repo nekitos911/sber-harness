@@ -12,16 +12,19 @@
   },
   "scripts": {
     "dev": "node server/index.js --dev",
-    "build": "vite build",
+    "build": "node scripts/ensure-bin.js && vite build",
     "start": "node server/index.js",
+    "desktop": "node scripts/ensure-bin.js && node scripts/desktop.js --ui",
+    "check": "node server/index.js --check",
     "test": "node --test \"test/*.test.js\"",
-    "typecheck": "tsc -p web --noEmit",
+    "typecheck": "node scripts/ensure-bin.js && tsc -p web --noEmit",
     "demo": "node server/index.js --demo",
     "start:bg": "node scripts/background.js start",
     "stop": "node scripts/background.js stop"
   },
   "dependencies": {
     "@lydell/node-pty": "^1.2.0-beta.18",
+    "undici": "^7.16.0",
     "ws": "^8.23.0"
   },
   "devDependencies": {
@@ -48,6 +51,7 @@
     "@xterm/addon-web-links": "^0.12.0",
     "@xterm/xterm": "^6.0.0",
     "codemirror": "^6.0.2",
+    "electron": "^45.4.1",
     "lucide-react": "^1.74.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",

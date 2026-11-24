@@ -23,14 +23,21 @@ harness wakes you with the answer.
 ## Recipe (coordinator / orchestrator)
 
 ```text
-agent(subagent_type, prompt, model?)                              # a helper in YOUR worktree; returns its result
+agent(subagent_type, prompt)                                      # a helper in YOUR worktree; returns its result
 worker_start(task_id | spec, worktree?: "current" | "new-child" | "new-top-level", name?, workspace?, agent?, model?)
 ```
 
+- **Never pass `model`**: the harness picks the model by the sub-agent type. A reviewer profile (`*reviewer*`,
+  `java-reviewer`, a read-only `plan` profile) gets the `review` grade, a search/exploration helper (`*explorer*`,
+  `Explore`, `*file-worker`) the `fast` grade, everything else `strong`; a type without a role takes the agent's
+  default grade. If a grade's model is missing from the backend catalogue the sub-agent simply runs on the CLI
+  default model and its chat says so — that is not an error.
+- If a specific model is really needed, pass a **grade name** (`default`, `fast`, `strong`, `review`, `explore` —
+  the agent's `modelGrades` in Settings), never a model id: ids change with the backend and a hard-coded one breaks.
 - **Helpers** (explore, review, implement one step) in your own working copy: `agent` — same arguments as the built-in
-  `agent` tool (`subagent_type` = profile from `~/.gigacode/agents/<name>.md`, `prompt`, `model` = id or grade like
-  `review`). It runs as its own chat and returns `{ status, summary, sessionId }`. Several in parallel = several calls
-  in one turn. Helpers do not start helpers of their own; finished helpers are archived automatically.
+  `agent` tool (`subagent_type` = profile from `~/.gigacode/agents/<name>.md`, `prompt`). It runs as its own chat and
+  returns `{ status, summary, sessionId }`. Several in parallel = several calls in one turn. Helpers do not start
+  helpers of their own; finished helpers are archived automatically.
 - **Workers** for independent or parallel work: `worker_start`, returns at once. Placement (omit `worktree` and the
   harness picks it: `current` when you work in the task's repository, else `new-top-level` in the task's repository;
   the result says which, e.g. `placement: "new-top-level (auto)"`; an explicit `current` in another repository fails):
@@ -39,7 +46,9 @@ worker_start(task_id | spec, worktree?: "current" | "new-child" | "new-top-level
     (`ft-core-free`); use it when workers would edit files in parallel;
   - `new-top-level` — a new worktree in ANOTHER repository (`workspace` = repo name from `workspace_list`); one per
     service when a task spans several microservices. A worker there may orchestrate its own helpers.
-  New worktrees are added to your readable folders, so you can read their files and diffs directly.
+  New worktrees are added to your readable folders, so you can read their files and diffs directly. On disk they sit next
+  to the repository, in `<repo>-worktrees\<name>` (`config.worktreeRoot`, else the repository's parent folder) — not in
+  `.gigacode\worktrees`, which belongs to the CLIs; give a reviewer the exact path the result reports.
 - Start every independent worker, then **end your turn**. "Report back" and "tell me when it's done" still mean end
   your turn: the harness wakes you with each report (`worker_done`), question (`ask`) or escalation.
 - To talk to a worker in any state: `send_message(to: <session_id>, body)`. A working worker gets it when its turn
@@ -48,7 +57,7 @@ worker_start(task_id | spec, worktree?: "current" | "new-child" | "new-top-level
   deliberate fan-out.
 - Need their state without waiting: `worker_inspect(session_id)` (status, activity, branch, diff stat, last text,
   report) or `worker_list` (all of yours, incl. other worktrees).
-- `agent` / `model` only if the user named one.
+- `agent` only if the user named one; `model` only as a grade, never as a model id.
 
 Never:
 - poll, sleep or loop on `worker_list` / `worker_inspect` — the harness wakes you;
@@ -95,7 +104,7 @@ worktrees. **Several repositories:** one subtask per repo (`task_create(parent_i
 
 | tool | use it to |
 |---|---|
-| `agent` / `worker_run` | run a helper synchronously in its own chat and get its result |
+| `agent` / `worker_run` | run a helper synchronously in its own chat and get its result (no `model`: the harness picks it by the sub-agent type) |
 | `worker_start` | start a worker (task or spec) with placement `current` / `new-child` / `new-top-level`; returns at once |
 | `worktree_peers` | see running agents in this tree, including independent chats, their tasks and reserved files |
 | `worktree_claim` | before editing, claim paths relative to the worktree root; only edit on ok=true. Claims end with the turn. Coordinate a single committer when sharing a tree. |

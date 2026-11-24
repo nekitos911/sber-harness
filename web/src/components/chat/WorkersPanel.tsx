@@ -108,7 +108,7 @@ function WorkerRow({ w, now, nested }: { w: Session; now: number; nested?: boole
   // the server keeps the last 200 characters: a one-line tail starts mid-word («обы дожать…») — cut to a word, mark it
   const cut = lines.length === 1 && w.preview.length >= 200
   const last = cut ? `…${lines[0].replace(/^\S*\s+/, '')}` : lines.pop()
-  const doing = starting || tool || (w.status === 'running' ? 'работает' : last)
+  const doing = starting || tool || (w.status === 'running' ? (w.background && last ? `работает · ${last}` : 'работает') : w.background ? `закончил · ${relTime(w.lastActivityAt, now)}` : last)
   // a helper whose turn ended without worker_done still answered: its last text went back to the agent as the result
   const answered = !!w.ephemeral && w.status !== 'running' && w.report?.status === 'no_report'
   return (

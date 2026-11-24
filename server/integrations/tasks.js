@@ -124,6 +124,8 @@ export function parseFindIssues(text) {
 }
 
 const fieldLine = (line) => line.match(/^\s*-\s+\*\*([^*]+)\*\*:\s*(.*)$/);
+// an attribute of sbertrack_getIssue: "**БТ Сбертрек** (`br_st`, text)" — the value on the next, indented line(s)
+const attributeLine = (line) => line.match(/^\s*\*\*(.+?)\*\*\s*(?:\(`([^`]+)`[^)]*\))?\s*$/);
 
 export function parseIssue(text) {
   const lines = text.split(/\r?\n/);
@@ -132,16 +134,27 @@ export function parseIssue(text) {
   const attributes = {};
   const desc = [];
   let section = 'top'; // top -> fields -> description -> attributes
+  let attribute = null; // the attribute whose indented lines are being read
   for (const line of lines) {
     if (/^#\s/.test(line) && section === 'top') continue;
     if (/^###\s+Attributes/i.test(line)) {
       section = 'attributes';
       continue;
     }
-    const f = fieldLine(line);
     if (section === 'attributes') {
-      if (f) attributes[f[1].trim()] = f[2].trim();
-    } else if (f && (section === 'top' || section === 'fields')) {
+      const f = fieldLine(line); // a listing in the bullet shape ("- **Sprint**: S54") reads the same
+      const a = f ? [null, f[1].trim()] : attributeLine(line);
+      if (a) {
+        attribute = a[1].trim();
+        attributes[attribute] = f ? f[2].trim() : '';
+        continue;
+      }
+      // its value: the lines indented under it (code blocks inside keep their own indentation)
+      if (attribute && line.trim() && /^\s/.test(line)) attributes[attribute] = attributes[attribute] ? `${attributes[attribute]}\n${line.trim()}` : line.trim();
+      continue;
+    }
+    const f = fieldLine(line);
+    if (f && (section === 'top' || section === 'fields')) {
       section = 'fields';
       fields[f[1].trim()] = f[2].trim();
     } else if (section === 'fields' || section === 'description') {
@@ -311,21 +324,23 @@ async function fetchLinks(mcp, cfg, key) {
 export const urlsIn = (text) => [...new Set([...String(text ?? '').matchAll(/https?:\/\/[^\s)>\]"',;]+/g)].map((m) => m[0].replace(/[.:]+$/, '')))];
 
 /**
- * The task's «Внешние ссылки» (onework shows them on their own tab, not as a field): integrations.tasks.tools.externalLinks,
- * else a tool of the tracker's server named like external/remote/web links. Its addresses, whatever the answer looks like.
+ * The task's «Внешние ссылки» (attribute `external_link` of sbertrack_getIssue; onework has no tool of its own for them —
+ * docs/GIGACODE-FACTS.md «Внешние ссылки в onework»): integrations.tasks.tools.externalLinks, else the answer has none.
+ * Its addresses, whatever shape the answer has.
  */
 async function fetchExternalLinks(mcp, cfg, key) {
-  let tool = cfg.tools?.externalLinks;
-  if (tool === false) return [];
-  if (!tool) tool = (await mcp.listTools(cfg.server).catch(() => [])).map((t) => t.name).find((n) => /(external|remote|web)[_-]?links?/i.test(n)) || null;
-  if (!tool) return [];
+  const tool = cfg.tools?.externalLinks;
+  if (!tool || tool === false) return [];
   return urlsIn(await callText(mcp, cfg, tool, { key }).catch(() => '')).map((url) => ({ name: 'Внешние ссылки', url }));
 }
 
-/** Addresses in an issue's fields and attributes (e.g. «Внешние ссылки» → a repository with the specification). */
+/**
+ * Addresses in an issue's fields and attributes (e.g. «Внешние ссылки» → a repository with the specification), and those
+ * the description links to: a task that names its own specification there needs nothing fetched.
+ */
 export function fieldLinks(issue) {
   const out = [];
-  for (const [name, value] of Object.entries({ ...issue.fields, ...issue.attributes })) {
+  for (const [name, value] of Object.entries({ ...issue.fields, ...issue.attributes, Описание: issue.description })) {
     for (const [url] of String(value ?? '').matchAll(/https?:\/\/[^\s)>\]"',]+/g)) if (!out.some((l) => l.url === url)) out.push({ name, url });
   }
   return out;
@@ -336,9 +351,11 @@ export async function getExternal({ config, mcp, tasks, task }) {
   if (!markdown(cfg)) throw disabled('Подробности задачи доступны только для трекера onework-markdown');
   const key = trackerKey(task);
   const issue = parseIssue(await callText(mcp, cfg, toolOf(cfg, 'get'), { key }));
-  // cached attributes (Component, Repository, ...) also feed the repository auto-fill
-  const external = await fetchExternalLinks(mcp, cfg, key);
-  const links = [...fieldLinks(issue), ...external.filter((e) => !fieldLinks(issue).some((l) => l.url === e.url))];
+  // cached attributes (Component, Repository, ...) also feed the repository auto-fill; addresses named in the issue itself
+  // («Внешние ссылки», «БТ Сбертрек», the description) — the ones the agent reads first
+  const links = fieldLinks(issue);
+  const own = new Set(links.map((l) => l.url));
+  for (const e of await fetchExternalLinks(mcp, cfg, key)) if (!own.has(e.url)) links.push(e);
   tasks.update(task.id, { ...(!task.description && issue.description ? { description: issue.description } : {}), externalFields: issue.fields, externalLinks: links }, 'harness');
   return { ...issue, links: await fetchLinks(mcp, cfg, key) };
 }

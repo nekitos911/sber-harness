@@ -10,6 +10,7 @@ CLI) с историей, файлы, диффы, коммиты и пулл-р�
 npm install          # dependencies
 npm run build        # build the UI into web/dist
 npm start            # server + UI at http://127.0.0.1:4777
+npm run desktop      # the same UI in a window of its own (Electron): no browser tab
 npm run dev          # same, with Vite hot reload of the UI
 npm test             # node:test, all tests must stay green
 npm run typecheck    # UI types
@@ -17,6 +18,9 @@ npm run typecheck    # UI types
 
 Демо без GigaCode: в UI создайте чат с агентом `mock` (см. `scripts/mock-agent.js`;
 директивы `#spawn`, `#done`, `#ask` в сообщении запускают оркестрацию).
+
+Ярлык `start-harness.cmd` открывает окно приложения. Работающий на 4777 харнес не останавливается: окно берёт первый
+свободный порт и, если каталог данных занят, свой (`data/<slug>-<port>`). Подробности — `README.md`, раздел «Окно вместо браузера».
 
 **Начните с [`docs/HANDOFF.md`](docs/HANDOFF.md)**: что сделано, как работают ключевые сценарии, что
 проверено, а что нет.
@@ -36,6 +40,7 @@ npm run typecheck    # UI types
 | MCP-клиент, используемый самим харнесом (stdio/http, таймауты, секреты) | `server/mcp-client.js` |
 | Git / файлы | `server/git.js`, `server/fs.js` |
 | UI | `web/src/` (React + Vite + TS) |
+| Окно приложения вместо браузера (`npm run desktop`) | `scripts/desktop.js` (запуск: сервер под Node либо окно Electron), `scripts/desktop-app.js` (порт, каталог данных, старт сервера, окно) |
 | Протокол оркестрации для агентов | `skills/harness-orchestration/SKILL.md` |
 | Моки для GigaCode и MCP | `scripts/mock-agent.js`, `scripts/mock-mcp.js` |
 | Ручной вызов MCP-сервера (инструменты, сырые ответы) | `node scripts/mcp-call.js <server> --list` / `<tool> '<json>'` |

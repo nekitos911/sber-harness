@@ -819,6 +819,7 @@ function SessionRowView({ s, nested, level = 0, caret, via, from, showLocation }
   s: Session; nested: boolean; level?: number; showLocation?: boolean; caret?: { open: boolean; toggle: () => void }; via?: string; from?: Session
 }) {
   const mixed = useContext(MixedAgents)
+  const defaultAgent = useStore((st) => st.defaultAgent)
   const [menu, setMenu] = useState(false)
   const [editing, setEditing] = useState(false)
   const [leaving, setLeaving] = useState(false)
@@ -885,7 +886,7 @@ function SessionRowView({ s, nested, level = 0, caret, via, from, showLocation }
         </button>
       ) : level > 0 && <span className="caret-space" aria-hidden />}
       <StatusIcon session={s} />
-      {!nested && mixed && <AgentGlyph agent={s.agent} />}
+      {!nested && mixed && <AgentGlyph agent={s.agent} primary={s.agent === defaultAgent} />}
       {editing ? (
         <input className="input tree-rename" autoFocus defaultValue={s.title} aria-label="Название чата"
           onClick={(e) => e.stopPropagation()}
@@ -923,9 +924,11 @@ export function CliGlyph() {
   return <SquareTerminal className="cli-glyph" aria-label="из CLI" />
 }
 
-/** A small mark of the agent CLI (GigaCode, Claude, mock…): its first letter, tinted per agent. */
-function AgentGlyph({ agent }: { agent: string }) {
+/** A small mark of the agent CLI (GigaCode, Claude, mock…): its first letter, tinted per agent. The primary agent's
+ *  mark is noise — every row is it; only a sidebar with two or more agents shows the letter. */
+function AgentGlyph({ agent, primary }: { agent: string; primary: boolean }) {
   const label = useStore((s) => s.agents.find((a) => a.id === agent)?.label ?? agent)
+  if (primary) return null
   return <span className="agent-glyph" data-agent={agent} aria-label={label} data-tip={label}>{label.charAt(0).toUpperCase()}</span>
 }
 

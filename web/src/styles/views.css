@@ -480,6 +480,15 @@ button.chip.chip-mono[aria-pressed="true"] { background: var(--signal-soft); col
 .mcp-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--lamp-fail); }
 .mcp-dot[data-ok] { background: var(--lamp-done); }
 .mcp-list li[data-off] .mcp-dot { background: var(--ink-4); }
+/* servers added in «MCP-серверы»: name, transport, switch, delete on one line; address and headers under it */
+.mcp-server { display: grid; gap: 6px; }
+.mcp-server-head { display: flex; align-items: center; gap: 8px; }
+.mcp-server-head > input, .mcp-server-head > .input { flex: 1; min-width: 140px; }
+.mcp-server-check { display: flex; align-items: center; gap: 8px; min-height: 28px; }
+.mcp-secrets { display: grid; gap: 6px; }
+.mcp-secret-add { display: flex; gap: 6px; }
+.mcp-secret-add > input, .mcp-secret-add > .input { min-width: 0; }
+.mcp-add { padding-top: 2px; }
 .set-line { display: block; }
 .chat-hint { display: flex; align-items: center; gap: 8px; padding: 6px 6px 6px 12px; border: 1px solid var(--rule); border-radius: var(--r-2); background: var(--deck); font-size: 12.5px; color: var(--ink-2); }
 .quick-tools { margin-top: 6px; }
