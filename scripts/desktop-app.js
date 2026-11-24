@@ -118,7 +118,7 @@ async function openUrl({ root, flag, argv, env, spawnProcess }) {
   const port = await pickPort(config, { host: config.host });
   const own = desktopDataDir({ baseDir: config.dataDir, root, port, running });
   mkdirSync(own, { recursive: true });
-  const harness = startHarness({ root, node: nodeCommand(env), flag, argv: [...argv, '--port', String(port), '--data-dir', own], dataDir: own, env, spawnProcess });
+  const harness = startHarness({ root, node: nodeCommand(env), flag, argv: [...argv, '--port', String(port)], dataDir: own, env, spawnProcess });
   return { url: await harness.url, child: harness.child };
 }
 
@@ -204,24 +204,27 @@ export async function serve({ root, flag = '--harness-desktop', argv = [], elect
   harness = child;
   const preload = path.resolve(root, 'scripts', 'desktop-preload.js');
   const icon = await appIcon(root);
+  // macOS takes the Dock icon from the bundle, which is Electron's own here: the app's icon is set on the Dock instead
+  if (icon && app.dock) try { app.dock.setIcon(icon); } catch {}
   if (!url) {
-    showWindow(BrowserWindow, shell, `data:text/html;charset=utf-8,${encodeURIComponent(errorPage('Харнес не запустился', 'Причина — в окне терминала: запускайте <code>npm run desktop</code> из консоли.'))}`, { preload, icon });
+    showWindow(BrowserWindow, shell, `data:text/html;charset=utf-8,${encodeURIComponent(errorPage('Харнес не запустился', 'Причина — в журнале запуска <code>sber-harness-desktop.log</code> во временной папке (ярлык) или в терминале (<code>npm run desktop</code>).'))}`, { preload, icon });
     return app;
   }
   showWindow(BrowserWindow, shell, url, { preload, icon });
+  // macOS: started by a script (the launcher app, a terminal), not by LaunchServices, the window would open behind the rest
+  if (app.dock) app.focus({ steal: true });
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) showWindow(BrowserWindow, shell, url, { preload, icon }); }); // macOS dock
   return app;
 }
 
 /**
- * The icon in `build/` (made on first use by scripts/icon.js); the dock on macOS takes it from the app bundle instead.
+ * The icon in `build/`. It ships with the repository; only a missing one is drawn (scripts/icon.js), never a present one
+ * redrawn: file times after a clone say nothing about which is newer, and a redraw would dirty the working tree.
  */
 async function appIcon(root) {
-  if (process.platform === 'darwin') return undefined; // the dock takes the icon from the app bundle
+  const png = path.resolve(root, 'build', 'app-icon.png');
   try {
-    const { ensureIcons } = await import('./icon.js');
-    await ensureIcons({ root });
-    const png = path.resolve(root, 'build', 'app-icon.png');
+    if (!existsSync(png)) await (await import('./icon.js')).ensureIcons({ root });
     return existsSync(png) ? png : undefined;
   } catch {
     return undefined; // an icon is a nicety: never a reason not to open

@@ -85,10 +85,12 @@ function fileStatus(x, y) {
 
 /**
  * git.excludeFromCommit: "dir/" = that folder at the repository top, "*.ext" = such files anywhere (an agent's build
- * output and logs: git's own pathspec «*» crosses folders too), otherwise a top-relative path.
+ * output and logs: git's own pathspec «*» crosses folders too), "name*" = what starts so at the top (temp files of
+ * other tools, e.g. .openai-logs-cleanup-<id>), otherwise a top-relative path.
  */
 export const isService = (file, patterns = []) => patterns.some((p) => (p.startsWith('*') ? file.endsWith(p.slice(1))
-  : p.endsWith('/') ? file.startsWith(p) : file === p || file.startsWith(`${p}/`)));
+  : p.endsWith('*') ? file.startsWith(p.slice(0, -1))
+    : p.endsWith('/') ? file.startsWith(p) : file === p || file.startsWith(`${p}/`)));
 const excludeSpecs = (patterns = []) => patterns.map((p) => `:(top,exclude)${p}`);
 
 export async function status(cwd, exclude = []) {

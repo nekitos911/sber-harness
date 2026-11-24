@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import * as git from './git.js';
-import { historyMessages, historyFolder, globDirs } from './history.js';
+import { historyMessages, historyFolder, globDirs, FOLDER_LINE } from './history.js';
 
 const HELPER_PROMPT = /^(\/models|\/context|\/compress|HARNESS_GENERATE_MESSAGE)\b/;
 const HARNESS_BLOCK = /^\s*(\[harness\]|Ты работаешь внутри harness)/;
@@ -33,7 +33,7 @@ export function isServiceChat(userTexts, answers = 0) {
   // a probe: one message to the agent and nothing back that a person would read (these runs are never worth a chat)
   // (a GigaCode record opens its first message with the folder on a line of its own)
   const lines = first.split(/\n/);
-  const text = lines.length > 1 && path.isAbsolute(lines[0].trim()) ? lines.slice(1).join('\n').trim() : first;
+  const text = lines.length > 1 && FOLDER_LINE(lines[0]) ? lines.slice(1).join('\n').trim() : first;
   if (!text || HELPER_PROMPT.test(text)) return true;
   const [lead, ...rest] = text.split(/\n\s*\n/);
   // a helper's run opens with «Субагенты не …» and is either the whole message or the block above the [harness] one;
@@ -106,7 +106,8 @@ export function createAdopter({ config, store, sessions, history }) {
       if (!fresh.length) return false;
       sessions.importMessages(s.id, fresh, s.turnCount || 0);
     }
-    sessions.update(s.id, { cliRecordAt: rec.updatedAt, cliRecordCount: rec.messages.length, lastActivityAt: Math.max(s.lastActivityAt || 0, rec.updatedAt || 0) });
+    // the CLI itself wrote this: the chat is read-only here for a while (sessions.cliLive)
+    sessions.update(s.id, { cliRecordAt: rec.updatedAt, cliRecordCount: rec.messages.length, cliLiveAt: rec.updatedAt || null, lastActivityAt: Math.max(s.lastActivityAt || 0, rec.updatedAt || 0) });
     return true;
   }
 
@@ -155,7 +156,7 @@ export function createAdopter({ config, store, sessions, history }) {
       if (!cwd) continue; // unknown folder, or a run of the harness itself
       const s = await sessions.create({ kind: 'chat', agent, cwd, title: adoptedTitle(rec, msgs), origin: CLI_ORIGIN });
       sessions.importMessages(s.id, msgs);
-      sessions.update(s.id, { createdAt: rec.startedAt || rec.updatedAt || s.createdAt, externalSessionId: rec.id, historyId: rec.id, lastActivityAt: rec.updatedAt || Date.now(), cliRecordAt: rec.updatedAt, cliRecordCount: rec.messages.length });
+      sessions.update(s.id, { createdAt: rec.startedAt || rec.updatedAt || s.createdAt, externalSessionId: rec.id, historyId: rec.id, lastActivityAt: rec.updatedAt || Date.now(), cliRecordAt: rec.updatedAt, cliRecordCount: rec.messages.length, cliLiveAt: rec.updatedAt || null });
       touched.set(s.id, rec.id);
       adopted++;
     }

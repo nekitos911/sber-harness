@@ -1,5 +1,5 @@
 import { createContext, memo, useContext, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react'
-import { Activity, ArrowUp, Bot, ChevronDown, Ellipsis, Folder, FolderTree, TriangleAlert, GitPullRequest, Pin, ChevronRight, FolderGit2, FolderPlus, GitBranch, GitBranchPlus, House, Inbox, MessageSquarePlus, Moon, Search, Settings, SquareKanban, SquareTerminal, Sun, X } from 'lucide-react'
+import { ArrowUp, Bot, ChevronDown, Ellipsis, Folder, FolderTree, TriangleAlert, GitPullRequest, Pin, ChevronRight, FolderGit2, FolderPlus, GitBranch, GitBranchPlus, House, Inbox, MessageSquarePlus, Moon, Search, Settings, SquareKanban, SquareTerminal, Sun, X } from 'lucide-react'
 import { getState, useFeature, openDialog, openScreen, openSession, openWorktree, setState, showPanel, useActiveCwd, useStore, useThrottledStore, wtKey, type Screen } from '../store'
 import { archiveSession, dismissSession, renameSession, sessionMenu, unseenDone, unseenReply } from '../lib/sessionActions'
 import { loadWorktrees } from '../ws'
@@ -12,12 +12,12 @@ import { basename, normPath, plural, relTime, subTitle, tokens } from '../lib/fo
 import { loadDraft, saveDraft } from '../lib/draft'
 import { newChat } from '../lib/actions'
 import type { Session, Task, Workspace, Worktree } from '../types'
-import { compareChats, compareRows, filteredOut, moveTo, orderProjects, prGroup, PR_GROUPS, staleChat, statusGroup, STATUS_GROUPS, type SbPrefs, type SortBy } from '../lib/sidebarPrefs'
+import { compareChats, compareRows, filteredOut, keepOrder, moveTo, orderProjects, prGroup, PR_GROUPS, staleChat, statusGroup, STATUS_GROUPS, turnStarts, type SbPrefs, type SortBy, type TurnStarts } from '../lib/sidebarPrefs'
 import type { VisualState } from '../lib/sessionState'
 import { loadPr } from '../lib/pr'
 import { setSbPrefs, useSbPrefs, WorkspaceParams } from './WorkspaceParams'
 import { Skeleton, StatusIcon, SubStateIcon, subStateLabel } from './bits'
-import { Button, Menu, Popover } from './ui'
+import { Button, isMenuKey, Menu, Popover } from './ui'
 import { ideEnabled, isUnread, projectMenu, setUnread, worktreeMenu } from './WorktreeMenu'
 import { useNow } from '../lib/useNow'
 import { useRail } from '../lib/useMedia'
@@ -30,9 +30,10 @@ const CHAT_PREVIEW = 4
 const CHAT_PAGE = 20
 const isFolder = (ws: Workspace) => !ws.isGit || ws.kind === 'folder' || ws.kind === 'root'
 
-const activate = (fn: () => void) => (e: KeyboardEvent) => {
+const activate = (fn: () => void, menu?: () => void) => (e: KeyboardEvent) => {
   if (e.target !== e.currentTarget) return
   if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fn() }
+  if (menu && isMenuKey(e)) { e.preventDefault(); menu() }
 }
 
 export function Sidebar() {
@@ -65,21 +66,42 @@ export function Sidebar() {
   const sbp = useSbPrefs() // «Чаты из CLI», «Скрывать чаты старше» in the workspace parameters
   const openTab = useStore((s) => (s.view.kind === 'wt' ? s.wt[normPath(s.view.cwd)]?.active : null))
   const ageMinute = sbp.chatsMaxAgeDays ? Math.floor(now / 60000) : 0
-  const tree = useMemo(() => buildTree(sessions.filter((s) => (!s.archived || leaving.has(s.id)) && (sbp.showCli || s.origin !== 'cli') &&
-    (filtering || openTab === `s:${s.id}` || !staleChat(sbp, s, ageMinute * 60000))), query, allWorktrees, sbp.sort), [sessions, filtering, query, allWorktrees, leaving, sbp, openTab, ageMinute])
+  const turns = useRef<TurnStarts>(new Map())
+  const tree = useMemo(() => {
+    turns.current = turnStarts(turns.current, sessions) // idempotent: safe however often the memo runs
+    return buildTree(sessions.filter((s) => (!s.archived || leaving.has(s.id)) && (sbp.showCli || s.origin !== 'cli') &&
+      (filtering || openTab === `s:${s.id}` || !staleChat(sbp, s, ageMinute * 60000))), query, allWorktrees, sbp.sort, turns.current)
+  }, [sessions, filtering, query, allWorktrees, leaving, sbp, openTab, ageMinute])
   const rootWs = workspaces.find((w) => w.kind === 'root')
   const projects = workspaces.filter((w) => w.kind !== 'root')
   const prefs = sbp
+  // Nothing changes place under the pointer: the order catches up when it leaves the tree.
+  const [hold, setHold] = useState(false)
+  useMemo(() => noteWorktrees(allWorktrees), [allWorktrees])
+  // The projects folder's agents make worktrees in any project: lists of folded projects too, read again when a turn
+  // there starts or ends (the only way a new worktree shows before someone opens its project).
+  const gitIds = projects.filter((w) => !isFolder(w)).map((w) => w.id).join()
+  const folderSig = tree.all.filter((s) => { const o = workspaces.find((w) => w.id === tree.owner(s)); return !!o && isFolder(o) }).map((s) => s.id + s.status).join()
+  useEffect(() => { void refreshWorktrees(gitIds.split(',').filter(Boolean)) }, [gitIds, folderSig])
+  const madeBy = useMemo(() => {
+    const m = new Map<string, Worktree[]>()
+    for (const list of Object.values(allWorktrees)) for (const w of list) {
+      const id = (w.meta?.createdBy ?? w.createdBy) === 'agent' ? w.meta?.createdBySession : undefined
+      if (id) m.set(id, [...(m.get(id) ?? []), w])
+    }
+    return m
+  }, [allWorktrees])
   // Quiet projects (no sessions, no changes, not on screen) wait behind «Ещё N»; «Скрыть без сессий и изменений» drops them.
   const [showAll, setShowAllState] = useState(() => loadDraft<boolean>('sb:all') ?? false)
   const setShowAll = (v: boolean) => { setShowAllState(v); saveDraft('sb:all', v || null) }
   const activeCwd = useActiveCwd()
   const isActive = (ws: Workspace) =>
     tree.roots.some((x) => tree.owner(x) === ws.id) ||
-    (allWorktrees[ws.id] ?? []).some((w) => (w.dirty ?? 0) > 0) ||
+    (allWorktrees[ws.id] ?? []).some((w) => (w.dirty ?? 0) > 0 || isFresh(w.path, now)) ||
     (!!activeCwd && (normPath(activeCwd) === normPath(ws.path) || normPath(activeCwd).startsWith(`${normPath(ws.path)}/`) || (allWorktrees[ws.id] ?? []).some((w) => normPath(w.path) === normPath(activeCwd))))
-  const lastOf = (ws: Workspace) => Math.max(0, ...tree.all.filter((x) => tree.owner(x) === ws.id).map((x) => x.lastActivityAt), ...(allWorktrees[ws.id] ?? []).map((w) => w.lastActivityAt ?? 0))
-  const ordered = orderProjects(projects, prefs, lastOf)
+  // by turn starts; a worktree's own time (git touches, read with the list) only where no chat is
+  const lastOf = (ws: Workspace) => Math.max(0, ...tree.all.filter((x) => tree.owner(x) === ws.id).map(tree.turnAt), ...(allWorktrees[ws.id] ?? []).filter((w) => !w.sessions).map((w) => w.lastActivityAt ?? 0))
+  const ordered = useHeld(orderProjects(projects, prefs, lastOf), (w) => w.id, hold && prefs.order !== 'manual') // a drag shows at once
   const listed = ordered.filter((w) => !prefs.hiddenProjects.includes(w.id) && (prefs.folders || !isFolder(w)))
   const quiet = filtering ? [] : listed.filter((w) => !isActive(w))
   const compactList = listed.length <= 3
@@ -125,7 +147,8 @@ export function Sidebar() {
       </div>
 
       <SidebarSearch.Provider value={filtering}><MixedAgents.Provider value={new Set(tree.all.map((x) => x.agent)).size > 1}>
-      <div className="tree" aria-label="Проекты и сессии">
+      <HoldOrder.Provider value={hold}><MadeBy.Provider value={madeBy}>
+      <div className="tree" aria-label="Проекты и сессии" onPointerEnter={() => setHold(true)} onPointerLeave={() => setHold(false)}>
         {!filtering && <PinnedSection tree={tree} />}
         {!filtering && <AttentionSection tree={tree} />}
         {!filtering && <WorkingSection tree={tree} sessions={sessions} />}
@@ -165,6 +188,7 @@ export function Sidebar() {
           </div>
         )}
       </div>
+      </MadeBy.Provider></HoldOrder.Provider>
       </MixedAgents.Provider></SidebarSearch.Provider>
 
       <div className="sb-foot">
@@ -222,6 +246,50 @@ function useLeaving(sessions: Session[]): Set<string> {
 
 const clampWidth = (w: number) => Math.round(Math.min(520, Math.max(220, w)))
 
+/** `list`, kept in the order it had on the last render while `hold` (the pointer is over the tree). */
+function useHeld<T>(list: T[], key: (x: T) => string, hold: boolean): T[] {
+  const last = useRef<string[]>([])
+  const out = hold ? keepOrder(list, key, last.current) : list
+  last.current = out.map(key)
+  return out
+}
+
+// Worktrees that appeared while the app is open (an agent or the person just made them): path → first seen.
+// A worktree the harness made carries meta.createdAt (server markWorktree): that survives a reload.
+const knownWt = new Map<string, Set<string>>()
+const bornAt = new Map<string, number>()
+const FRESH = 15 * 60_000
+function noteWorktrees(all: Record<string, Worktree[]>) {
+  for (const [id, list] of Object.entries(all)) {
+    if (!list.length) continue // a failed read: no baseline, or everything would look new
+    for (const w of list) {
+      const made = (w.meta as { createdAt?: number } | undefined)?.createdAt
+      if (made && !bornAt.has(normPath(w.path))) bornAt.set(normPath(w.path), made)
+    }
+    const known = knownWt.get(id)
+    const paths = list.map((w) => normPath(w.path))
+    if (known) for (const p of paths) if (!known.has(p) && !bornAt.has(p)) bornAt.set(p, Date.now())
+    knownWt.set(id, new Set([...(known ?? []), ...paths]))
+  }
+}
+const isFresh = (path: string, now: number) => now - (bornAt.get(normPath(path)) ?? -Infinity) < FRESH
+
+/** Plain lists (one git call each) of these projects; the git facts an open project already read (dirty, ahead) stay. */
+async function refreshWorktrees(ids: string[]) {
+  if (!ids.length) return
+  const lists = await Promise.all(ids.map((id) => api<Worktree[]>('GET', `/workspaces/${encodeURIComponent(id)}/worktrees`).catch(() => null)))
+  setState((s) => {
+    const next = { ...s.worktrees }
+    ids.forEach((id, i) => {
+      const list = lists[i]
+      if (!Array.isArray(list)) return
+      const old = new Map((s.worktrees[id] ?? []).map((w) => [normPath(w.path), w]))
+      next[id] = list.map((w) => { const o = old.get(normPath(w.path)); return o && w.dirty == null ? { ...w, dirty: o.dirty, ahead: o.ahead } : w })
+    })
+    return { worktrees: next }
+  })
+}
+
 function NavItem({ screen, icon, label, end }: { screen: Screen; icon: ReactNode; label: string; end?: ReactNode }) {
   const active = useStore((s) => s.view.kind === 'screen' && s.view.screen === screen)
   const rail = useRail() // icons only: the name comes as a tooltip
@@ -243,6 +311,7 @@ interface Tree {
   system: Session[] // harness-internal sessions: «Служебное»
   all: Session[] // every listed chat (roots and their workers), for the attention section
   from: Map<string, Session> // a child shown under its own worktree → the parent it came from («от: …»)
+  turnAt: (s: Session) => number // when it last started a turn: what the activity orders go by
 }
 
 /** The worktree a session belongs to: worktreePath from the server, else the longest known worktree containing its cwd. */
@@ -252,7 +321,7 @@ export function worktreeOf(s: Session, paths: string[]): string | null {
   return paths.filter((p) => cwd === p || cwd.startsWith(`${p}/`)).sort((a, b) => b.length - a.length)[0] ?? null
 }
 
-function buildTree(sessions: Session[], query: string, worktrees: Record<string, Worktree[]>, sort: SortBy): Tree {
+function buildTree(sessions: Session[], query: string, worktrees: Record<string, Worktree[]>, sort: SortBy, turns: TurnStarts): Tree {
   // A known worktree decides the project (a folder workspace may contain another project's worktrees).
   const byPath = new Map<string, string>()
   for (const [id, list] of Object.entries(worktrees)) for (const w of list) byPath.set(normPath(w.path), id)
@@ -286,7 +355,7 @@ function buildTree(sessions: Session[], query: string, worktrees: Record<string,
       (kids.get(s.id) ?? []).some(hit)
     roots = roots.filter(hit)
   }
-  return { owner, roots, kids, loose: roots.filter((s) => !owner(s)), terminals, system, all: sorted, from }
+  return { owner, roots, kids, loose: roots.filter((s) => !owner(s)), terminals, system, all: sorted, from, turnAt: (s) => turns.get(s.id)?.at ?? s.lastActivityAt }
 }
 
 const WAITS: Partial<Record<string, string>> = { waiting_permission: 'разрешение', waiting_answer: 'вопрос', auth: 'вход', stalled: 'нет вывода', error: 'ошибка', interrupted: 'прервана' }
@@ -391,7 +460,7 @@ function WorkingSection({ tree, sessions }: { tree: Tree; sessions: Session[] })
               via={s.parentId !== parent.id ? tree.all.find((p) => p.id === s.parentId)?.title : undefined} />)}
           </div>
         ))}
-        <button type="button" className="tree-row tree-more" style={depth(1)} onClick={() => { setState({ agentsMode: 'running' }); openScreen('agents') }}>Все работающие агенты · {list.length}</button>
+        <button type="button" className="tree-row tree-more" style={depth(1)} onClick={() => { setState({ agentsMode: 'run' }); openScreen('agents') }}>Все работающие агенты · {list.length}</button>
       </>}
     </section>
   )
@@ -424,6 +493,8 @@ const ATTENTION = new Set(['waiting_answer', 'waiting_permission', 'stalled', 'a
 /** The agent's letter on rows only when the tree mixes agents (GigaCode and Claude): one agent needs no badge. */
 const MixedAgents = createContext(false)
 const SidebarSearch = createContext(false)
+const HoldOrder = createContext(false) // the pointer is over the tree: rows keep their places
+const MadeBy = createContext(new Map<string, Worktree[]>()) // chat id → the worktrees its agent made
 const BUSY = new Set(['running', 'starting'])
 
 interface WtRow {
@@ -456,7 +527,7 @@ function worktreeRows(ws: Workspace, worktrees: Worktree[] | undefined, tree: Tr
       dup: (names.get(wt.meta?.label || wt.branch || basename(wt.path)) ?? 0) > 1,
       matters: worktreeMatters(wt, here, wt.taskStatus ?? task?.status, active, now, terms.length),
       rank: attention ? 0 : states.some((v) => BUSY.has(v)) ? 1 : 2,
-      last: Math.max(wt.lastActivityAt ?? 0, ...here.map((s) => s.lastActivityAt)),
+      last: here.length ? Math.max(...here.map(tree.turnAt)) : wt.lastActivityAt ?? 0, // chats: by turn starts, not each event
       name: wt.meta?.label || basename(wt.path),
       created: wt.meta?.createdAt ?? (here.length ? Math.min(...here.map((s) => s.createdAt)) : 0),
       changes: wt.dirty ?? 0,
@@ -470,6 +541,7 @@ function arrange(rows: WtRow[], p: SbPrefs): WtRow[] {
     .filter((r) => r.attention || r.active || r.wt.orphan || !filteredOut(p, {
       main: r.wt.main, detached: !!r.wt.detached || (!r.wt.branch && !!r.wt.head), sleeping: !!r.wt.meta?.sleeping,
       createdBy: r.wt.meta?.createdBy ?? r.wt.createdBy, empty: !r.here.length && !r.terms.length && !(r.wt.dirty ?? 0) && !(r.wt.ahead ?? 0),
+      chats: r.here.some((s) => s.origin !== 'cli'),
     }))
     .sort(compareRows(p.sort))
 }
@@ -487,8 +559,8 @@ function GroupedWorktrees({ projects, tree }: { projects: Workspace[]; tree: Tre
   useEffect(() => {
     for (const id of key.split(',').filter(Boolean)) if (!(id in getState().worktrees)) void loadWorktrees(id).then(() => loadWorktrees(id, true))
   }, [key])
-  const rows = useMemo(() => arrange(projects.flatMap((ws) => worktreeRows(ws, worktrees[ws.id], tree, tasks, activeCwd, now)), prefs),
-    [projects, worktrees, tree, tasks, activeCwd, now, prefs])
+  const rows = useHeld(useMemo(() => arrange(projects.flatMap((ws) => worktreeRows(ws, worktrees[ws.id], tree, tasks, activeCwd, now)), prefs),
+    [projects, worktrees, tree, tasks, activeCwd, now, prefs]), (r) => r.wt.path, useContext(HoldOrder))
   const prOf = (r: WtRow) => {
     const c = prs[wtKey(r.wt.path)]
     return (c && typeof c === 'object' && 'state' in c ? c : null) ?? r.wt.pr ?? r.task?.pr ?? null
@@ -540,7 +612,8 @@ function ProjectNode({ ws, tree, filtering, drag, activeTab }: {
   // Open by default only where something is; a choice the user made sticks.
   const [choice, setChoice] = useState(() => loadDraft<boolean>(`sb:open:${ws.id}`))
   const isRoot = ws.kind === 'root'
-  const open = choice ?? (holdsActive || (!isRoot && mine.length > 0))
+  // …and where an agent has just made a worktree (often from the projects folder: no chat of its own here)
+  const open = choice ?? (holdsActive || (!isRoot && mine.length > 0) || (worktrees ?? []).some((w) => isFresh(w.path, now)))
   const [chatLimit, setChatLimit] = useState(filtering ? CHAT_PAGE : CHAT_PREVIEW)
   const toggle = () => { setChoice(!open); saveDraft(`sb:open:${ws.id}`, !open); setChatLimit(CHAT_PREVIEW) }
   const [moreChoice, setMoreChoice] = useState(() => loadDraft<boolean>(`sb:more:${ws.id}`) ?? false)
@@ -559,7 +632,8 @@ function ProjectNode({ ws, tree, filtering, drag, activeTab }: {
     if (expanded && ws.isGit && !plain) void loadWorktrees(ws.id).then(() => loadWorktrees(ws.id, true)) // rows at once, badges next
   }, [expanded, ws.id, ws.isGit, plain, sig])
 
-  const rows = useMemo(() => plain || !expanded ? [] : arrange(worktreeRows(ws, worktrees, tree, tasks, activeCwd, now), prefs), [plain, expanded, ws, worktrees, tree, tasks, activeCwd, now, prefs])
+  const rows = useHeld(useMemo(() => plain || !expanded ? [] : arrange(worktreeRows(ws, worktrees, tree, tasks, activeCwd, now), prefs),
+    [plain, expanded, ws, worktrees, tree, tasks, activeCwd, now, prefs]), (r) => r.wt.path, useContext(HoldOrder))
   const visible = filtering ? rows.filter((r) => r.here.length > 0) : moreChoice ? rows : rows.filter((r) => r.matters)
   const hidden = filtering ? 0 : rows.length - rows.filter((r) => r.matters).length
 
@@ -576,7 +650,7 @@ function ProjectNode({ ws, tree, filtering, drag, activeTab }: {
       <div ref={projRow} className="tree-row tree-project" role="button" tabIndex={0} aria-expanded={expanded} data-tip={isRoot ? `Папка с проектами · ${ws.path}` : plain ? ws.path : ws.name} data-tip-trunc={!isRoot || undefined} onClick={toggle}
         onKeyDown={(e) => {
           if (drag && e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) { e.preventDefault(); drag.onStep(e.key === 'ArrowUp' ? -1 : 1); return }
-          activate(toggle)(e)
+          activate(toggle, () => setMenu(true))(e)
         }}
         aria-keyshortcuts={drag ? 'Alt+ArrowUp Alt+ArrowDown' : undefined}
         draggable={!!drag}
@@ -694,12 +768,17 @@ function WorktreeRow({ ws, wt, sessions, terminals, dup, kids, active, fromOf, p
   const errDelete = (typeof err === 'object' && err?.op === 'delete') || /^Не удалось удалить/.test(errFull ?? '')
   const errTitle = errHead?.[1] ?? (errDelete ? 'Не удалось удалить' : 'Ошибка')
   const errText = errHead?.[2] || errFull
+  // made by an agent: which chat (worktrees from the projects folder's chats are otherwise a mystery)
+  const byAgent = (wt.meta?.createdBy ?? wt.createdBy) === 'agent'
+  const maker = useStore((s) => (byAgent && wt.meta?.createdBySession ? s.sessions.find((x) => x.id === wt.meta?.createdBySession) : undefined))
+  const makerTip = maker ? `Создал агент в чате «${maker.title || maker.id}» — открыть чат` : 'Создано агентом'
+  const fresh = isFresh(wt.path, useNow())
   return (
-    <div className="wt" data-active={active} data-sleeping={mark === 'sleep' || undefined}>
+    <div className="wt" data-active={active} data-sleeping={mark === 'sleep' || undefined} data-new={fresh || undefined}>
       <div ref={row} className="tree-row tree-wt" role="button" tabIndex={0} style={depth(1)}
-        data-tip={wt.branch ? `${name}\n${wt.branch}` : name}
+        data-tip={[name, wt.branch, byAgent && (maker ? `создано агентом · чат «${maker.title || maker.id}»` : 'создано агентом')].filter(Boolean).join('\n')}
         aria-current={active ? 'location' : undefined} onClick={pick}
-        onKeyDown={activate(pick)}
+        onKeyDown={activate(pick, () => setMenu(true))}
         onContextMenu={(e) => { e.preventDefault(); setMenu(true) }}>
         {sessions.length > 0 ? (
           <button type="button" className="caret" aria-expanded={!folded} aria-label={folded ? 'Показать агентов' : 'Свернуть агентов'}
@@ -708,7 +787,7 @@ function WorktreeRow({ ws, wt, sessions, terminals, dup, kids, active, fromOf, p
           </button>
         ) : <span className="caret-space" aria-hidden />}
         <span className="wt-mark" data-mark={mark} aria-label={mark === 'sleep' ? 'спит' : mark === 'attention' ? 'нужно внимание' : mark === 'busy' ? 'агенты работают' : undefined}>
-          {mark === 'sleep' ? <Moon aria-hidden /> : mark === 'busy' ? <Activity aria-hidden /> : mark === 'attention' ? <span className="wt-dot" /> : wt.main ? <House aria-label="Основное рабочее дерево" /> : <GitBranch aria-hidden />}
+          {mark === 'sleep' ? <Moon aria-hidden /> : mark === 'busy' ? <span className="run-ring" /> : mark === 'attention' ? <span className="wt-dot" /> : wt.main ? <House aria-label="Основное рабочее дерево" /> : <GitBranch aria-hidden />}
         </span>
         <span className="label">
           {wt.main ? wt.branch ?? name : name}
@@ -716,6 +795,11 @@ function WorktreeRow({ ws, wt, sessions, terminals, dup, kids, active, fromOf, p
           {dup && <span className="tree-path"> · {basename(wt.path)}</span>}
           {project && <span className="tree-path"> · {project}</span>}
         </span>
+        {fresh && <span className="wt-new">новое</span>}
+        {byAgent && (maker
+          ? <button type="button" className="wt-maker" aria-label={makerTip} data-tip={makerTip}
+            onClick={(e) => { e.stopPropagation(); openSession(maker.id) }} onKeyDown={(e) => e.stopPropagation()}><Bot aria-hidden /></button>
+          : <span className="wt-maker" role="img" aria-label={makerTip} data-tip={makerTip}><Bot aria-hidden /></span>)}
         {wt.meta?.pinned && <Pin className="wt-pin" aria-label="закреплено" />}
         {unread && <span className="wt-unread" aria-label="непрочитано" />}
         <span className="wt-badges">
@@ -851,6 +935,9 @@ function SessionRowView({ s, nested, level = 0, caret, via, from, showLocation }
   const catalog = useStore((st) => st.agents.find((x) => x.id === s.agent)?.models)
   const model = !cards.showModel ? '' : s.kind === 'terminal' ? 'shell' : modelId ? modelLabel(modelId, normModels(catalog)).replace(/-\d+[km]$/i, '') : mixed ? s.agent : ''
   const when = cards.showTime ? relTime(s.lastActivityAt, now).replace('только что', 'сейчас') : '' // short: the title needs the room
+  // worktrees its agent made elsewhere (a chat in the projects folder makes them in the projects): which, and one click there
+  const made = (useContext(MadeBy).get(s.id) ?? []).filter((w) => normPath(w.path) !== normPath(s.worktreePath ?? s.cwd))
+  const madeTip = made.length ? `Агент создал рабочие ${made.length > 1 ? 'деревья' : 'дерево'}: ${made.map((w) => w.meta?.label || basename(w.path)).join(', ')} — открыть ${made[0].meta?.label || basename(made[0].path)}` : ''
   return (
     <>
     <div
@@ -868,7 +955,7 @@ function SessionRowView({ s, nested, level = 0, caret, via, from, showLocation }
       aria-current={current ? 'true' : undefined}
       data-tip={editing ? undefined : s.title || s.id} data-tip-trunc
       onClick={editing ? undefined : open}
-      onKeyDown={editing ? undefined : activate(open)}
+      onKeyDown={editing ? undefined : activate(open, () => setMenu(true))}
       onContextMenu={(e) => { e.preventDefault(); setMenu(true) }}
       style={depth(level)}
     >
@@ -907,6 +994,12 @@ function SessionRowView({ s, nested, level = 0, caret, via, from, showLocation }
             {showLocation && basename(s.worktreePath ?? s.cwd)}{showLocation && detailed && ' · '}{detailed && doing}
           </span>}
         </span>
+      )}
+      {made.length > 0 && (
+        <button type="button" className="wt-stat wt-term num" aria-label={madeTip} data-tip={madeTip}
+          onClick={(e) => { e.stopPropagation(); openWorktree(made[0].path) }} onKeyDown={(e) => e.stopPropagation()}>
+          <GitBranch aria-hidden />{made.length}
+        </button>
       )}
       {model && <span className="sess-model">{model}</span>}
       {when && <span className="sess-time">{when}</span>}

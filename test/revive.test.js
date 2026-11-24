@@ -9,7 +9,11 @@ import { startTestServer, tmpDir, rmrf, waitFor } from './helpers.js';
 const root = tmpDir();
 let h;
 before(async () => {
-  h = await startTestServer({ session: { stallSec: 1, stallCheckSec: 0.3, revive: { attempts: 2, delaysSec: [0.2, 0.3], stallWakeMin: 0.02 } } });
+  h = await startTestServer({
+    session: { stallSec: 1, stallCheckSec: 0.3, revive: { attempts: 2, delaysSec: [0.2, 0.3], stallWakeMin: 0.02 } },
+    // one cold start at a time (agents.<id>.maxStarting)
+    agents: { mockone: { launcher: 'mock', label: 'Mock one', approvalMode: 'auto', approvalModes: ['default', 'auto'], maxStarting: 1, spawnGapMs: 0, modelsDiscovery: null } },
+  });
 });
 after(async () => {
   await h.close();
@@ -122,4 +126,16 @@ test('«Прервать и отправить»: the running turn stops, the qu
   const ms = await messages(s.id);
   assert.ok(ms.some((m) => m.text === 'Остановлено пользователем'));
   assert.equal((await session(s.id)).queued, 0);
+});
+
+test('cold starts of one agent wait for a slot (maxStarting): the second chat says it waits, then runs', async () => {
+  // the first process says nothing for a while: it holds the only start slot
+  const a = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mockone', cwd: root, prompt: '#silent 2500' })).body;
+  await waitFor(async () => (await session(a.id)).pid, { what: 'first started' });
+  const b = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mockone', cwd: root, prompt: 'привет' })).body;
+  const waiting = await waitFor(async () => { const x = await session(b.id); return x.startWait === 1 && x; }, { what: 'second waits' });
+  assert.equal(waiting.phase, 'starting');
+  assert.equal(waiting.pid, null, 'nothing spawned while the slot is taken');
+  await waitFor(async () => { const x = await session(b.id); return x.status === 'idle' && !x.startWait; }, { timeout: 15000, what: 'second ran after the first' });
+  assert.ok((await messages(b.id)).some((m) => m.kind === 'assistant'));
 });

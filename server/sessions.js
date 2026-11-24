@@ -92,7 +92,7 @@ export const contextSize = (v) => {
 /** A tool call whose turn ended without its result (stopped, crashed, the harness restarted): never «running» again. */
 export const UNFINISHED_TOOL = 'Ход закончился без результата этого вызова.';
 const MCP_GRACE_MS = 60000; // GigaCode connects its MCP servers at start: a minute with no word from them is none
-export const MCP_MISSING = '⚠ Похоже, агенту не подключились MCP-серверы: за этот запуск GigaCode ни разу не обратился к инструментам harness (вероятно, onework и sourcecontrol тоже недоступны — агент их не найдёт). Частая причина — параллельно работающий процесс агента (GigaCode держит свои файлы на время старта, в stderr при этом бывает «store is busy» или «protected storage is unavailable»). Меню чата «Ещё» → «Сбросить статус» перезапустит процесс агента, контекст сохранится.';
+export const MCP_MISSING = '⚠ Похоже, агенту не подключились MCP-серверы: за этот запуск GigaCode ни разу не обратился к инструментам harness (вероятно, onework и sourcecontrol тоже недоступны — агент их не найдёт). Частая причина — параллельно работающий процесс агента (GigaCode держит свои файлы на время старта, в stderr при этом бывает «store is busy» или «protected storage is unavailable»). Меню чата «Ещё» → «Переподключить MCP» перезапустит процесс агента, контекст чата сохранится.';
 
 /**
  * The queued messages as one prompt. A slash command («/full-task …») works only as the prompt's first word: queued
@@ -324,7 +324,9 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
    */
   function sandboxed(s, cfg) {
     const defaults = launchers[cfg.launcher]?.defaults || {};
-    const agentCfg = db.agentMeta[s.agent]?.partialUnsupported ? { ...cfg, partialMessagesFlag: null } : cfg; // the CLI rejected it once
+    let agentCfg = db.agentMeta[s.agent]?.partialUnsupported ? { ...cfg, partialMessagesFlag: null } : cfg; // the CLI rejected it once
+    // only when the person says so: the user's own GigaCode hooks stay on in the harness's runs by default
+    if (agentCfg.userHooks === false) agentCfg = { ...agentCfg, settings: { ...agentCfg.settings, disableAllHooks: true } };
     const sandbox = agentCfg.autoSandbox === undefined ? defaults.autoSandbox ?? null : agentCfg.autoSandbox;
     if (!db.agentMeta[s.agent]?.sandboxBroken) return sandbox === agentCfg.autoSandbox ? agentCfg : { ...agentCfg, autoSandbox: sandbox };
     return { ...agentCfg, autoSandbox: null, approvalModeMap: { ...(agentCfg.approvalModeMap ?? defaults.approvalModeMap ?? {}), auto: 'auto-edit' } };
@@ -645,6 +647,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     if (r.closedEarly) return;
     const c = r.cur;
     s.lastActivityAt = Date.now();
+    r.releaseSlot?.(); // it started (or waits for a login): the next process of this agent may start
     if (ev.type !== 'auth') {
       s.lastEventAt = s.lastActivityAt;
       s.everStarted ||= true; // some turn of this session produced output: an error later is not «не запустился»
@@ -1106,7 +1109,46 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
 
   const spawnAt = new Map(); // agent -> when its next process may start
   /** Several processes of one agent started at the same moment collide on its own files (GigaCode: «Extension store is busy»). */
-  async function spawnSlot(agent, r) {
+  /**
+   * At most agents.<id>.maxStarting processes of one agent COLD-START at once (default 4; 0 = no limit) — not a limit on
+   * agents at work: the slot is held only until the process says something (first event) or the turn ends, at most
+   * START_SLOT_MAX_MS. Each GigaCode start loads every MCP server of the user's settings, and many at the same moment
+   * stalled the machine (initialize and hooks timed out, the extension store and its lock were «busy»). A gap
+   * (spawnGapMs) still spreads the starts that do run together.
+   */
+  async function spawnSlot(agent, r, s) {
+    const limit = Number(config.agents[agent]?.maxStarting ?? 4);
+    const max = limit > 0 ? limit : Infinity;
+    while ((startingNow.get(agent) || 0) >= max) {
+      if (s) {
+        Object.assign(s, { startWait: (startWaiters.get(agent)?.length || 0) + 1, phase: 'starting' });
+        emit(s);
+      }
+      await new Promise((res) => {
+        const list = startWaiters.get(agent) || [];
+        list.push(res);
+        startWaiters.set(agent, list);
+        r.slotWake = () => { startWaiters.set(agent, (startWaiters.get(agent) || []).filter((x) => x !== res)); res(); };
+      });
+      r.slotWake = null;
+      if (r.stopRequested) return;
+    }
+    if (s?.startWait) {
+      s.startWait = 0;
+      emit(s);
+    }
+    startingNow.set(agent, (startingNow.get(agent) || 0) + 1);
+    let held = true;
+    const timer = setTimeout(() => r.releaseSlot?.(), START_SLOT_MAX_MS);
+    timer.unref?.();
+    r.releaseSlot = () => {
+      if (!held) return;
+      held = false;
+      r.releaseSlot = null;
+      clearTimeout(timer);
+      startingNow.set(agent, Math.max(0, (startingNow.get(agent) || 0) - 1));
+      startWaiters.get(agent)?.shift()?.();
+    };
     const gap = config.agents[agent]?.spawnGapMs ?? 1200;
     const at = Math.max(Date.now(), (spawnAt.get(agent) || 0) + gap);
     spawnAt.set(agent, at);
@@ -1114,9 +1156,23 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     if (at > Date.now()) await new Promise((res) => { const t = setTimeout(res, at - Date.now()); r.slotWake = () => { clearTimeout(t); res(); }; });
     r.slotWake = null;
   }
+  const startingNow = new Map(); // agent -> processes cold-starting now
+  const startWaiters = new Map(); // agent -> wake-ups of turns waiting for a start slot, in order
+  const START_SLOT_MAX_MS = 180000; // a start that never speaks gives its slot away after this
   // «Unable to update lock within the stale threshold»: GigaCode's file lock lost to another process starting at the same
   // time (seen 2026-11-21, ACP, exit 1 before any event). «protected storage is unavailable»: its secret store lost the
   // same race — the second process cannot write there, so waiting and starting again is the whole fix.
+  const HOOK_TIMEOUT = /hook-execution-response/i;
+  const hookTimedOut = (res) => HOOK_TIMEOUT.test(`${res.error || ''}\n${res.stderrTail || ''}`);
+  /** «Хук … не ответил»: the stderr line that names the hook (event or command) when there is one. */
+  function hookText(s, res) {
+    const line = String(res.stderrTail || '').split('\n').map((l) => l.trim()).filter((l) => /hook/i.test(l) && !HOOK_TIMEOUT.test(l)).at(-1);
+    return `Хук ${config.agents[s.agent]?.label || s.agent} не ответил вовремя (hook-execution-response)${line ? `: ${line.slice(0, 300)}` : ''}. Хуки задаются в ~/.gigacode/settings.json (ключ hooks) — проверьте тот, что срабатывает на каждый промпт (UserPromptSubmit) или на старте (SessionStart).`;
+  }
+  const CLI_LIVE_MS = 3 * 60000; // the adopt pass runs every minute: a CLI chat written to within this is still in use
+  // not worth starting again by itself: the executable, the launcher or the config is wrong (the person fixes it)
+  const START_FATAL = /Не удалось запустить агента|ENOENT|нет режима ACP|не найден|неизвестный лаунчер|не настроен|не существует|недоступн/i;
+  const START_RETRY_SEC = [20, 60, 180];
   const START_BUSY = /ExtensionStoreBusyError|store is busy|EBUSY|resource busy or locked|Unable to update lock within the stale threshold|Lock file is already being held|protected storage is unavailable/i;
 
   /**
@@ -1179,8 +1235,9 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     r.cur = { assistant: null, thought: null, raw: null, tools: new Map(), subTools: new Map(), gotText: false };
     // re-queued items (their process never started) are in the transcript already
     const userMsgs = retry ? [] : items.filter((it) => !it.recorded).map((it) => addMessage(s, { kind: 'user', text: it.text, from: it.from, ...(it.options ? { options: it.options } : {}) }));
-    Object.assign(s, { status: 'running', errorKind: null, queued: 0, lastActivityAt: Date.now(), lastEventAt: null, stalled: false, turnClosing: false });
+    Object.assign(s, { status: 'running', errorKind: null, queued: 0, lastActivityAt: Date.now(), lastEventAt: null, stalled: false, turnClosing: false, startRetryAt: null });
     if (s.origin === 'cli' && !s.cliImportedAt) s.cliImportedAt = Date.now(); // an adopted CLI chat: the harness took over
+    if (s.cliLiveAt) s.cliLiveAt = null; // taken over (or the CLI is done): the chat is the harness's now
     hooks.turnStarted?.(s);
     const approvalOnce = s.approvalOnce; // an edit tool allowed once in plan/default mode: this turn only
     delete s.approvalOnce;
@@ -1252,7 +1309,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
       const carrier = userMsgs.at(-1) || store.messages(s.id).findLast((m) => m.kind === 'user');
       if (carrier) updateMessage(s, Object.assign(carrier, { runInfo }));
       fs.mkdirSync(runDir(s.id), { recursive: true });
-      if (!(agentCfg.transport === 'acp' && s.warm)) await spawnSlot(s.agent, r); // a warm ACP process starts nothing
+      if (!(agentCfg.transport === 'acp' && s.warm)) await spawnSlot(s.agent, r, s); // a warm ACP process starts nothing
       if (r.stopRequested) throw Object.assign(new Error('stopped before start'), { beforeStart: true }); // stopped while waiting for its slot
       launcher.prepare(ctx);
       r.registryTimer = setInterval(() => pollRegistry(s), REGISTRY_POLL_MS);
@@ -1293,6 +1350,8 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     } catch (e) {
       res = e.beforeStart ? { stopped: true, stderrTail: '', eventCount: 0 } : { error: e.message, action: e.action };
     }
+    r.releaseSlot?.();
+    if (s.startWait) s.startWait = 0;
     // the start collided with another process of the agent («Extension store is busy»): the same messages again in a few
     // seconds — not «Агент не запустился»
     const busy = (`${res.error || ''} ${res.stderrTail || ''}`.match(START_BUSY) || [])[0];
@@ -1315,9 +1374,30 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
       s.queue.unshift(...items.map((it) => ({ ...it, recorded: true })));
       s.queued = s.queue.length;
       r.requeued = true;
-      res.error += `\nСообщений в очереди: ${s.queue.length} — уйдут со следующим сообщением или после смены модели.`;
+      // a start that timed out or died on a loaded machine is tried again by itself: a worker's messages from its
+      // coordinator must not wait for a person to press «Повторить». A missing executable or model waits for the person.
+      const n = r.startFails || 0;
+      if (!res.action && !START_FATAL.test(res.error) && n < START_RETRY_SEC.length) {
+        r.startFails = n + 1;
+        const sec = START_RETRY_SEC[n];
+        const due = Date.now() + sec * 1000;
+        s.startRetryAt = due;
+        res.error += `\nПовторю запуск сам через ${sec} с (попытка ${n + 2} из ${START_RETRY_SEC.length + 1}); сообщений в очереди: ${s.queue.length}.`;
+        const t = setTimeout(() => {
+          const x = find(s.id);
+          if (!x || x.startRetryAt !== due || x.archived || x.status === 'stopped' || runtime(s.id).running || !x.queue.length) return;
+          startTurn(x);
+        }, sec * 1000);
+        t.unref?.();
+      } else {
+        res.error += `\nСообщений в очереди: ${s.queue.length} — уйдут со следующим сообщением или после смены модели.`;
+      }
     }
-    if (res.eventCount) r.startRetries = 0; // it started: the next collision gets its retries again
+    if (res.eventCount) {
+      r.startRetries = 0; // it started: the next collision gets its retries again
+      r.startFails = 0;
+    }
+    if (res.sawResult && !res.error) r.hookRetried = false; // a good turn: the next hook timeout gets its retry again
     if (!res.detached) finishTurn(s, res);
   }
 
@@ -1477,8 +1557,16 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     } else if (unadopted && !res.sawResult) {
       // the saved pid is gone or now belongs to another process: what the file had is shown, the rest is lost
       markInterrupted(s);
+    } else if (hookTimedOut(res) && !r.hookRetried && r.lastItems) {
+      // a hook of the person's GigaCode did not answer (often a loaded machine at start): said so, which hook if stderr
+      // names it, and the turn once more on a fresh process — nothing is switched off behind the person's back
+      r.hookRetried = true;
+      acp.drop(s.id);
+      addMessage(s, { kind: 'system', text: `⚠ ${hookText(s, res)} Повторяю ход на новом процессе агента.` });
+      r.retryItems = r.lastItems; // a prompt hook that hangs: the prompt never reached the model — the same messages again
     } else if (res.error) {
-      addMessage(s, { kind: 'error', text: `${res.error}${tail(res.stderrTail)}`, ...(res.action ? { action: res.action } : {}) });
+      const hook = hookTimedOut(res) ? `\n${hookText(s, res)} Если он мешает только запускам из харнесса — agents.${s.agent}.userHooks: false отключит хуки в них.` : '';
+      addMessage(s, { kind: 'error', text: `${res.error}${hook}${tail(res.stderrTail)}`, ...(res.action ? { action: res.action } : {}) });
       status = 'error';
     } else if (res.authTimedOut) {
       const min = Math.round((config.agents[s.agent]?.authTimeoutMs || 600000) / 60000);
@@ -1809,6 +1897,11 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     messages: (sid) => (get(sid), store.messages(sid)),
     children: (sid) => db.sessions.filter((s) => s.parentId === sid),
     isRunning: (sid) => runtime(sid).running,
+    /** A CLI chat the CLI itself wrote to within CLI_LIVE_MS (server/adopt.js cliLiveAt): read-only here meanwhile. */
+    cliLive(sid) {
+      const s = find(sid);
+      return !!s && s.origin === 'cli' && !runtime(sid).running && Date.now() - (s.cliLiveAt || 0) < CLI_LIVE_MS;
+    },
     attachmentsDir: (sid) => (get(sid), attachmentsDir(sid)),
     subagents: (sid) => (get(sid), readRegistry(registryDir(sid), { idleWindowSec: config.session.idleWindowSec })),
     /** An informational line in a chat that does not wake the agent. */
@@ -2155,9 +2248,23 @@ ${note.trim()}` : text });
       if (sid && find(sid)) runtime(sid).mcpAt = Date.now();
     },
 
-    async restart(sid) {
+    async restart(sid, { keepContext = false } = {}) {
       const s = get(sid);
       const r = runtime(sid);
+      if (keepContext && s.kind === 'chat') {
+        // «Переподключить MCP»: a new agent process (its MCP servers start again) on the SAME CLI session — ACP loads it
+        // with session/load, headless resumes it with --resume. A running turn is cut and continued in the new process.
+        if (s.virtual) fail(409, 'внутренний субагент перезапускается вместе с родительским чатом');
+        if (r.running) {
+          r.reviveKill = 'перезапуск агента: MCP-серверы подключаются заново';
+          r.handle?.stop();
+          r.slotWake?.();
+          if (!(s.queue || []).some(isContinue)) s.queue.push({ id: newId('q'), from: 'harness', at: Date.now(), text: CONTINUE('агент перезапущен, MCP-серверы подключены заново') });
+        }
+        acp.drop(sid);
+        addMessage(s, { kind: 'system', text: '↻ Агент перезапущен: MCP-серверы подключаются заново, контекст чата и сессии CLI сохранён.' });
+        return emit(s);
+      }
       if (s.kind === 'terminal') {
         const pty = await loadPty();
         const old = r.pty;

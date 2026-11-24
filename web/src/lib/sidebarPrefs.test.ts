@@ -1,7 +1,7 @@
 // Run: node --test web/src/lib/sidebarPrefs.test.ts
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { DEFAULT_PREFS, compareChats, compareRows, filteredOut, hidesSomething, isDefault, moveTo, orderProjects, prGroup, staleChat, statusGroup } from './sidebarPrefs.ts'
+import { DEFAULT_PREFS, compareChats, compareRows, filteredOut, hidesSomething, isDefault, keepOrder, loadPrefs, moveTo, orderProjects, prGroup, staleChat, statusGroup, turnStarts } from './sidebarPrefs.ts'
 
 const wt = { main: false, detached: false, sleeping: false, createdBy: 'user', empty: false }
 
@@ -10,8 +10,9 @@ test('filters: each switch hides its kind; older worktrees count as made outside
   assert.equal(filteredOut({ ...DEFAULT_PREFS, hideSleeping: true }, { ...wt, sleeping: true }), true)
   assert.equal(filteredOut({ ...DEFAULT_PREFS, hideMain: true }, { ...wt, main: true }), true)
   assert.equal(filteredOut({ ...DEFAULT_PREFS, hideAgentMade: true }, { ...wt, createdBy: 'agent' }), true)
-  assert.equal(filteredOut({ ...DEFAULT_PREFS, hideExternal: true }, { ...wt, createdBy: undefined }), true)
-  assert.equal(filteredOut({ ...DEFAULT_PREFS, hideExternal: true }, { ...wt, main: true, createdBy: undefined }), false)
+  assert.equal(filteredOut({ ...DEFAULT_PREFS, showCli: false }, { ...wt, createdBy: undefined }), true)
+  assert.equal(filteredOut({ ...DEFAULT_PREFS, showCli: false }, { ...wt, main: true, createdBy: undefined }), false)
+  assert.equal(filteredOut({ ...DEFAULT_PREFS, showCli: false }, { ...wt, createdBy: 'external', chats: true }), false, 'harness chats work in it')
   assert.equal(filteredOut({ ...DEFAULT_PREFS, hideDetached: true }, { ...wt, detached: true }), true)
   assert.equal(filteredOut({ ...DEFAULT_PREFS, hideEmpty: true }, { ...wt, empty: true }), true)
 })
@@ -77,6 +78,31 @@ test('«Скрывать чаты старше N дней»: by last activity; a
   assert.equal(staleChat(p, { ...old, status: 'running' }, now), false)
   assert.equal(staleChat(p, { ...old, waitingFor: 'answer' }, now), false)
   assert.equal(hidesSomething(p), true)
+})
+
+test('saved prefs: the old «скрыть созданные вне harness» turns «Из CLI» off; unknown keys go', () => {
+  assert.deepEqual(loadPrefs(null), DEFAULT_PREFS)
+  assert.equal(loadPrefs({ hideExternal: true }).showCli, false)
+  assert.equal(loadPrefs({ hideExternal: false, showCli: false }).showCli, false)
+  assert.equal(loadPrefs({ hideExternal: false, group: 'pr' }).showCli, true)
+  assert.equal('hideExternal' in loadPrefs({ hideExternal: true }), false)
+})
+
+test('activity order: a chat moves when a turn starts, not on each streamed event', () => {
+  let t = turnStarts(new Map(), [{ id: 'a', status: 'idle', lastActivityAt: 10 }, { id: 'b', status: 'running', lastActivityAt: 20 }])
+  assert.deepEqual([t.get('a')?.at, t.get('b')?.at], [10, 20])
+  t = turnStarts(t, [{ id: 'a', status: 'idle', lastActivityAt: 10 }, { id: 'b', status: 'running', lastActivityAt: 99 }])
+  assert.equal(t.get('b')?.at, 20, 'streaming keeps its place')
+  t = turnStarts(t, [{ id: 'a', status: 'running', lastActivityAt: 50 }, { id: 'b', status: 'idle', lastActivityAt: 120 }])
+  assert.deepEqual([t.get('a')?.at, t.get('b')?.at], [50, 20], 'a started a turn; b ending one does not move')
+  assert.deepEqual(turnStarts(t, [{ id: 'a', status: 'running', lastActivityAt: 70 }]).get('a')?.at, 50, 'idempotent')
+})
+
+test('held order: nothing moves under the pointer, new items after', () => {
+  const ids = (list: string[], held: string[]) => keepOrder(list, (x) => x, held).join('')
+  assert.equal(ids(['c', 'a', 'b'], ['a', 'b', 'c']), 'abc')
+  assert.equal(ids(['d', 'c', 'a', 'b'], ['a', 'b', 'c']), 'abcd')
+  assert.equal(ids(['b', 'a'], ['a', 'x', 'b']), 'ab')
 })
 
 test('chat rows stay in creation order as activity changes, unless sorted by name', () => {

@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { startServer } from '../server/index.js';
 import { CODE_ROOT } from '../server/config.js';
-import { acpEvents, acpMcpServers } from '../server/acp.js';
+import { acpEvents, acpMcpServers, patientRequest } from '../server/acp.js';
 import { tmpDir, rmrf, waitFor, waitPidGone } from './helpers.js';
 
 const root = tmpDir();
@@ -17,6 +17,9 @@ const configFile = path.join(root, 'config.json');
 fs.mkdirSync(cwd);
 fs.writeFileSync(path.join(cwd, 'inside.txt'), 'внутри');
 fs.writeFileSync(path.join(root, 'outside.txt'), 'снаружи');
+// an «agent» that never answers initialize and says nothing on stderr
+const deadAgent = path.join(root, 'dead-agent.js');
+fs.writeFileSync(deadAgent, 'setInterval(() => {}, 1000);\n');
 fs.copyFileSync(path.join(CODE_ROOT, 'harness.config.json'), configFile);
 let h;
 
@@ -28,6 +31,11 @@ async function harness() {
       defaultAgent: 'mock', mcpServersFrom: null, history: { adopt: false }, session: { mcpGraceSec: 3 }, agents: {
         mock: { modelsDiscovery: null },
         acpmock: { launcher: 'mock', label: 'ACP mock', transport: 'acp', acpClientFs: true, command: [process.execPath, path.join(CODE_ROOT, 'scripts', 'mock-acp-agent.js')], approvalMode: 'auto', approvalModes: ['default', 'auto'], modelsDiscovery: { prompt: '/models', maxAgeHours: 24 } },
+        // the same mock: its hooks never answer until the run settings turn them off
+        acphooks: { launcher: 'mock', label: 'ACP hooks', transport: 'acp', command: [process.execPath, path.join(CODE_ROOT, 'scripts', 'mock-acp-agent.js')], approvalMode: 'auto', approvalModes: ['default', 'auto'] },
+        acpnohooks: { launcher: 'mock', label: 'ACP no hooks', transport: 'acp', userHooks: false, command: [process.execPath, path.join(CODE_ROOT, 'scripts', 'mock-acp-agent.js')], approvalMode: 'auto', approvalModes: ['default', 'auto'] },
+        // a process that never answers initialize (and says nothing on stderr)
+        acpdead: { launcher: 'mock', label: 'ACP dead', transport: 'acp', firstEventTimeoutMs: 1500, command: [process.execPath, deadAgent], approvalMode: 'auto', approvalModes: ['default', 'auto'] },
         // the same mock, unloaded after 0.4 s idle
         acpidle: { launcher: 'mock', label: 'ACP idle', transport: 'acp', acpIdleMin: 0.4 / 60, command: [process.execPath, path.join(CODE_ROOT, 'scripts', 'mock-acp-agent.js')], approvalMode: 'auto', approvalModes: ['default', 'auto'] },
       },
@@ -322,4 +330,60 @@ test('model discovery asks a warm ACP process in a hidden session (no headless c
   assert.ok(r.models.some((m) => m.id === 'GLM-5.3-Flash-262k' && m.available), JSON.stringify(r));
   // (a headless run of this ACP-only mock could not answer: the catalogue came from the warm process)
   assert.ok(!(await said(chat.id)).some((t) => t.includes('GLM-5.3-Flash')), 'the helper session stays out of the chat');
+});
+
+test('a GigaCode hook that never answers (hook-execution-response): said so, one retry on a fresh process, hooks stay on', async () => {
+  const s = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'acphooks', cwd, prompt: 'сделай #hooktimeout' })).body;
+  const err = await waitFor(async () => (await messages(s.id)).find((m) => m.kind === 'error'), { timeout: 30000, what: 'the retry failed too' });
+  const ms = await messages(s.id);
+  assert.equal(ms.filter((m) => m.kind === 'system' && /Хук ACP hooks не ответил вовремя .*Повторяю ход на новом процессе/.test(m.text)).length, 1, JSON.stringify(ms.map((m) => m.text)));
+  assert.match(err.text, /Хук ACP hooks не ответил вовремя .*~\/\.gigacode\/settings\.json .*userHooks: false/s);
+  assert.ok(!ms.some((m) => /disableAllHooks/.test(m.text)), 'nothing switched off by itself');
+});
+
+test('agents.<id>.userHooks: false — the harness runs go without the hooks (disableAllHooks in the run settings)', async () => {
+  const s = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'acpnohooks', cwd, prompt: 'сделай #hooktimeout' })).body;
+  await waitFor(async () => (await said(s.id)).some((t) => /ACP mock, turn 1/.test(t)), { timeout: 30000, what: 'the turn ran without hooks' });
+  assert.ok(!(await messages(s.id)).some((m) => m.kind === 'error'));
+  await idle(s.id);
+});
+
+test('an ACP agent that never answers initialize: the start is retried by itself, the messages wait in the queue', async () => {
+  const s = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'acpdead', cwd, prompt: 'привет' })).body;
+  const err = await waitFor(async () => (await messages(s.id)).find((m) => m.kind === 'error'), { timeout: 30000, what: 'the start failed' });
+  assert.match(err.text, /ACP initialize: нет ответа за \d+ с/);
+  assert.match(err.text, /Повторю запуск сам через 20 с \(попытка 2 из 4\)/);
+  const x = await session(s.id);
+  assert.equal(x.queue.length, 1);
+  assert.ok(x.startRetryAt > Date.now());
+  await h.api('POST', `/api/sessions/${s.id}/stop`);
+});
+
+test('patientRequest: waits while the agent writes to stderr, fails after a silence', async () => {
+  const errFile = path.join(root, 'patient.err.txt');
+  fs.writeFileSync(errFile, '');
+  const never = { request: () => new Promise(() => {}) };
+  const started = Date.now();
+  const writer = setInterval(() => fs.appendFileSync(errFile, '[perf] acp agent event loop stall\n'), 100);
+  const p = patientRequest(never, 'initialize', {}, { idleMs: 400, errFile, pollMs: 50 });
+  setTimeout(() => clearInterval(writer), 1000);
+  await assert.rejects(p, /ACP initialize: нет ответа/);
+  assert.ok(Date.now() - started >= 1300, 'kept waiting while stderr grew');
+  const answered = await patientRequest({ request: async () => 'ok' }, 'initialize', {}, { idleMs: 400, errFile });
+  assert.equal(answered, 'ok');
+});
+
+test('«Переподключить MCP»: a new agent process on the same CLI session (session/load), the chat keeps its context', async () => {
+  const s = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'acpmock', cwd, prompt: 'привет' })).body;
+  await idle(s.id);
+  const ext = (await session(s.id)).externalSessionId;
+  const pid = records().filter((r) => r.env.HARNESS_SESSION_ID === s.id).at(-1).pid;
+  assert.equal((await h.api('POST', `/api/sessions/${s.id}/restart`, { keepContext: true })).status, 200);
+  await waitFor(async () => (await session(s.id)).warm === false, { what: 'the old process unloaded' });
+  await send(s.id, 'дальше');
+  await waitFor(async () => (await said(s.id)).some((t) => /^loaded, ACP mock, turn 2\./.test(t)), { what: 'the same CLI session, loaded by a new process' });
+  assert.equal((await session(s.id)).externalSessionId, ext);
+  assert.notEqual(records().filter((r) => r.env.HARNESS_SESSION_ID === s.id).at(-1).pid, pid, 'a new process');
+  assert.ok((await messages(s.id)).some((m) => m.kind === 'system' && /Агент перезапущен: MCP-серверы подключаются заново/.test(m.text)));
+  await idle(s.id);
 });

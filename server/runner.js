@@ -298,6 +298,15 @@ function tailFile(file, offset, maxLine, onLine, onOffset) {
  *   pid null = not adopted (unknown or reused pid): only the output already in the file is read.
  * @returns {{ pid, startedAt, turn, stop(), detach(), done: Promise<{code, signal, sawResult, timedOut, stopped, detached, error, stderrTail, eventCount}> }}
  */
+const FIRST_EVENT_PATIENCE = 3;
+const fileSize = (file) => {
+  try {
+    return fs.statSync(file).size;
+  } catch {
+    return -1;
+  }
+};
+
 export function runTurn({ launcher, ctx, command, cwd, env, firstEventTimeoutMs, authTimeoutMs = 600000, logFile, outFile, errFile, onEvent, onOffset, maxLine = MAX_LINE, turn = null, reattach = null }) {
   const log = fs.createWriteStream(logFile, { flags: 'a' });
   log.on('error', () => {}); // best-effort: the run folder may be gone (session deleted right after the spawn)
@@ -347,13 +356,26 @@ export function runTurn({ launcher, ctx, command, cwd, env, firstEventTimeoutMs,
     if (child && (child.exitCode !== null || child.signalCode !== null)) return;
     killTree(pid);
   };
-  const timer = reattach ? null : setTimeout(() => {
+  // The CLI answers only after its MCP servers are up; on a loaded machine that outlasts the limit while stderr keeps
+  // growing (MCP warnings, «event loop stall»). A start that still writes is given up to FIRST_EVENT_PATIENCE × the
+  // limit; a silent one is stopped at the limit as before.
+  const startedWaiting = Date.now();
+  let errSize = fileSize(errFile);
+  const firstEventCheck = () => {
     // under load the polled files may lag: a login prompt or the first event may already be there
     tail.read();
     errTail.read();
     if (res.auth || sawJson || settled) return;
+    const size = fileSize(errFile);
+    const alive = size !== errSize;
+    errSize = size;
+    if (alive && Date.now() - startedWaiting < firstEventTimeoutMs * FIRST_EVENT_PATIENCE) {
+      timer = setTimeout(firstEventCheck, firstEventTimeoutMs);
+      return;
+    }
     kill('first_event_timeout');
-  }, firstEventTimeoutMs);
+  };
+  let timer = reattach ? null : setTimeout(firstEventCheck, firstEventTimeoutMs);
   let sawJson = res.priorOutput;
   let authTimer = null;
   let pendingUrl = null;

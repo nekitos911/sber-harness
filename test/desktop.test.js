@@ -7,9 +7,9 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { CODE_ROOT } from '../server/config.js';
-import { DESKTOP_FLAG, desktopArgv, electronArgs, electronBinary, isElectron, nodeCommand, npmArgs, runDesktop } from '../scripts/desktop.js';
+import { DESKTOP_FLAG, desktopArgv, electronArgs, electronBinary, isElectron, nodeCommand, npmArgs, runDesktop, sandboxSwitches } from '../scripts/desktop.js';
 import { desktopDataDir, pickPort, startHarness, stopHarness } from '../scripts/desktop-app.js';
-import { desktopEntry, makeShortcuts } from '../scripts/shortcut.js';
+import { bundleScript, desktopEntry, infoPlist, makeShortcuts } from '../scripts/shortcut.js';
 
 const tmp = (p) => fs.mkdtempSync(path.join(os.tmpdir(), p));
 const scripts = { desktop: 'node scripts/ensure-bin.js && node scripts/desktop.js --ui', start: 'node server/index.js', demo: 'node server/index.js --demo' };
@@ -79,8 +79,8 @@ test('the window is Electron with its own entry, the marker and the script flags
 
 test('the real package.json leads to the Electron binary, not a module object', () => {
   const electronDir = path.join(CODE_ROOT, 'node_modules', 'electron');
+  const binary = electronBinary(CODE_ROOT); // Electron 45 downloads its binary on first require, not at npm install
   const installed = path.join(electronDir, 'dist', fs.readFileSync(path.join(electronDir, 'path.txt'), 'utf8'));
-  const binary = electronBinary(CODE_ROOT);
   assert.equal(typeof binary, 'string');
   assert.ok(fs.existsSync(binary), `electron binary exists: ${binary}`);
   // inside Electron there is no binary to start: the window entry is what the shell names
@@ -226,13 +226,16 @@ test('the Linux shortcut is a runnable .desktop entry with the app icon, in the 
   try {
     const entry = desktopEntry({ exec: '/opt/my apps/start-harness.sh', icon: '/opt/my apps/build/app-icon.png', workDir: '/opt/my apps' });
     assert.match(entry, /^\[Desktop Entry\]\n/);
-    assert.match(entry, /^Exec="\/opt\/my apps\/start-harness\.sh"$/m); // a quoted path keeps its spaces whole
+    assert.match(entry, /^Exec=\/bin\/sh "\/opt\/my apps\/start-harness\.sh"$/m); // a quoted path keeps its spaces whole, no run bit needed
+    assert.match(entry, /^StartupWMClass=sber-harness$/m);
     assert.match(entry, /^Path=\/opt\/my apps$/m);
     assert.match(entry, /^Icon=\/opt\/my apps\/build\/app-icon\.png$/m);
     assert.match(entry, /^Terminal=false$/m); // the window is the app: no console opens next to it
     assert.match(entry, /^Type=Application$/m);
     // `%` is the format's field code, never a literal one
-    assert.match(desktopEntry({ exec: '/x/100%/go.sh', icon: '/i.png', workDir: '/x' }), /^Exec="\/x\/100%%\/go\.sh"$/m);
+    assert.match(desktopEntry({ exec: '/x/100%/go.sh', icon: '/i.png', workDir: '/x' }), /^Exec=\/bin\/sh "\/x\/100%%\/go\.sh"$/m);
+    // a quote inside: escaped for the quoting rule, then its backslash doubled for the string rule
+    assert.match(desktopEntry({ exec: '/x/a"b/go.sh', icon: '/i.png', workDir: '/x' }), /^Exec=\/bin\/sh "\/x\/a\\\\"b\/go\.sh"$/m);
     const made = makeShortcuts({ root: path.join(home, 'repo'), env: { HOME: home }, platform: 'linux' });
     const expected = [path.join(home, '.local', 'share', 'applications', 'sber-harness.desktop'), path.join(home, 'Desktop', 'sber-harness.desktop')];
     assert.deepEqual(made, expected);
@@ -242,8 +245,46 @@ test('the Linux shortcut is a runnable .desktop entry with the app icon, in the 
       if (process.platform !== 'win32') assert.ok(fs.statSync(file).mode & 0o100, `runnable: ${file}`);
     }
     assert.deepEqual(makeShortcuts({ root: path.join(home, 'repo'), env: { HOME: home }, platform: 'linux' }), expected); // a second run rewrites nothing new
-    assert.deepEqual(makeShortcuts({ root: home, env: {}, platform: 'darwin' }), []); // macOS gets the dock icon instead
   } finally {
     fs.rmSync(home, { recursive: true, force: true });
   }
+});
+
+test('macOS gets an app bundle that runs the launcher, in ~/Applications and on the desktop', () => {
+  const home = tmp('harness-mac-home-');
+  const runs = [];
+  try {
+    const root = path.join(home, "my repo's");
+    const made = makeShortcuts({ root, env: { HOME: home }, platform: 'darwin', run: (cmd, args) => runs.push([cmd, ...args]) });
+    assert.deepEqual(made, [path.join(home, 'Applications', 'sber-harness.app'), path.join(home, 'Desktop', 'sber-harness.app')]);
+    for (const app of made) {
+      const exe = path.join(app, 'Contents', 'MacOS', 'sber-harness');
+      assert.equal(fs.readFileSync(exe, 'utf8'), bundleScript(path.join(root, 'start-harness.sh')));
+      if (process.platform !== 'win32') assert.ok(fs.statSync(exe).mode & 0o100, `runnable: ${exe}`);
+      assert.equal(fs.readFileSync(path.join(app, 'Contents', 'Info.plist'), 'utf8'), infoPlist());
+    }
+    // a quote in the path stays inside one shell word
+    assert.equal(bundleScript("/a b/it's/start-harness.sh"), "#!/bin/sh\nexec /bin/sh '/a b/it'\\''s/start-harness.sh'\n");
+    assert.match(infoPlist(), /<key>CFBundleExecutable<\/key><string>sber-harness<\/string>/);
+    assert.match(infoPlist(), /<key>LSUIElement<\/key><true\/>/); // no second Dock icon next to the window's
+    assert.deepEqual(runs[0].slice(0, 4), ['sips', '-s', 'format', 'icns']); // the icon is converted from build/app-icon.png
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('Linux without a usable sandbox starts the window with --no-sandbox instead of crashing', () => {
+  const bin = process.execPath; // any file that exists stands for the Electron binary
+  const sysctl = (values) => (file) => { if (file in values) return values[file]; throw new Error('ENOENT'); };
+  const stat = (uid, mode) => () => ({ uid, mode });
+  const opts = (o) => ({ platform: 'linux', uid: 1000, read: sysctl({}), stat: stat(1000, 0o755), probe: () => ({ status: 0 }), ...o });
+  assert.deepEqual(sandboxSwitches(bin, opts({})), []); // user namespaces work: Chromium sandboxes by itself
+  assert.deepEqual(sandboxSwitches(bin, opts({ read: sysctl({ '/proc/sys/kernel/apparmor_restrict_unprivileged_userns': '1\n' }) })), ['--no-sandbox']); // Ubuntu >= 23.10
+  assert.deepEqual(sandboxSwitches(bin, opts({ read: sysctl({ '/proc/sys/kernel/unprivileged_userns_clone': '0' }), stat: stat(0, 0o104755) })), []); // a setuid-root helper
+  assert.deepEqual(sandboxSwitches(bin, opts({ probe: () => ({ status: 1 }) })), ['--no-sandbox']); // allowed, yet refused (seccomp)
+  assert.deepEqual(sandboxSwitches(bin, opts({ probe: () => ({ status: 1 }), stat: stat(0, 0o104755) })), []);
+  assert.deepEqual(sandboxSwitches(bin, opts({ probe: () => ({ error: { code: 'ENOENT' } }) })), []); // no unshare: no evidence against
+  assert.deepEqual(sandboxSwitches(bin, opts({ uid: 0 })), ['--no-sandbox']); // root (a container)
+  assert.deepEqual(sandboxSwitches(bin, opts({ platform: 'darwin', uid: 0 })), []);
+  assert.deepEqual(sandboxSwitches(path.join(bin, 'missing'), opts({ uid: 0 })), []); // nothing to start, nothing to decide
 });

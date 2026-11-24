@@ -3,18 +3,9 @@
 # letter's «:» turns the whole reference invalid.
 param([Parameter(Mandatory = $true)][string]$Launcher)
 
-# one folder up is the repository root, the folder the shortcut's launcher is meant to run from
-$root = Split-Path -Parent (Split-Path -Parent $Launcher)
+# the launcher sits in the repository root (it arrives as scripts\..\start-harness.cmd): its folder is where it runs from
+$Launcher = (Resolve-Path -LiteralPath $Launcher).Path
+$root = Split-Path -Parent $Launcher
 # a .cmd is not a process CreateProcess can start on its own: cmd runs it, with its own quoting for a path with spaces
-$relaunch = Start-Process -WindowStyle Hidden -PassThru -FilePath $env:ComSpec -ArgumentList '/d', '/c', "`"`"$Launcher`" --run`"" -WorkingDirectory $root
-
-# Start-Process answers as soon as the copy is started, the copy returns as soon as the server is up (or has failed).
-# A failure exit is the only answer the caller can still see: the console was hidden, and no window was opened
-try {
-  $exited = $relaunch.WaitForExit(120000)
-} catch {
-  exit 1
-}
-if (-not $exited) { exit 0 }
-if ($relaunch.ExitCode -ne 0) { exit 1 }
-exit 0
+# Nothing waits for it: the copy runs as long as the window is open, and a failed start shows its own message box.
+Start-Process -WindowStyle Hidden -FilePath $env:ComSpec -ArgumentList '/d', '/c', "`"`"$Launcher`" --run`"" -WorkingDirectory $root

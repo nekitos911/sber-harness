@@ -31,7 +31,7 @@ import { createHistory, historyMessages } from './history.js';
 import { runJob, jobStep, JOB_ID_RE, holdJob } from './jobs.js';
 import { DEMO_PORT, demoOverrides, seedDemoRepos, seedDemoTasks } from './demo.js';
 import { importTasks, importIssue, transitionTask, getExternal, getTransitions, importChildren, syncColumn, getPath, settleClosedTasks } from './integrations/tasks.js';
-import { fillTemplate, createPullRequest, prStatus, refreshTaskPr, declinePullRequest, mergePullRequest, pullRequestDetail, prEnabled, prMe, repoPulls, prAuthor } from './integrations/pr.js';
+import { fillTemplate, createPullRequest, findOpenPr, prStatus, refreshTaskPr, declinePullRequest, mergePullRequest, pullRequestDetail, prEnabled, prMe, repoPulls, prAuthor } from './integrations/pr.js';
 
 const MAX_BODY = 1024 * 1024;
 const MIME = {
@@ -43,7 +43,7 @@ const MIME = {
 const NO_BUILD_HTML = '<!doctype html><meta charset="utf-8"><title>Harness</title><body style="font-family:sans-serif;padding:2rem"><h1>UI is not built</h1><p>Run <code>npm run build</code> (or start with <code>npm run dev</code>) and reload.</p></body>';
 // optional API groups this server implements (docs/ARCHITECTURE.md "Feature flags"); a flag ships with its route
 export const FEATURES = ['branches', 'fs-search', 'pr-status', 'agent-info', 'models-refresh', 'tracker-links', 'board-columns', 'review-loop',
-  'subagents', 'virtual-sessions', 'worker-run', 'skills-install', 'demo', 'worktree-meta', 'open', 'sdd', 'health', 'folders', 'include-dirs', 'questions', 'permissions', 'activity', 'rework', 'fs-raw', 'tracker-import', 'pr-decline', 'task-suggest', 'recovery', 'acp', 'worktree-lazy', 'cli-history', 'prs-mine', 'git-generate', 'git-via-agent', 'git-stage', 'handoff', 'release-resolve', 'cli-adopt', 'handoff-dry-run', 'integrations-check', 'pick-folder', 'checks', 'revive', 'bind-task', 'open-file', 'pr-actions', 'pr-detail', 'pin', 'mcp-connections'];
+  'subagents', 'virtual-sessions', 'worker-run', 'skills-install', 'demo', 'worktree-meta', 'open', 'sdd', 'health', 'folders', 'include-dirs', 'questions', 'permissions', 'activity', 'rework', 'fs-raw', 'tracker-import', 'pr-decline', 'task-suggest', 'recovery', 'acp', 'worktree-lazy', 'cli-history', 'prs-mine', 'git-generate', 'git-via-agent', 'git-stage', 'handoff', 'release-resolve', 'cli-adopt', 'handoff-dry-run', 'integrations-check', 'pick-folder', 'checks', 'revive', 'bind-task', 'open-file', 'pr-actions', 'pr-detail', 'pin', 'mcp-connections', 'agent-reconnect', 'cli-live', 'review-retry', 'prs-filters'];
 // titles of operations the UI may follow by sending x-job-id (WS { t: 'job' } frames)
 const JOB_TITLES = {
   'POST /api/tasks/sync': 'Синхронизация с трекером',
@@ -65,6 +65,7 @@ const TASK_VARS = ['{taskUrl}', '{key}', '{id}', '{description}'];
 const hasTaskVar = (tpl) => TASK_VARS.some((v) => tpl.includes(v));
 
 const fail = (status, message) => { throw Object.assign(new Error(message), { status }); };
+const CLI_LIVE_TEXT = 'Этот чат сейчас ведёт GigaCode в терминале: сообщение отсюда или удаление помешают его работе. Дождитесь, пока CLI закончит, или перехватите чат.';
 
 /** At most n async jobs at a time (git processes for many worktrees). */
 function limiter(n) {
@@ -272,7 +273,7 @@ export async function startServer(opts = {}) {
   async function refreshPrs() {
     if (prRefreshing) return;
     prRefreshing = true;
-    if (prsCache.has('mine')) collectPrs('mine', true).catch(() => {}); // the «Пулл-реквесты» screen stays fresh
+    for (const key of [...prsCache.keys()].filter((k) => k.endsWith('|open'))) collectPrs(...key.split('|'), true).catch(() => {}); // the «Пулл-реквесты» screen stays fresh (open PRs: merged/closed lists refresh on demand)
     try {
       for (const t of db.tasks) {
         const ws = t.branch && db.workspaces.find((w) => w.id === t.workspaceId);
@@ -287,32 +288,40 @@ export async function startServer(opts = {}) {
    * (the code host's login), tracked = those whose head is a task branch or a worktree of that repository. Linked to
    * tasks (a task key in the head branch) and agents (an agent-made worktree / the task's assignee). Cached 3 min.
    */
-  const prsCache = new Map(); // scope -> { at, data: Promise }
-  function collectPrs(scope, fresh = false) {
+  const prsCache = new Map(); // `${scope}|${state}` -> { at, data: Promise }
+  /** scope: mine (my PRs), review (where I am a reviewer), tracked (task branches / worktrees), all; state: open|merged|declined|all. */
+  function collectPrs(scope, state = 'open', fresh = false) {
     if (!prEnabled(config, mcp)) fail(501, 'интеграция PR выключена (integrations.pr.enabled)');
     if (!config.integrations.pr.listTool) fail(501, 'не настроен integrations.pr.listTool');
-    const hit = prsCache.get(scope);
+    const cacheKey = `${scope}|${state}`;
+    const hit = prsCache.get(cacheKey);
     if (!fresh && hit && Date.now() - hit.at < 180000) return hit.data;
     const data = (async () => {
       const errors = [];
       let me = null;
       let meSource = null;
-      if (scope === 'mine') {
+      if (scope === 'mine' || scope === 'review') {
         const who = await prMe({ config, mcp });
         ({ login: me, source: meSource } = who);
         if (who.warning) errors.push({ repo: null, error: who.warning });
       }
-      // a repository registered by several workspaces (main checkout + worktrees) is asked once: the first one that has an origin
-      const first = new Map(); // repo -> workspace
+      // a repository registered by several workspaces (main checkout + worktrees, other clones) is asked once: the first
+      // one that has an origin; the host's project keys ignore case (ssh …/PROJ/x and https …/scm/proj/x are one repository)
+      const first = new Map(); // lower-case repo -> workspace
       for (const ws of db.workspaces.filter((w) => w.isGit && !w.kind)) {
         const info = await git.remoteInfo(ws.path).catch(() => ({}));
-        if (info.project && info.repository && !first.has(info.repo)) first.set(info.repo, { ws, ...info });
+        const key = info.repo?.toLowerCase();
+        if (info.project && info.repository && !first.has(key)) first.set(key, { ws, ...info });
       }
       const slots = limiter(4);
       const lists = await Promise.all([...first.values()].map(({ ws, project, repository, repo }) => slots(async () => {
         try {
-          const [pulls, wts] = await Promise.all([repoPulls({ config, mcp, project, repository, author: me }), git.worktrees(ws.path).catch(() => [])]);
-          return pulls.map((p) => prItem(ws, { project, repo }, p, wts)).filter((it) => scope === 'mine' || it.tracked).map(({ tracked, ...it }) => it);
+          const states = state === 'all' ? ['OPEN', 'MERGED', 'DECLINED'] : [state.toUpperCase()];
+          const author = scope === 'mine' ? me : null;
+          const [pulls, wts] = await Promise.all([Promise.all(states.map((st) => repoPulls({ config, mcp, project, repository, author, state: st }))).then((l) => l.flat()), git.worktrees(ws.path).catch(() => [])]);
+          const mine = (n) => !!n && !!me && String(n).toLowerCase() === String(me).toLowerCase();
+          const keep = { mine: () => true, all: () => true, tracked: (it) => it.tracked, review: (it) => it.reviewers.some((r) => mine(r.name)) }[scope];
+          return pulls.map((p) => prItem(ws, { project, repo }, p, wts)).filter(keep).map(({ tracked, ...it }) => it);
         } catch (e) {
           errors.push({ repo, error: e.message });
           return [];
@@ -321,19 +330,19 @@ export async function startServer(opts = {}) {
       const items = dedupePrs(lists.flat()).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
       return { me, meSource, items, errors, at: Date.now() };
     })();
-    prsCache.set(scope, { at: Date.now(), data });
-    data.catch(() => prsCache.delete(scope));
+    prsCache.set(cacheKey, { at: Date.now(), data });
+    data.catch(() => prsCache.delete(cacheKey));
     return data;
   }
 
   /**
-   * One item per pull request: the same repository is registered both by its main checkout and by each worktree, and
-   * every copy asks the code host for the same list. The main checkout (the earliest registered) wins.
+   * One item per pull request, whichever registration (main checkout, worktree, another clone) or page of the host's
+   * list it came from: the host's own link names it, else the repository (any case) and number. The first one wins.
    */
   function dedupePrs(items) {
     const seen = new Set();
     return items.filter((it) => {
-      const key = `${it.repo}#${it.index}`;
+      const key = (it.url || `${it.repo}#${it.index}`).toLowerCase();
       if (seen.has(key)) return false;
       seen.add(key);
       return true;
@@ -402,6 +411,8 @@ export async function startServer(opts = {}) {
         authTimeoutMs: a.authTimeoutMs ?? 600000,
         inheritUserMcp: !!a.inheritUserMcp,
         enabled: a.enabled !== false,
+        maxStarting: a.maxStarting ?? 4, // cold starts at once (0 = no limit), not agents at work
+        userHooks: a.userHooks !== false,
         // paths, not secrets: null = auto per platform; `resolved` is what «Проверить» shows
         command: a.command ?? null,
         node: a.node ?? null,
@@ -483,7 +494,7 @@ export async function startServer(opts = {}) {
     if ('modelsDiscovery' in a) {
       const md = a.modelsDiscovery;
       // discovery runs headless: "auto" needs a CLI action sandbox the run file does not enable, so the mode is explicit
-      if (!isObj(md) || Object.keys(md).some((k) => !['approvalMode', 'maxAgeHours'].includes(k))) fail(400, `${where('modelsDiscovery')}: { approvalMode?: string, maxAgeHours?: number }`);
+      if (!isObj(md) || Object.keys(md).some((k) => !['approvalMode', 'maxAgeHours', 'timeoutMs'].includes(k))) fail(400, `${where('modelsDiscovery')}: { approvalMode?: string, maxAgeHours?: number, timeoutMs?: number }`);
       p.modelsDiscovery = md;
     }
     if ('approvalModeLabels' in a) {
@@ -569,7 +580,11 @@ export async function startServer(opts = {}) {
       if (!Number.isInteger(a.firstEventTimeoutMs) || a.firstEventTimeoutMs < 1000 || a.firstEventTimeoutMs > 30 * 60000) fail(400, `${where('firstEventTimeoutMs')}: целое число от 1000 до 1800000`);
       p.firstEventTimeoutMs = a.firstEventTimeoutMs;
     }
-    for (const k of ['inheritUserMcp', 'enabled']) {
+    if ('maxStarting' in a) {
+      if (!Number.isInteger(a.maxStarting) || a.maxStarting < 0 || a.maxStarting > 50) fail(400, `${where('maxStarting')}: целое число от 0 (без предела) до 50`);
+      p.maxStarting = a.maxStarting;
+    }
+    for (const k of ['inheritUserMcp', 'enabled', 'userHooks']) {
       if (!(k in a)) continue;
       if (typeof a[k] !== 'boolean') fail(400, `${where(k)}: нужно true или false`);
       p[k] = a[k];
@@ -1191,7 +1206,7 @@ export async function startServer(opts = {}) {
     if (!config.agents[params.id].modelsDiscovery?.prompt) fail(400, `не настроен agents.${params.id}.modelsDiscovery.prompt`);
     jobStep('Опрос /models');
     const c = await catalog.discover(params.id);
-    return { models: catalog.merged(params.id), at: c?.at ?? null, ...(c?.error ? { error: c.error } : {}) };
+    return { models: catalog.merged(params.id), at: c?.at ?? null, ...(c?.error ? { error: c.error, timedOut: !!c.timedOut } : {}) };
   });
   route('PUT', '/api/settings', ({ body }) => saveSettings(body));
 
@@ -1565,6 +1580,7 @@ export async function startServer(opts = {}) {
     }
     return rel?.releaseWarning ? { ...s, releaseWarning: rel.releaseWarning } : s;
   });
+  route('POST', '/api/tasks/:id/review', ({ params }) => orch.review(params.id));
   route('POST', '/api/tasks/:id/port', ({ params, body }) => {
     check(body, { target: 'string', agent: 'string?' });
     return orch.port(params.id, body.target, { agent: body.agent });
@@ -1585,7 +1601,10 @@ export async function startServer(opts = {}) {
     return s;
   });
   route('PATCH', '/api/sessions/:id', ({ params, body }) => sessions.patch(params.id, body));
-  route('DELETE', '/api/sessions/:id', ({ params, query }) => sessions.remove(params.id, { force: query.force === '1' }));
+  route('DELETE', '/api/sessions/:id', ({ params, query }) => {
+    if (query.force !== '1' && sessions.cliLive(params.id)) fail(409, CLI_LIVE_TEXT);
+    return sessions.remove(params.id, { force: query.force === '1' });
+  });
   // the transcript keeps every tool output whole; the list sends at most 64 KB of each (full text on demand)
   const OUTPUT_MAX = 64 * 1024;
   route('GET', '/api/sessions/:id/messages', ({ params }) => {
@@ -1605,8 +1624,9 @@ export async function startServer(opts = {}) {
   });
   // `cut: true` — «Сразу агенту»: the message ends the step it found (nothing is cut without it)
   route('POST', '/api/sessions/:id/messages', ({ params, body }) => {
-    const { text, cut } = check(body, { text: 'string', cut: 'boolean?' });
+    const { text, cut, force } = check(body, { text: 'string', cut: 'boolean?', force: 'boolean?' });
     notGarbled(text);
+    if (force !== true && sessions.cliLive(params.id)) fail(409, CLI_LIVE_TEXT);
     return sessions.deliver(params.id, { from: 'user', text, cut: cut === true });
   });
   // the agent's own «/context» answer as numbers (the ring's breakdown); slow on a cold agent, the UI has its own timeout
@@ -1628,7 +1648,7 @@ export async function startServer(opts = {}) {
   });
   route('DELETE', '/api/sessions/:id/queue/:qid', ({ params }) => sessions.unqueue(params.id, params.qid));
   route('POST', '/api/sessions/:id/queue/send', ({ params, body }) => sessions.sendQueue(params.id, { interrupt: check(body || {}, { interrupt: 'boolean?' }).interrupt === true }));
-  route('POST', '/api/sessions/:id/restart', ({ params }) => sessions.restart(params.id));
+  route('POST', '/api/sessions/:id/restart', ({ params, body }) => sessions.restart(params.id, { keepContext: body?.keepContext === true }));
   route('GET', '/api/sessions/:id/log', ({ params }) => sessions.logTail(params.id));
   route('GET', '/api/sessions/:id/subagents', ({ params }) => sessions.subagents(params.id));
 
@@ -1702,8 +1722,9 @@ export async function startServer(opts = {}) {
   route('GET', '/api/git/suggest', ({ query }) => orch.gitSuggest(cwdOf(query)));
   route('GET', '/api/git/branches', ({ query }) => git.branches(cwdOf(query), { allRemotes: query.allRemotes === '1' }));
   route('GET', '/api/prs', ({ query }) => {
-    if (!['mine', 'tracked', undefined].includes(query.scope)) fail(400, 'scope: mine или tracked');
-    return collectPrs(query.scope || 'mine', query.refresh === '1');
+    if (!['mine', 'tracked', 'review', 'all', undefined].includes(query.scope)) fail(400, 'scope: mine, review, tracked или all');
+    if (!['open', 'merged', 'declined', 'all', undefined].includes(query.state)) fail(400, 'state: open, merged, declined или all');
+    return collectPrs(query.scope || 'mine', query.state || 'open', query.refresh === '1');
   });
   route('GET', '/api/git/pr-status', async ({ query }) => {
     const cwd = cwdOf(query);
@@ -1761,13 +1782,16 @@ export async function startServer(opts = {}) {
     if (!prEnabled(config, mcp)) fail(501, 'создание PR выключено (integrations.pr.enabled)');
     const branch = (await git.currentBranch(body.cwd)) || fail(400, 'в cwd не выбрана ветка');
     const base = body.base || config.git.defaultBase;
-    if (viaOf(body) === 'agent') {
-      const prLookup = async (b) => (await prStatus({ config, mcp, branch: b, ...(await git.remoteInfo(body.cwd)) })).pr?.url ?? null;
+    const remote = await git.remoteInfo(body.cwd);
+    // the agent's own MCP call does not look for an open PR first: the harness does, as for a direct one
+    const open = viaOf(body) === 'agent' ? await findOpenPr({ config, mcp, branch, base, ...remote }) : null;
+    if (viaOf(body) === 'agent' && !open) {
+      const prLookup = async (b) => (await prStatus({ config, mcp, branch: b, ...remote })).pr?.url ?? null;
       return orch.gitViaAgent('pr', { cwd: body.cwd, title: body.title, body: body.body || '', base, branch, prLookup }, holdJob());
     }
-    const r = await createPullRequest({
+    const r = open ? { url: open, existing: true } : await createPullRequest({
       config, mcp, cwd: body.cwd, branch, base,
-      title: body.title, body: body.body || '', ...(await git.remoteInfo(body.cwd)),
+      title: body.title, body: body.body || '', ...remote,
     });
     const task = db.tasks.find((t) => t.branch === branch);
     if (task) {

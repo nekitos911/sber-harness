@@ -40,7 +40,8 @@ test('enriched worktree list: dirty, ahead, task, sessions, meta', async () => {
   const chat = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', cwd: wt.path })).body;
   await h.api('PATCH', '/api/worktrees/meta', { path: wt.path, label: 'Лимиты', pinned: true });
   const item = await waitFor(async () => (await list()).find((w) => w.path === wt.path && w.dirty === 1));
-  assert.deepEqual([item.ahead, item.taskId, item.taskStatus, item.sessions, item.running, { ...item.meta, repo: undefined }, item.createdBy], [1, t.id, 'todo', 1, 0, { createdBy: 'user', label: 'Лимиты', pinned: true, repo: undefined }, 'user']);
+  assert.deepEqual([item.ahead, item.taskId, item.taskStatus, item.sessions, item.running, { ...item.meta, repo: undefined, createdAt: undefined }, item.createdBy], [1, t.id, 'todo', 1, 0, { createdBy: 'user', label: 'Лимиты', pinned: true, repo: undefined, createdAt: undefined }, 'user']);
+  assert.ok(item.meta.createdAt > 0, 'when it was made: «новое» in the sidebar survives a reload');
   assert.equal(path.resolve(item.meta.repo), path.resolve(repo), 'meta remembers its repository');
   assert.ok(item.lastActivityAt >= chat.lastActivityAt, 'newest of session activity and the git dir mtime');
   const main = (await list()).find((w) => w.main);
@@ -54,7 +55,9 @@ test('sleeping refuses running turns unless forced', async () => {
   await waitFor(async () => (await h.api('GET', '/api/state')).body.sessions.find((x) => x.id === s.id).status === 'running');
   const r = await h.api('PATCH', '/api/worktrees/meta', { path: wt.path, sleeping: true });
   assert.deepEqual([r.status, r.body.running], [409, 1]);
-  assert.deepEqual((await h.api('PATCH', '/api/worktrees/meta', { path: wt.path, sleeping: true, force: true })).body, { createdBy: 'user', sleeping: true });
+  const { createdAt, ...slept } = (await h.api('PATCH', '/api/worktrees/meta', { path: wt.path, sleeping: true, force: true })).body;
+  assert.deepEqual(slept, { createdBy: 'user', sleeping: true });
+  assert.ok(createdAt > 0);
   await waitFor(async () => (await h.api('GET', '/api/state')).body.sessions.find((x) => x.id === s.id).pid === null, { what: 'turn stopped' });
 });
 

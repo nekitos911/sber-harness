@@ -92,6 +92,21 @@ test('a repository registered twice (main checkout + worktree) lists each of its
   assert.deepEqual(r.items.map((i) => [i.repo, i.index, i.workspaceId]), [['PROJ/demo-service', 600, wsDemo.id]], 'the first registration keeps the row');
 });
 
+test('another clone of a repository (its origin in another case) and a PR through the agent never duplicate a PR', async () => {
+  writePulls([pull(610, 'demo-service', 'feature/клон', 'ivanov')]);
+  const clone = makeRepo(path.join(root, 'demo-service-clone'));
+  gitIn(clone, 'remote', 'add', 'origin', 'https://code.example/scm/proj/demo-service.git'); // an https clone: lower-case project
+  await h.api('POST', '/api/workspaces', { path: clone });
+  const r = (await h.api('GET', '/api/prs?scope=mine&refresh=1')).body;
+  assert.deepEqual(r.items.map((i) => [i.repo, i.index]), [['PROJ/demo-service', 610]], 'one row, under the first registration');
+
+  // the agent's own MCP call would open a second PR next to the open one: the harness answers with that one, no agent turn
+  gitIn(clone, 'switch', '-q', '-c', 'feature/клон');
+  const made = await h.api('POST', '/api/git/pr', { cwd: clone, title: 'PR', base: 'develop', via: 'agent' });
+  assert.equal(made.status, 200, JSON.stringify(made.body));
+  assert.deepEqual(made.body, { url: 'https://code.example/sc/PROJ/demo-service/pulls/610', existing: true });
+});
+
 test('scope=tracked: PRs of task branches and worktrees, whoever opened them', async () => {
   writePulls([
     pull(580, 'demo-service', `feature/${task.id}`, 'petrov'),
@@ -100,6 +115,25 @@ test('scope=tracked: PRs of task branches and worktrees, whoever opened them', a
   const r = (await h.api('GET', '/api/prs?scope=tracked&refresh=1')).body;
   assert.deepEqual(r.items.map((i) => [i.index, i.taskId]), [[580, task.id]]);
   assert.equal((await h.api('GET', '/api/prs?scope=все')).status, 400);
+});
+
+test('scope=review / all and state=merged|all: the status tabs and «На ревью» of the PR list', async () => {
+  const mergedFile = path.join(fixtures, 'sourcecontrol.git_list_pull_requests.MERGED.json');
+  writePulls([
+    { ...pull(590, 'demo-service', 'feature/ревью', 'petrov'), reviewers: [{ username: 'IVANOV', status: 'PENDING' }] },
+    pull(591, 'demo-service', 'feature/чужое', 'petrov'),
+  ]);
+  fs.writeFileSync(mergedFile, JSON.stringify({ pulls: [{ ...pull(592, 'demo-service', 'feature/влит', 'ivanov'), state: 'merged' }] }));
+  try {
+    const get = async (q) => (await h.api('GET', `/api/prs?${q}&refresh=1`)).body.items.map((i) => i.index).sort();
+    assert.deepEqual(await get('scope=review'), [590], 'a reviewer login matches in any case');
+    assert.deepEqual(await get('scope=all'), [590, 591]);
+    assert.deepEqual(await get('scope=mine&state=merged'), [592]);
+    assert.deepEqual(await get('scope=all&state=all'), [590, 591, 592]);
+    assert.equal((await h.api('GET', '/api/prs?state=closed')).status, 400);
+  } finally {
+    fs.rmSync(mergedFile, { force: true });
+  }
 });
 
 test('prMe: integrations.pr.me wins; a failing git_get_user falls back to the OS account name with a warning', async () => {

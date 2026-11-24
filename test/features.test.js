@@ -38,11 +38,14 @@ test('each feature flag has a working route (not 404/405)', async () => {
       folders: ['GET', `/api/fs/dirs?path=${q}`, (b) => Array.isArray(b.entries) && Array.isArray(b.roots)],
       'include-dirs': ['PATCH', `/api/sessions/${chat.id}`, (b) => Array.isArray(b.includeDirs), { includeDirs: [] }],
       'mcp-connections': ['GET', '/api/mcp/config', (b) => Array.isArray(b.servers)],
+      'agent-reconnect': ['POST', `/api/sessions/${chat.id}/restart`, (b) => b.id === chat.id, { keepContext: true }],
+      'cli-live': ['POST', `/api/sessions/${chat.id}/messages`, null, { text: 'ещё', force: true }],
       pin: ['PATCH', `/api/sessions/${chat.id}`, (b) => b.pinnedAt > 0, { pinned: true }],
       questions: ['GET', `/api/sessions/${chat.id}/messages`],
       permissions: ['POST', `/api/sessions/${chat.id}/permission`, null, {}],
       activity: ['GET', '/api/settings', (b) => Number.isInteger(b.session?.stallSec)],
       rework: ['POST', `/api/tasks/${task.id}/rework`, null, { notes: 'x' }],
+      'review-retry': ['POST', `/api/tasks/${task.id}/review`], // 409 here: reviewMode is builtin
       'fs-raw': ['GET', `/api/fs/raw?cwd=${q}&path=..%2Fout.png`],
       'tracker-import': ['POST', '/api/tasks/import', null, { ref: 'PROJ-1' }],
       'pr-decline': ['POST', '/api/git/pr/decline', null, { cwd: repo, index: 1 }],
@@ -53,6 +56,7 @@ test('each feature flag has a working route (not 404/405)', async () => {
       'cli-history': ['GET', `/api/history?cwd=${q}`, (b) => Array.isArray(b)],
       sdd: ['GET', `/api/sdd?cwd=${q}`, (b) => Array.isArray(b.plans)],
       'prs-mine': ['GET', '/api/prs?scope=mine'],
+      'prs-filters': ['GET', '/api/prs?scope=review&state=all'], // 501 here: no PR server
       'git-generate': ['POST', '/api/git/generate', null, { cwd: repo, kind: 'commit' }], // 400 here: nothing to commit
       'git-via-agent': ['POST', '/api/git/commit', null, { cwd: repo, message: '', via: 'agent' }], // 400: no message
       'git-stage': ['POST', '/api/git/unstage', null, { cwd: repo, all: true }],

@@ -174,6 +174,7 @@ function CatalogRefresh({ agentId }: { agentId: string }) {
   }
   const error = err ?? meta.catalog?.error ?? null
   const at = meta.catalog?.at
+  const listed = (meta.models?.length ?? 0) > 0
   if (running) {
     return (
       <div className="picker-refresh" data-state="running" role="status">
@@ -184,10 +185,11 @@ function CatalogRefresh({ agentId }: { agentId: string }) {
   }
   if (error) {
     return (
-      // a list from before is still there: not an alarm, just «not refreshed» (the reason on hover)
-      <div className="picker-refresh" data-state={at ? undefined : 'error'} role={at ? 'status' : 'alert'}>
+      // a list from before or from the settings is still there: not an alarm, just «not refreshed» (the reason on hover)
+      <div className="picker-refresh" data-state={at || listed ? undefined : 'error'} role={at || listed ? 'status' : 'alert'}>
         {at ? <span className="muted" data-tip={error}>Список не обновился — показан прошлый</span>
-          : <span className="picker-refresh-error">Не удалось получить список: {error}</span>}
+          : listed ? <span className="muted" data-tip={error}>Список из настроек — {meta.catalog?.timedOut ? 'CLI не ответил' : 'CLI не отдал список'}, повторю позже</span>
+            : <span className="picker-refresh-error">Не удалось получить список: {error}</span>}
         <button type="button" className="btn btn-sm" onClick={() => void refresh()}><RefreshCw />Повторить</button>
       </div>
     )

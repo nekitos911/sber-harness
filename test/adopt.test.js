@@ -80,7 +80,7 @@ test('only the real CLI chat is adopted: titled, grouped, transcript from the re
   // a harness chat owns it: the record it continues is the chat's own, never adopted as a second one
   assert.equal((await h.api('POST', '/api/history/mock/owned-1/continue', { cwd: repo })).body.externalSessionId, 'owned-1');
   // every record ever written (`adoptDays: 0`): the server's own pass only looks at the configured window
-  const r = (await h.api('POST', '/api/history/adopt', { adoptDays: 0 })).body;
+  const r = (await h.api('POST', '/api/history/adopt')).body;
   // the adoption pass at server start (default window) may have taken records already: their timestamps still tell
   assert.ok(r.adopted <= 1, JSON.stringify(await sessions()));
   // the helper runs and the one-command probes wait for `refreshed`; the one real CLI chat and the continued one are here
@@ -149,4 +149,18 @@ test('an adopted chat whose restarted turn took a new CLI session stays one chat
   assert.equal((await h.api('DELETE', `/api/sessions/${own.id}?force=1`)).status, 200);
   assert.equal((await h.api('POST', '/api/history/adopt')).body.adopted, 0);
   assert.ok(!(await sessions()).some((x) => x.externalSessionId === 'owned-1'));
+});
+
+test('a CLI chat GigaCode is writing to right now is read-only here: messages and delete wait, «Перехватить» forces', async () => {
+  record('session-live.json', 'cli-live-1', [gigacode('Живой чат в терминале', 2), answer('работаю', 1)], { lastUpdated: new Date().toISOString() });
+  const r = (await h.api('POST', '/api/history/adopt')).body;
+  const s = (await sessions()).find((x) => x.externalSessionId === 'cli-live-1');
+  assert.ok(s, JSON.stringify({ r, ids: (await sessions()).map((x) => [x.externalSessionId, x.origin, x.archived]) }));
+  assert.ok(s.cliLiveAt > Date.now() - 60000, 'the CLI wrote to it just now');
+  const sent = await h.api('POST', `/api/sessions/${s.id}/messages`, { text: 'вмешаюсь' });
+  assert.equal(sent.status, 409);
+  assert.match(sent.body.error, /ведёт GigaCode в терминале/);
+  assert.equal((await h.api('DELETE', `/api/sessions/${s.id}`)).status, 409);
+  assert.equal((await h.api('POST', `/api/sessions/${s.id}/messages`, { text: 'перехватываю', force: true })).status, 200);
+  await waitFor(async () => { const x = (await sessions()).find((y) => y.id === s.id); return x.status === 'idle' && !x.pid && !x.cliLiveAt; }, { what: 'taken over' });
 });

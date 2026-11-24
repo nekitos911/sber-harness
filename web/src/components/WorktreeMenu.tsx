@@ -1,8 +1,9 @@
-import { useMemo, useState } from 'react'
-import { ClipboardCopy, Ellipsis, FolderOpen, GitBranchPlus, Info, ListChecks, Mail, MessageSquarePlus, Code, Moon, Pin, PinOff, SquareTerminal, Sun, Trash2 } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+import { ClipboardCopy, Ellipsis, FolderMinus, FolderOpen, GitBranchPlus, Info, ListChecks, Mail, MessageSquarePlus, Code, Moon, Pin, PinOff, SquareTerminal, Sun, Trash2 } from 'lucide-react'
 import { api, ApiError, errorText, tryApi } from '../api'
 import { closeDialog, getState, hasFeature, openDialog, setState, toast, upsert, useStore } from '../store'
 import { basename, COLUMNS, normPath, relTime } from '../lib/format'
+import { isMac } from '../lib/keys'
 import { newChat, newTerminal } from '../lib/actions'
 import { loadWorktrees } from '../ws'
 import type { Task, TaskStatus, Workspace, Worktree } from '../types'
@@ -35,6 +36,8 @@ export async function openFolder(cwd: string) {
   if (await tryApi('POST', '/open', { cwd, target: 'explorer' })) toast(`Открываю папку ${basename(cwd)} в файловом менеджере`, 'info')
 }
 
+export const REVEAL = isMac ? 'Показать в Finder' : /win/i.test(navigator.platform) ? 'Показать в проводнике' : 'Показать в файловом менеджере'
+
 /** A file from the chat: «file» — its own program (a program or a script: its folder instead); «reveal» — its folder, the file selected. */
 export function openFile(path: string, how: 'file' | 'reveal' = 'file', cwd?: string) {
   void tryApi('POST', '/open', { path, target: how, ...(cwd ? { cwd } : {}) })
@@ -47,7 +50,7 @@ async function patchMeta(workspaceId: string, path: string, meta: Partial<NonNul
   void loadWorktrees(workspaceId)
 }
 
-const copy = (text: string, what: string) => {
+export const copy = (text: string, what: string) => {
   void navigator.clipboard.writeText(text).then(() => toast(`Скопировано: ${what}`, 'ok'), () => toast('Буфер обмена недоступен', 'error'))
 }
 
@@ -99,7 +102,19 @@ export function projectMenu(ws: Workspace): MenuItem[] {
       { label: 'Новый чат в основной копии', icon: <MessageSquarePlus />, onSelect: () => void newChat({ cwd: ws.path, workspaceId: ws.id }) },
       { label: 'Копировать путь', icon: <ClipboardCopy />, onSelect: () => copy(ws.path, 'путь') },
     ] },
+    ...(ws.kind !== 'root' ? [{ label: 'Убрать проект из списка…', icon: <FolderMinus />, danger: true, divider: true, onSelect: () => removeProject(ws) }] : []),
   ]
+}
+
+/** Only the registration goes: the folder, its worktrees and chats stay on disk; «Добавить проект» brings it back. */
+function removeProject(ws: Workspace) {
+  openDialog({
+    kind: 'confirm', danger: true, ok: 'Убрать проект', title: `Убрать проект ${ws.name} из списка?`,
+    text: `Папка ${ws.path} и её рабочие деревья на диске не изменятся. Вернуть проект можно через «Добавить проект».`,
+    onConfirm: () => void tryApi('DELETE', `/workspaces/${encodeURIComponent(ws.id)}`).then((r) => {
+      if (r !== undefined) setState((s) => ({ workspaces: s.workspaces.filter((w) => w.id !== ws.id) }))
+    }),
+  })
 }
 
 // ---------- dialogs ----------
@@ -192,7 +207,11 @@ export function CleanupDialog({ workspaceId }: { workspaceId: string }) {
   const list = useStore((s) => s.worktrees[workspaceId])
   const tasks = useStore((s) => s.tasks)
   const rows = useMemo(() => (list ?? []).filter((w) => !w.main), [list])
-  const [picked, setPicked] = useState<Set<string>>(() => new Set(rows.filter(cleanable).map((w) => w.path)))
+  // opened from a folded project or the filters: its list may be missing or lack the git facts (dirty, ahead)
+  useEffect(() => { void loadWorktrees(workspaceId, true) }, [workspaceId])
+  // until the person ticks something, the safe ones as the list comes
+  const [choice, setPicked] = useState<Set<string> | null>(null)
+  const picked = choice ?? new Set(rows.filter(cleanable).map((w) => w.path))
   const [branch, setBranch] = useState<BranchMode>('safe')
   const [results, setResults] = useState<Record<string, string>>({})
   const [busy, setBusy] = useState(false)
@@ -220,7 +239,7 @@ export function CleanupDialog({ workspaceId }: { workspaceId: string }) {
     <Dialog title={`Очистить рабочие деревья ${ws?.name ?? ''}`} submitLabel={busy ? 'Удаляем…' : `Удалить выбранные (${picked.size})`} danger wide
       busy={busy} disabled={!picked.size} onClose={closeDialog} onSubmit={() => void run()}>
       <p className="field-hint">Отмечены деревья, чья задача готова или PR влит, без незакоммиченных изменений и работающих агентов.</p>
-      {!rows.length ? <p className="muted">Кроме основной копии деревьев нет.</p> : (
+      {!list ? <p className="muted">Загрузка…</p> : !rows.length ? <p className="muted">Кроме основной копии деревьев нет.</p> : (
         <div className="cleanup" role="table" aria-label="Рабочие деревья">
           {rows.map((w) => {
             const task = tasks.find((t) => t.id === w.taskId)
@@ -233,6 +252,7 @@ export function CleanupDialog({ workspaceId }: { workspaceId: string }) {
                 <span className="muted">{task ? `${task.externalId ?? task.id} · ${COLUMNS.find((c) => c.id === task.status)?.label ?? ''}` : '—'}</span>
                 <span>{w.pr ? <span className="pr-state" data-state={w.pr.state}>PR {w.pr.state === 'merged' ? 'влит' : w.pr.state === 'open' ? 'открыт' : 'отклонён'}</span> : <span className="muted">нет PR</span>}</span>
                 <span className="cleanup-badges">
+                  {(w.meta?.createdBy ?? w.createdBy) === 'agent' && <span className="chip">агент</span>}
                   {(w.dirty ?? 0) > 0 && <span className="chip chip-run">{w.dirty} изм.</span>}
                   {(w.ahead ?? 0) > 0 && <span className="chip">↑{w.ahead}</span>}
                   {(w.running ?? 0) > 0 && <span className="chip chip-run">работает</span>}

@@ -2,8 +2,8 @@
 // The harness and its agents run under Node (node:sqlite, node-pty), so Electron must not own them: from a terminal
 // this entry point opens the window; inside Electron, with the desktop marker, it shows the same window in this process.
 // Without `--ui` it runs the server itself, which is also how the window's own server starts.
-import { spawn } from 'node:child_process';
-import { readFileSync, realpathSync, statSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -49,13 +49,35 @@ export function findByWalk(start, pkg = 'electron', seen = new Set()) {
   return null;
 }
 
+/**
+ * Chromium switches this machine needs before Electron can start at all. Linux sandboxes the renderer with user
+ * namespaces; where they are off (Ubuntu >= 23.10 restricts them through AppArmor, hardened kernels, a container's seccomp)
+ * Chromium falls back to chrome-sandbox, which works only as a setuid-root file — and `npm install` never makes it one.
+ * Then the start dies before any window, so the window runs without the OS sandbox instead: it shows only the local app,
+ * and links leave for the system browser.
+ */
+export function sandboxSwitches(electron, { platform = process.platform, uid = process.getuid?.(), read = readFileSync, stat = statSync, probe = () => spawnSync('unshare', ['--user', 'true'], { stdio: 'ignore', timeout: 5000 }) } = {}) {
+  if (platform !== 'linux' || !existsSync(electron)) return [];
+  if (uid === 0) return ['--no-sandbox']; // Chromium refuses to run as root with a sandbox
+  const sysctl = (name) => { try { return String(read(`/proc/sys/${name}`, 'utf8')).trim(); } catch { return null; } };
+  const userns = sysctl('kernel/apparmor_restrict_unprivileged_userns') !== '1' && sysctl('kernel/unprivileged_userns_clone') !== '0' && sysctl('user/max_user_namespaces') !== '0';
+  // the sysctls can allow them while seccomp still refuses: one real try (no `unshare` at all means no answer, not a no)
+  const tried = userns && probe();
+  if (userns && (tried.error?.code === 'ENOENT' || tried.status === 0)) return [];
+  try {
+    const helper = stat(join(dirname(electron), 'chrome-sandbox'));
+    if (helper.uid === 0 && helper.mode & 0o4000) return [];
+  } catch {}
+  return ['--no-sandbox'];
+}
+
 /** The window's own argv: the app entry Electron loads, then the desktop marker and whatever the script added. */
-export function electronArgs(root = ROOT, argv = process.argv, scripts, electron = electronBinary(root)) {
+export function electronArgs(root = ROOT, argv = process.argv, scripts, electron = electronBinary(root), switches = sandboxSwitches(electron)) {
   // Electron loads its first argument as an app package (ESM there never reaches app readiness), so the entry is named
   // here and `--ui` stays behind: the window process must never spawn another window
   const entry = resolve(root, 'scripts', 'desktop-window.cjs');
   const flags = npmArgs('desktop', DESKTOP_FLAG, argv.slice(2), scripts); // leads with the marker, which the shell adds below
-  return [electron, [entry, DESKTOP_FLAG, ...flags.filter((a) => a !== DESKTOP_FLAG)]];
+  return [electron, [entry, DESKTOP_FLAG, ...flags.filter((a) => a !== DESKTOP_FLAG), ...switches]];
 }
 
 /** The flags the window process keeps: the marker and Electron's own switches stay with the shell, `--ui` names this entry. */
@@ -113,8 +135,6 @@ async function runServer(argv) {
   const port = arg('--port') === undefined ? undefined : Number(arg('--port'));
   const srv = await startServer({ dev: argv.includes('--dev'), demo: argv.includes('--demo'), port, dataDir: arg('--data-dir') });
   console.log(`Harness running at ${srv.url}`);
-  // the window's own icon and the shortcuts that point at it: made here, while a console can still say why one failed
-  refreshIcons(ROOT);
   const shutdown = () => {
     srv.flush();
     srv.close().finally(() => process.exit(0));
@@ -126,14 +146,3 @@ async function runServer(argv) {
 // a plain `node scripts/desktop.js …`. Inside Electron this file is never an entry: the window gets desktop-window.cjs,
 // which Electron can load as an ordinary CommonJS app.
 if (process.argv[1] && !isElectron() && realpathSync(process.argv[1]) === realpathSync(SELF)) await runDesktop();
-
-/** Icon and shortcuts in the background: the window opens now, and neither is worth a failed start. */
-async function refreshIcons(root) {
-  try {
-    const [{ ensureIcons }, { makeShortcuts }] = await Promise.all([import('./icon.js'), import('./shortcut.js')]);
-    const made = await ensureIcons({ root });
-    if (made.length) makeShortcuts({ root });
-  } catch {
-    // an icon and a shortcut are niceties; the start already happened
-  }
-}

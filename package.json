@@ -15,6 +15,7 @@
     "build": "node scripts/ensure-bin.js && vite build",
     "start": "node server/index.js",
     "desktop": "node scripts/ensure-bin.js && node scripts/desktop.js --ui",
+    "shortcut": "node scripts/shortcut.js",
     "check": "node server/index.js --check",
     "test": "node --test \"test/*.test.js\"",
     "typecheck": "node scripts/ensure-bin.js && tsc -p web --noEmit",

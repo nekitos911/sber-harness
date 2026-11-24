@@ -132,7 +132,9 @@
 .turn-file > .disclosure-head { display: flex; align-items: center; padding-right: 4px; }
 .turn-file > .disclosure-head:hover { background: var(--deck-2); }
 .turn-file .disclosure-toggle { flex: 1; min-width: 0; height: 28px; gap: 8px; padding: 0 6px 0 10px; color: var(--ink); }
-.turn-file-name { flex: 1; min-width: 0; font-family: var(--font-mono); font-size: 12px; text-align: left; }
+.turn-file-name { flex: 0 1 auto; min-width: 0; font-family: var(--font-mono); font-size: 12px; text-align: left; cursor: pointer; }
+.turn-file-name:hover { text-decoration: underline; }
+.turn-file .disclosure-toggle > .diff-stat { margin-left: auto; }
 .turn-file .diff-lines, .turn-file .collapse > div > * { margin: 0; }
 
 .chat-alert {
@@ -451,3 +453,28 @@ svg.step-icon.spinner { color: var(--lamp-run); }
 /* «/name …» sent as the command's text: folded under the person's message */
 .msg-command { margin-top: 6px; border-top: 1px solid var(--rule-soft); padding-top: 4px; font-size: 12px; }
 .msg-command .md-preview { max-height: 60vh; overflow: auto; font-size: 13px; }
+
+/* Sending: the spinner in the send button stays readable (a disabled button is faded). */
+.composer-send[aria-busy] { opacity: 0.7; cursor: progress; }
+.composer-send .spinner { width: 15px; height: 15px; }
+/* A message on its way: the bubble at once, a quiet state line under it; a refused one says so with «Повторить». */
+.msg-out .msg-user { opacity: 0.7; }
+.msg-out[data-failed] .msg-user { opacity: 1; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--lamp-fail) 45%, transparent); }
+.msg-out-state { display: flex; align-items: center; justify-content: flex-end; gap: 6px; color: var(--ink-3); font-size: 11.5px; }
+.msg-out-state > svg { width: 12px; height: 12px; flex-shrink: 0; }
+.msg-out[data-failed] .msg-out-state { color: var(--lamp-fail); }
+.msg-out-state span { overflow-wrap: anywhere; }
+
+/* Find in chat (Ctrl+F): a small bar over the top right of the transcript; matches painted with the Highlight API. */
+.chat-scroll:focus { outline: none; }
+.chat-find-anchor { position: relative; height: 0; z-index: 3; }
+.chat-find {
+  position: absolute; top: 8px; right: 16px; display: flex; align-items: center; gap: 2px; max-width: calc(100% - 32px);
+  padding: 3px 4px 3px 10px; border: 1px solid var(--rule-strong); border-radius: var(--r-2); background: var(--deck-2);
+  box-shadow: var(--shadow-pop); animation: rise-in 120ms var(--ease-out);
+}
+.chat-find-input { width: 200px; min-width: 0; height: 24px; padding: 0; border: 0; outline: none; background: transparent; color: var(--ink); font-size: 13px; }
+.chat-find-input::placeholder { color: var(--ink-4); }
+.chat-find-count { min-width: 52px; padding: 0 6px; font-size: 11.5px; text-align: right; white-space: nowrap; }
+::highlight(chat-find) { background-color: color-mix(in srgb, var(--lamp-run) 30%, transparent); color: inherit; }
+::highlight(chat-find-cur) { background-color: var(--lamp-run); color: var(--deck); }

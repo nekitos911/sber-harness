@@ -1,15 +1,16 @@
 import { useLayoutEffect, useRef, useState } from 'react'
 import { useCompact, useRail } from '../lib/useMedia'
-import { Archive, ArrowLeft, ArrowRight, ClipboardCopy, Command, FileText, FolderOpen, History, GitCompare, MessageSquare, MessageSquarePlus, PanelLeft, PanelRight, Plus, SquareTerminal, X } from 'lucide-react'
+import { Archive, ArrowLeft, ArrowRight, ClipboardCopy, Command, FileText, FolderOpen, History, GitCompare, MessageSquare, MessageSquarePlus, PanelLeft, PanelRight, Pencil, Pin, PinOff, Plus, SquareTerminal, X } from 'lucide-react'
 import { activateTab, closeTab, dirtyKey, hasFeature, navigate, openDialog, setState, tabKey, toast, useStore, wtKey, type Tab } from '../store'
 import { loadDraft, saveDraft } from '../lib/draft'
 import { tryApi } from '../api'
-import { archiveSession } from '../lib/sessionActions'
+import { archiveSession, pinSession, renameSession } from '../lib/sessionActions'
+import { copy } from './WorktreeMenu'
 import { basename } from '../lib/format'
 import { useGit } from '../lib/git'
 import type { GitStatus, Session } from '../types'
 import { StatusIcon } from './bits'
-import { Menu, MenuButton, type MenuItem } from './ui/Menu'
+import { isMenuKey, Menu, MenuButton, type MenuItem } from './ui/Menu'
 import { newChat, newTerminal, workspaceFor } from '../lib/actions'
 import { shortcut } from '../lib/keys'
 
@@ -142,6 +143,7 @@ function TabBar({ cwd }: { cwd: string }) {
     toast('Агент продолжает работать — сессия в боковой панели')
   }
   const [menu, setMenu] = useState<{ key: string; el: HTMLElement } | null>(null)
+  const [renaming, setRenaming] = useState<string | null>(null)
   const menuAnchor = useRef<HTMLElement | null>(null)
   menuAnchor.current = menu?.el ?? null
   const menuItems = (key: string): MenuItem[] => {
@@ -149,6 +151,8 @@ function TabBar({ cwd }: { cwd: string }) {
     const t = tabs[i]
     const keys = tabs.map(tabKey)
     const path = t && (t.kind === 'file' || t.kind === 'diff') ? t.path : null
+    const s = t?.kind === 'session' ? sessions.find((x) => x.id === t.id) : undefined
+    const id = t?.kind === 'session' || t?.kind === 'history' ? t.id : null
     return [
       { label: 'Закрыть', icon: <X />, hint: CLOSE_KEYS, onSelect: () => close(key, true) },
       { label: 'Закрыть другие', disabled: keys.length < 2, onSelect: () => closeMany(keys.filter((x) => x !== key)) },
@@ -157,7 +161,12 @@ function TabBar({ cwd }: { cwd: string }) {
       ...(t?.kind === 'session' && sessions.find((x) => x.id === t.id)?.kind === 'chat' ? [{
         label: 'Закрыть и в архив', icon: <Archive />, onSelect: () => { const ss = sessions.find((x) => x.id === t.id); if (ss) void archiveSession(ss) },
       }] : []),
-      ...(path ? [{ label: 'Копировать путь', icon: <ClipboardCopy />, divider: true, onSelect: () => void navigator.clipboard.writeText(path).then(() => toast(`Скопировано: ${path}`, 'ok'), () => toast('Буфер обмена недоступен', 'error')) }] : []),
+      ...(s && !s.virtual ? [{ label: 'Переименовать', icon: <Pencil />, divider: true, onSelect: () => setRenaming(key) }] : []),
+      ...(s && s.kind === 'chat' && !s.virtual && !s.archived && hasFeature('pin')
+        ? [s.pinnedAt ? { label: 'Открепить', icon: <PinOff />, onSelect: () => void pinSession(s, false) } : { label: 'Закрепить вверху', icon: <Pin />, onSelect: () => void pinSession(s, true) }]
+        : []),
+      ...(id ? [{ label: 'Копировать ID', icon: <ClipboardCopy />, divider: !s || !!s.virtual, onSelect: () => copy(id, 'ID') }] : []),
+      ...(path ? [{ label: 'Копировать путь', icon: <ClipboardCopy />, divider: true, onSelect: () => copy(path, path) }] : []),
     ]
   }
 
@@ -169,6 +178,7 @@ function TabBar({ cwd }: { cwd: string }) {
         {tabs.map((t) => {
           const key = tabKey(t)
           const { icon, title, badge, file } = describeTab(t, sessions, git?.status ?? null)
+          const renamed = renaming === key && t.kind === 'session' ? sessions.find((x) => x.id === t.id) : undefined
           return (
             <div
               key={`${k}|${key}`}
@@ -185,12 +195,19 @@ function TabBar({ cwd }: { cwd: string }) {
               onAuxClick={(e) => { if (e.button === 1) close(key, true) }}
               onContextMenu={(e) => { e.preventDefault(); setMenu({ key, el: e.currentTarget }) }}
               onKeyDown={(e) => {
+                if (e.target !== e.currentTarget) return // the rename field
+                if (isMenuKey(e)) { e.preventDefault(); setMenu({ key, el: e.currentTarget }) }
                 if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); activateTab(cwd, key) }
                 if (e.key === 'Delete') close(key, false)
               }}
             >
               {icon}
-              <span className="tab-title">{title}</span>
+              {renamed ? (
+                <input className="input tab-rename" autoFocus defaultValue={renamed.title} aria-label="Название вкладки"
+                  onClick={(e) => e.stopPropagation()}
+                  onBlur={(e) => { setRenaming(null); void renameSession(renamed, e.currentTarget.value) }}
+                  onKeyDown={(e) => { e.stopPropagation(); if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') { e.currentTarget.value = renamed.title; setRenaming(null) } }} />
+              ) : <span className="tab-title">{title}</span>}
               {badge && <span className="gs" data-s={badge}>{badge}</span>}
               {dirty[dirtyKey(cwd, key)] && <span className="tab-dirty" aria-label="не сохранено" />}
               <button

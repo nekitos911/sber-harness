@@ -1,6 +1,8 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Bot, Check, LoaderCircle, MessageSquare, Radio, X } from 'lucide-react'
 import { openSession, useStore } from '../../store'
+import { ensureMessages } from '../../ws'
+import { childOfCall } from '../../lib/overview'
 import type { ToolCall } from '../../types'
 import { Markdown } from '../Markdown'
 import { Disclosure } from '../ui'
@@ -23,8 +25,17 @@ export function isSubagentTool(tool: ToolCall) {
  * (tool.progress, auto-scrolled while running) and its final answer as markdown. Open while running,
  * folds away once finished.
  */
-export function SubagentCard({ tool }: { tool: ToolCall }) {
+export function SubagentCard({ tool, sessionId, at }: { tool: ToolCall; sessionId?: string; at?: number }) {
   const input = (tool.input ?? {}) as Obj
+  // a harness call without subSessionId: its chat is found by the id in its output, else by its prompt among the children
+  const lookup = !tool.subSessionId && !!sessionId && /^(mcp__harness__|harness\.)(agent|worker_run)$/.test(tool.name)
+  const call = { at: at ?? 0, prompt: str(input.prompt), output: tool.output }
+  const found = useStore((s) => (lookup ? childOfCall(call, s.sessions.filter((x) => x.parentId === sessionId)
+    .map((x) => ({ id: x.id, createdAt: x.createdAt, first: s.messages[x.id]?.find((m) => m.kind === 'user')?.text }))) : null))
+  // the children started after the call: their first messages are read to match the prompt
+  const unread = useStore((s) => (lookup && !found ? s.sessions.filter((x) => x.parentId === sessionId && x.createdAt >= call.at - 2000 && !s.messages[x.id]).map((x) => x.id).join(' ') : ''))
+  useEffect(() => { for (const id of unread.split(' ').filter(Boolean)) ensureMessages(id) }, [unread])
+  const subId = tool.subSessionId ?? found
   const type = str(input.subagent_type) || str(input.description) || 'агент'
   const model = str(input.model) || str(input.grade)
   const ask = str(input.prompt) || str(input.description)
@@ -33,7 +44,7 @@ export function SubagentCard({ tool }: { tool: ToolCall }) {
   const bg = backgroundRun(tool.output)
   const background = input.run_in_background === true || !!bg
   // the chat of this sub-agent says whether the work goes on: running past the parent's turn means it is still at work
-  const chat = useStore((s) => (tool.subSessionId ? s.sessions.find((x) => x.id === tool.subSessionId) : undefined))
+  const chat = useStore((s) => (subId ? s.sessions.find((x) => x.id === subId) : undefined))
   const stillRunning = chat ? chat.status === 'running' : !!tool.stillRunning
   const running = tool.status === 'running' || (background && stillRunning)
   const [open, setOpen] = useState(running)
@@ -52,8 +63,8 @@ export function SubagentCard({ tool }: { tool: ToolCall }) {
       open={open}
       onToggle={setOpen}
       chevron="end"
-      actions={tool.subSessionId ? (
-        <button type="button" className="btn btn-ghost btn-sm" onClick={() => openSession(tool.subSessionId!)}>
+      actions={subId ? (
+        <button type="button" className="btn btn-ghost btn-sm" onClick={() => openSession(subId)}>
           <MessageSquare />Открыть чат субагента
         </button>
       ) : undefined}
@@ -66,7 +77,7 @@ export function SubagentCard({ tool }: { tool: ToolCall }) {
         <span className="agent-kind">Субагент <strong>{type}</strong>{background && <span className="muted"> · {running ? 'в фоне' : 'работал в фоне'}</span>}</span>
         {model && <span className="mono muted">{model}</span>}
         <span className="tool-sum ellipsis">{ask.split('\n').find((l) => l.trim()) ?? ''}</span>
-        {background && chat && <span className="agent-live mono muted" data-tip="его шаги — в чате субагента">
+        {(background || found) && chat && <span className="agent-live mono muted" data-tip="его шаги — в чате субагента">
           {chat.status === 'running' ? 'работает' : `закончил · ${relTime(chat.lastActivityAt, Date.now())}`}
         </span>}
       </>}

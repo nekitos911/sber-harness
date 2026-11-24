@@ -11,6 +11,7 @@ import { runHelper } from './helper.js';
 const fail = (status, message) => { throw Object.assign(new Error(message), { status }); };
 const TOKEN_RE = /[A-Za-z0-9][A-Za-z0-9.-]{3,79}/g;
 const CONTEXT_RE = /^\d{2,4}[kKmM]$/;
+const RETRY_MS = 3600000; // a failed discovery is tried again after an hour (or maxAgeHours, if shorter)
 
 /**
  * Model ids in a free-form answer (markdown table, list or plain lines). A model id has letters and digits and a
@@ -152,6 +153,12 @@ export function createModelCatalog({ config, store, getUrl }) {
   const inflight = new Map(); // agentId -> { promise, handle }
   const meta = (agent) => db.agentMeta[agent] || {}; // reads never create entries
   const maxAgeMs = (agent) => (config.agents[agent]?.modelsDiscovery?.maxAgeHours ?? 24) * 3600000;
+  /** Discovery's own wait for the CLI's first word, longer than a chat's: a cold start with every user MCP server on a
+   *  machine busy with other agents (modelsDiscovery.timeoutMs; default 2× firstEventTimeoutMs, at least 5 min). */
+  const discoveryTimeoutMs = (agent) => {
+    const a = config.agents[agent] || {};
+    return a.modelsDiscovery?.timeoutMs || Math.max(300000, 2 * (a.firstEventTimeoutMs || launchers[a.launcher]?.defaults.firstEventTimeoutMs || 30000));
+  };
 
   function save(agent, catalog) {
     db.agentMeta[agent] = { ...db.agentMeta[agent], catalog };
@@ -165,27 +172,33 @@ export function createModelCatalog({ config, store, getUrl }) {
     const prev = meta(agent).catalog;
     try {
       const launcher = launchers[agentCfg.launcher] || fail(400, `неизвестный лаунчер «${agentCfg.launcher}»`);
-      if (agentCfg.transport === 'acp' && acpPrompt) {
+      if (acpPrompt) {
         // a warm ACP process answers /models in a hidden session: no extra cold start of the CLI and its MCP servers
+        // (null at once when no chat of this agent keeps one)
         const answer = await acpPrompt(agent, md.prompt).catch(() => null);
         const found = answer ? parseModelIds(answer, md.pattern) : [];
         if (found.length) return save(agent, { models: found, at: Date.now() });
       }
-      // /models needs no MCP servers: the light run first (quickArgs, e.g. --safe-mode), the full one only if it found nothing
+      // /models needs no MCP servers: the light run first (quickArgs, e.g. --safe-mode), the full one only if it answered
+      // without ids — never after a timeout: a start too slow without the MCP servers is slower still with all of them
       const quick = db.agentMeta?.[agent]?.quickArgsBroken ? [] : agentCfg.quickArgs ?? launcher.defaults?.quickArgs ?? [];
       const approval = md.approvalMode ? { approvalMode: md.approvalMode } : {};
+      const timeoutMs = discoveryTimeoutMs(agent);
       let res = null;
       for (const extraArgs of quick.length ? [quick, []] : [[]]) {
         const out = await runHelper({
-          config, store, getUrl, agent, kind: 'discovery', prompt: md.prompt, extraArgs, ...approval, onHandle: (handle) => { entry.handle = handle; },
+          config, store, getUrl, agent, kind: 'discovery', prompt: md.prompt, extraArgs, ...approval, firstEventTimeoutMs: timeoutMs, onHandle: (handle) => { entry.handle = handle; },
         });
         const models = parseModelIds(out.resultText || out.text, md.pattern);
         if (models.length) return save(agent, { models, at: Date.now() });
         res = out.res;
+        if (res.timedOut) break;
       }
+      // a timeout is a busy machine, not a broken CLI: said as such, and tried again sooner (ensureFresh)
+      if (res.timedOut) return save(agent, { models: prev?.models || [], at: prev?.at ?? null, error: `CLI не ответил за ${Math.round(timeoutMs / 1000)} с`, timedOut: true, errorAt: Date.now() });
       // stderr warnings («MCP server(s) failed to start: java-lsp») are not why no model ids came back
       const stderr = res.stderrTail.trim().split('\n').filter((l) => l.trim() && !/^\s*Warning:/i.test(l)).slice(-3).join(' ');
-      const why = (res.error && !/^\s*Warning:/i.test(res.error) ? res.error : null) || (res.timedOut ? 'нет ответа вовремя' : stderr) || 'в ответе нет id моделей';
+      const why = (res.error && !/^\s*Warning:/i.test(res.error) ? res.error : null) || stderr || 'в ответе нет id моделей';
       save(agent, { models: prev?.models || [], at: prev?.at ?? null, error: why.slice(0, 500), errorAt: Date.now() });
     } catch (e) {
       save(agent, { models: prev?.models || [], at: prev?.at ?? null, error: e.message, errorAt: Date.now() });
@@ -214,7 +227,8 @@ export function createModelCatalog({ config, store, getUrl }) {
     if (!a || a.enabled === false || !a.modelsDiscovery?.prompt || inflight.has(agent)) return;
     const c = meta(agent).catalog;
     const last = Math.max(c?.at || 0, c?.errorAt || 0);
-    if (!c || Date.now() - last > maxAgeMs(agent)) discover(agent).catch(() => {});
+    const wait = c?.error ? Math.min(maxAgeMs(agent), RETRY_MS) : maxAgeMs(agent); // «повторю позже»
+    if (!c || Date.now() - last > wait) discover(agent).catch(() => {});
   }
 
   /** Config entries (order, labels) + discovered + seen, deduped; available = in a successful discovery (null = unknown). */
@@ -270,7 +284,7 @@ export function createModelCatalog({ config, store, getUrl }) {
     isFresh,
     info: (agent) => {
       const c = meta(agent).catalog;
-      return c ? { at: c.at ?? null, error: c.error ?? null, running: inflight.has(agent) } : { at: null, error: null, running: inflight.has(agent) };
+      return { at: c?.at ?? null, error: c?.error ?? null, timedOut: !!(c?.error && c.timedOut), running: inflight.has(agent) };
     },
     /** Stops discovery runs (they are ours, not user turns) and waits for them, so the data dir is released. */
     async close() {

@@ -49,12 +49,15 @@ npm start            # http://127.0.0.1:4777
 npm run desktop      # то же приложение, но в своём окне — без вкладок, адресной строки и закладок
 ```
 
-Или ярлык в папке репозитория: `start-harness.cmd` (Windows) / `start-harness.sh` (Linux, macOS). Оба при необходимости
-сами делают `npm install` и `npm run build`.
+Или лаунчер в папке репозитория: `start-harness.cmd` (Windows, двойной щелчок) / `./start-harness.sh` (Linux, macOS, из
+терминала). Оба при необходимости сами делают `npm install` и `npm run build`. Ярлык на рабочем столе и в меню (Windows —
+`.lnk`, Linux — `.desktop`, macOS — `~/Applications/sber-harness.app`) создаёт `npm run shortcut`. Подробности по каждой
+ОС, журнал запуска и типичные сбои — в [docs/INSTALL.md](docs/INSTALL.md#окно-приложения-и-ярлык).
 Окно — это Electron, но харнес и агенты остаются под обычным Node: Electron 24 без `node:sqlite` и `@lydell/node-pty`
 (подробности — в шапке `scripts/desktop.js`). Платформа берётся та, для которой скачан Electron при `npm install`
-(Windows — `dist/electron.exe`, Linux/macOS — `dist/electron`, при отсутствии библиотек окна `npm i -D electron --force`
-перекачивает сборку под текущую ОС).
+(Windows — `dist/electron.exe`, Linux — `dist/electron`, macOS — `dist/Electron.app/Contents/MacOS/Electron`; путь берётся
+из `node_modules/electron/path.txt`, при отсутствии библиотек окна `npm i -D electron --force` перекачивает сборку под
+текущую ОС).
 
 - **Уже запущенный харнес не трогается.** Если на `4777` (или на порту из конфига) кто-то отвечает, окно поднимает свой сервер на
   первом свободном порту и в своём каталоге данных `data/<папка-репозитория>-<порт>` (своя доска, свои сессии, свой `server.json`).

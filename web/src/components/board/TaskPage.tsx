@@ -1,7 +1,7 @@
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
-import { Ellipsis, GitBranch, ExternalLink, EyeOff, GitMerge, Lock, Pencil, Play, Plus, Send, SquareArrowOutUpRight, Trash2, UserPlus, Wrench, X } from 'lucide-react'
+import { Bot, Ellipsis, GitBranch, ExternalLink, EyeOff, GitMerge, History, Lock, Pencil, Play, Plus, Send, Settings2, SquareArrowOutUpRight, Trash2, User, UserPlus, Wrench, X } from 'lucide-react'
 import { api, ApiError, errorText, tryApi } from '../../api'
-import { getState, openDialog, openSession, openWorktree, setState, toast, upsert, useFeature, useStore, without, upsertSession } from '../../store'
+import { closeDetail, getState, openDialog, openSession, openWorktree, setState, toast, upsert, useFeature, useStore, without, upsertSession } from '../../store'
 import { COLUMNS, fullTime, PRIORITY, relTime, statusLabel } from '../../lib/format'
 import { isImported, pendingDeps, taskKey } from '../../lib/tasks'
 import { useNow } from '../../lib/useNow'
@@ -16,7 +16,10 @@ import { HandoffPopover, ReworkPopover, StartPopover } from './Rework'
 import { TargetsLine } from '../ReleaseTargets'
 import { PrChip } from '../PrChip'
 import { openPrSettings, usePr } from '../../lib/pr'
-import type { BoardCtx } from './TaskCard'
+import { AgentBadge, chipChat, type BoardCtx } from './TaskCard'
+import { agentChip, chipStates } from '../../lib/agentChip'
+import { dur, sessionVisualState } from '../../lib/sessionState'
+import { DetailBar, Meta } from '../DetailPage'
 
 /** Optimistic: the change shows at once; the server's answer settles it, a failure rolls back (with a toast). */
 async function patchTask(id: string, fields: Partial<Task> & { comment?: string }) {
@@ -49,20 +52,29 @@ function useDraft(value: string, key: string) {
   return [draft, set] as const
 }
 
-export function TaskDrawer({ task, ctx, onClose }: { task: Task; ctx: BoardCtx; onClose: () => void }) {
-  const ref = useRef<HTMLElement>(null)
+/** One task as a page over «Задачи»: title and status, a meta row (column, agent, targets, worktrees), the work, the journal. */
+export function TaskPage({ task, ctx }: { task: Task | undefined; ctx: BoardCtx }) {
+  if (!task) {
+    return (
+      <div className="detail-page" tabIndex={-1}>
+        <DetailBar back="Задачи" />
+        <div className="empty">
+          <h2>Задачи больше нет</h2>
+          <p>Её удалили с доски.</p>
+          <button type="button" className="btn" onClick={closeDetail}>К задачам</button>
+        </div>
+      </div>
+    )
+  }
+  return <TaskBody task={task} ctx={ctx} />
+}
+
+function TaskBody({ task, ctx }: { task: Task; ctx: BoardCtx }) {
   const titleId = useId()
+  const now = useNow()
   const trackerOn = useStore((s) => s.integrations.tasks)
   const [panel, setPanel] = useState<'assign' | 'send' | null>(null)
   const [confirmDelete, setConfirmDelete] = useState(false)
-
-  useEffect(() => { ref.current?.focus() }, [])
-  useEffect(() => {
-    // Esc closes the drawer unless a modal on top of it (start/PR dialog) is handling it.
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && !e.defaultPrevented && !document.querySelector('dialog[open]')) onClose() }
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
-  }, [onClose])
 
   const key = taskKey(task, ctx.byId)
   const parent = task.parentId ? ctx.byId.get(task.parentId) : undefined
@@ -74,6 +86,7 @@ export function TaskDrawer({ task, ctx, onClose }: { task: Task; ctx: BoardCtx; 
   const startRef = useRef<HTMLButtonElement>(null)
   const primaryRef = useRef<HTMLButtonElement>(null)
   const patch = (fields: Partial<Task>) => patchTask(task.id, fields)
+  const hasKids = (ctx.kids.get(task.id)?.length ?? 0) > 0
 
   const imported = isImported(task)
   // Imported tasks are only hidden by DELETE (re-import keeps them hidden); local ones are deleted.
@@ -81,135 +94,161 @@ export function TaskDrawer({ task, ctx, onClose }: { task: Task; ctx: BoardCtx; 
     const ok = await tryApi<unknown>('DELETE', `/tasks/${encodeURIComponent(task.id)}`)
     if (ok === undefined) return
     setState((s) => ({ tasks: imported ? upsert(s.tasks, { ...task, hidden: true }) : without(s.tasks, task.id) }))
-    onClose()
+    closeDetail()
   }
 
   return (
-    <aside ref={ref} className="drawer" role="dialog" aria-modal="false" aria-labelledby={titleId} tabIndex={-1}>
-      <header className="drawer-head">
-        <span className="mono card-id" data-tip={task.id}>{task.parentId ? `${key} · ${task.id}` : key}</span>
+    <div className="detail-page" role="region" aria-labelledby={titleId} tabIndex={-1}>
+      <DetailBar back="Задачи" crumbs={<>
+        {parent && <><button type="button" className="dp-crumb" onClick={() => ctx.onOpen(parent.id)} data-tip={`Родительская задача: ${parent.title}`}>{taskKey(parent, ctx.byId)}</button><span aria-hidden>/</span></>}
+        <span className="mono" data-tip={task.id}>{key}</span>
+      </>}>
         {task.externalUrl && (
-          <a className="icon-btn icon-btn-sm" href={task.externalUrl} target="_blank" rel="noreferrer noopener" aria-label="Открыть в трекере" data-tip="Открыть в трекере">
+          <a className="icon-btn" href={task.externalUrl} target="_blank" rel="noreferrer noopener" aria-label="Открыть в трекере" data-tip="Открыть в трекере">
             <ExternalLink />
           </a>
         )}
-        <span className="grow" />
-        <span className="muted" data-tip={`обновлено ${fullTime(task.updatedAt)}`}>
-          {task.takenAt ? `в работе с ${relTime(task.takenAt)}` : `обновлено ${relTime(task.updatedAt)}`}
-        </span>
         <MenuButton label="Ещё действия" icon={<Ellipsis />} align="right" items={[
           { label: 'Назначить агенту…', icon: <UserPlus />, onSelect: () => setPanel('assign') },
           { label: 'Отправить в сессию…', icon: <Send />, onSelect: () => setPanel('send') },
           ...(!task.hidden ? [{ label: imported ? 'Скрыть с доски' : 'Удалить задачу', icon: imported ? <EyeOff /> : <Trash2 />, danger: !imported, divider: true, onSelect: () => setConfirmDelete(true) }] : []),
         ]} />
-        <button type="button" className="icon-btn" aria-label="Закрыть" data-tip="Закрыть (Esc)" onClick={onClose}><X /></button>
-      </header>
+      </DetailBar>
 
-      <div className="drawer-body">
-        {parent && (
-          <button type="button" className="drawer-parent" onClick={() => ctx.onOpen(parent.id)}>
-            Подзадача <span className="mono">{parent.id}</span> <span className="ellipsis">{parent.title}</span>
-          </button>
-        )}
-        <TitleField id={titleId} task={task} />
-        {(task.externalStatus || imported) && <span className="chip drawer-tracker-status">{task.externalStatus ?? statusLabel(task.status)}</span>}
-        <TargetsLine targets={task.targets} workspaceId={task.workspaceId} onChange={(targets) => void patch({ targets })} />
-        {task.hidden && (
-          <div className="drawer-note">
-            Задача скрыта с доски.
-            <button type="button" className="btn btn-sm" onClick={() => void patch({ hidden: false })}>Вернуть на доску</button>
+      <div className="dp-scroll">
+        <header className="dp-head">
+          <div className="dp-title">
+            <TitleField id={titleId} task={task} />
+            <span className="dp-key mono">{key}</span>
           </div>
-        )}
-        {task.snapshot && (task.snapshot.title !== task.title || task.snapshot.description !== task.description) && (
-          <div className="drawer-note" data-tip={task.snapshot.title}>
-            После взятия в работу задача изменилась в трекере (снимок от {fullTime(task.snapshot.at)}).
-          </div>
-        )}
-
-        <div className="drawer-actions">
-          {/* One primary action: take into work → open the running session → send back for rework once it finished. */}
-          {!session ? (
-            <button ref={primaryRef} type="button" className="btn btn-primary" disabled={blocked.length > 0} onClick={() => setPop('handoff')}>
-              <Play />
-              Передать агенту
-            </button>
-          ) : reworkable ? (
-            <>
-              <button ref={primaryRef} type="button" className="btn btn-primary" onClick={() => setPop('rework')}>
-                <Wrench />
-                Доработать
+          <div className="dp-primary">
+            {/* One primary action: take into work → open the running session → send back for rework once it finished. */}
+            {!session ? (
+              <button ref={primaryRef} type="button" className="btn btn-primary" disabled={blocked.length > 0} onClick={() => setPop('handoff')}>
+                <Play />
+                Передать агенту
               </button>
-              <button type="button" className="btn" onClick={() => openSession(session.id)}>
+            ) : reworkable ? (
+              <>
+                <button type="button" className="btn" onClick={() => openSession(session.id)}>
+                  <StatusIcon session={session} />
+                  Открыть сессию
+                </button>
+                <button ref={primaryRef} type="button" className="btn btn-primary" onClick={() => setPop('rework')}>
+                  <Wrench />
+                  Доработать
+                </button>
+              </>
+            ) : (
+              <button type="button" className="btn btn-primary" onClick={() => openSession(session.id)}>
                 <StatusIcon session={session} />
                 Открыть сессию
               </button>
-            </>
-          ) : (
-            <button type="button" className="btn btn-primary" onClick={() => openSession(session.id)}>
-              <StatusIcon session={session} />
-              Открыть сессию
-            </button>
-          )}
-          {!session && <HandoffPopover task={task} anchor={primaryRef} open={pop === 'handoff'} onClose={() => setPop(null)} />}
-          {reworkable && <ReworkPopover task={task} anchor={primaryRef} open={pop === 'rework'} onClose={() => setPop(null)} />}
-        </div>
-        {!session && <UnboundChat task={task} taskKey={key} />}
-        {blocked.length > 0 && <p className="drawer-blocked">Ждёт задач: {blocked.join(', ')}</p>}
-        {confirmDelete && (
-          <div className="drawer-note drawer-confirm">
-            <span>{imported ? `Скрыть ${key} с доски? В трекере задача останется.` : `Удалить ${task.id} без возможности восстановления?`}</span>
-            <button type="button" className={imported ? 'btn btn-sm' : 'btn btn-sm btn-danger'} onClick={() => void remove()}>{imported ? 'Скрыть' : 'Удалить'}</button>
-            <button type="button" className="btn btn-sm btn-ghost" onClick={() => setConfirmDelete(false)}>Отмена</button>
+            )}
+            {!session && <HandoffPopover task={task} anchor={primaryRef} open={pop === 'handoff'} onClose={() => setPop(null)} />}
+            {reworkable && <ReworkPopover task={task} anchor={primaryRef} open={pop === 'rework'} onClose={() => setPop(null)} />}
           </div>
-        )}
-        {panel === 'assign' && <AssignForm task={task} onDone={() => setPanel(null)} />}
-        {panel === 'send' && <SendForm task={task} onDone={() => setPanel(null)} />}
-        {session && (
-          <p className="drawer-assignee">
-            <StatusIcon session={session} /> {session.title} · {ctx.agents.get(session.agent)?.label ?? session.agent} · {statusText(session)}
-          </p>
-        )}
+          <div className="dp-sub">
+            <span className="dp-status" data-s={task.status}><span className="col-mark" data-s={task.status} aria-hidden />{statusLabel(task.status)}</span>
+            {task.externalStatus && <span className="chip" data-tip="Статус в трекере">трекер: {task.externalStatus}</span>}
+            {task.hidden && <span className="chip">скрыта с доски</span>}
+            <span className="muted" data-tip={`обновлено ${fullTime(task.updatedAt)}`}>
+              {task.takenAt ? `в работе с ${relTime(task.takenAt, now)}` : `обновлено ${relTime(task.updatedAt, now)}`}
+            </span>
+          </div>
+        </header>
 
-        {imported ? (task.description.trim() ? <div className="md-preview drawer-desc"><Markdown text={task.description} /></div> : <ExternalCard task={task} full />) : <DescriptionField task={task} />}
-        {(task.externalLinks?.length ?? 0) > 0 && (
-          <ul className="drawer-links" aria-label="Ссылки из полей задачи">
-            {task.externalLinks!.map((l) => <li key={l.url}><span className="muted">{l.name}: </span><a href={l.url} target="_blank" rel="noreferrer noopener">{l.url}</a></li>)}
-          </ul>
-        )}
-        <TaskWorktrees task={task} />
-        <TaskPrs task={task} />
-        {task.targets.length > 1 && <Ports task={task} />}
-        {(ctx.kids.get(task.id)?.length ?? 0) > 0 && <Subtasks task={task} ctx={ctx} />}
+        <div className="dp-meta">
+          <Meta label="Статус">
+            <Select size="sm" label="Колонка на доске" value={task.status} onChange={(v) => void patch({ status: v as TaskStatus })} options={COLUMNS.map((c) => ({ value: c.id, label: c.label }))} />
+          </Meta>
+          <Meta label="Агент">
+            {session ? <TaskAgent task={task} session={session} ctx={ctx} /> : <span className="muted">Не назначен</span>}
+            {session && <span className="dp-agent-meta muted">{session.title} · {ctx.agents.get(session.agent)?.label ?? session.agent}</span>}
+          </Meta>
+          <Meta label="Целевые ветки">
+            <TargetsLine targets={task.targets} workspaceId={task.workspaceId} onChange={(targets) => void patch({ targets })} />
+          </Meta>
+          <Meta label="Рабочие деревья"><TaskWorktrees task={task} /></Meta>
+        </div>
 
-        <Disclosure className="drawer-more" summary={<h3>Настроить запуск</h3>}>
-          <WorkSummary task={task} />
-          {!session && (
-            <div className="row">
-              <button ref={startRef} type="button" className="btn btn-sm" disabled={blocked.length > 0} onClick={() => setPop('start')}><Play />Взять в работу в репозитории…</button>
-              <StartPopover task={task} anchor={startRef} open={pop === 'start'} onClose={() => setPop(null)} />
+        <div className="dp-body">
+          {task.hidden && (
+            <div className="drawer-note">
+              Задача скрыта с доски.
+              <button type="button" className="btn btn-sm" onClick={() => void patch({ hidden: false })}>Вернуть на доску</button>
             </div>
           )}
-        </Disclosure>
-        {trackerOn && task.externalId && (
-          <Disclosure className="drawer-more" summary={<h3>Статус в трекере</h3>}>
-            <TrackerStatus task={task} />
-            {imported && task.description.trim() && <ExternalCard task={task} full={false} />}
-          </Disclosure>
-        )}
-        <Disclosure className="drawer-more" summary={<h3>Ещё: колонка, приоритет, зависимости, метки</h3>}>
-          <div className="props">
-            <Prop label="Колонка"><Select size="sm" label="Колонка на доске" value={task.status} onChange={(v) => void patch({ status: v as TaskStatus })} options={COLUMNS.map((c) => ({ value: c.id, label: c.label }))} /></Prop>
-            <Prop label="Приоритет"><Select size="sm" label="Приоритет" value={task.priority ?? ''} onChange={(v) => void patch({ priority: (v || null) as Task['priority'] })}
-              options={[{ value: '', label: 'Без приоритета' }, ...(['high', 'medium', 'low'] as const).map((p) => ({ value: p, label: PRIORITY[p] }))]} /></Prop>
-            <Prop label="Зависимости"><DepsField task={task} ctx={ctx} onChange={(deps) => void patch({ deps })} /></Prop>
-            <Prop label="Метки"><ChipsInput values={task.labels} label="метку" onChange={(labels) => void patch({ labels })} /></Prop>
-          </div>
-          {!(ctx.kids.get(task.id)?.length) && <Subtasks task={task} ctx={ctx} />}
-        </Disclosure>
-        <Activity task={task} sessions={ctx.sessions} />
+          {task.snapshot && (task.snapshot.title !== task.title || task.snapshot.description !== task.description) && (
+            <div className="drawer-note" data-tip={task.snapshot.title}>
+              После взятия в работу задача изменилась в трекере (снимок от {fullTime(task.snapshot.at)}).
+            </div>
+          )}
+          {!session && <UnboundChat task={task} taskKey={key} />}
+          {blocked.length > 0 && <p className="drawer-blocked">Ждёт задач: {blocked.join(', ')}</p>}
+          {confirmDelete && (
+            <div className="drawer-note drawer-confirm">
+              <span>{imported ? `Скрыть ${key} с доски? В трекере задача останется.` : `Удалить ${task.id} без возможности восстановления?`}</span>
+              <button type="button" className={imported ? 'btn btn-sm' : 'btn btn-sm btn-danger'} onClick={() => void remove()}>{imported ? 'Скрыть' : 'Удалить'}</button>
+              <button type="button" className="btn btn-sm btn-ghost" onClick={() => setConfirmDelete(false)}>Отмена</button>
+            </div>
+          )}
+          {panel === 'assign' && <AssignForm task={task} onDone={() => setPanel(null)} />}
+          {panel === 'send' && <SendForm task={task} onDone={() => setPanel(null)} />}
 
+          <section className="dp-card">
+            <h3 className="dp-card-head">Описание{imported && <span className="muted">из трекера</span>}</h3>
+            {imported ? (task.description.trim() ? <div className="md-preview drawer-desc"><Markdown text={task.description} /></div> : <ExternalCard task={task} full />) : <DescriptionField task={task} />}
+            {(task.externalLinks?.length ?? 0) > 0 && (
+              <ul className="drawer-links" aria-label="Ссылки из полей задачи">
+                {task.externalLinks!.map((l) => <li key={l.url}><span className="muted">{l.name}: </span><a href={l.url} target="_blank" rel="noreferrer noopener">{l.url}</a></li>)}
+              </ul>
+            )}
+          </section>
+          <TaskPrs task={task} />
+          {task.targets.length > 1 && <Ports task={task} />}
+          {hasKids && <Subtasks task={task} ctx={ctx} />}
+
+          <Disclosure className="drawer-more dp-fold" summary={<h3>Настроить запуск</h3>}>
+            <WorkSummary task={task} />
+            {!session && (
+              <div className="row">
+                <button ref={startRef} type="button" className="btn btn-sm" disabled={blocked.length > 0} onClick={() => setPop('start')}><Play />Взять в работу в репозитории…</button>
+                <StartPopover task={task} anchor={startRef} open={pop === 'start'} onClose={() => setPop(null)} />
+              </div>
+            )}
+          </Disclosure>
+          {trackerOn && task.externalId && (
+            <Disclosure className="drawer-more dp-fold" summary={<h3>Статус в трекере</h3>}>
+              <TrackerStatus task={task} />
+              {imported && task.description.trim() && <ExternalCard task={task} full={false} />}
+            </Disclosure>
+          )}
+          <Disclosure className="drawer-more dp-fold" summary={<h3>Ещё: приоритет, зависимости, метки</h3>}>
+            <div className="props">
+              <Prop label="Приоритет"><Select size="sm" label="Приоритет" value={task.priority ?? ''} onChange={(v) => void patch({ priority: (v || null) as Task['priority'] })}
+                options={[{ value: '', label: 'Без приоритета' }, ...(['high', 'medium', 'low'] as const).map((p) => ({ value: p, label: PRIORITY[p] }))]} /></Prop>
+              <Prop label="Зависимости"><DepsField task={task} ctx={ctx} onChange={(deps) => void patch({ deps })} /></Prop>
+              <Prop label="Метки"><ChipsInput values={task.labels} label="метку" onChange={(labels) => void patch({ labels })} /></Prop>
+            </div>
+            {!hasKids && <Subtasks task={task} ctx={ctx} />}
+          </Disclosure>
+          <Activity task={task} sessions={ctx.sessions} />
+        </div>
       </div>
-    </aside>
+    </div>
+  )
+}
+
+/** The agent as on the board card: the harness's check / review explained, else the chat's live state; a click opens the chat. */
+function TaskAgent({ task, session, ctx }: { task: Task; session: Session; ctx: BoardCtx }) {
+  const now = useNow()
+  if (chipStates(task)) return <AgentBadge task={task} session={session} ctx={ctx} />
+  const c = agentChip(task, chipChat(session), null, now, dur)
+  return (
+    <button type="button" className="agent-badge" data-s={sessionVisualState(session)} data-tip={c.tip} aria-label={`${c.text}. ${c.tip}`} onClick={() => openSession(session.id)}>
+      <StatusIcon session={session} />{c.text}
+    </button>
   )
 }
 
@@ -326,10 +365,8 @@ function WorkSummary({ task }: { task: Task }) {
 function TaskWorktrees({ task }: { task: Task }) {
   const workspaces = useStore((s) => s.workspaces)
   const list = task.worktrees ?? []
-  if (!list.length) return null
+  if (!list.length) return <span className="muted">Пока нет</span>
   return (
-    <section className="drawer-section">
-      <h3>Рабочие деревья задачи</h3>
       <ul className="task-wts">
         {list.map((w) => (
           <li key={w.path}>
@@ -342,7 +379,6 @@ function TaskWorktrees({ task }: { task: Task }) {
           </li>
         ))}
       </ul>
-    </section>
   )
 }
 
@@ -564,8 +600,8 @@ function Ports({ task }: { task: Task }) {
     if (res.sessionId) openSession(res.sessionId)
   }
   return (
-    <section className="drawer-section">
-      <h3>Портирование</h3>
+    <section className="dp-card">
+      <h3 className="dp-card-head">Портирование</h3>
       {!task.branch && <p className="field-hint">Перенос станет доступен, когда у задачи появится рабочая ветка.</p>}
       <div className="ports">
         {task.targets.slice(1).map((target) => {
@@ -612,8 +648,8 @@ function Subtasks({ task, ctx }: { task: Task; ctx: BoardCtx }) {
   }
 
   return (
-    <section className="drawer-section">
-      <h3>
+    <section className="dp-card">
+      <h3 className="dp-card-head">
         Подзадачи
         {kids.length > 0 && <span className="muted num" style={{ fontWeight: 400 }}>{done}/{kids.length}</span>}
         <button type="button" className="btn btn-ghost btn-sm" style={{ marginLeft: 'auto' }} onClick={() => setAdding(!adding)} aria-expanded={adding}>
@@ -650,23 +686,34 @@ function Subtasks({ task, ctx }: { task: Task; ctx: BoardCtx }) {
   )
 }
 
+/** «Журнал» as a timeline of events: who, what, when; an entry with a link (a PR created) opens it. */
 function Activity({ task, sessions }: { task: Task; sessions: Map<string, Session> }) {
   const now = useNow()
   const log = task.log.filter((l) => typeof l.text === 'string' && l.text.trim()) // technical entries without text stay hidden
   if (!log.length) return null
-  const who = (by: string) => (by === 'user' ? 'вы' : by === 'harness' ? 'harness' : sessions.get(by)?.title ?? by)
   return (
-    <Disclosure className="drawer-more" summary={<h3>Журнал <span className="muted num">{log.length}</span></h3>}>
-      <ol className="activity">
-        {log.map((l, i) => (
-          <li key={i}>
-            <span className="muted" data-tip={fullTime(l.at)}>{relTime(l.at, now)}</span>
-            <span className="activity-by">{who(l.by)}</span>
-            <span className="activity-text">{l.text}</span>
-          </li>
-        ))}
+    <section className="dp-events" aria-label="Журнал задачи">
+      <h3 className="dp-card-head"><History aria-hidden />Журнал <span className="count">{log.length}</span></h3>
+      <ol className="timeline">
+        {log.map((l, i) => {
+          const chat = sessions.get(l.by)
+          const Icon = l.by === 'user' ? User : l.by === 'harness' ? Settings2 : Bot
+          const url = typeof l.data?.url === 'string' ? l.data.url : null
+          return (
+            <li key={i}>
+              <span className="timeline-dot" aria-hidden><Icon /></span>
+              <span className="timeline-text">
+                {chat ? <button type="button" className="timeline-by" onClick={() => openSession(chat.id)} data-tip="Открыть чат">{chat.title}</button>
+                  : <strong className="timeline-by">{l.by === 'user' ? 'вы' : l.by}</strong>}
+                {' '}<span className="activity-text">{l.text}</span>
+                {url && <> <a href={url} target="_blank" rel="noreferrer noopener">открыть</a></>}
+                {' '}<span className="muted" data-tip={fullTime(l.at)}>{relTime(l.at, now)}</span>
+              </span>
+            </li>
+          )
+        })}
       </ol>
-    </Disclosure>
+    </section>
   )
 }
 
@@ -745,8 +792,8 @@ function TaskPrs({ task }: { task: Task }) {
   const assignee = sessions.find((x) => x.id === task.assigneeSessionId)
   const mainCwd = assignee?.cwd ?? Object.values(worktrees).flat().find((w) => task.branch && w.branch === task.branch)?.path ?? null
   return (
-    <section className="drawer-section">
-      <h3>Пулл-реквесты</h3>
+    <section className="dp-card">
+      <h3 className="dp-card-head">Пулл-реквесты</h3>
       {!enabled ? (
         <div className="pr-off"><span className="muted">PR-интеграция не настроена.</span><button type="button" className="btn btn-sm" onClick={openPrSettings}>Настроить</button></div>
       ) : (

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
-import { ArrowRight, ChevronDown, ChevronRight, Ellipsis, ExternalLink, File, FileCode, FileDiff, FileJson, FileText, GitBranch, GitPullRequest, Minus, Plus, RotateCcw, Search, Sparkles } from 'lucide-react'
+import { ArrowRight, ChevronDown, ChevronRight, ClipboardCopy, Ellipsis, ExternalLink, Eye, File, FileCode, FileDiff, FileJson, FileText, FolderOpen, GitBranch, GitCompare, GitPullRequest, Minus, Plus, RotateCcw, Search, Sparkles } from 'lucide-react'
 import { api, qs, tryApi } from '../../api'
 import { getState, openDialog, openTab, openTask, openWorktree, setState, showPanel, toast, useFeature, useStore } from '../../store'
 import { basename, normPath, plural, relTime, shortHash } from '../../lib/format'
@@ -8,14 +8,14 @@ import { gsLetter, refreshGit, splitPath, useGit, useGitWatch } from '../../lib/
 import { parseDiff, type DiffFile } from '../../lib/diff'
 import { useNow } from '../../lib/useNow'
 import type { GitCommit, GitFile, GitSuggest, Settings } from '../../types'
-import { Disclosure, Menu, MenuButton, type MenuItem } from '../ui'
+import { Disclosure, isMenuKey, Menu, MenuButton, type MenuItem } from '../ui'
 import { openPrSettings, usePr } from '../../lib/pr'
 import { Skeleton } from '../bits'
 import { GenerateStatus, useGenerate } from '../GenerateMessage'
 import { AgentGitLine } from '../AgentGit'
 import { currentVia, gitAction, type GitVia } from '../../lib/agentGit'
 import { BranchPicker } from '../pickers/BranchPicker'
-import { openFolder } from '../WorktreeMenu'
+import { copy, openFile, openFolder, REVEAL } from '../WorktreeMenu'
 import { flowState } from '../../lib/flow'
 import { touchedRoots, type Root } from '../../lib/toolRun'
 import { loadWorktreesOf } from '../../ws'
@@ -397,10 +397,34 @@ function ChangeRow({ cwd, f, git, staged = false, stageOn = false, onStage, onDi
   const { dir, name } = splitPath(f.path)
   const diff = git?.files?.find((d) => d.path === f.path)
   const Icon = iconOf(f.path)
+  const [menu, setMenu] = useState(false)
+  const row = useRef<HTMLDivElement>(null)
+  const canOpen = useFeature('open-file')
+  const sep = cwd.includes('\\') ? '\\' : '/'
+  const abs = `${cwd.replace(/[\\/]+$/, '')}${sep}${f.path.replace(/[\\/]/g, sep)}`
+  const gone = f.status === 'D' ? { disabled: true, tip: 'Файл удалён в рабочей копии' } : {}
+  const items: MenuItem[] = !menu ? [] : [
+    { label: 'Просмотреть', icon: <Eye />, onSelect: () => openTab({ kind: 'file', cwd, path: f.path }), ...gone },
+    { label: 'Показать изменения', icon: <GitCompare />, onSelect: () => openTab({ kind: 'diff', cwd, path: f.path }) },
+    { label: 'Копировать путь', icon: <ClipboardCopy />, divider: true, onSelect: () => copy(abs, 'путь') },
+    { label: 'Копировать относительный путь', icon: <ClipboardCopy />, onSelect: () => copy(f.path, 'относительный путь') },
+    ...(canOpen ? [
+      { label: 'Открыть приложением по умолчанию', icon: <ExternalLink />, divider: true, onSelect: () => openFile(f.path, 'file', cwd), ...gone },
+      { label: REVEAL, icon: <FolderOpen />, onSelect: () => openFile(f.path, 'reveal', cwd), ...gone },
+    ] : []),
+    ...(stageOn && onStage ? [{ label: staged ? 'Убрать из индекса' : 'Добавить в индекс', icon: staged ? <Minus /> : <Plus />, divider: true, onSelect: onStage }] : []),
+    ...(stageOn && onDiscard ? [{ label: 'Отменить изменения…', icon: <RotateCcw />, danger: true, divider: !onStage, onSelect: onDiscard }] : []),
+  ]
+  const show = () => openTab({ kind: 'diff', cwd, path: f.path })
   return (
     <li className="change">
-      <div className="change-row" role="button" tabIndex={0} data-tip={`${f.path}: ${STATUS_LABEL[f.status]}`} data-tip-trunc
-        onClick={() => openTab({ kind: 'diff', cwd, path: f.path })} onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); openTab({ kind: 'diff', cwd, path: f.path }) } }}>
+      <div ref={row} className="change-row" role="button" tabIndex={0} data-tip={`${f.path}: ${STATUS_LABEL[f.status]}`} data-tip-trunc
+        onClick={show} onContextMenu={(e) => { e.preventDefault(); setMenu(true) }}
+        onKeyDown={(e) => {
+          if (e.target !== e.currentTarget) return
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); show() }
+          if (isMenuKey(e)) { e.preventDefault(); setMenu(true) }
+        }}>
         <Icon className="change-icon" aria-hidden />
         <span className="change-name">{name}</span>
         {dir && <span className="change-dir"><bdi>{dir}</bdi></span>}
@@ -412,6 +436,7 @@ function ChangeRow({ cwd, f, git, staged = false, stageOn = false, onStage, onDi
         <span className="diff-stat num">{(f.added ?? diff?.added) !== undefined ? <><span className="add">+{f.added ?? diff!.added}</span> <span className="del">−{f.removed ?? diff!.removed}</span></> : ''}</span>
         <span className="gs" data-s={f.status} aria-label={STATUS_LABEL[f.status]}>{gsLetter(f.status)}</span>
       </div>
+      <Menu anchor={row} open={menu} onClose={() => setMenu(false)} items={items} label={`Файл ${name}`} placement="bottom-end" />
     </li>
   )
 }

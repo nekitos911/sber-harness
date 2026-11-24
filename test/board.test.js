@@ -124,6 +124,29 @@ test('harness review: round 1 changes requested -> the worker fixes -> round 2 a
   }
 });
 
+test('harness review: «Повторить ревью» after a deleted reviewer runs the same round in a new reviewer chat', async () => {
+  const h = await startTestServer({ orchestration: { reviewMode: 'harness', review: { promptTemplate: '#slow #reviewer round={round} approve-at=1', maxRounds: 2 } } });
+  try {
+    const ws = (await h.api('POST', '/api/workspaces', { path: repo })).body;
+    const t = (await h.api('POST', '/api/tasks', { title: 'Повтор #done', workspaceId: ws.id })).body;
+    assert.equal((await h.api('POST', `/api/tasks/${t.id}/review`)).status, 409, 'no worker yet');
+    await h.api('POST', `/api/tasks/${t.id}/start`, { agent: 'mock' });
+    const at = async (pred) => waitFor(async () => { const x = (await h.api('GET', '/api/state')).body.tasks.find((y) => y.id === t.id); return pred(x) && x; }, { timeout: 20000 });
+    const reviewing = await at((x) => x.review?.state === 'reviewing' && x.review.reviewerSessionId);
+    assert.equal((await h.api('POST', `/api/tasks/${t.id}/review`)).status, 409, 'a review already runs');
+    await h.api('DELETE', `/api/sessions/${reviewing.review.reviewerSessionId}?force=1`);
+    await at((x) => x.review?.state === 'review_stopped');
+    const res = await h.api('POST', `/api/tasks/${t.id}/review`);
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.deepEqual([res.body.review.state, res.body.review.round], ['reviewing', 1]);
+    assert.notEqual(res.body.review.reviewerSessionId, reviewing.review.reviewerSessionId);
+    const done = await at((x) => x.review?.state === 'approved');
+    assert.equal(done.review.round, 1);
+  } finally {
+    await h.close();
+  }
+});
+
 test('harness review: rounds exhausted -> notification, changes_requested', async () => {
   const { h, t } = await reviewRun(99);
   try {

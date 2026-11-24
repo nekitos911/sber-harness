@@ -18,23 +18,28 @@ export interface SbPrefs {
   hideSleeping: boolean
   hideMain: boolean
   hideAgentMade: boolean
-  hideExternal: boolean
   hideDetached: boolean
   hideEmpty: boolean // without sessions and changes
-  showCli: boolean // chats adopted from the CLI history
+  showCli: boolean // «Из CLI»: chats adopted from the CLI history and worktrees made outside the harness
   chatsMaxAgeDays: number // 0: all chats; else idle chats untouched for longer are hidden
 }
 
 export const DEFAULT_PREFS: SbPrefs = {
   hiddenProjects: [], folders: true, group: 'project', sort: 'activity', order: 'manual', projectOrder: [],
   cards: 'compact', showAction: true, showModel: true, showTime: true,
-  hideSleeping: false, hideMain: false, hideAgentMade: false, hideExternal: false, hideDetached: false, hideEmpty: false,
+  hideSleeping: false, hideMain: false, hideAgentMade: false, hideDetached: false, hideEmpty: false,
   showCli: true, chatsMaxAgeDays: 0,
+}
+
+/** Saved prefs of any version: the old «Скрыть созданные вне harness (CLI)» is now the off position of «Из CLI». */
+export function loadPrefs(saved: (Partial<SbPrefs> & { hideExternal?: boolean }) | null | undefined): SbPrefs {
+  const { hideExternal, ...rest } = saved ?? {}
+  return { ...DEFAULT_PREFS, ...rest, ...(hideExternal ? { showCli: false } : {}) }
 }
 
 /** Something is hidden by the choice: the dot on the sliders button. */
 export const hidesSomething = (p: SbPrefs) =>
-  p.hiddenProjects.length > 0 || !p.folders || !p.showCli || p.chatsMaxAgeDays > 0 || p.hideSleeping || p.hideMain || p.hideAgentMade || p.hideExternal || p.hideDetached || p.hideEmpty
+  p.hiddenProjects.length > 0 || !p.folders || !p.showCli || p.chatsMaxAgeDays > 0 || p.hideSleeping || p.hideMain || p.hideAgentMade || p.hideDetached || p.hideEmpty
 
 /** Every setting at its default (the manual order is the user's arrangement, not a setting). */
 export const isDefault = (p: SbPrefs) =>
@@ -45,12 +50,13 @@ export function staleChat(p: SbPrefs, s: { lastActivityAt: number; status: strin
   return p.chatsMaxAgeDays > 0 && s.status !== "running" && !s.waitingFor && now - s.lastActivityAt > p.chatsMaxAgeDays * 86400000
 }
 
-export interface WtFacts { main: boolean; detached: boolean; sleeping: boolean; createdBy?: string | null; empty: boolean }
+export interface WtFacts { main: boolean; detached: boolean; sleeping: boolean; createdBy?: string | null; empty: boolean; chats?: boolean }
 
 /** A worktree the filters hide; the caller keeps the ones needing attention and the one on screen. */
 export function filteredOut(p: SbPrefs, w: WtFacts): boolean {
   return (p.hideSleeping && w.sleeping) || (p.hideMain && w.main) || (p.hideAgentMade && w.createdBy === 'agent') ||
-    (p.hideExternal && !w.main && (!w.createdBy || w.createdBy === 'external')) || // older ones count as made outside
+    // «Из CLI» off: made outside (older ones count so), unless harness chats work in it
+    (!p.showCli && !w.main && !w.chats && (!w.createdBy || w.createdBy === 'external')) ||
     (p.hideDetached && w.detached) || (p.hideEmpty && w.empty)
 }
 
@@ -102,8 +108,28 @@ export function compareRows(sort: SortBy): (a: RowFacts, b: RowFacts) => number 
 export function orderProjects<T extends { id: string; name: string }>(list: T[], p: SbPrefs, lastOf: (x: T) => number): T[] {
   if (p.order === 'alpha') return [...list].sort((a, b) => a.name.localeCompare(b.name, 'ru', { numeric: true }))
   if (p.order === 'activity') return [...list].sort((a, b) => lastOf(b) - lastOf(a))
-  const at = (x: T) => { const i = p.projectOrder.indexOf(x.id); return i < 0 ? p.projectOrder.length + list.indexOf(x) : i }
+  return keepOrder(list, (x) => x.id, p.projectOrder)
+}
+
+/** `list` in the order of the keys `held` (items it does not know after, in their own order). */
+export function keepOrder<T>(list: T[], key: (x: T) => string, held: string[]): T[] {
+  const at = (x: T) => { const i = held.indexOf(key(x)); return i < 0 ? held.length + list.indexOf(x) : i }
   return [...list].sort((a, b) => at(a) - at(b))
+}
+
+export type TurnStarts = Map<string, { at: number; running: boolean }>
+/**
+ * When each chat last started a turn (the person wrote, an agent woke it): what the activity orders go by. The server
+ * bumps lastActivityAt on every streamed event; ordering by it made rows jump while agents worked. Idempotent.
+ */
+export function turnStarts(prev: TurnStarts, sessions: { id: string; status: string; lastActivityAt: number }[]): TurnStarts {
+  const next: TurnStarts = new Map()
+  for (const s of sessions) {
+    const p = prev.get(s.id)
+    const running = s.status === 'running'
+    next.set(s.id, { running, at: !p || (running && !p.running) ? s.lastActivityAt : p.at })
+  }
+  return next
 }
 
 /** `id` moved onto `target`'s place: after it when moving down, before it when moving up. */

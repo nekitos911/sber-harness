@@ -8,7 +8,9 @@ import './styles/base.css'
 import './styles/layout.css'
 import './styles/views.css'
 import './styles/board.css'
+import './styles/agents.css'
 import './styles/chat.css'
+import './styles/overview.css'
 import './styles/ui.css'
 
 connect()

@@ -14,9 +14,9 @@ const fail = (status, message) => { throw Object.assign(new Error(message), { st
 /**
  * @returns {Promise<{ text, resultText, res }>} text = the streamed answer, resultText = the result event's text,
  *   res = runTurn's result (error, timedOut, eventCount, stderrTail, ...).
- * o = { config, store, getUrl, agent, kind, prompt, extraArgs?, approvalMode?, model?, timeoutMs?, logName?, onHandle }
+ * o = { config, store, getUrl, agent, kind, prompt, extraArgs?, approvalMode?, model?, timeoutMs?, firstEventTimeoutMs? (default the agent's), logName?, onHandle }
  */
-export function runHelper({ config, store, getUrl, agent, kind, prompt, extraArgs = [], approvalMode = null, model = null, timeoutMs = 0, logName = `${kind}.log`, onHandle }) {
+export function runHelper({ config, store, getUrl, agent, kind, prompt, extraArgs = [], approvalMode = null, model = null, timeoutMs = 0, firstEventTimeoutMs = 0, logName = `${kind}.log`, onHandle }) {
   const agentCfg = config.agents[agent] || fail(404, `агент ${agent} не найден`);
   const launcher = launchers[agentCfg.launcher] || fail(400, `неизвестный лаунчер «${agentCfg.launcher}»`);
   const exe = launcher.resolve(agentCfg);
@@ -44,7 +44,7 @@ export function runHelper({ config, store, getUrl, agent, kind, prompt, extraArg
   const handle = runTurn({
     launcher, ctx, command: exe, cwd: dir,
     env: { ...process.env, ...agentCfg.env, ...secretEnv(config), ...exe.env, ...launcher.env(ctx), ...env },
-    firstEventTimeoutMs: agentCfg.firstEventTimeoutMs || launcher.defaults.firstEventTimeoutMs || 30000,
+    firstEventTimeoutMs: firstEventTimeoutMs || agentCfg.firstEventTimeoutMs || launcher.defaults.firstEventTimeoutMs || 30000,
     authTimeoutMs: agentCfg.authTimeoutMs || 600000,
     ...files,
     onEvent: (ev) => {

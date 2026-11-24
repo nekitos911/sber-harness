@@ -3,7 +3,8 @@
 // Prompt directives: #perm (tool call that asks for permission, then writes out.txt via fs/write_text_file),
 // #mcp (a harness MCP tool behind GigaCode's ToolCall wrapper asking for permission), #late (the fixture's tool-call
 // stream), #read <path> (fs/read_text_file), #slow (streams ~4 s, honours session/cancel), #die (exits mid-turn),
-// #maxtokens (ends with stopReason max_tokens).
+// #maxtokens (ends with stopReason max_tokens), #hooktimeout (fails like GigaCode whose hooks never answer, unless the
+// run settings say disableAllHooks).
 // loadSession: true; sessions live in MOCK_AGENT_STATE_DIR (acp-<id>.json), a load replays the history.
 // MOCK_AGENT_ARGV_FILE: appends { acp: true, argv, mcpServers } on session/new|load.
 import fs from 'node:fs';
@@ -27,6 +28,13 @@ const request = (method, params) => new Promise((resolve, reject) => {
 const update = (sessionId, u) => send({ method: 'session/update', params: { sessionId, update: u } });
 const say = (sessionId, text) => update(sessionId, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } });
 const cancelled = new Set();
+const hooksOff = () => {
+  try {
+    return !!JSON.parse(fs.readFileSync(process.env.MOCK_AGENT_SETTINGS_PATH || process.env.GIGACODE_SYSTEM_SETTINGS_PATH || '', 'utf8')).disableAllHooks;
+  } catch {
+    return false;
+  }
+};
 const loadedHere = new Set();
 // the catalogue `/models` prints: the table's first column, minus the header and the rule
 const MODELS = fs.readFileSync(new URL('../test/fixtures/gigacode.models.txt', import.meta.url), 'utf8').split('\n')
@@ -44,6 +52,9 @@ async function prompt({ sessionId, prompt: parts }) {
     // like the headless mock: the catalogue from the fixture, in a (hidden) helper session
     say(sessionId, fs.readFileSync(new URL('../test/fixtures/gigacode.models.txt', import.meta.url), 'utf8'));
     return { stopReason: 'end_turn' };
+  }
+  if (/#hooktimeout\b/.test(text) && !hooksOff()) {
+    throw Object.assign(new Error('Internal error'), { code: -32603, data: { details: 'Request timed out waiting for hook-execution-response' } });
   }
   const st = JSON.parse(fs.readFileSync(stateFile(sessionId), 'utf8'));
   st.turns += 1;
@@ -178,6 +189,6 @@ readline.createInterface({ input: process.stdin }).on('line', async (line) => {
     if (!handler) throw Object.assign(new Error(`unknown method ${msg.method}`), { code: -32601 });
     send({ id: msg.id, result: (await handler(msg.params || {})) ?? null });
   } catch (e) {
-    send({ id: msg.id, error: { code: e.code || -32603, message: e.message } });
+    send({ id: msg.id, error: { code: e.code || -32603, message: e.message, ...(e.data ? { data: e.data } : {}) } });
   }
 });

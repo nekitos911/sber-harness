@@ -393,11 +393,12 @@ POST   /api/tasks/:id/tracker-status {transition, comment?} -> Task   (onework: 
 
 POST   /api/sessions            {kind, agent?, cwd?, workspaceId?, title?, prompt?, role?, approvalMode?, model?, command?} -> Session
 PATCH  /api/sessions/:id        {title?, approvalMode?, model?, autoReport?}            -> Session
-DELETE /api/sessions/:id        (stops, removes session + transcript)
+DELETE /api/sessions/:id        (stops, removes session + transcript; 409 for a CLI chat live in its terminal unless ?force=1)
 GET    /api/sessions/:id/messages                         -> Message[]
-POST   /api/sessions/:id/messages {text}                  -> { queued: boolean }
+POST   /api/sessions/:id/messages {text, cut?, force?}    -> { queued: boolean }   (409 for a CLI chat live in its terminal unless force)
 POST   /api/sessions/:id/stop
-POST   /api/sessions/:id/restart                          (terminal: respawn; chat: reset status to idle)
+POST   /api/sessions/:id/restart {keepContext?}           (terminal: respawn; chat: new CLI session, status idle;
+                                                           keepContext: true = «Переподключить MCP» — new process, same CLI session)
 GET    /api/sessions/:id/log                              -> { text }   (stderr/raw tail)
 GET    /api/sessions/:id/subagents                        -> { items, problems }   (registry, read-only)
 
@@ -437,7 +438,9 @@ POST   /api/git/commit          {cwd, message, paths?, staged?, push?, via?} -> 
 POST   /api/git/push            {cwd}                    -> { summary, output }  (summary: «Отправлено в origin/<b>» |
                                                              «Новая ветка <b> в origin» | «Уже в origin/<b> — нечего отправлять»; output = raw git)
 POST   /api/git/pr              {cwd, title, body, base?} -> { url, existing }   (integrations.pr; 501 if disabled;
-                                 existing: an OPEN PR with the same head+base already existed and is returned instead;
+                                 existing: an OPEN PR with the same head+base already existed and is returned instead —
+                                 with via "agent" too: the harness looks first and the agent gets no turn; a second call
+                                 for the same repo+head+base while the first is in flight gets the first one's answer;
                                  400 with byte counts when title/body exceed integrations.pr.limits — UTF-8 BYTES)
 
 POST   /api/git/pr/decline  { cwd, index } -> { ok: true }   (sourcecontrol decline via integrations.pr.declineTool,
@@ -455,7 +458,7 @@ POST   /api/prs/merge|decline { workspaceId, index } -> { ok, index, result }   
                                  сбрасывается, PR задач перечитываются)
 GET    /api/prs/detail?workspaceId&index&head&base -> { diff: { text?, error?, local?, hostError? },
                                      comments: { items?: [{ author, text, at, path, line }], error? } }
-                                 (feature `pr-detail`: панель PR на экране «Пулл-реквесты». diff — integrations.pr.diffTool
+                                 (feature `pr-detail`: страница PR на экране «Пулл-реквесты». diff — integrations.pr.diffTool
                                   (git_get_pull_request_diff), comments — commentsTool (git_list_pull_request_comments), аргументы
                                   detailArgs, по умолчанию как у decline — VERIFY. Каждая часть сообщает свою ошибку. Если сервис
                                   не отдал дифф, а head/base известны — локальный `git diff base...head` (сначала origin/<ветка>,
@@ -467,13 +470,20 @@ GET    /api/prs?scope=mine|tracked&refresh=1 -> { me, items: [{ workspaceId, rep
                                   { project, repository, state: 'OPEN', author: me, page: 1, limit: 100 } — a server that
                                   rejects `author` is asked without it — and the items' pr_creator/author must be me;
                                   me = integrations.pr.meTool (default git_get_user, args {}, login|username|name, cached
-                                  24 h, VERIFY the args/shape); 4 repositories at a time, per-repo errors collected; the
+                                  24 h, VERIFY the args/shape); 4 repositories at a time, per-repo errors collected; a
+                                  repository registered several times (worktrees, other clones, origin in another case:
+                                  …/PROJ/x and …/scm/proj/x) is asked once, and each PR is one item (by its url, else
+                                  repo#index, case-insensitive); the
                                   whole answer cached 3 min, refresh=1 bypasses, refreshed every integrations.pr.refreshSec
                                   while a UI client is connected. taskId/taskKey: a task of that repo whose branch (or
                                   task.worktrees branch) is the head, else whose key (externalId or id) is a token in the
                                   head name; sessionId/byAgent: the head is a worktree createdBy 'agent' (its session) or
                                   the task has an assignee. scope=tracked: every author, only heads that are task
                                   branches or worktrees of the repo.)
+                                 Флаг `prs-filters`: `scope=review` — PR любых авторов, где я в reviewers (логин без учёта
+                                 регистра), `scope=all` — все PR репозиториев; `state=open|merged|declined|all` (по умолчанию open)
+                                 передаётся в listTool как OPEN/MERGED/DECLINED, all = три вызова, PR дедуплицируются. Кэш — на пару
+                                 scope+state; фоновое обновление — только списки open, остальные по запросу.
                                  integrations.pr.enabled: true | false | "auto" (default): "auto" = on when a console MCP
                                  server named integrations.pr.server exists (and, once its tools were listed, offers
                                  `tool`); /api/settings shows `{ enabled, active }`, /api/state integrations.pr = active.
@@ -713,6 +723,10 @@ POST   /api/notifications/read-all
   CLI); нет такого → новый исполнитель в существующем рабочем дереве задачи (или заново извлечённой ветке задачи, но никогда не новая ветка)
   с промптом доработки вместо промпта задачи; никогда не запускалась (нет ветки) → 409. Эффекты: статус → in_progress
   (при `board.moveSyncsTracker` обычная синхронизация перемещения), запись в журнале «Доработка: <notes>», без уведомления. Возвращает сессию.
+- «Повторить ревью»: `POST /api/tasks/:id/review` (флаг `review-retry`) — ревью силами harness ещё раз для исполнителя задачи
+  (`review.workerSessionId`, иначе `assigneeSessionId`). 409, если `orchestration.reviewMode` не `"harness"`, нет неархивного чата
+  исполнителя или ревью уже идёт с живым ревьюером. После `review_stopped` повторяется тот же раунд; удалённый или архивный чат ревьюера
+  заменяется новым, живой получает повторный запрос. Возвращает задачу.
 
 ## Субагенты как чаты
 
@@ -910,6 +924,27 @@ Ctrl+Enter) ставит сообщение в начало очереди и в
 Старт, столкнувшийся с другим процессом того же агента (`ExtensionStoreBusyError`, «store is busy», `EBUSY`), не считается
 «Агент не запустился»: те же сообщения уходят снова через несколько секунд (до 4 раз; в чате — «Агент был занят другим
 запуском … повторяю через N с»). Процессы одного агента стартуют не чаще раза в `agents.<id>.spawnGapMs` (1200 мс).
+Холодных стартов одного агента одновременно не больше `agents.<id>.maxStarting` (по умолчанию 4, `0` — без предела).
+Это предел только на момент запуска, а не на число работающих агентов: каждый старт GigaCode поднимает все MCP-серверы
+пользователя, и много разом перегружали машину (тайм-ауты `initialize`, хуков, блокировки хранилища расширений).
+Остальные ждут слота (`session.startWait` — место в очереди, в UI «ждёт запуска»); слот
+освобождается на первом событии процесса или в конце хода, самое позднее через 3 мин.
+Старт, который не удался по временной причине (тайм-аут `initialize`, процесс умер на старте), повторяется сам через 20 с,
+1 мин и 3 мин (`session.startRetryAt`); сообщения, в том числе от координатора, ждут в очереди. Нет исполняемого файла,
+папки, лаунчера или модели — повтора нет, решает человек.
+Старт ACP (`initialize`, `session/new`) и первое событие headless-хода ждут дольше `firstEventTimeoutMs`, пока stderr
+процесса растёт (загрузка MCP, «event loop stall»): ACP — до 4×, headless — до 3× лимита; молчащий процесс
+останавливается на лимите, как раньше.
+Хук GigaCode, не ответивший вовремя («Request timed out waiting for hook-execution-response» в `data.details` ошибки
+JSON-RPC): в чат — какой хук (строка stderr о нём, если есть) и где хуки задаются, ход повторяется один раз на новом
+процессе агента. Повторилось — ошибка с тем же объяснением. Сам харнес хуки не отключает; `agents.<id>.userHooks: false`
+пишет `disableAllHooks: true` в файл настроек запусков харнеса.
+
+## Чаты CLI, которые ведутся в терминале (флаг `cli-live`)
+
+Если запись чата CLI обновил сам CLI (не ход харнеса), `session.cliLiveAt` = время записи. Три минуты после этого
+(проход усыновления — раз в минуту) чат только для чтения: отправка и удаление отвечают 409, UI показывает «ведёт GigaCode
+в терминале» и «Перехватить» (`force`). Ход харнеса в этом чате сбрасывает `cliLiveAt`.
 Субагент (`worker_run` / `agent`), который так и не запустился или упал без продолжения, завершает ожидание вызывающего с
 `status: "failed"` и причиной — координатор не висит до `timeoutMin`.
 
@@ -968,28 +1003,33 @@ Ctrl+Enter) ставит сообщение в начало очереди и в
   `identity: { found, source }` (шим, из которого взят identity; само значение — никогда).
 
 - Источники, объединяемые и дедуплицируемые по id: (1) **обнаруженные** — harness запускает CLI агента без головы с
-  `agents.<id>.modelsDiscovery.prompt` (по умолчанию для gigacode `"/models"`) в `<dataDir>/chats/helper/discovery` (без записи чата CLI) — сначала с
-  лёгкими `quickArgs` (`--safe-mode`: без MCP-серверов), полный запуск только если там id не найдено; строки stderr `Warning:`
+  `agents.<id>.modelsDiscovery.prompt` (по умолчанию для gigacode `"/models"`) в `<dataDir>/chats/helper/discovery` (без записи чата CLI); если у
+  агента есть тёплый ACP-процесс (чат в режиме «Процесс на чат»), `/models` спрашивается у него в скрытой сессии, без холодного старта; иначе — сначала с
+  лёгкими `quickArgs` (`--safe-mode`: без MCP-серверов), полный запуск только если лёгкий ответил, но id в ответе нет (после таймаута
+  лёгкого полный не запускается: со всеми MCP-серверами старт ещё дольше). Ожидание первого ответа CLI у обнаружения своё —
+  `modelsDiscovery.timeoutMs` (по умолчанию 2 × `firstEventTimeoutMs`, не меньше 5 мин); строки stderr `Warning:`
   никогда не считаются сообщаемой ошибкой — берётся итоговый
   текст (`result` / текст ассистента) и из него извлекаются id моделей терпимым разбором (markdown-таблица / список / обычные строки;
   токен = буквы/цифры/`.`/`-`, содержит цифру и `-`, 4–80 символов; рядом может быть контекст вроде `262k`/`128k`)
   либо через `modelsDiscovery.pattern` (регулярное выражение с группой захвата), если задан; результат кэшируется в `db.agentMeta[agent].catalog =
-  { models: [{id, context?}], at, error? }`; (2) **замеченные** — модели из событий `system/init`; (3) **конфиг**
+  { models: [{id, context?}], at, error?, timedOut? }` (`timedOut`: CLI не ответил за это время — занятая машина, а не сломанный CLI); (2) **замеченные** — модели из событий `system/init`; (3) **конфиг**
   `agents.<id>.models` — только метки/описания/порядок (переопределения), не источник истины.
 - Каждая объединённая запись: `{ id, label?, context?, description?, available: boolean | null }` — `available = false`, когда
   есть свежее обнаружение и id в нём отсутствует (показывается серым «недоступна», никогда не отбрасывается молча); `null`, когда
   обнаружения ещё не было.
 - Триггеры обнаружения: лениво, когда запрашивается `/api/agents/:id/info` или `/api/state` и каталог старше
   `modelsDiscovery.maxAgeHours` (по умолчанию 24) — в фоне, никогда не блокируя запрос; `POST /api/agents/:id/models/refresh`
-  (кнопки UI) → `{ models, at, error? }`; автоматически после хода, который завершился ошибкой "is not present in the current backend
+  (кнопки UI) → `{ models, at, error?, timedOut? }`; автоматически после хода, который завершился ошибкой "is not present in the current backend
   catalogue" (или `modelsDiscovery.missingPattern`). Обнаружение выполняется не более одного за раз на агента; сбои сохраняются в
-  `catalog.error` и показываются, никогда не фатальны.
+  `catalog.error` и показываются, никогда не фатальны; неудачное обнаружение повторяется лениво через час (или через `maxAgeHours`, если это
+  меньше). Пока есть что выбрать (модели из конфига или прошлый список), UI показывает сбой спокойной строкой «список из настроек; CLI не
+  ответил за N с — повторю позже» с кнопкой «Обновить список», а не красной ошибкой.
 - Устойчивые запуски: при записи settings.json сессии градации, чья модель заведомо недоступна (`available === false`),
   пропускаются (CLI возвращается к значению по умолчанию), и один раз на сессию добавляется системная заметка ⚠; сессия, чья `model`
   заведомо недоступна, получает карточку ошибки вместо заранее обречённого запуска только если обнаружение свежее — иначе ход
   всё же пробуется (каталог может быть устаревшим). Сбой «модель отсутствует» порождает Message с
   `action: 'pick-model'`, чтобы UI мог предложить выбор модели + «Повторить».
-- `/api/agents/:id/info` возвращает `catalog` (`{ at, error }`) и объединённые `models`; `/api/state` agents[].models — это
+- `/api/agents/:id/info` возвращает `catalog` (`{ at, error, timedOut, running }`) и объединённые `models`; `/api/state` agents[].models — это
   объединённый список. Произвольные id моделей всегда принимаются (PATCH session.model, настройки).
 
 ## Авторизация GigaCode (первый запуск на машине)
@@ -1479,7 +1519,8 @@ running И phase !== 'auth' И нет событий в течение `session.
   Каждый `worker_done` сохраняет `session.report` (он заменил `runResult`). Запуски агентов получают `HARNESS_SERVER_JSON`: harness-mcp
   читает из него текущий URL при каждом вызове (перезапущенный harness может слушать в другом месте); нет файла = harness не работает → повтор
   (`HARNESS_RETRY_MS`, по умолчанию 2 мин; повторяются только запросы, которые так и не дошли до сервера, worker_wait — всегда).
-- Состояние цикла ревью / переносов (`task.review: { round, reviewerSessionId, verdicts[] }`, `task.ports[]`) сохраняется; ревьюер,
+- Состояние цикла ревью / переносов (`task.review: { state: reviewing|approved|changes_requested|review_stopped, round, maxRounds, workerSessionId,
+  reviewerSessionId, startedAt, findings, report, stoppedReason, stoppedAt }`, `task.ports[]`) сохраняется; ревьюер,
   завершившийся, пока harness был выключен, подхватывается при старте (его отчёт — в транскрипте/поле report).
 - Терминалы: история сохраняется (`terms/<sid>.log`); процессы PTY не могут пережить сервер, поэтому при старте каждый терминал,
   который был жив, автоматически запускается заново в том же cwd (системная строка «— перезапуск harness: новая сессия терминала —»

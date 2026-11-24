@@ -58,6 +58,8 @@ if (process.env.MOCK_AGENT_ARGV_FILE) {
   const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => /^(GIGACODE_|MOCK_AGENT_SETTINGS|MCP_SECRET_|HARNESS_SESSION_ID)/.test(k)));
   fs.appendFileSync(process.env.MOCK_AGENT_ARGV_FILE, `${JSON.stringify({ argv: [...process.execArgv, ...process.argv.slice(1)], env })}\n`);
 }
+// MOCK_AGENT_MODELS_SILENT: a cold start that says nothing for a long time (a loaded machine, many MCP servers)
+if (prompt === '/models' && process.env.MOCK_AGENT_MODELS_SILENT) await sleep(120000);
 
 const delivered = prompt.startsWith('[harness] Message from');
 // harness preamble lines (they may quote chat titles, i.e. other prompts) are not directives

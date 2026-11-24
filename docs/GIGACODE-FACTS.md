@@ -231,6 +231,16 @@
    `hints.localCopyOf` (…/browse/<path>, …/blob/<ref>/<path>, …/-/blob/<ref>/<path>) и уходит агенту строкой «Ссылки из полей
    задачи». Кэш — `task.externalLinks`: запуск задачи со ссылкой второй раз трекер не опрашивает (`server/index.js`).
 
+0000. **Хуки и перегрузка при параллельных стартах.** ВИДЕЛИ (ACP, v26.10.109, 2026-11-24): `session/prompt` раз за разом
+   отвечает `-32603 Internal error` с `data.details: "Request timed out waiting for hook-execution-response"`; в stderr —
+   `[perf] acp agent event loop stall: max=11173ms` и «MCP server(s) failed to start: confluence, …, harness, sprut»,
+   следующий `initialize` не ответил за 120 с. В Qwen Code хуки задаются ключом `hooks`, выключаются `disableAllHooks: true`
+   (и `--safe-mode`/`--bare`); `UserPromptSubmit` срабатывает на каждый промпт. Харнес теперь: ограничивает одновременные
+   старты (`maxStarting`), ждёт живой процесс дольше, пишет в чат о зависшем хуке и повторяет ход один раз; отключить хуки
+   в запусках харнеса можно только явно (`agents.<id>.userHooks: false` → `disableAllHooks`).
+   ПРОВЕРИТЬ: принимает ли GigaCode `disableAllHooks` в файле настроек запуска (`GIGACODE_SYSTEM_SETTINGS_PATH`), и чьи
+   хуки висели — пользовательские из `~/.gigacode/settings.json` или встроенные.
+
 000. **Мост вызовов инструментов.** ВИДЕЛИ (ACP, DeepSeek-V4.1-Flash, 2026-11-18): четыре параллельных запуска субагентов
    пришли как вызовы `tool` без аргументов и отклонены «[tool_call bridge refused] params must have required property
    'name'» — модель не назвала инструмент; ничего не выполнилось. В UI такой шаг подписан «Вызов без имени инструмента».

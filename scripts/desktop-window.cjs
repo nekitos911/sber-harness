@@ -7,7 +7,8 @@ import(pathToFileURL(path.join(__dirname, 'desktop-app.js')).href)
   .then(({ serve }) => serve({
     root: path.resolve(__dirname, '..'),
     flag: '--harness-desktop',
-    argv: process.argv.slice(1).filter((a) => a !== '--ui' && a !== '--harness-desktop'),
+    // argv[1] is this file (Electron's app path) and --no-sandbox is Chromium's: neither belongs to the server
+    argv: process.argv.slice(2).filter((a) => a !== '--ui' && a !== '--harness-desktop' && a !== '--no-sandbox'),
   }))
   .catch((e) => {
     console.error(e);

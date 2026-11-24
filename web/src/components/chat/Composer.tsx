@@ -1,5 +1,5 @@
-import { useLayoutEffect, useRef, useState } from 'react'
-import { ArrowUp, ChevronDown, ChevronUp, Clock, FileText, Pencil, Plus, Square, X, Zap } from 'lucide-react'
+import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react'
+import { ArrowUp, ChevronDown, ChevronUp, Clock, FileText, LoaderCircle, Pencil, Plus, Square, X, Zap } from 'lucide-react'
 import { tryApi } from '../../api'
 import { getState, setDraft, setState, useFeature, useStore, upsertSession } from '../../store'
 import { openFile } from '../WorktreeMenu'
@@ -9,7 +9,8 @@ import { MentionMirror, useComposerSuggest } from './Suggest'
 import { ModelPicker } from '../pickers/ModelPicker'
 import { ContextRing } from './ContextRing'
 import { FULL_ACCESS, modeShort, useSettings } from '../../lib/agents'
-import { attRef, dropRef, insertRef, withAttachments } from '../../lib/attachments'
+import { attRef, deleteRefs, dropRef, insertRef, snapCaret, withAttachments } from '../../lib/attachments'
+import { deliver } from '../../lib/outbox'
 
 /** A file attached to the message being written: its copy at the harness, and a preview for an image. */
 interface Att { path: string; name: string; preview: string | null }
@@ -18,7 +19,8 @@ function AttFace({ a, n }: { a: Att; n: number }) {
   return a.preview ? <img src={a.preview} alt={a.name} /> : <><FileText aria-hidden /><span className="att-n num">#{n}</span><span className="att-name ellipsis">{a.name}</span></>
 }
 
-export function Composer({ session, active }: { session: Session; active: boolean }) {
+/** `force`: the person took over a chat GigaCode writes in a terminal — its messages go even so. */
+export function Composer({ session, active, force = false }: { session: Session; active: boolean; force?: boolean }) {
   const agent = useStore((s) => s.agents.find((a) => a.id === session.agent))
   // Draft lives in the store: survives tab switches, remounts and reloads.
   const text = useStore((s) => s.drafts[session.id] ?? '')
@@ -77,20 +79,45 @@ export function Composer({ session, active }: { session: Session; active: boolea
     if (i >= 0) update(dropRef(getState().drafts[session.id] ?? '', i + 1)) // its mention goes, the later ones renumber
   }
   const canOpen = useFeature('open-file')
+  /** Backspace / Delete at a mention takes it whole, and its file with it (the later ones renumber). */
+  const deleteKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    const el = e.currentTarget
+    const r = deleteRefs(text, el.selectionStart, el.selectionEnd, e.key === 'Backspace')
+    if (!r) return false
+    e.preventDefault()
+    const gone = atts.filter((_, i) => r.refs.includes(i + 1))
+    for (const a of gone) if (a.preview) URL.revokeObjectURL(a.preview)
+    setAtts((list) => list.filter((a) => !gone.includes(a)))
+    update(r.text)
+    requestAnimationFrame(() => { ref.current?.setSelectionRange(r.caret, r.caret); setCaret(r.caret) })
+    return true
+  }
+  // «Повторить» on a refused message went through and emptied the input it had been put back into: its cards go too
+  useEffect(() => {
+    const on = (e: Event) => {
+      if ((e as CustomEvent<string>).detail !== session.id || getState().drafts[session.id]) return
+      setAtts((list) => { for (const a of list) if (a.preview) URL.revokeObjectURL(a.preview); return [] })
+    }
+    window.addEventListener('harness:sent', on)
+    return () => window.removeEventListener('harness:sent', on)
+  }, [session.id])
 
   /** «cut»: the message ends the step it found and opens the next turn («Сразу агенту», Ctrl+Enter). Without it a
-   * message waits in the queue for the step to end by itself — nothing is cut unless the person asks. */
+   * message waits in the queue for the step to end by itself — nothing is cut unless the person asks.
+   * The input empties at once and the message shows in the chat as «Отправляется» (lib/outbox) while the request is
+   * out; a refused one comes back into the input (when nothing new was typed there) and stays in the chat with «Повторить». */
   const send = async ({ cut = false } = {}) => {
     const body = withAttachments(text.trim(), atts.map((a) => a.path))
     if (!body || sending) return
+    const draft = text
+    const sent = atts
     setSending(true)
-    const res = await tryApi<{ queued: boolean; cut?: boolean }>('POST', `/sessions/${session.id}/messages`, cut ? { text: body, cut: true } : { text: body })
-    setSending(false)
-    if (!res) return
     update('')
-    for (const a of atts) if (a.preview) URL.revokeObjectURL(a.preview)
     setAtts([])
-    window.dispatchEvent(new CustomEvent('harness:sent', { detail: session.id })) // the chat scrolls to the bottom
+    const ok = await deliver(session.id, body, cut, draft, force)
+    setSending(false)
+    if (!ok && !getState().drafts[session.id]) { update(draft); setAtts(sent); return }
+    for (const a of sent) if (a.preview) URL.revokeObjectURL(a.preview)
     // queued: the list above the input says so (a toast here covered its «×» on a narrow window)
   }
 
@@ -136,7 +163,14 @@ export function Composer({ session, active }: { session: Session; active: boolea
         aria-label="Сообщение агенту"
         value={text}
         onChange={(e) => { update(e.target.value); setCaret(e.target.selectionStart) }}
-        onSelect={(e) => setCaret(e.currentTarget.selectionStart)}
+        onSelect={(e) => {
+          // a mention is one token: the caret does not stop inside it (it jumps over in the direction it moved)
+          const el = e.currentTarget
+          const p = el.selectionStart
+          const at = el.selectionEnd === p ? snapCaret(el.value, p, Math.sign(p - caret)) : p
+          if (at !== p) el.setSelectionRange(at, at)
+          setCaret(at)
+        }}
         onScroll={(e) => setScroll(e.currentTarget.scrollTop)}
         onPaste={(e) => {
           const img = [...e.clipboardData.files].find((f) => f.type.startsWith('image/'))
@@ -146,6 +180,7 @@ export function Composer({ session, active }: { session: Session; active: boolea
         }}
         onKeyDown={(e) => {
           if (suggest.onKeyDown(e)) return
+          if ((e.key === 'Backspace' || e.key === 'Delete') && deleteKey(e)) return
           if (e.key !== 'Enter' || e.shiftKey || e.nativeEvent.isComposing) return
           e.preventDefault()
           // Ctrl+Enter («Сразу агенту») ends the running step and hands the message to the next turn; Enter queues it
@@ -183,8 +218,8 @@ export function Composer({ session, active }: { session: Session; active: boolea
             <Square />
           </button>
         )}
-        <button type="button" className="composer-send" onClick={() => void send()} disabled={(!text.trim() && !atts.length) || sending} aria-label={running ? 'Поставить в очередь' : 'Отправить'} data-tip={running ? 'В очередь (Enter)' : 'Отправить (Enter)'}>
-          <ArrowUp />
+        <button type="button" className="composer-send" onClick={() => void send()} disabled={(!text.trim() && !atts.length) || sending} aria-label={sending ? 'Отправляется' : running ? 'Поставить в очередь' : 'Отправить'} aria-busy={sending || undefined} data-tip={running ? 'В очередь (Enter)' : 'Отправить (Enter)'}>
+          {sending ? <LoaderCircle className="spinner" aria-hidden /> : <ArrowUp />}
         </button>
         {running && (
           <button type="button" className="icon-btn composer-now" onClick={() => void send({ cut: true })} disabled={(!text.trim() && !atts.length) || sending}

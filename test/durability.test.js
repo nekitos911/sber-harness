@@ -200,3 +200,22 @@ test('streaming appends only what changed to a journal: a crash keeps it, the tu
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(crashed, 'transcripts', 's1.json'), 'utf8')).map((m) => m.text), ['привет', 'пишу дальше', 'готово']);
   st.close();
 });
+
+test('a review whose reviewer chat is deleted ends as «ревью прервано», not «ревью…» forever', async () => {
+  const h = await harness(path.join(root, 'данные ревью'));
+  try {
+    const ws = await h.api('POST', '/api/workspaces', { path: repo });
+    const task = await h.api('POST', '/api/tasks', { title: 'Ревьюер пропал #done сделано', workspaceId: ws.id });
+    await h.api('POST', `/api/tasks/${task.id}/start`, { agent: 'mock' });
+    const reviewing = await waitFor(async () => {
+      const t = (await h.state()).tasks.find((x) => x.id === task.id);
+      return t.review?.state === 'reviewing' && t.review.reviewerSessionId && t;
+    }, { what: 'review started' });
+    await fetch(`${h.srv.url}/api/sessions/${reviewing.review.reviewerSessionId}?force=1`, { method: 'DELETE', headers: { 'x-harness-token': h.srv.token } });
+    const t = await waitFor(async () => { const x = (await h.state()).tasks.find((y) => y.id === task.id); return x.review?.state === 'review_stopped' && x; }, { what: 'review stopped' });
+    assert.equal(t.agentState, 'review_stopped');
+    assert.match(t.review.stoppedReason, /удалён/);
+  } finally {
+    await h.srv.close();
+  }
+});

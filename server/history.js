@@ -42,7 +42,17 @@ const textOf = (content) => {
 const partsOf = (m) => (Array.isArray(m?.message?.parts) ? m.message.parts : null);
 
 /** The folder GigaCode repeats on a line of its own above a user message (older builds: the first message only). */
-const FOLDER_LINE = (line) => /^(?:[a-z]:[\\/]|\\\\)/i.test(line.trim()) && path.isAbsolute(line.trim());
+// POSIX: «/home/u/proj» reads like a slash command («/full-task …»), so it counts only as a folder that exists
+export const FOLDER_LINE = (line) => {
+  const l = line.trim();
+  if (/^(?:[a-z]:[\\/]|\\\\)/i.test(l)) return path.isAbsolute(l);
+  if (!l.startsWith('/') || !path.isAbsolute(l)) return false;
+  try {
+    return fs.statSync(l).isDirectory();
+  } catch {
+    return false;
+  }
+};
 
 /** A user message as the person wrote it: the folder line the CLI keeps above it left out. */
 function withoutFolderLine(text) {

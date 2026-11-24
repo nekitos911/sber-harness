@@ -1,7 +1,7 @@
 // Run: node --test web/src/lib/sessionState.test.ts
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { sessionVisualState as v, stateSummary } from './sessionState.ts'
+import { cliLive, sessionVisualState as v, stateSummary } from './sessionState.ts'
 
 test('priority: waiting answer beats stalled beats starting beats running', () => {
   assert.equal(v({ kind: 'chat', status: 'running', waitingFor: 'answer', stalled: true }), 'waiting_answer')
@@ -24,4 +24,13 @@ test('summary: attention first, plurals, calm states and terminals not counted',
     { kind: 'chat', status: 'idle' }, { kind: 'terminal', status: 'running' },
   ])
   assert.deepEqual(s.map((x) => x.text), ['1 ждёт ответа', '2 ошибки', '2 работают'])
+})
+
+test('cliLive: a CLI chat GigaCode wrote in the last 3 min, unless the harness itself runs it', () => {
+  const at = 1_000_000
+  assert.equal(cliLive({ origin: 'cli', status: 'idle', cliLiveAt: at }, at + 60_000), true)
+  assert.equal(cliLive({ origin: 'cli', status: 'idle', cliLiveAt: at }, at + 180_000), false)
+  assert.equal(cliLive({ origin: 'cli', status: 'running', cliLiveAt: at }, at), false)
+  assert.equal(cliLive({ origin: null, status: 'idle', cliLiveAt: at }, at), false)
+  assert.equal(cliLive({ origin: 'cli', status: 'idle', cliLiveAt: null }, at), false)
 })

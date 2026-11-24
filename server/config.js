@@ -51,7 +51,7 @@ export function loadConfig({ root = CODE_ROOT, overrides = {}, dataDir, configFi
   cfg.mcpDisabled ||= [];
   cfg.mcpServers ||= {};
   cfg.integrations ||= {};
-  cfg.git = { defaultBase: 'main', excludeFromCommit: ['.superpowers/', '.gigacode/tmp/', '*.class', '*.log'], networkTimeoutSec: 120, generateMessages: true, generateTimeoutSec: 120, via: 'agent', ...cfg.git };
+  cfg.git = { defaultBase: 'main', excludeFromCommit: ['.superpowers/', '.gigacode/tmp/', '.openai-logs-cleanup-*', '*.class', '*.log'], networkTimeoutSec: 120, generateMessages: true, generateTimeoutSec: 120, via: 'agent', ...cfg.git };
   cfg.session = { idleWindowSec: 90, stallSec: 300, ...cfg.session };
   cfg.sessions = { autoArchiveDays: 7, ...cfg.sessions };
   cfg.history = { adopt: true, adoptDays: 14, ...cfg.history }; // CLI chats become ordinary chats (server/adopt.js)

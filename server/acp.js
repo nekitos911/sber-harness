@@ -45,7 +45,9 @@ function connect(child, { onRequest, onNotify, log }) {
       } else if (pending.has(msg.id)) {
         const p = pending.get(msg.id);
         pending.delete(msg.id);
-        if (msg.error) p.reject(Object.assign(new Error(msg.error.message || 'ACP error'), { code: msg.error.code }));
+        // GigaCode puts the real reason in data.details («Request timed out waiting for hook-execution-response»)
+        const details = typeof msg.error?.data?.details === 'string' ? msg.error.data.details : '';
+        if (msg.error) p.reject(Object.assign(new Error([msg.error.message || 'ACP error', details].filter(Boolean).join(': ')), { code: msg.error.code }));
         else p.resolve(msg.result);
       }
     }
@@ -66,6 +68,42 @@ function connect(child, { onRequest, onNotify, log }) {
     },
   };
 }
+
+const sizeOf = (file) => {
+  try {
+    return fs.statSync(file).size;
+  } catch {
+    return -1;
+  }
+};
+
+/**
+ * A start request (initialize, session/new) that waits as long as the agent shows signs of life: GigaCode answers only
+ * after its MCP servers are up, and on a loaded machine that took longer than any fixed limit while its stderr kept
+ * growing (MCP warnings, «event loop stall»). It fails after `idleMs` of silence, or after PATIENCE × idleMs in all.
+ */
+export function patientRequest(rpc, method, params, { idleMs, errFile, pollMs = 2000 }) {
+  const started = Date.now();
+  return new Promise((resolve, reject) => {
+    let size = sizeOf(errFile);
+    let last = started;
+    const tick = setInterval(() => {
+      const now = Date.now();
+      const cur = sizeOf(errFile);
+      if (cur !== size) {
+        size = cur;
+        last = now;
+      }
+      if (now - last >= idleMs || now - started >= idleMs * PATIENCE) {
+        clearInterval(tick);
+        reject(new Error(`ACP ${method}: нет ответа за ${Math.round((now - started) / 1000)} с`));
+      }
+    }, Math.min(pollMs, idleMs));
+    tick.unref?.();
+    rpc.request(method, params).then((v) => { clearInterval(tick); resolve(v); }, (e) => { clearInterval(tick); reject(e); });
+  });
+}
+const PATIENCE = 4;
 
 /**
  * The MCP servers an ACP session gets, in ACP shape (MCP SDK schema): stdio { name, command, args, env: [{ name, value }] },
@@ -355,7 +393,7 @@ export function createAcp({ onWarm = () => {} } = {}) {
       const init = await Promise.race([
         // files stay the agent's own business by default: with the harness as its file system, GigaCode's «read before
         // edit» guard never saw the reads and refused every edit (agents.<id>.acpClientFs: true brings it back)
-        c.rpc.request('initialize', { protocolVersion: PROTOCOL_VERSION, clientCapabilities: { fs: { readTextFile: !!o.clientFs, writeTextFile: !!o.clientFs }, terminal: false } }, o.initTimeoutMs || ACP_INIT_TIMEOUT_MS),
+        patientRequest(c.rpc, 'initialize', { protocolVersion: PROTOCOL_VERSION, clientCapabilities: { fs: { readTextFile: !!o.clientFs, writeTextFile: !!o.clientFs }, terminal: false } }, { idleMs: o.initTimeoutMs || ACP_INIT_TIMEOUT_MS, errFile }),
         exited.then(({ code }) => { throw new Error(`ACP-агент завершился при запуске (код ${code})`); }),
       ]);
       const mcpServers = acpMcpServers(o.ctx.harnessMcp, { timeoutMs: o.ctx.mcpTimeoutMs });
@@ -387,7 +425,7 @@ export function createAcp({ onWarm = () => {} } = {}) {
       // session/new can be long (the agent cold-starts the MCP servers); the child dying is the only other outcome
       if (!c.sessionId) {
         const created = await Promise.race([
-          c.rpc.request('session/new', { cwd: o.cwd, mcpServers }, o.initTimeoutMs || ACP_INIT_TIMEOUT_MS),
+          patientRequest(c.rpc, 'session/new', { cwd: o.cwd, mcpServers }, { idleMs: o.initTimeoutMs || ACP_INIT_TIMEOUT_MS, errFile }),
           exited.then(({ code }) => { throw new Error(`ACP-агент завершился при создании сессии (код ${code})`); }),
         ]);
         c.sessionId = created.sessionId;

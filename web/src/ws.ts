@@ -227,7 +227,7 @@ function apply(ev: ServerEvent) {
     }
     case 'task.del':
       for (const f of ['title', 'branch', 'description']) saveDraft(`task:${ev.id}:${f}`, null)
-      setState((s) => ({ tasks: without(s.tasks, ev.id), focusTaskId: s.focusTaskId === ev.id ? null : s.focusTaskId }))
+      setState((s) => ({ tasks: without(s.tasks, ev.id) }))
       break
     case 'session':
       noteStart(ev.session)

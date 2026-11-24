@@ -13,6 +13,12 @@ export async function openChatFileDiff(cwd: string, path: string) {
   if (target) openTab({ kind: 'diff', ...target })
 }
 
+/** A file the agent edited, in the harness's own viewer: in the worktree that holds it (outside Git: the chat's folder). */
+export async function openChatFile(cwd: string, path: string) {
+  const target = await api<{ cwd: string; path: string }>('GET', `/git/file-target${qs({ cwd, path })}`).catch(() => null)
+  openTab({ kind: 'file', ...(target ?? { cwd, path }) })
+}
+
 async function load(cwd: string): Promise<GitInfo> {
   try {
     const raw = await api<GitStatus>('GET', `/git/status${qs({ cwd })}`)

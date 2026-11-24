@@ -1,5 +1,5 @@
 import { useEffect, useState, useSyncExternalStore } from 'react'
-import type { PrListState, PrScope } from './lib/prsMine'
+import type { PrItem, PrKey, PrListState } from './lib/prsMine'
 import type { AgentGitJob } from './lib/agentGit'
 import type { AgentInfo, AgentMeta, HistoryItem, RecoveryState, GitStatus, SddPlan, Settings, Integrations, Message, Notification, Session, SubAgent, Task, Workspace, Worktree } from './types'
 import type { DiffFile } from './lib/diff'
@@ -15,13 +15,16 @@ export type Tab =
   | { kind: 'diff'; cwd: string; path: string | null; rev?: string } // rev: a commit's changes (the commits list)
   | { kind: 'history'; cwd: string; agent: string; id: string; title: string } // a CLI-recorded chat, read-only
 
-/** Main area: a full-screen global view, or one worktree with its own tab strip. */
-export type View = { kind: 'screen'; screen: Screen } | { kind: 'wt'; cwd: string }
+/** A page over a list screen: one task of «Задачи», one PR of «Пулл-реквесты» (the list stays mounted under it). */
+export type Detail = { kind: 'task'; id: string } | { kind: 'pr'; pr: PrItem }
+
+/** Main area: a full-screen global view (maybe with a detail page), or one worktree with its own tab strip. */
+export type View = { kind: 'screen'; screen: Screen; detail?: Detail } | { kind: 'wt'; cwd: string }
 
 export interface WtTabs { cwd: string; tabs: Tab[]; active: string | null }
 
 /** A history entry for back/forward: a screen, or a worktree with the tab shown in it. */
-export type Loc = { screen: Screen } | { cwd: string; tab: string | null }
+export type Loc = { screen: Screen; detail?: Detail } | { cwd: string; tab: string | null }
 
 export type DialogRequest =
   | { kind: 'workspace'; from?: string; stay?: boolean } // from: where «Обзор…» starts (the projects folder)
@@ -58,7 +61,7 @@ interface Prefs {
   sidebarWidth: number
   panelWidth: number // the right panel, dragged by its left edge
   panel: boolean
-  panelTab: 'files' | 'changes' | 'verdicts' | 'history'
+  panelTab: 'files' | 'changes' | 'verdicts' | 'history' | 'overview'
   theme: Theme | null // null = default (dark)
   drafts: Record<string, string> // unsent composer text per chat session
 }
@@ -84,7 +87,7 @@ export interface State extends Prefs {
   settingsCategory: 'Рабочее место' | 'Агенты' | 'Подключения' | 'Доска и Git'
   settings: Settings | null // loaded on demand (pickers need grades; the settings screen edits it)
   prs: Record<string, PrState | undefined> // key = normPath(cwd): PR of the branch checked out there
-  prsMine: Partial<Record<PrScope, PrListState>> // GET /api/prs: «Мои» / «По задачам»
+  prsMine: Partial<Record<PrKey, PrListState>> // GET /api/prs: «Мои» / «По задачам»
   sdd: Record<string, SddPlan[] | null> // key = normPath(cwd): /full-task plans and verdicts (null: server lacks it)
   recentFolders: string[]
   slowStarts: Record<string, number[]> // sessionId -> how long the last turns sat in phase «starting» (ms)
@@ -97,8 +100,7 @@ export interface State extends Prefs {
   dirty: Record<string, boolean>
   toasts: Toast[]
   jobs: Job[]
-  focusTaskId: string | null
-  agentsMode: 'active' | 'running' | 'archive'
+  agentsMode: import('./lib/agentsBoard').Filter
   dialog: DialogRequest | null
   back: Loc[]
   forward: Loc[]
@@ -136,7 +138,9 @@ const defaultPrefs: Prefs = {
 const SCREENS = new Set<Screen>(['home', 'board', 'agents', 'prs', 'inbox', 'settings', 'setup'])
 const validView = (v: unknown): v is View => {
   const x = v as View | null
-  return !!x && ((x.kind === 'screen' && SCREENS.has(x.screen)) || (x.kind === 'wt' && typeof x.cwd === 'string'))
+  const d = x?.kind === 'screen' ? x.detail : undefined
+  const detailOk = !d || (d.kind === 'task' && typeof d.id === 'string') || (d.kind === 'pr' && typeof d.pr?.index === 'number')
+  return !!x && ((x.kind === 'screen' && SCREENS.has(x.screen) && detailOk) || (x.kind === 'wt' && typeof x.cwd === 'string'))
 }
 
 function readPrefs(): Prefs {
@@ -163,11 +167,11 @@ const resolveScheme = (pref: Theme | null): Theme => pref ?? 'dark'
 const prefs = readPrefs()
 let state: State = {
   ...prefs,
-  agentsMode: 'active',
+  agentsMode: 'all',
   conn: 'connecting', loaded: false, authExpired: false, scheme: resolveScheme(prefs.theme),
   tasks: [], sessions: [], workspaces: [], notifications: [], agents: [], defaultAgent: null, shell: '',
   integrations: { tasks: false, pr: false },
-  messages: {}, subagents: {}, worktrees: {}, git: {}, agentMeta: {}, settings: null, settingsCategory: 'Рабочее место', prs: {}, prsMine: {}, sdd: {}, recentFolders: [], slowStarts: {}, agentGit: {}, sbOverlay: false, panelOverlay: false, history: {}, recovery: null, features: [], dirty: {}, toasts: [], jobs: [], focusTaskId: null, dialog: null, back: [], forward: [],
+  messages: {}, subagents: {}, worktrees: {}, git: {}, agentMeta: {}, settings: null, settingsCategory: 'Рабочее место', prs: {}, prsMine: {}, sdd: {}, recentFolders: [], slowStarts: {}, agentGit: {}, sbOverlay: false, panelOverlay: false, history: {}, recovery: null, features: [], dirty: {}, toasts: [], jobs: [], dialog: null, back: [], forward: [],
   desktop: (window as unknown as { harnessDesktop?: DesktopBridge }).harnessDesktop ?? null, // the shell's preload, if this page runs in its window
 }
 
@@ -236,7 +240,7 @@ document.documentElement.dataset.theme = state.scheme
 
 export type Feature = 'sdd' | 'subagents' | 'virtual-sessions' | 'worker-run' | 'pr-status' | 'branches' | 'fs-search'
   | 'agent-info' | 'models-refresh' | 'tracker-links' | 'worktree-meta' | 'open' | 'board-columns' | 'review-loop' | 'skills-install' | 'demo'
-  | 'fs-raw' | 'rework' | 'tracker-import' | 'folders' | 'include-dirs' | 'acp' | 'pr-decline' | 'questions' | 'permissions' | 'activity' | 'recovery' | 'cli-history' | 'prs-mine' | 'git-generate' | 'git-via-agent' | 'git-stage' | 'handoff' | 'release-resolve' | 'handoff-dry-run' | 'cli-adopt' | 'integrations-check' | 'pick-folder' | 'checks' | 'revive' | 'bind-task' | 'open-file' | 'pr-actions' | 'pr-detail' | 'pin' | 'mcp-connections'
+  | 'fs-raw' | 'rework' | 'tracker-import' | 'folders' | 'include-dirs' | 'acp' | 'pr-decline' | 'questions' | 'permissions' | 'activity' | 'recovery' | 'cli-history' | 'prs-mine' | 'git-generate' | 'git-via-agent' | 'git-stage' | 'handoff' | 'release-resolve' | 'handoff-dry-run' | 'cli-adopt' | 'integrations-check' | 'pick-folder' | 'checks' | 'revive' | 'bind-task' | 'open-file' | 'pr-actions' | 'pr-detail' | 'pin' | 'mcp-connections' | 'agent-reconnect' | 'cli-live' | 'review-retry' | 'prs-filters'
 
 /** Whether this server implements an optional API group (no flag list = an older server = none). */
 export const hasFeature = (f: Feature) => state.features.includes(f)
@@ -268,14 +272,15 @@ export function upsertSession(list: Session[], s: Session): Session[] {
 
 // ---------- navigation: screens, worktrees, tabs ----------
 
-const locKey = (l: Loc) => ('screen' in l ? `@${l.screen}` : `${wtKey(l.cwd)}#${l.tab ?? ''}`)
+const detailKey = (d?: Detail) => (!d ? '' : d.kind === 'task' ? `/t:${d.id}` : `/p:${d.pr.url || `${d.pr.repo}#${d.pr.index}`}`)
+const locKey = (l: Loc) => ('screen' in l ? `@${l.screen}${detailKey(l.detail)}` : `${wtKey(l.cwd)}#${l.tab ?? ''}`)
 
 const currentLoc = (s: Pick<State, 'view' | 'wt'>): Loc =>
-  s.view.kind === 'screen' ? { screen: s.view.screen } : { cwd: s.view.cwd, tab: s.wt[wtKey(s.view.cwd)]?.active ?? null }
+  s.view.kind === 'screen' ? { screen: s.view.screen, detail: s.view.detail } : { cwd: s.view.cwd, tab: s.wt[wtKey(s.view.cwd)]?.active ?? null }
 
 /** View + per-worktree active tab for a location; tab null keeps the worktree's remembered tab. */
 function applyLoc(wt: Record<string, WtTabs>, loc: Loc): Pick<State, 'view' | 'wt'> {
-  if ('screen' in loc) return { view: { kind: 'screen', screen: loc.screen }, wt }
+  if ('screen' in loc) return { view: { kind: 'screen', screen: loc.screen, detail: loc.detail }, wt }
   const k = wtKey(loc.cwd)
   const entry = wt[k] ?? { cwd: loc.cwd, tabs: [], active: null }
   const active = loc.tab ?? entry.active
@@ -370,9 +375,17 @@ export function closeSessionTab(id: string) {
 /** Folder the workspace panel and «new chat here» are bound to: the worktree on screen. */
 export const useActiveCwd = () => useStore((s) => (s.view.kind === 'wt' ? s.view.cwd : null))
 
-export function openTask(id: string) {
-  openScreen('board')
-  setState({ focusTaskId: id })
+/** A task's page over «Задачи»; a PR's page over «Пулл-реквесты». */
+export const openTask = (id: string) => setState((s) => go(s, { screen: 'board', detail: { kind: 'task', id } }))
+export const openPr = (pr: PrItem) => setState((s) => go(s, { screen: 'prs', detail: { kind: 'pr', pr } }))
+
+/** Back from a detail page to its list: a step back when the list is where we came from (filters, scroll kept). */
+export function closeDetail() {
+  const v = state.view
+  if (v.kind !== 'screen' || !v.detail) return
+  const prev = state.back[state.back.length - 1]
+  if (prev && 'screen' in prev && prev.screen === v.screen && !prev.detail) navigate('back')
+  else openScreen(v.screen)
 }
 
 export function setDirty(key: string, value: boolean) {
@@ -380,7 +393,7 @@ export function setDirty(key: string, value: boolean) {
   setState((s) => ({ dirty: { ...s.dirty, [key]: value } }))
 }
 
-export function showPanel(tab: 'files' | 'changes' | 'verdicts' | 'history') {
+export function showPanel(tab: State['panelTab']) {
   setState({ panel: true, panelOverlay: true, panelTab: tab }) // panelOverlay matters only in a narrow window
 }
 

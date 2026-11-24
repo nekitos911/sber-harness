@@ -47,7 +47,7 @@ test('an unguarded Windows-only command is reported, a guarded one is not', () =
   assert.match(result.stdout, /server[\\/]call\.js:2 — Windows-only command/);
   assert.match(result.stdout, /server[\\/]paths\.js:1 — split on a literal backslash/);
   const flagged = result.stdout.split('\n').filter((line) => line.includes(' — '));
-  assert.equal(flagged.filter((line) => line.startsWith('server\\guarded.js')).length, 1, result.stdout);
+  assert.equal(flagged.filter((line) => /^server[\\/]guarded\.js/.test(line)).length, 1, result.stdout);
 });
 
 test('a function whose caller picks the platform counts as guarded', () => {

@@ -548,22 +548,24 @@ test('settings: model catalogue objects, labels, presets, timeouts, flags and tr
   assert.equal(await bad({ agents: { mock: { modelGrades: { fast: 7 } } } }), 400);
   assert.equal(await bad({ agents: { mock: { firstEventTimeoutMs: 10 } } }), 400);
   assert.equal(await bad({ agents: { mock: { enabled: 'yes' } } }), 400);
+  assert.equal(await bad({ agents: { mock: { maxStarting: -1 } } }), 400);
+  assert.equal(await bad({ agents: { mock: { userHooks: 'no' } } }), 400);
   assert.equal(await bad({ agents: { mock: { taskPromptPresets: ['no task vars'] } } }), 400);
   assert.equal(await bad({ integrations: { tasks: { statusMap: { qa: 'testing' } } } }), 400);
   assert.equal(await bad({ integrations: { pr: { enabled: 1 } } }), 400);
 
   const saved = (await h.api('PUT', '/api/settings', {
-    agents: { mock: { model: 'not-in-the-catalogue', modelGrades: { fast: 'm-x' }, approvalModeLabels: { auto: 'Всё сам' }, taskPromptPresets: ['/full-task {taskUrl}{notes}'], firstEventTimeoutMs: 60000, inheritUserMcp: true } },
+    agents: { mock: { model: 'not-in-the-catalogue', modelGrades: { fast: 'm-x' }, approvalModeLabels: { auto: 'Всё сам' }, taskPromptPresets: ['/full-task {taskUrl}{notes}'], firstEventTimeoutMs: 60000, inheritUserMcp: true, maxStarting: 0, userHooks: false } },
     integrations: { tasks: { space: 'ABC', urlTemplate: 'https://t.example/{key}', statusMap: { qa: 'review' }, closedStatuses: ['done', 'won_t_do'] }, pr: { enabled: true } },
   })).body;
   assert.deepEqual([saved.agents.mock.model, saved.agents.mock.modelGrades.fast, saved.agents.mock.approvalModeLabels.auto], ['not-in-the-catalogue', 'm-x', 'Всё сам']);
-  assert.deepEqual([saved.agents.mock.firstEventTimeoutMs, saved.agents.mock.inheritUserMcp], [60000, true]);
+  assert.deepEqual([saved.agents.mock.firstEventTimeoutMs, saved.agents.mock.inheritUserMcp, saved.agents.mock.maxStarting, saved.agents.mock.userHooks], [60000, true, 0, false]);
   assert.deepEqual([saved.integrations.tasks.space, saved.integrations.tasks.statusMap.qa, saved.integrations.pr.enabled], ['ABC', 'review', true]);
   assert.equal((await state()).integrations.pr, true);
   const local = JSON.parse(fs.readFileSync(h.configFile.replace(/\.json$/, '.local.json'), 'utf8'));
   assert.deepEqual(local.integrations.tasks.closedStatuses, ['done', 'won_t_do']);
   assert.equal(local.agents.mock.firstEventTimeoutMs, 60000);
-  await h.api('PUT', '/api/settings', { agents: { mock: { inheritUserMcp: false, model: null } }, integrations: { pr: { enabled: false } } });
+  await h.api('PUT', '/api/settings', { agents: { mock: { inheritUserMcp: false, model: null, maxStarting: 4, userHooks: true } }, integrations: { pr: { enabled: false } } });
 });
 
 test('settings round trip: PUT with exactly what GET returned is accepted (read-only fields ignored)', async () => {

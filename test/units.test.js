@@ -87,6 +87,9 @@ test('excludeFromCommit: nested service folders (.gigacode/tmp/) are service fil
   assert.ok(isService('.proj-42-r3-targeted.log', junk));
   assert.ok(!isService('src/main/java/a/Client.java', junk));
   assert.ok(!isService('docs/class-diagram.md', junk));
+  // another tool's temp files at the top: «name*»
+  assert.ok(isService('.openai-logs-cleanup-8f2a', ['.openai-logs-cleanup-*']));
+  assert.ok(!isService('src/.openai-logs-cleanup-8f2a', ['.openai-logs-cleanup-*']));
 });
 
 test('expandCommand: the command file\'s text with the arguments, the project\'s first; null leaves it to the CLI', () => {

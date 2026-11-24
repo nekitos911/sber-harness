@@ -43,13 +43,20 @@ export interface Task {
   log: TaskLogEntry[]
   pr?: TaskPr | null // newer servers: PR of task.branch, refreshed in the background
   agentState?: AgentState | null // what the assigned agent (and the harness review) is doing
-  checks?: { round: number; state: 'running' | 'passed' | 'failed'; workerSessionId: string; at?: number } | null // «Проверка перед готово»
+  checks?: { round: number; state: 'running' | 'passed' | 'failed'; workerSessionId: string; at?: number; startedAt?: number } | null // «Проверка перед готово»
+  review?: TaskReview | null // the harness review loop (orchestration.reviewMode "harness")
   externalLinks?: { name: string; url: string }[] // addresses in the tracker task's fields («Внешние ссылки»): the agent reads them first
   createdAt: number
   updatedAt: number
 }
 
-export type AgentState = 'running' | 'waiting' | 'done' | 'failed' | 'checking' | 'reviewing' | 'approved' | 'changes_requested'
+export interface TaskReview {
+  state: 'reviewing' | 'approved' | 'changes_requested' | 'review_stopped'
+  round: number; maxRounds?: number; workerSessionId: string; reviewerSessionId: string | null
+  startedAt?: number; findings?: string | null; stoppedReason?: string; stoppedAt?: number
+}
+
+export type AgentState = 'running' | 'waiting' | 'done' | 'failed' | 'checking' | 'reviewing' | 'approved' | 'changes_requested' | 'review_stopped'
 
 export interface BoardColumn { status: TaskStatus; label: string; trackerStatuses: string[] }
 export interface BoardSettings {
@@ -123,6 +130,10 @@ export interface Session {
   errorKind?: 'not_started' | 'turn' | string | null // why status is error: never produced output vs this turn failed
   status: SessionStatus
   phase?: 'starting' | 'streaming' | 'auth' | null
+  /** waits for a start slot of its agent: its place in that line (server/sessions.js spawnSlot) */
+  startWait?: number
+  startRetryAt?: number | null // the harness retries starting the agent by itself at that time
+  cliLiveAt?: number | null // a CLI-origin chat GigaCode itself wrote to (in a terminal outside the harness) at that time
   lastEventAt?: number | null // last stdout event of the current turn (newer servers)
   lastEventKind?: 'text_delta' | 'assistant_final' | 'tool_running' | 'tool_done' | 'thought' | 'result' | null // the latest stream event (newer servers)
   turnClosing?: boolean // the answer is complete (result seen); the CLI is only shutting down
@@ -240,7 +251,7 @@ export interface AgentMeta {
   id: string
   resolved: { ok: boolean; command?: string; node?: string; entry?: string; identity: boolean; error?: string }
   auth?: 'ok' | 'required' | 'unknown'
-  catalog?: { at: number | null; error?: string | null; running?: boolean } | null
+  catalog?: { at: number | null; error?: string | null; timedOut?: boolean; running?: boolean } | null // timedOut: the CLI was too slow (a busy machine), not broken
   modelRefs?: { file: string; model: string; available: boolean | null }[]
   commands?: Record<string, 'installed' | 'missing' | 'different'>
   userCommands?: string[] // the person's own commands and skills in the agent's folders (the first-run setup offers them)
@@ -317,6 +328,8 @@ export interface AgentSettings {
   reworkPromptPresets?: string[]
   firstEventTimeoutMs?: number
   inheritUserMcp?: boolean
+  maxStarting?: number // processes of this agent cold-starting at once (0 = no limit); not a limit on agents at work
+  userHooks?: boolean // false: the harness runs go with disableAllHooks
   enabled?: boolean
   transport?: 'headless' | 'acp' // acp: one long-lived process with interactive permissions (feature acp)
   acpIdleMin?: number | null // ACP: unload an idle chat's process after N minutes (null = never)

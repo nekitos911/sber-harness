@@ -25,7 +25,7 @@
  *    } }
  *  enabled: true | false | "auto" (default): "auto" = on when a console MCP server named `server` exists (and, once
  *    its tools were listed, offers `tool`).
- *  repoPulls({ config, mcp, project, repository, author? }) -> raw open pull requests of one repository (author: the
+ *  repoPulls({ config, mcp, project, repository, author?, state? = 'OPEN' }) -> raw pull requests (OPEN|MERGED|DECLINED) of one repository (author: the
  *    server's own filter, and the items' pr_creator/author checked here as well); prMe({ config, mcp }) -> my login
  *    from `meTool` (default git_get_user, called with { username: meArg ?? the OS account name }; login|username|name;
  *    cached 24 h).
@@ -99,10 +99,10 @@ export const prAuthor = (p) => {
 };
 
 /** Open pull requests of one repository; with `author` only that author's (a server that rejects the arg: filtered here). */
-export async function repoPulls({ config, mcp, project, repository, author = null }) {
+export async function repoPulls({ config, mcp, project, repository, author = null, state = 'OPEN' }) {
   const cfg = config.integrations.pr;
   const call = async (args) => getPath(toolResultValue(await mcp.callTool(cfg.server, cfg.listTool, args)), cfg.listItemsPath ?? 'pulls');
-  const args = { project, repository, state: 'OPEN', page: 1, limit: 100 };
+  const args = { project, repository, state, page: 1, limit: 100 };
   let pulls = null;
   if (author) pulls = await call({ ...args, author }).catch(() => null);
   if (!Array.isArray(pulls)) pulls = await call(args);
@@ -110,7 +110,28 @@ export async function repoPulls({ config, mcp, project, repository, author = nul
   return author ? pulls.filter((p) => { const a = prAuthor(p); return a == null || a === author; }) : pulls;
 }
 
-export async function createPullRequest({ config, mcp, cwd, branch, base, title, body = '', repo, project = null, repository = null }) {
+/**
+ * The url of an OPEN pull request head `branch` → `base` (null: none, or no listTool). One check for every way a PR is
+ * made — directly and through the agent (its own MCP call would open a second one next to it).
+ */
+export async function findOpenPr({ config, mcp, branch, base, ...vars }) {
+  const cfg = config.integrations?.pr;
+  if (!cfg?.listTool) return null;
+  jobStep('Поиск существующего PR');
+  const listed = toolResultValue(await mcp.callTool(cfg.server, cfg.listTool, fillTemplate(cfg.listArgs || LIST_ARGS, { ...vars, branch, head: branch, base })));
+  const pulls = getPath(listed, cfg.listItemsPath ?? 'pulls');
+  const same = Array.isArray(pulls) && pulls.find((p) => p?.head?.name === branch && p?.base?.name === base);
+  return (same && getPath(same, cfg.urlPath ?? 'url')) || null;
+}
+
+const creating = new Map(); // repo|branch|base -> the call in flight: a second click before the first PR exists gets that one
+export function createPullRequest(o) {
+  const key = [String(o.repo ?? '').toLowerCase(), o.branch, o.base || o.config.git?.defaultBase || 'main'].join('|');
+  if (!creating.has(key)) creating.set(key, createPr(o).finally(() => creating.delete(key)));
+  return creating.get(key);
+}
+
+async function createPr({ config, mcp, cwd, branch, base, title, body = '', repo, project = null, repository = null }) {
   const cfg = config.integrations?.pr;
   if (!prEnabled(config, mcp)) throw Object.assign(new Error('создание PR выключено (integrations.pr.enabled)'), { status: 501 });
   const { titleBytes, bodyBytes } = cfg.limits || {};
@@ -124,14 +145,8 @@ export async function createPullRequest({ config, mcp, cwd, branch, base, title,
   }
   const vars = { repo, project, repository, branch, head: branch, base: base || config.git?.defaultBase || 'main', title, body, cwd };
 
-  if (cfg.listTool) {
-    jobStep('Поиск существующего PR');
-    const listed = toolResultValue(await mcp.callTool(cfg.server, cfg.listTool, fillTemplate(cfg.listArgs || LIST_ARGS, vars)));
-    const pulls = getPath(listed, cfg.listItemsPath ?? 'pulls');
-    const same = Array.isArray(pulls) && pulls.find((p) => p?.head?.name === branch && p?.base?.name === vars.base);
-    const url = same && getPath(same, cfg.urlPath ?? 'url');
-    if (url) return { url, existing: true };
-  }
+  const open = await findOpenPr({ config, mcp, ...vars });
+  if (open) return { url: open, existing: true };
 
   jobStep('Создание PR');
   const value = toolResultValue(await mcp.callTool(cfg.server, cfg.tool, fillTemplate(cfg.args || {}, vars)));

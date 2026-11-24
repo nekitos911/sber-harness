@@ -1,5 +1,5 @@
 import { memo, useState, type MouseEvent } from 'react'
-import { Check, Copy, ExternalLink, FileText, FolderOpen, GitCompare, LoaderCircle, TriangleAlert, X } from 'lucide-react'
+import { Check, Copy, ExternalLink, FileText, FolderOpen, GitCompare, LoaderCircle, PlugZap, TriangleAlert, X } from 'lucide-react'
 import { tryApi } from '../../api'
 import { openSession, useFeature, useStore } from '../../store'
 import { openFile } from '../WorktreeMenu'
@@ -15,6 +15,7 @@ import { isSubagentTool, SubagentCard } from './SubagentCard'
 import { ThoughtBlock, Thumb } from './ToolSteps'
 import { isImagePath, splitAttachments } from '../../lib/attachments'
 import { toolKind } from '../../lib/toolRun'
+import { reconnectMcp } from '../../lib/sessionActions'
 import { AskToolCard, isAskCard, MessageQuestion, PermissionCard } from './Attention'
 
 /** `until`: for a thought, when it ended (null = still thinking); the thought shows how long it took. */
@@ -22,11 +23,11 @@ export const MessageItem = memo(function MessageItem({ m, fresh = false, until, 
   // An `ask` with options (from this agent or a worker) is a question card like the CLI's own question tool.
   const body = m.kind === 'thought' ? <ThoughtBlock m={m} until={until === undefined ? m.at : until} />
     : m.options?.length && m.kind !== 'permission' ? <MessageQuestion m={m} />
-      : m.kind === 'system' ? <><SystemNote text={m.text} count={count} />{m.link && <LinkButton href={m.link} />}</>
+      : m.kind === 'system' ? <><SystemNote text={m.text} count={count} />{m.link && <LinkButton href={m.link} />}<ReconnectButton m={m} /></>
         : <MessageBody m={m} />
   // Messages that arrive while the chat is open fade in; the loaded history does not replay.
   return (
-    <div className="msg-wrap" data-kind={m.kind} data-enter={fresh || undefined}>
+    <div className="msg-wrap" data-kind={m.kind} data-mid={m.id} data-enter={fresh || undefined}>
       {body}
     </div>
   )
@@ -39,10 +40,21 @@ function MessageBody({ m }: { m: Message }) {
     case 'thought': return <ThoughtBlock m={m} until={m.at} />
     case 'tool': return m.tool ? <ToolCard tool={m.tool} sessionId={m.sessionId} m={m} /> : null
     case 'error': return m.action === 'pick-model' ? <PickModelError m={m} /> : <div className="msg msg-error" role="alert">{m.text}{m.link && <LinkButton href={m.link} />}</div>
-    case 'system': return <>{<SystemNote text={m.text} />}{m.link && <LinkButton href={m.link} />}</>
+    case 'system': return <>{<SystemNote text={m.text} />}{m.link && <LinkButton href={m.link} />}<ReconnectButton m={m} /></>
     case 'question': return <MessageQuestion m={m} />
     case 'permission': return m.permission ? <PermissionCard m={m} /> : <SystemNote text={m.text} />
   }
+}
+
+/** Beside the harness's «MCP-серверы не подключились» note: the «Переподключить MCP» it tells about, one click away. */
+function ReconnectButton({ m }: { m: Message }) {
+  const on = useFeature('agent-reconnect')
+  if (!on || !m.text.includes('Переподключить MCP')) return null
+  return (
+    <button type="button" className="btn btn-sm link-btn-out" onClick={() => void reconnectMcp({ id: m.sessionId })} data-tip="Перезапустить процесс агента: MCP-серверы подключатся заново, контекст чата сохранится">
+      <PlugZap />Переподключить MCP
+    </button>
+  )
 }
 
 /** One-click answers for an `ask` with options; the chosen text is sent as the reply. */
@@ -161,7 +173,7 @@ const editLines = (e: FileEdit): DiffLine[] =>
   e.lines.map((l) => ({ kind: l.kind === '+' ? 'add' : l.kind === '-' ? 'del' : 'ctx', text: l.text, old: null, new: null }))
 
 function ToolCard({ tool, sessionId, m }: { tool: ToolCall; sessionId: string; m?: Message }) {
-  if (isSubagentTool(tool)) return <SubagentCard tool={tool} />
+  if (isSubagentTool(tool)) return <SubagentCard tool={tool} sessionId={sessionId} at={m?.at} />
   if (isAskCard(tool) && m) return <AskToolCard m={m} />
   const edit = fileEdit(tool.input)
   if (edit) return <EditBlock tool={tool} sessionId={sessionId} file={edit.file} created={edit.created} added={edit.added} removed={edit.removed} lines={editLines(edit)} />

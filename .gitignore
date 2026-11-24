@@ -8,3 +8,4 @@ harness.config.local.json
 graphify-out/
 .playwright-mcp/
 data-demo/
+.openai-logs-cleanup-*

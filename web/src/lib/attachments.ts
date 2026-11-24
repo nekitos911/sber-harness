@@ -34,3 +34,33 @@ export function insertRef(text: string, at: number, tag: string): { text: string
 export function dropRef(text: string, n: number): string {
   return text.replace(/ ?\[(Изображение|Файл) №(\d+)\]/g, (m, kind: string, d: string) => (+d === n ? '' : +d > n ? m.replace(`[${kind} №${d}]`, `[${kind} №${+d - 1}]`) : m))
 }
+
+/** Where each mention lies in the text: [start, end) and its number. */
+export const refSpans = (text: string) =>
+  [...text.matchAll(/\[(?:Изображение|Файл) №(\d+)\]/g)].map((m) => ({ start: m.index, end: m.index + m[0].length, n: +m[1] }))
+
+/** A caret inside a mention moves out of it (a mention is one token): to the side it moved toward (`dir` < 0: left), else the nearer one. */
+export function snapCaret(text: string, pos: number, dir = 0): number {
+  const s = refSpans(text).find((r) => pos > r.start && pos < r.end)
+  if (!s) return pos
+  return (dir ? dir < 0 : pos - s.start < s.end - pos) ? s.start : s.end
+}
+
+/**
+ * Backspace (`back`) / Delete over the selection [start, end): null when it touches no mention (the input deletes as
+ * usual). Else a mention goes whole — a caret right after it (Backspace) or before it (Delete) takes all of it, a
+ * selection that cuts into one widens to it — with one of the spaces around it, the later mentions renumbered;
+ * `refs`: the numbers removed, their files leave the message too.
+ */
+export function deleteRefs(text: string, start: number, end: number, back: boolean): { text: string; caret: number; refs: number[] } | null {
+  let a = start === end && back ? start - 1 : start
+  let b = start === end && !back ? end + 1 : end
+  const hit = refSpans(text).filter((r) => a < r.end && b > r.start)
+  if (!hit.length) return null
+  a = Math.min(a, hit[0].start)
+  b = Math.max(b, hit[hit.length - 1].end)
+  if (text[a - 1] === ' ' && (b === text.length || /\s/.test(text[b]))) a--
+  else if (a === 0 && text[b] === ' ') b++
+  const refs = hit.map((r) => r.n).sort((x, y) => y - x)
+  return { text: refs.reduce(dropRef, text.slice(0, a) + text.slice(b)), caret: a, refs }
+}

@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { CODE_ROOT } from '../server/config.js';
-import { parseProfile, SUBAGENT_CONTEXT, TEMP_FILES, WORKTREE_RULE } from '../server/orchestration.js';
+import { parseProfile, SUBAGENT_CONTEXT, DELEGATION, TEMP_FILES, WORKTREE_RULE } from '../server/orchestration.js';
 import { startTestServer, tmpDir, rmrf, waitFor, makeRepo } from './helpers.js';
 
 const root = tmpDir();
@@ -121,7 +121,7 @@ test('harness `agent` alias: listed only in harness mode; builtin mode drops it 
   }
   const withBlock = await chat('с блоком');
   const run2 = await waitFor(() => fs.readFileSync(argvFile, 'utf8').trim().split('\n').map((l) => JSON.parse(l)).find((x) => x.env.HARNESS_SESSION_ID === withBlock.id));
-  assert.equal(run2.argv[run2.argv.indexOf('-p') + 1], `${SUBAGENT_CONTEXT}\n\n${TEMP_FILES}\n\n${WORKTREE_RULE}\n\nс блоком`);
+  assert.equal(run2.argv[run2.argv.indexOf('-p') + 1], `${SUBAGENT_CONTEXT}\n\n${DELEGATION}\n\n${TEMP_FILES}\n\n${WORKTREE_RULE}\n\nс блоком`);
 });
 
 test('worker_run over MCP: progress notifications while waiting; past its wait the sub-agent goes to the background, its result to come as a message', async () => {

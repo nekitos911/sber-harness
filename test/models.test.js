@@ -200,3 +200,24 @@ test('discovery tries the light run (quickArgs) first, the full one only if it f
     await h.close();
   }
 });
+
+test('discovery that times out: its own timeout, no second full run after it, a calm `timedOut` status with the config list kept', async () => {
+  const argvFile = path.join(root, 'discovery-slow-argv.ndjson');
+  Object.assign(process.env, { MOCK_AGENT_ARGV_FILE: argvFile, MOCK_AGENT_MODELS_SILENT: '1' });
+  // firstEventTimeoutMs of a chat stays long: discovery waits by modelsDiscovery.timeoutMs
+  const h = await startTestServer({ agents: { mock: { modelsDiscovery: { prompt: '/models', maxAgeHours: 24, timeoutMs: 2000 }, quickArgs: ['--safe-mode'], firstEventTimeoutMs: 600000, models: [{ id: 'Config-Model-1-128k' }] } } });
+  try {
+    const started = Date.now();
+    const r = (await h.api('POST', '/api/agents/mock/models/refresh')).body;
+    assert.ok(Date.now() - started < 20000, 'the discovery timeout, not the chat one');
+    assert.deepEqual([r.error, r.timedOut], ['CLI не ответил за 2 с', true]);
+    assert.ok(r.models.some((m) => m.id === 'Config-Model-1-128k'), 'the config list is still offered');
+    const runs = fs.readFileSync(argvFile, 'utf8').trim().split('\n').map((l) => JSON.parse(l).argv);
+    assert.deepEqual(runs.map((a) => a.includes('--safe-mode')), [true], 'the full run with every MCP server is not tried after a timeout');
+    const info = (await h.api('GET', '/api/agents/mock/info')).body.catalog;
+    assert.deepEqual([info.error, info.timedOut], ['CLI не ответил за 2 с', true]);
+  } finally {
+    for (const k of ['MOCK_AGENT_ARGV_FILE', 'MOCK_AGENT_MODELS_SILENT']) delete process.env[k];
+    await h.close();
+  }
+});

@@ -1,57 +1,115 @@
-import { useEffect, useMemo, useState, type MouseEvent } from 'react'
-import { Bot, Check, ChevronRight, Clock, ExternalLink, GitMerge, GitPullRequest, RefreshCw, TriangleAlert, X, XCircle } from 'lucide-react'
-import { api, errorText, qs, tryApi } from '../api'
-import { parseDiff, type DiffFile } from '../lib/diff'
-import { FileDiff } from './DiffView'
-import { Markdown } from '../components/Markdown'
-import { openDialog, openSession, openTask, toast, useFeature, useStore } from '../store'
-import { loadPrsMine, type PrItem, type PrScope } from '../lib/prsMine'
+import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
+import { ArrowRight, Bot, Ellipsis, ExternalLink, FolderGit2, GitMerge, GitPullRequest, ListFilter, MessageSquare, PanelRight, RefreshCw, Search, TriangleAlert, XCircle } from 'lucide-react'
+import { openPr, openTask, useFeature, useStore } from '../store'
+import { PrPage, prAction, prStanding, REVIEW_ICON, REVIEW_TIP, usePrWork } from './PrPage'
+import { ErrorBoundary } from '../components/ErrorBoundary'
+import { loadPrsMine, prsKey, type PrItem, type PrScope, type PrState } from '../lib/prsMine'
+import { activePrFilters, filterPrs, NO_PR_FILTERS, prFilterOptions, type PrFilters } from '../lib/prFilter'
 import { openPrSettings } from '../lib/pr'
 import { ago, plural, reviewKind } from '../lib/format'
 import { loadDraft, saveDraft } from '../lib/draft'
 import { useNow } from '../lib/useNow'
+import { loadWorktreesOf } from '../ws'
 import { Skeleton } from '../components/bits'
-import { Button, Disclosure, Segmented } from '../components/ui'
+import { PrGlyph } from '../components/PrChip'
+import { Button, Disclosure, Menu, MenuButton, Segmented, type MenuItem } from '../components/ui'
 
 const stop = (e: MouseEvent) => e.stopPropagation()
 
+const STATES: { value: PrState; label: string }[] = [
+  { value: 'open', label: 'Открытые' }, { value: 'merged', label: 'Влитые' }, { value: 'declined', label: 'Закрытые' }, { value: 'all', label: 'Все' },
+]
+const FILTERS: { key: keyof PrFilters; label: string }[] = [
+  { key: 'repo', label: 'Репозиторий' }, { key: 'author', label: 'Автор' }, { key: 'reviewer', label: 'Запрошено ревью у' }, { key: 'base', label: 'Целевая ветка' },
+]
+const NONE: Record<PrState, string> = { open: 'Открытых PR нет', merged: 'Влитых PR нет', declined: 'Закрытых PR нет', all: 'PR нет' }
+
 /**
- * «Пулл-реквесты»: every open PR of the person across repositories («Мои»), or the PRs behind tasks («По задачам»),
- * grouped by repository; a task key and an «агент» badge when the harness is behind it. A row opens the PR.
+ * «Пулл-реквесты» as a table: status (Открытые · Влитые · Закрытые · Все) and whose (Все · Мои · На ревью · По задачам),
+ * a search and «Фильтры» over the fields the PR service gives. A row opens the PR; its button goes to the branch's chat or
+ * worktree when the harness has one.
  */
 export function MinePrs() {
-  const [scope, setScopeState] = useState<PrScope>(() => loadDraft<PrScope>('prs:scope') ?? 'mine')
+  const filtersOn = useFeature('prs-filters') // older servers: open PRs, «Мои» / «По задачам» only
+  const [scopeRaw, setScopeState] = useState<PrScope>(() => loadDraft<PrScope>('prs:scope') ?? 'mine')
+  const [stateRaw, setStateState] = useState<PrState>(() => loadDraft<PrState>('prs:state') ?? 'open')
+  const scope: PrScope = filtersOn || scopeRaw === 'mine' || scopeRaw === 'tracked' ? scopeRaw : 'mine'
+  const state: PrState = filtersOn ? stateRaw : 'open'
   const setScope = (v: PrScope) => { setScopeState(v); saveDraft('prs:scope', v === 'mine' ? null : v) }
+  const setPrState = (v: PrState) => { setStateState(v); saveDraft('prs:state', v === 'open' ? null : v) }
+  const key = prsKey(scope, state)
   const active = useStore((s) => s.settings?.integrations?.pr?.active)
-  const cached = useStore((s) => s.prsMine[scope])
+  const cached = useStore((s) => s.prsMine[key])
   const data = active === false ? 'off' : cached
   const now = useNow()
   const [refreshing, setRefreshing] = useState(false)
-  useEffect(() => { if (active !== false) loadPrsMine(scope, cached === 'off') }, [scope, active])
+  useEffect(() => { if (active !== false) loadPrsMine(scope, cached === 'off', state) }, [scope, state, active])
   useEffect(() => { if (refreshing && data && typeof data === 'object' && !('error' in data)) setRefreshing(false) }, [data, refreshing])
-  const refresh = () => { setRefreshing(true); loadPrsMine(scope, true) }
-  const [sel, setSel] = useState<PrItem | null>(null) // the PR open in the drawer
+  const refresh = () => { setRefreshing(true); loadPrsMine(scope, true, state) }
+  // the PR page over the list (store view): the list stays mounted under it, its filters and scroll kept
+  const sel = useStore((s) => (s.view.kind === 'screen' && s.view.detail?.kind === 'pr' ? s.view.detail.pr : null))
+  const [query, setQuery] = useState('')
+  const [filters, setFilters] = useState<PrFilters>(NO_PR_FILTERS)
+  const [filtersOpen, setFiltersOpen] = useState(false)
+  const filtersRef = useRef<HTMLButtonElement>(null)
 
   const list = data && typeof data === 'object' && 'items' in data ? data : null
   const repoErrors = (list?.errors ?? []).filter((e): e is { repo: string; error: string } => !!e.repo)
-  const repos = useMemo(() => {
-    const by = new Map<string, PrItem[]>()
-    for (const it of list?.items ?? []) by.set(it.repo, [...(by.get(it.repo) ?? []), it])
-    return [...by.entries()].map(([repo, items]) => ({ repo, items: items.sort((a, b) => b.updatedAt - a.updatedAt) })).sort((a, b) => a.repo.localeCompare(b.repo, 'ru'))
-  }, [list])
+  const all = useMemo(() => [...(list?.items ?? [])].sort((a, b) => b.updatedAt - a.updatedAt), [list])
+  const rows = useMemo(() => filterPrs(all, query, filters), [all, query, filters])
+  const options = useMemo(() => prFilterOptions(all), [all])
+  const nFilters = activePrFilters(filters)
+  const narrowed = nFilters > 0 || !!query.trim()
+
+  // the row's button goes to a worktree of its branch: the repositories' worktree lists are needed
+  const worktrees = useStore((s) => s.worktrees)
+  useEffect(() => {
+    const missing = [...new Set(all.map((i) => i.workspaceId).filter((id): id is string => !!id && !worktrees[id]))]
+    if (missing.length) void loadWorktreesOf(missing)
+  }, [all])
+
+  const filterItems: MenuItem[] = FILTERS.map(({ key: k, label }) => ({
+    label, hint: filters[k] || undefined, disabled: !options[k].length,
+    children: [
+      { label: 'Любой', hint: filters[k] ? undefined : '✓', onSelect: () => setFilters({ ...filters, [k]: '' }) },
+      ...options[k].map((v) => ({ label: v, hint: filters[k] === v ? '✓' : undefined, onSelect: () => setFilters({ ...filters, [k]: v }) })),
+    ],
+  }))
+  if (nFilters) filterItems.push({ label: 'Сбросить фильтры', divider: true, onSelect: () => setFilters(NO_PR_FILTERS) })
+
+  const scopes = [
+    ...(filtersOn ? [{ value: 'all' as const, label: 'Все', hint: 'Все PR зарегистрированных репозиториев' }] : []),
+    { value: 'mine' as const, label: 'Мои', hint: 'Мои PR во всех репозиториях' },
+    ...(filtersOn ? [{ value: 'review' as const, label: 'На ревью', hint: 'PR, где вы в ревьюерах' }] : []),
+    { value: 'tracked' as const, label: 'По задачам', hint: 'PR веток задач и рабочих деревьев harness' },
+  ]
+  const whose = scope === 'mine' ? 'Ваши PR во всех репозиториях' : scope === 'review' ? 'PR, где вы в ревьюерах,' : scope === 'tracked' ? 'PR веток задач' : 'PR зарегистрированных репозиториев'
 
   return (
-    <div className="prs-view">
+    <>
+    <div className="prs-view" inert={!!sel}>
       <header className="view-head">
         <h1>Пулл-реквесты</h1>
-        {list && <span className="count">{list.items.length}</span>}
-        <Segmented size="sm" label="Какие PR" value={scope} onChange={setScope}
-          options={[{ value: 'mine', label: 'Мои', hint: 'Все мои открытые PR во всех репозиториях' }, { value: 'tracked', label: 'По задачам', hint: 'PR веток задач harness' }]} />
-        {scope === 'mine' && list?.me && <span className="muted">как <span className="mono">{list.me}</span>{list.meSource === 'os' && <> — по имени пользователя ОС, <button type="button" className="link" onClick={openPrSettings}>уточнить</button></>}</span>}
+        {list && <span className="count">{narrowed ? `${rows.length} из ${all.length}` : all.length}</span>}
+        {(scope === 'mine' || scope === 'review') && list?.me && <span className="muted">как <span className="mono">{list.me}</span>{list.meSource === 'os' && <> — по имени пользователя ОС, <button type="button" className="link" onClick={openPrSettings}>уточнить</button></>}</span>}
         <span className="grow" />
         {list && <span className="muted num">обновлено {ago(list.at, now)}</span>}
         {data !== 'off' && <Button size="sm" variant="ghost" icon={<RefreshCw className={refreshing ? 'spinner' : undefined} />} disabled={refreshing} onClick={refresh}>Обновить</Button>}
       </header>
+      {data !== 'off' && (
+        <div className="prs-toolbar">
+          {filtersOn && <Segmented size="sm" label="Статус PR" value={state} onChange={setPrState} options={STATES} />}
+          <Segmented size="sm" label="Какие PR" value={scope} onChange={setScope} options={scopes} />
+          <button ref={filtersRef} type="button" className="btn btn-ghost btn-sm" aria-haspopup="menu" aria-expanded={filtersOpen} onClick={() => setFiltersOpen(!filtersOpen)}>
+            <ListFilter />Фильтры{nFilters > 0 && <span className="count">{nFilters}</span>}
+          </button>
+          <Menu anchor={filtersRef} open={filtersOpen} onClose={() => setFiltersOpen(false)} items={filterItems} label="Фильтр пулл-реквестов" />
+          <div className="search prs-search">
+            <Search aria-hidden />
+            <input className="input" type="search" placeholder="Название, #номер, ветка, автор, задача" aria-label="Поиск PR" value={query} onChange={(e) => setQuery(e.target.value)} />
+          </div>
+        </div>
+      )}
       {data === undefined || data === null ? (
         <div className="prs-list"><Skeleton rows={6} label="Загрузка PR…" /></div>
       ) : data === 'off' ? (
@@ -70,21 +128,41 @@ export function MinePrs() {
         </div>
       ) : (
         <div className="prs-list">
-          {repos.length === 0 && repoErrors.length > 0 && (
+          {all.length === 0 && repoErrors.length > 0 && (
             <div className="empty">
               <TriangleAlert className="empty-icon" aria-hidden />
               <h2>Репозитории не ответили</h2>
-              <p>{scope === 'mine' ? 'Список пуст, потому что ни один репозиторий не отдал данные — причина ниже.' : 'PR веток задач неизвестны: ни один репозиторий не отдал данные — причина ниже.'}</p>
+              <p>Список пуст, потому что ни один репозиторий не отдал данные — причина ниже.</p>
             </div>
           )}
-          {repos.length === 0 && repoErrors.length === 0 && (
+          {all.length === 0 && repoErrors.length === 0 && (
             <div className="empty">
               <GitPullRequest className="empty-icon" aria-hidden />
-              <h2>Открытых PR нет</h2>
-              <p>{scope === 'mine' ? 'Ваши открытые PR во всех репозиториях появятся здесь.' : 'PR веток задач появятся здесь, когда их создадут.'}</p>
+              <h2>{NONE[state]}</h2>
+              <p>{whose} появятся здесь.</p>
             </div>
           )}
-          {repos.map(({ repo, items }) => <RepoGroup key={repo} repo={repo} items={items} now={now} onPick={setSel} />)}
+          {all.length > 0 && rows.length === 0 && (
+            <div className="empty">
+              <Search className="empty-icon" aria-hidden />
+              <h2>Ничего не найдено</h2>
+              <p>Ни один из {all.length} PR не подходит под поиск и фильтры.</p>
+              <Button onClick={() => { setQuery(''); setFilters(NO_PR_FILTERS) }}>Сбросить</Button>
+            </div>
+          )}
+          {rows.length > 0 && (
+            <div className="pr-table" role="table" aria-label="Пулл-реквесты">
+              <div className="pr-tr pr-th" role="row">
+                <span role="columnheader">ID</span>
+                <span role="columnheader">Название / контекст</span>
+                <span role="columnheader">Рецензенты</span>
+                <span role="columnheader">Влить</span>
+                <span role="columnheader">Обновлено</span>
+                <span role="columnheader" aria-label="Действие" />
+              </div>
+              {rows.map((it) => <PrRow key={it.url ?? `${it.repo}#${it.index}`} it={it} now={now} />)}
+            </div>
+          )}
           {repoErrors.length > 0 && (
             <Disclosure className="prs-errors" summary={<span className="muted">Не ответили {repoErrors.length} {plural(repoErrors.length, 'репозиторий', 'репозитория', 'репозиториев')}</span>}>
               <ul>{repoErrors.map((e) => <li key={e.repo}><strong>{e.repo}</strong> <span className="muted mono">{e.error}</span></li>)}</ul>
@@ -92,182 +170,62 @@ export function MinePrs() {
           )}
         </div>
       )}
-      {sel && <PrDrawer key={`${sel.repo}#${sel.index}`} it={sel} now={now} onClose={() => setSel(null)} />}
     </div>
+    {sel && <ErrorBoundary area="страницу PR"><PrPage key={`${sel.repo}#${sel.index}`} pr={sel} /></ErrorBoundary>}
+    </>
   )
 }
 
-function RepoGroup({ repo, items, now, onPick }: { repo: string; items: PrItem[]; now: number; onPick: (it: PrItem) => void }) {
-  const [open, setOpenState] = useState(() => loadDraft<boolean>(`prs:open:${repo}`) ?? true)
-  const toggle = () => { setOpenState(!open); saveDraft(`prs:open:${repo}`, open ? false : null) }
-  return (
-    <section className="prs-repo">
-      <button type="button" className="prs-group" aria-expanded={open} onClick={toggle}>
-        <ChevronRight className="chev" aria-hidden />
-        {repo} <span className="count">{items.length}</span>
-      </button>
-      {open && items.map((it) => <PrRow key={it.url} it={it} now={now} onPick={onPick} />)}
-    </section>
-  )
-}
-
-const REVIEW_ICON = { approved: Check, changes: X, pending: Clock }
-const REVIEW_TIP = { approved: 'одобрил', changes: 'просит изменения', pending: 'ещё не ответил' }
-
-/** Where the PR stands, in one word: what to do next is seen without reading every reviewer chip. */
-function prStanding(it: PrItem): { k: 'conflict' | 'changes' | 'approved' | 'review' | 'none'; label: string } {
-  const kinds = it.reviewers.map((r) => reviewKind(r.status))
-  const ok = kinds.filter((k) => k === 'approved').length
-  if (it.mergeable === false) return { k: 'conflict', label: 'Конфликт' }
-  if (kinds.includes('changes')) return { k: 'changes', label: 'Просят изменения' }
-  if (!kinds.length) return { k: 'none', label: 'Без ревьюеров' }
-  if (ok === kinds.length) return { k: 'approved', label: 'Одобрен' }
-  return { k: 'review', label: ok ? `Одобрен ${ok} из ${kinds.length}` : `Ждёт ревью · 0 из ${kinds.length}` }
-}
-
-/** Merge / close from the list (confirmed: on the code host it cannot be taken back here); the lists re-read after. */
-function prAction(it: PrItem, action: 'merge' | 'decline') {
-  const merge = action === 'merge'
-  openDialog({
-    kind: 'confirm', danger: !merge,
-    title: merge ? `Влить PR #${it.index}?` : `Закрыть PR #${it.index} без вливания?`,
-    text: `${it.title}\n${it.head} → ${it.base} (${it.repo})${merge ? '' : '\nВетка останется, PR можно будет создать заново.'}`,
-    ok: merge ? 'Влить' : 'Закрыть PR',
-    onConfirm: () => void tryApi('POST', `/prs/${action}`, { workspaceId: it.workspaceId, index: it.index }).then((r) => {
-      if (r === undefined) return
-      toast(merge ? `PR #${it.index} влит` : `PR #${it.index} закрыт`, 'ok')
-      loadPrsMine('mine', true)
-      loadPrsMine('tracked', true)
-    }),
-  })
-}
-
-function PrRow({ it, now, onPick }: { it: PrItem; now: number; onPick: (it: PrItem) => void }) {
-  const session = useStore((s) => (it.sessionId ? s.sessions.find((x) => x.id === it.sessionId) : undefined))
-  const actionsOn = useFeature('pr-actions') && !!it.workspaceId
+function PrRow({ it, now }: { it: PrItem; now: number }) {
+  const work = usePrWork(it)
+  const actionsOn = useFeature('pr-actions') && !!it.workspaceId && it.state === 'open'
   const st = prStanding(it)
-  const open = () => window.open(it.url, '_blank', 'noopener,noreferrer')
-  // newer servers: the row opens the PR here (its diff, comments); the icon opens it in the browser
+  const browse = () => window.open(it.url, '_blank', 'noopener,noreferrer')
+  // newer servers: the row opens the PR here (its diff, comments); the menu opens it in the browser
   const detail = useFeature('pr-detail') && !!it.workspaceId
-  const pick = () => (detail ? onPick(it) : open())
+  const pick = () => (detail ? openPr(it) : browse())
+  // the primary step: back to the work behind the PR (its agent's chat, its worktree), else the PR itself
+  const primary = work ? { ...work, label: work.kind === 'chat' ? 'К чату' : 'К дереву' }
+    : { label: 'Открыть', tip: detail ? 'Открыть PR: изменения и комментарии' : 'Открыть PR в браузере', run: pick }
+  const menu: MenuItem[] = [
+    ...(detail ? [{ label: 'Открыть PR здесь', icon: <PanelRight />, onSelect: () => openPr(it) }] : []),
+    { label: 'Открыть в браузере', icon: <ExternalLink />, onSelect: browse },
+    ...(it.taskId ? [{ label: `Задача ${it.taskKey ?? it.taskId}`, icon: <FolderGit2 />, onSelect: () => openTask(it.taskId!) }] : []),
+    ...(actionsOn ? [
+      {
+        label: `Влить в ${it.base}`, icon: <GitMerge />, divider: true, disabled: it.mergeable === false, onSelect: () => prAction(it, 'merge'),
+        tip: it.mergeable === false ? 'Конфликт с базовой веткой: сначала разрешите его' : st.k === 'approved' ? undefined : 'Ревью ещё не завершено — сервис может не дать',
+      },
+      { label: 'Закрыть без вливания…', icon: <XCircle />, danger: true, onSelect: () => prAction(it, 'decline') },
+    ] : []),
+  ]
   return (
-    <div className="pr-row pr-row-link" role="link" tabIndex={0} data-tip={detail ? 'Открыть PR: изменения и комментарии' : 'Открыть PR в новой вкладке'} onClick={pick}
+    <div className="pr-tr pr-row-link" role="row" tabIndex={0} data-tip={detail ? 'Открыть PR: изменения и комментарии' : 'Открыть PR в новой вкладке'} onClick={pick}
       onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); pick() } }}>
-      <span className="pr-standing" data-k={st.k}>{st.label}</span>
-      <span className="pr-row-main">
-        <span className="pr-row-title"><span className="mono muted">#{it.index}</span> <strong>{it.title}</strong></span>
+      <span role="cell" className="pr-td-id mono"><PrGlyph pr={{ index: it.index, state: it.state, url: it.url, updatedAt: it.updatedAt }} />#{it.index}</span>
+      <span role="cell" className="pr-row-main">
+        <span className="pr-row-title"><strong>{it.title}</strong></span>
         <span className="pr-row-meta">
+          {it.author && <span>{it.author}</span>}
+          <span>{it.repo}</span>
           <span className="mono">{it.head} → {it.base}</span>
-          <span>обновлён {ago(it.updatedAt, now)}</span>
+          {it.taskId && <button type="button" className="chip chip-mono" onClick={(e) => { stop(e); openTask(it.taskId!) }} data-tip="Открыть задачу">{it.taskKey ?? it.taskId}</button>}
+          {it.sessionId && <span className="chip pr-agent" data-tip="За PR стоит агент harness"><Bot aria-hidden />агент</span>}
         </span>
       </span>
-      {it.reviewers.length > 0 && (
-        <span className="pr-reviewers">
-          {it.reviewers.map((r) => {
-            const k = reviewKind(r.status)
-            const Icon = REVIEW_ICON[k]
-            return <span key={r.name} className="chip pr-reviewer" data-k={k} data-tip={`${r.name}: ${REVIEW_TIP[k]} (${r.status})`}><Icon aria-hidden />{r.name}</span>
-          })}
-        </span>
-      )}
-      {it.taskId && (
-        <button type="button" className="chip chip-mono" onClick={(e) => { stop(e); openTask(it.taskId!) }} data-tip="Открыть задачу">{it.taskKey ?? it.taskId}</button>
-      )}
-      {it.sessionId && (
-        <button type="button" className="chip pr-agent" onClick={(e) => { stop(e); openSession(it.sessionId!) }} data-tip={session ? `${session.title}: открыть чат` : 'Открыть чат агента'}>
-          <Bot aria-hidden />агент
-        </button>
-      )}
-      {actionsOn && (
-        <span className="pr-actions" onClick={stop} onKeyDown={(e) => e.stopPropagation()}>
-          <Button size="sm" variant={st.k === 'approved' ? 'primary' : undefined} icon={<GitMerge />} disabled={it.mergeable === false}
-            tip={it.mergeable === false ? 'Конфликт с базовой веткой: сначала разрешите его' : st.k === 'approved' ? 'Влить в ' + it.base : 'Влить в ' + it.base + ' (ревью ещё не завершено — сервис может не дать)'}
-            onClick={() => prAction(it, 'merge')}>Влить</Button>
-          <Button size="sm" variant="ghost" icon={<XCircle />} tip="Закрыть без вливания" onClick={() => prAction(it, 'decline')}>Закрыть</Button>
-          <button type="button" className="icon-btn icon-btn-sm" aria-label="Открыть PR в браузере" data-tip="Открыть PR в браузере" onClick={open}><ExternalLink /></button>
-        </span>
-      )}
+      <span role="cell" className="pr-reviewers">
+        {it.reviewers.length ? it.reviewers.map((r) => {
+          const k = reviewKind(r.status)
+          const Icon = REVIEW_ICON[k]
+          return <span key={r.name} className="chip pr-reviewer" data-k={k} data-tip={`${r.name}: ${REVIEW_TIP[k]} (${r.status})`}><Icon aria-hidden />{r.name}</span>
+        }) : <span className="muted">—</span>}
+      </span>
+      <span role="cell"><span className="pr-standing" data-k={st.k}>{st.label}</span></span>
+      <span role="cell" className="muted" data-tip={new Date(it.updatedAt).toLocaleString('ru-RU')}>{ago(it.updatedAt, now)}</span>
+      <span role="cell" className="pr-actions" onClick={stop} onKeyDown={(e) => e.stopPropagation()}>
+        <Button size="sm" tip={primary.tip} icon={work?.kind === 'chat' ? <MessageSquare /> : undefined} onClick={primary.run}>{primary.label}<ArrowRight /></Button>
+        <MenuButton label={`Действия с PR #${it.index}`} icon={<Ellipsis />} align="right" className="icon-btn-sm" items={menu} />
+      </span>
     </div>
-  )
-}
-
-interface PrDetail { diff: { text?: string; error?: string; local?: boolean; hostError?: string | null }; comments: { items?: { author: string | null; text: string; at: number | null; path: string | null; line: number | null }[]; error?: string } }
-
-/** One PR in detail beside the list: where it stands, its reviewers, its changes file by file and its comments. */
-function PrDrawer({ it, now, onClose }: { it: PrItem; now: number; onClose: () => void }) {
-  const [d, setD] = useState<PrDetail | { error: string } | null>(null)
-  const [attempt, setAttempt] = useState(0)
-  const [tab, setTab] = useState<'files' | 'comments'>('files')
-  const cwd = useStore((s) => s.workspaces.find((w) => w.id === it.workspaceId)?.path ?? '')
-  const actionsOn = useFeature('pr-actions') && !!it.workspaceId
-  useEffect(() => {
-    let live = true
-    setD(null)
-    api<PrDetail>('GET', `/prs/detail${qs({ workspaceId: it.workspaceId ?? '', index: String(it.index), head: it.head, base: it.base })}`)
-      .then((r) => { if (live) setD(r) }, (e) => { if (live) setD({ error: errorText(e) }) })
-    return () => { live = false }
-  }, [it, attempt])
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && !document.querySelector('dialog[open]')) onClose() }
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
-  }, [onClose])
-  const st = prStanding(it)
-  const files: DiffFile[] = d && !('error' in d) && d.diff.text ? parseDiff(d.diff.text) : []
-  const comments = d && !('error' in d) ? d.comments.items ?? [] : []
-  const problem = d && ('error' in d ? d.error : tab === 'files' ? d.diff.error : d.comments.error)
-  return (
-    <aside className="pr-drawer" aria-label={`PR #${it.index}`}>
-      <header className="pr-drawer-head">
-        <div><span className="muted">{it.repo} · PR #{it.index}</span><h2>{it.title}</h2></div>
-        <button type="button" className="icon-btn" aria-label="Закрыть панель PR" data-tip="Закрыть панель (Esc)" onClick={onClose}><X /></button>
-      </header>
-      <div className="pr-drawer-meta">
-        <span className="mono">{it.head} → {it.base}</span>
-        <span className="pr-standing" data-k={st.k}>{st.label}</span>
-        <span className="muted">обновлён {ago(it.updatedAt, now)}</span>
-        {it.taskId && <button type="button" className="chip chip-mono" onClick={() => openTask(it.taskId!)}>{it.taskKey ?? it.taskId}</button>}
-        {it.sessionId && <button type="button" className="chip pr-agent" onClick={() => openSession(it.sessionId!)}><Bot aria-hidden />агент</button>}
-      </div>
-      {it.reviewers.length > 0 && (
-        <ul className="pr-drawer-reviewers">
-          {it.reviewers.map((r) => { const k = reviewKind(r.status); const Icon = REVIEW_ICON[k]; return <li key={r.name} data-k={k}><Icon aria-hidden /><span className="mono">{r.name}</span> <span className="muted">{REVIEW_TIP[k]}</span></li> })}
-        </ul>
-      )}
-      <div className="pr-drawer-actions">
-        {actionsOn && <Button size="sm" variant={st.k === 'approved' ? 'primary' : undefined} icon={<GitMerge />} disabled={it.mergeable === false} onClick={() => prAction(it, 'merge')}>Влить</Button>}
-        {actionsOn && <Button size="sm" variant="ghost" icon={<XCircle />} onClick={() => prAction(it, 'decline')}>Закрыть</Button>}
-        <Button size="sm" variant="ghost" icon={<ExternalLink />} onClick={() => window.open(it.url, '_blank', 'noopener,noreferrer')}>Открыть в браузере</Button>
-      </div>
-      <Segmented size="sm" label="Что показать" value={tab} onChange={setTab}
-        options={[{ value: 'files', label: d && !('error' in d) && !d.diff.error ? `Изменения · ${files.length}` : 'Изменения' }, { value: 'comments', label: d && !('error' in d) && !d.comments.error ? `Комментарии · ${comments.length}` : 'Комментарии' }]} />
-      <div className="pr-drawer-body">
-        {d === null ? <Skeleton rows={6} label="Загрузка PR…" />
-          : problem ? <div className="pr-load-error" role="status">
-            <strong>{tab === 'files' ? 'Не удалось загрузить изменения' : 'Не удалось загрузить комментарии'}</strong>
-            <Button size="sm" icon={<RefreshCw />} onClick={() => setAttempt((n) => n + 1)}>Повторить</Button>
-            <Disclosure summary="Технические подробности"><p>{problem}</p></Disclosure>
-          </div>
-          : !('error' in d) && (tab === 'files' ? (
-            <>
-              {d.diff.local && <p className="muted pr-drawer-note">Показаны изменения по локальным веткам.</p>}
-              {files.map((f, i) => <FileDiff key={`${f.path}:${i}`} cwd={cwd} f={f} open={i < 10} />)}
-              {files.length === 0 && <p className="muted pr-drawer-note">Изменений нет.</p>}
-            </>
-          ) : (
-            <>
-              {!d.comments.error && comments.length === 0 && <p className="muted pr-drawer-note">Комментариев нет.</p>}
-              <ul className="pr-comments">
-                {comments.map((c, i) => (
-                  <li key={i}>
-                    <div className="pr-comment-head"><strong>{c.author ?? 'кто-то'}</strong>{c.at && <span className="muted"> · {ago(c.at, now)}</span>}{c.path && <span className="mono muted"> · {c.path}{c.line ? `:${c.line}` : ''}</span>}</div>
-                    <div className="md-preview"><Markdown text={c.text} /></div>
-                  </li>
-                ))}
-              </ul>
-            </>
-          ))}
-      </div>
-    </aside>
   )
 }

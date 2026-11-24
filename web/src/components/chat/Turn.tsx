@@ -1,7 +1,9 @@
-import { memo, useMemo, useState, type MouseEvent } from 'react'
-import { ChevronRight, CircleHelp, GitCompare, LoaderCircle, ShieldAlert, TriangleAlert, Wrench } from 'lucide-react'
+import { memo, useMemo, useRef, useState, type MouseEvent } from 'react'
+import { ChevronRight, CircleHelp, ClipboardCopy, Ellipsis, ExternalLink, FileText, FolderOpen, GitCompare, LoaderCircle, ShieldAlert, TriangleAlert, Wrench } from 'lucide-react'
 import { tryApi } from '../../api'
-import { openChatFileDiff } from '../../lib/git'
+import { openChatFile, openChatFileDiff } from '../../lib/git'
+import { toast, useFeature } from '../../store'
+import { openFile, REVEAL } from '../WorktreeMenu'
 import { basename, normPath, plural } from '../../lib/format'
 import { fileEdit, summarizeInput } from '../../lib/toolcall'
 import { useElapsed } from '../../lib/live'
@@ -9,7 +11,7 @@ import { dur } from '../../lib/sessionState'
 import type { DiffLine } from '../../lib/diff'
 import type { Message, Session } from '../../types'
 import { DiffLines } from '../DiffLines'
-import { Disclosure, IconButton } from '../ui'
+import { Disclosure, IconButton, Menu, type MenuItem } from '../ui'
 import { isSubagentTool } from './SubagentCard'
 import { isAskCard } from './Attention'
 import { longDur, RunImages, StepList } from './ToolSteps'
@@ -147,7 +149,7 @@ function TurnFilesView({ msgs, cwd }: { msgs: Message[]; cwd: string }) {
     const map = new Map<string, { added: number; removed: number; lines: DiffLine[] }>()
     for (const m of msgs) {
       const e = m.kind === 'tool' && m.tool?.status !== 'error' ? fileEdit(m.tool?.input) : null
-      if (!e) continue
+      if (!e || SERVICE_FILE.test(e.file)) continue
       const cur = map.get(e.file) ?? { added: 0, removed: 0, lines: [] }
       map.set(e.file, { added: cur.added + e.added, removed: cur.removed + e.removed, lines: [...cur.lines, ...editLines(e.lines)] })
     }
@@ -167,24 +169,48 @@ function TurnFilesView({ msgs, cwd }: { msgs: Message[]; cwd: string }) {
         Изменено {files.length} {plural(files.length, 'файл', 'файла', 'файлов')}
         <span className="diff-stat num"><span className="add">+{added}</span> <span className="del">−{removed}</span></span>
       </header>
-      {files.map(([f, c]) => {
-        const path = rel(f)
-        const dir = path.includes('/') || path.includes('\\') ? path.slice(0, path.length - basename(path).length) : ''
-        return (
-          <Disclosure
-            key={f}
-            className="turn-file"
-            summary={<>
-              <span className="turn-file-name ellipsis" data-tip={f}><span className="muted">{dir}</span>{basename(f)}</span>
-              <span className="diff-stat num"><span className="add">+{c.added}</span> <span className="del">−{c.removed}</span></span>
-            </>}
-            actions={<IconButton size="sm" label="Открыть дифф" icon={<GitCompare />} onClick={(e: MouseEvent) => { e.preventDefault(); void openChatFileDiff(cwd, f) }} />}
-          >
-            <DiffLines lines={c.lines} numbers={false} limit={400} label={`Изменения ${basename(f)}`} />
-          </Disclosure>
-        )
-      })}
+      {files.map(([f, c]) => <TurnFileRow key={f} f={f} path={rel(f)} c={c} cwd={cwd} />)}
     </section>
+  )
+}
+
+/** The harness's and agents' own scratch files (a commit message draft, brainstorm notes): never shown as the work. */
+export const SERVICE_FILE = /(^|[\\/])(\.gigacode[\\/]tmp|\.superpowers)[\\/]/
+
+/** One file of «Изменено N файлов»: the name opens it, the row folds its lines out, «…» / right click — the rest (as in Orca). */
+function TurnFileRow({ f, path, c, cwd }: { f: string; path: string; c: { added: number; removed: number; lines: DiffLine[] }; cwd: string }) {
+  const [menu, setMenu] = useState(false)
+  const more = useRef<HTMLButtonElement>(null)
+  const canOpen = useFeature('open-file')
+  const dir = path.includes('/') || path.includes('\\') ? path.slice(0, path.length - basename(path).length) : ''
+  const abs = /^([a-zA-Z]:)?[\\/]/.test(f) ? f : `${cwd.replace(/[\\/]+$/, '')}${cwd.includes('\\') ? '\\' : '/'}${f}`
+  const items: MenuItem[] = !menu ? [] : [
+    { label: 'Открыть файл', icon: <FileText />, onSelect: () => void openChatFile(cwd, f) },
+    ...(canOpen ? [
+      { label: 'Открыть приложением по умолчанию', icon: <ExternalLink />, onSelect: () => openFile(abs, 'file') },
+      { label: REVEAL, icon: <FolderOpen />, onSelect: () => openFile(abs, 'reveal') },
+    ] : []),
+    { label: 'Копировать путь', icon: <ClipboardCopy />, onSelect: () => void navigator.clipboard.writeText(abs).then(() => toast(`Скопировано: ${abs}`, 'ok'), () => toast('Буфер обмена недоступен', 'error')) },
+    { label: 'Показать изменения', icon: <GitCompare />, divider: true, onSelect: () => void openChatFileDiff(cwd, f) },
+  ]
+  return (
+    <div onContextMenu={(e) => { e.preventDefault(); setMenu(true) }}>
+      <Disclosure
+        className="turn-file"
+        summary={<>
+          {/* a click on the name opens the file; elsewhere on the row it folds the lines out (keyboard: «…») */}
+          <span className="turn-file-name ellipsis" data-tip={`Открыть ${f}`} onClick={(e) => { e.stopPropagation(); void openChatFile(cwd, f) }}><span className="muted">{dir}</span>{basename(f)}</span>
+          <span className="diff-stat num"><span className="add">+{c.added}</span> <span className="del">−{c.removed}</span></span>
+        </>}
+        actions={<>
+          <IconButton size="sm" label="Открыть дифф" icon={<GitCompare />} onClick={(e: MouseEvent) => { e.preventDefault(); void openChatFileDiff(cwd, f) }} />
+          <IconButton ref={more} size="sm" label="Действия с файлом" icon={<Ellipsis />} aria-haspopup="menu" aria-expanded={menu} onClick={() => setMenu(!menu)} />
+          <Menu anchor={more} open={menu} onClose={() => setMenu(false)} items={items} label={`Действия с ${basename(f)}`} placement="bottom-end" />
+        </>}
+      >
+        <DiffLines lines={c.lines} numbers={false} limit={400} label={`Изменения ${basename(f)}`} />
+      </Disclosure>
+    </div>
   )
 }
 

@@ -1,7 +1,7 @@
 import { useEffect, useState, type CSSProperties } from 'react'
 import { ownerWorkspace } from '../lib/actions'
 import { HistoryList } from './HistoryList'
-import { Files, FolderOpen, GitCompareArrows, History, RefreshCw, ShieldCheck, X } from 'lucide-react'
+import { Files, FolderOpen, GitCompareArrows, History, LayoutList, RefreshCw, ShieldCheck, X } from 'lucide-react'
 import { failCount, useSdd } from '../lib/sdd'
 import { VerdictsTab } from './panel/VerdictsTab'
 import { ErrorBoundary } from './ErrorBoundary'
@@ -13,6 +13,8 @@ import { Branch } from './bits'
 import { BranchPicker } from './pickers/BranchPicker'
 import { FilesTab } from './panel/FilesTab'
 import { ChangesTab } from './panel/ChangesTab'
+import { OverviewTab } from './panel/OverviewTab'
+import { descendants } from '../lib/overview'
 
 const clampPanel = (w: number) => Math.round(Math.min(Math.max(window.innerWidth * 0.6, 280), Math.max(260, w)))
 
@@ -33,11 +35,17 @@ export function WorkspacePanel() {
   const historyOn = useFeature('cli-history')
   const fails = failCount(plans)
   const hasChanges = changed > 0
+  // «Обзор» of the chat on screen; a chat with helpers opens on it (who did what where), the rest as before
+  const chat = useStore((s) => !!activeSession && s.sessions.find((x) => x.id === activeSession)?.kind === 'chat')
+  const hasKids = useStore((s) => !!activeSession && descendants(s.sessions, activeSession).length > 0)
 
   // A worktree with uncommitted changes opens on «Изменения»: that is what the user came to check.
   useEffect(() => {
-    if (hasChanges) setState({ panelTab: 'changes' })
-  }, [cwd, hasChanges])
+    if (hasChanges && !hasKids) setState({ panelTab: 'changes' })
+  }, [cwd, hasChanges, hasKids])
+  useEffect(() => {
+    if (hasKids) setState({ panelTab: 'overview' })
+  }, [activeSession, hasKids])
 
   if (!cwd) return null
   const name = project && normPath(project.path) !== normPath(cwd) ? `${project.name} / ${basename(cwd)}` : project?.name ?? basename(cwd)
@@ -59,6 +67,12 @@ export function WorkspacePanel() {
           if (e.key === 'ArrowRight') setState({ panelWidth: clampPanel(panelWidth - 16) })
         }} />
       <div className="wpanel-head" role="tablist" aria-label="Раздел панели">
+        {chat && (
+          <button type="button" role="tab" className="wpanel-tab" aria-selected={tab === 'overview'} onClick={() => setState({ panelTab: 'overview' })} data-tip="Обзор чата: задача, субагенты, где работали, хронология">
+            <LayoutList aria-hidden />
+            <span className="wtab-text ellipsis">Обзор</span>
+          </button>
+        )}
         <button type="button" role="tab" className="wpanel-tab" aria-selected={tab === 'files'} onClick={() => setState({ panelTab: 'files' })} data-tip="Файлы" data-tip-trunc>
           <Files aria-hidden />
           <span className="wtab-text ellipsis">Файлы</span>
@@ -99,8 +113,9 @@ export function WorkspacePanel() {
         {git?.status?.branch && tab !== 'changes' && <BranchPicker cwd={cwd} branch={git.status.branch} placement="bottom-start"><Branch name={git.status.branch} /></BranchPicker>}
       </div>
       <div className="wpanel-body" key={`${cwd}|${tab}`}>
-        <ErrorBoundary key={tab} area={tab === 'files' ? 'файлы' : tab === 'verdicts' ? 'вердикты' : tab === 'history' ? 'историю' : 'изменения'}>
-          {tab === 'history' && historyOn ? <div className="wpanel-section"><HistoryList cwd={cwd} /></div>
+        <ErrorBoundary key={tab} area={tab === 'overview' ? 'обзор' : tab === 'files' ? 'файлы' : tab === 'verdicts' ? 'вердикты' : tab === 'history' ? 'историю' : 'изменения'}>
+          {tab === 'overview' && chat && activeSession ? <OverviewTab key={activeSession} sessionId={activeSession} />
+            : tab === 'history' && historyOn ? <div className="wpanel-section"><HistoryList cwd={cwd} /></div>
             : tab === 'files' ? <FilesTab key={cwd} cwd={cwd} status={git?.status ?? null} />
             : tab === 'verdicts' && (plans?.length || allPlans) ? <VerdictsTab cwd={cwd} plans={plans ?? []} scope={activeSession ? { all: allPlans, set: setAllPlans } : undefined} />
               : <ChangesTab key={cwd} cwd={cwd} />}

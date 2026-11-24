@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { ArrowDown, Check, Copy, Ellipsis, ExternalLink, FolderPlus, KeyRound, Link2, ShieldCheck, Wrench, X, GitCompareArrows, MessageSquare, RotateCcw, ScrollText, Square, Trash2 } from 'lucide-react'
+import { ArrowDown, Bot, Check, Copy, Ellipsis, ExternalLink, FolderPlus, KeyRound, Link2, LoaderCircle, ShieldCheck, Wrench, X, GitCompareArrows, MessageSquare, PlugZap, RotateCcw, ScrollText, Square, Trash2, TriangleAlert } from 'lucide-react'
 import { api, errorText, tryApi } from '../api'
 import { getState, openDialog, openScreen, openSession, openTask, setState, showPanel, useFeature, useStore, upsertSession } from '../store'
 import { loadMessages, loadSubagents } from '../ws'
 import { basename, normPath, plural, ROLE } from '../lib/format'
 import { useGit } from '../lib/git'
-import { useElapsed, useStartingLabel } from '../lib/live'
+import { useCliLive, useCountdown, useElapsed, useStartingLabel } from '../lib/live'
 import { planDone, useSdd } from '../lib/sdd'
 import { loadDraft, saveDraft } from '../lib/draft'
 import { VerdictChip } from '../components/panel/VerdictsTab'
@@ -21,9 +21,16 @@ import { ActivityLine, buildItems, StallBanner, ToolRun, TurnFiles, TurnHead } f
 import { isMcpStatus, mcpServers } from '../lib/toolRun'
 import { sessionVisualState } from '../lib/sessionState'
 import { ownerWorkspace } from '../lib/actions'
-import { archiveSession, dismissSession, unseenDone, unseenReply } from '../lib/sessionActions'
+import { archiveSession, CLI_LIVE_TIP, dismissSession, NEW_CLI_SESSION_TIP, newCliSession, reconnectMcp, unseenDone, unseenReply } from '../lib/sessionActions'
 import { Composer } from '../components/chat/Composer'
 import { WorkersPanel } from '../components/chat/WorkersPanel'
+import { FindBar } from '../components/chat/FindBar'
+import { Markdown } from '../components/Markdown'
+import { arrived, dropOutgoing, retryOutgoing, useOutbox, type Outgoing } from '../lib/outbox'
+import { splitAttachments } from '../lib/attachments'
+import { modKey } from '../lib/keys'
+import { descendants, firstTask } from '../lib/overview'
+import { chatTask, TaskFold } from '../components/panel/OverviewTab'
 
 const PAGE = 200
 const PLACEHOLDER = { status: 'idle', phase: null, lastActivityAt: 0 } as Session // hooks run before the session is known
@@ -63,6 +70,23 @@ export function ChatView({ id, active }: { id: string; active: boolean }) {
   const [loadError, setLoadError] = useState<string | null>(null)
   const [limit, setLimit] = useState(PAGE)
   const [log, setLog] = useState<string | null>(null)
+  const outbox = useOutbox()
+  const chatRoot = useRef<HTMLDivElement>(null)
+  const [find, setFind] = useState(0) // 0: no find bar; each Ctrl+F counts up (the bar's input takes focus again)
+  // Ctrl/⌘+F finds in this chat when the focus is in it (or nowhere); elsewhere the key stays the browser's / the panel's
+  useEffect(() => {
+    if (!active) return
+    const on = (e: KeyboardEvent) => {
+      if (!modKey(e) || e.code !== 'KeyF' || e.shiftKey || e.altKey) return
+      const root = chatRoot.current
+      const t = e.target as Node
+      if (!root || !(root.contains(t) || (t === document.body && root.getClientRects().length)) || document.querySelector('dialog[open]')) return
+      e.preventDefault()
+      setFind((n) => n + 1)
+    }
+    window.addEventListener('keydown', on)
+    return () => window.removeEventListener('keydown', on)
+  }, [active])
 
   const shownAt = useRef(0) // messages newer than the first render of the transcript fade in; history does not
   if (messages && !shownAt.current) shownAt.current = Date.now()
@@ -134,6 +158,17 @@ export function ChatView({ id, active }: { id: string; active: boolean }) {
   // Messages that arrive while you watch are not «new»: no mark unless something unread was already there.
   const newSince = mark.since !== null && visible.some((m) => m.kind !== 'user' && m.at > mark.since! && m.at <= mark.at) ? mark.since : null
   const items = useMemo(() => buildItems(visible, runningTurn, newSince, session?.lastActivityAt), [visible, runningTurn, newSince, session?.lastActivityAt])
+  const older = useMemo(() => list.slice(0, hidden).map((m) => m.text), [list, hidden]) // what the find bar may need to show
+  const reveal = useCallback((n: number) => setLimit((l) => l + n), [])
+  const cliLive = useCliLive(session ?? PLACEHOLDER) && !!session
+  const [takenOver, setTakenOver] = useState(false) // «Перехватить» confirmed: this chat's messages go with force
+  if (takenOver && !cliLive) setTakenOver(false) // the terminal let go: next time it takes the chat, ask again
+  const retryIn = useCountdown(session?.status === 'error' ? session.startRetryAt : null)
+  const reconnectOn = useFeature('agent-reconnect')
+  const closeFind = useCallback(() => {
+    setFind(0)
+    chatRoot.current?.querySelector<HTMLTextAreaElement>('.composer-input')?.focus()
+  }, [])
 
   // its answer is seen once the chat is on screen: out of «Ждут вас» (now, or when the browser tab comes back)
   const unseen = !!session && (unseenReply(session) || unseenDone(session))
@@ -151,6 +186,46 @@ export function ChatView({ id, active }: { id: string; active: boolean }) {
     const el = scroller.current
     if (el && anchor.current !== null) { el.scrollTop = el.scrollHeight - anchor.current; anchor.current = null }
   }, [limit])
+
+  // A message to show (the task bar's «К началу», «Обзор» → «Хронология»): unfold «Показать ранее» if it is behind it,
+  // then scroll to it — or to the nearest message before it that has its own block (tool steps fold into runs).
+  const pendingGoto = useRef<string | null>(null)
+  const showMsg = (mid: string) => {
+    const el = scroller.current
+    const col = transcript.current
+    if (!el || !col) return
+    let target: HTMLElement | null = null
+    for (let i = list.findIndex((m) => m.id === mid); i >= 0 && !target; i--) target = col.querySelector<HTMLElement>(`[data-mid="${CSS.escape(list[i].id)}"]`)
+    if (!target) { el.scrollTop = 0; return }
+    const t = target
+    t.scrollIntoView({ block: 'start' })
+    requestAnimationFrame(() => t.scrollIntoView({ block: 'start' })) // off-screen blocks get their real height on the first jump
+    t.dataset.flash = ''
+    window.setTimeout(() => { delete t.dataset.flash }, 1200)
+  }
+  const jump = (mid: string) => {
+    const i = list.findIndex((m) => m.id === mid)
+    if (i < 0) return
+    stick.current = false
+    setAtBottom(false)
+    if (i < hidden) { pendingGoto.current = mid; setLimit(list.length - i) } else showMsg(mid)
+  }
+  const jumpRef = useRef(jump)
+  jumpRef.current = jump
+  useLayoutEffect(() => {
+    if (pendingGoto.current === null) return
+    const mid = pendingGoto.current
+    pendingGoto.current = null
+    showMsg(mid)
+  }, [limit]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const on = (e: Event) => {
+      const d = (e as CustomEvent<{ sessionId: string; messageId: string }>).detail
+      if (d?.sessionId === id) jumpRef.current(d.messageId)
+    }
+    window.addEventListener('harness:goto', on)
+    return () => window.removeEventListener('harness:goto', on)
+  }, [id])
 
   // Follow new output unless the user scrolled up to read.
   useLayoutEffect(() => {
@@ -171,6 +246,8 @@ export function ChatView({ id, active }: { id: string; active: boolean }) {
   }, [list.length, lastText, active, running, id, newSince, syncBottom])
 
   if (!session) return <Loading label="Загрузка сессии…" />
+  // sent from this chat and not in it yet (or refused): shown at the end at once
+  const outgoing = outbox.filter((o) => o.sessionId === id && (!!o.error || !arrived(o, list, session)))
 
   const toBottom = () => {
     const el = scroller.current
@@ -187,7 +264,13 @@ export function ChatView({ id, active }: { id: string; active: boolean }) {
       setLog(`Не удалось получить лог: ${errorText(e)}`)
     }
   }
-  const reset = () => void tryApi('POST', `/sessions/${id}/restart`)
+  const reset = () => newCliSession(session)
+  const reconnect = reconnectOn ? () => void reconnectMcp(session) : undefined
+  const takeOver = () => openDialog({
+    kind: 'confirm', title: 'Перехватить чат у терминала?', ok: 'Перехватить',
+    text: 'GigaCode сейчас ведёт этот чат в терминале. Сообщение отсюда пойдёт в ту же сессию CLI и может помешать его работе. Лучше дождаться, пока он закончит.',
+    onConfirm: () => setTakenOver(true),
+  })
 
   const showOlder = () => {
     const el = scroller.current
@@ -196,8 +279,8 @@ export function ChatView({ id, active }: { id: string; active: boolean }) {
   }
 
   return (
-    <div className="chat">
-      <ChatHeader session={session} onLog={showLog} onReset={reset} onDelete={() => openDialog({ kind: 'session-delete', id })} />
+    <div className="chat" ref={chatRoot}>
+      <ChatHeader session={session} cliLive={cliLive} onLog={showLog} onReset={reset} onReconnect={reconnect} onDelete={() => openDialog({ kind: 'session-delete', id })} />
       <SddStrip cwd={session.cwd} sessionId={session.id} />
       {log !== null && (
         <div className="chat-log">
@@ -206,7 +289,10 @@ export function ChatView({ id, active }: { id: string; active: boolean }) {
         </div>
       )}
 
-      <div className="chat-scroll" ref={scroller} onScroll={(e) => syncBottom(e.currentTarget)}>
+      {/* its own row above the find bar's anchor: the bar never covers the find bar or the messages */}
+      <TaskBar session={session} list={list} onTop={() => list[0] && jump(list[0].id)} />
+      {find > 0 && <FindBar root={transcript} focusKey={find} older={older} reveal={reveal} onClose={closeFind} />}
+      <div className="chat-scroll" ref={scroller} tabIndex={-1} onScroll={(e) => syncBottom(e.currentTarget)}>
         <div className="chat-col" ref={transcript} role="log" aria-live="polite" aria-relevant="additions">
           {!messages && !loadError && <Skeleton rows={6} label="Загрузка истории…" />}
           {loadError && (
@@ -236,6 +322,7 @@ export function ChatView({ id, active }: { id: string; active: boolean }) {
               case 'new': return <div key={it.key} className="new-divider" role="separator" aria-label="Новые сообщения"><span>Новое</span></div>
             }
           })}
+          {outgoing.map((o) => <OutgoingItem key={o.id} o={o} />)}
           {running && session.phase === 'auth' ? <AuthCard session={session} messages={list} />
             : running && <ActivityLine session={session} list={list} starting={starting} />}
         </div>
@@ -255,11 +342,12 @@ export function ChatView({ id, active }: { id: string; active: boolean }) {
           {session.interrupted && session.status !== 'running' && <InterruptedBar session={session} />}
           {session.status === 'error' && (
             <div className="chat-alert" role="alert">
-              {errorLine(session, list)}
+              {retryIn > 0 ? `Агент не запустился вовремя — повторю запуск сам через ${retryIn} с` : errorLine(session, list)}
               <span className="grow" />
               {reviveOn && <button type="button" className="btn btn-sm btn-primary" onClick={() => void tryApi('POST', `/sessions/${session.id}/revive`)} data-tip="Продолжить с того места, где оборвался"><RotateCcw />Повторить</button>}
               <button type="button" className="btn btn-sm" onClick={() => void showLog()}>Лог</button>
-              <button type="button" className="btn btn-sm" onClick={reset} data-tip="Новый процесс CLI: настройки и MCP-серверы читаются заново">Сбросить статус</button>
+              {reconnect && <button type="button" className="btn btn-sm" onClick={reconnect} data-tip="Перезапустить процесс агента: MCP-серверы подключатся заново, контекст чата сохранится"><PlugZap />Переподключить MCP</button>}
+              <button type="button" className="btn btn-sm" onClick={reset} data-tip={NEW_CLI_SESSION_TIP}>Новая сессия CLI</button>
             </div>
           )}
           {session.archived ? (
@@ -272,7 +360,12 @@ export function ChatView({ id, active }: { id: string; active: boolean }) {
               <span>Внутренний субагент GigaCode: писать можно в родительский чат.</span>
               {session.parentId && <button type="button" className="btn btn-sm" onClick={() => openSession(session.parentId!)}>Открыть родительский чат</button>}
             </div>
-          ) : <Composer session={session} active={active} />}
+          ) : cliLive && !takenOver ? (
+            <div className="virtual-bar" role="status">
+              <span>Этот чат сейчас ведёт GigaCode в терминале — чтобы не помешать, писать сюда можно после того, как он закончит.</span>
+              <button type="button" className="btn btn-sm" onClick={takeOver} data-tip="Писать отсюда, не дожидаясь терминала">Перехватить</button>
+            </div>
+          ) : <Composer session={session} active={active} force={cliLive} />}
           <WhereLine session={session} />
         </div>
       </div>
@@ -280,7 +373,48 @@ export function ChatView({ id, active }: { id: string; active: boolean }) {
   )
 }
 
-function ChatHeader({ session, onLog, onReset, onDelete }: { session: Session; onLog: () => void; onReset: () => void; onDelete: () => void }) {
+/** Above the transcript: the chat's original task in one line; unfolded (remembered per chat) its whole text. */
+function TaskBar({ session, list, onTop }: { session: Session; list: Message[]; onTop: () => void }) {
+  const task = useStore((s) => (session.taskId ? s.tasks.find((t) => t.id === session.taskId) : undefined))
+  const key = `taskbar:${session.id}`
+  const [open, setOpen] = useState(() => !!loadDraft<boolean>(key))
+  const first = firstTask(list)
+  const t = useMemo(() => (first ? chatTask(first, task) : null), [first, task])
+  if (!t?.head) return null
+  return (
+    <div className="task-bar">
+      <TaskFold head={t.head} full={t.full} onTop={onTop} open={open} onToggle={(o) => { saveDraft(key, o || null); setOpen(o) }} />
+    </div>
+  )
+}
+
+/** A message on its way (or refused): the person's bubble at once, «Отправляется…», else the error and «Повторить». */
+function OutgoingItem({ o }: { o: Outgoing }) {
+  const { text, paths } = splitAttachments(o.text)
+  return (
+    <div className="msg-wrap msg-out" data-kind="user" data-enter data-failed={!!o.error || undefined}>
+      <div className="msg msg-user">
+        {paths.length > 0 && <div className="msg-from">Вложений: {paths.length}</div>}
+        {text && <Markdown text={text} />}
+      </div>
+      {o.error ? (
+        <div className="msg-out-state" role="alert">
+          <TriangleAlert aria-hidden />
+          <span>Не отправлено: {o.error}</span>
+          <button type="button" className="btn btn-sm" onClick={() => void retryOutgoing(o.id)}><RotateCcw />Повторить</button>
+          <IconButton size="sm" label="Убрать сообщение" icon={<X />} onClick={() => dropOutgoing(o.id)} />
+        </div>
+      ) : (
+        <div className="msg-out-state" role="status">
+          {!o.sent && <LoaderCircle className="spinner" aria-hidden />}
+          <span>{o.sent ? 'Отправлено' : 'Отправляется…'}</span>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ChatHeader({ session, cliLive, onLog, onReset, onReconnect, onDelete }: { session: Session; cliLive: boolean; onLog: () => void; onReset: () => void; onReconnect?: () => void; onDelete: () => void }) {
   const changed = useGit(session.cwd)?.status?.files.filter((f) => !f.service).length ?? 0
   const changesOpen = useStore((s) => s.panel && s.panelTab === 'changes')
   const dirsOn = useFeature('include-dirs')
@@ -291,6 +425,7 @@ function ChatHeader({ session, onLog, onReset, onDelete }: { session: Session; o
   const task = useStore((s) => (session.taskId ? s.tasks.find((t) => t.id === session.taskId) : undefined))
   // who started it: a sub-agent's chat says whose it is (a re-tasked reviewer once read as «исполнитель» from nowhere)
   const parent = useStore((s) => (session.parentId ? s.sessions.find((x) => x.id === session.parentId) : undefined))
+  const kids = useStore((s) => descendants(s.sessions, session.id).length)
   const [title, setTitle] = useState(session.title)
   useEffect(() => setTitle(session.title), [session.title])
 
@@ -322,6 +457,11 @@ function ChatHeader({ session, onLog, onReset, onDelete }: { session: Session; o
       {task && (
         <button type="button" className="chip chip-mono" onClick={() => openTask(task.id)} data-tip={task.title}>
           {task.externalId ?? task.id}
+        </button>
+      )}
+      {kids > 0 && (
+        <button type="button" className="chip chat-kids" onClick={() => showPanel('overview')} data-tip="Кто что делал: субагенты, исполнители, их отчёты — во вкладке «Обзор»">
+          <Bot aria-hidden />{kids} {plural(kids, 'субагент', 'субагента', 'субагентов')}
         </button>
       )}
       <span className="grow" />
@@ -357,8 +497,9 @@ function ChatHeader({ session, onLog, onReset, onDelete }: { session: Session; o
           ...(session.allowedTools !== undefined ? [{ label: 'Разрешения этого чата…', icon: <ShieldCheck />, onSelect: () => openDialog({ kind: 'session-perms', id: session.id }) }] : []),
           ...(bindOn && session.kind === 'chat' && !session.taskId && !session.virtual ? [{ label: 'Привязать задачу…', icon: <Link2 />, onSelect: () => openDialog({ kind: 'bind-task', id: session.id }) }] : []),
           { label: 'Лог агента', icon: <ScrollText />, onSelect: onLog },
-          { label: 'Сбросить статус', icon: <RotateCcw />, onSelect: onReset },
-          { label: 'Удалить сессию', icon: <Trash2 />, onSelect: onDelete },
+          ...(onReconnect ? [{ label: 'Переподключить MCP', icon: <PlugZap />, tip: 'Перезапустить процесс агента: MCP-серверы подключатся заново, контекст чата сохранится', onSelect: onReconnect }] : []),
+          { label: 'Новая сессия CLI', icon: <RotateCcw />, tip: NEW_CLI_SESSION_TIP, onSelect: onReset },
+          { label: 'Удалить сессию', icon: <Trash2 />, onSelect: onDelete, ...(cliLive ? { disabled: true, tip: CLI_LIVE_TIP } : {}) },
         ]}
       />
     </header>

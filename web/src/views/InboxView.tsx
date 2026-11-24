@@ -117,7 +117,8 @@ function DoneItem({ t, s }: { t: Task; s?: Session }) {
   )
 }
 
-function WaitingItem({ s }: { s: Session }) {
+/** A waiting chat's open question / permission, answerable in place (also under a row of «Агенты»). */
+export function WaitingItem({ s }: { s: Session }) {
   useEffect(() => { ensureMessages(s.id) }, [s.id])
   const open = useStore((st) => {
     const list: Message[] = st.messages[s.id] ?? []

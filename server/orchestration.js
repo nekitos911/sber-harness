@@ -68,6 +68,8 @@ export const NO_SUBAGENTS = 'Субагенты не запускают свои
 // a worktree once got 948 compiled classes and two test logs of 20 000+ lines: every new file there is a change to commit
 // told only «не используй встроенный agent», an agent without the harness tool skipped its reviewers: the fallback matters
 export const WORKTREE_RULE = 'Перед каждой правкой, включая shell, вызови worktree_claim сервера harness с путями относительно корня дерева (его возвращает worktree_peers). Редактируй только после ok=true. При конфликте оставь файл владельцу. Резерв действует до конца хода. При совместной работе согласуйте одного исполнителя для коммита и переключения ветки.';
+// a top-level chat leads the work: what a person leaves running must end done, with its helpers visible and heard back
+export const DELEGATION = 'Ты ведёшь эту задачу до конца сам, человек может отойти. Большую работу раздели: исследование, реализацию отдельных частей и ревью отдавай субагентам через mcp__harness__agent (самодостаточное задание: цель, файлы, ограничения, как проверить; тот же workspace — то же рабочее дерево и ветка), а сам координируй. Результат каждого субагента приходит тебе — дождись всех, прочитай отчёты, проверь итог (сборка/тесты) и при необходимости отправь доработку тому же субагенту (send_message) или новому. Не останавливайся с вопросом «продолжать?» — спрашивай человека через mcp__harness__ask только о решениях, которые нельзя принять самому. В конце — краткий итог: что сделано, где (ветка, дерево), чем проверено, что осталось.';
 export const TEMP_FILES = 'Временные файлы (логи прогонов, вывод тестов, скомпилированные классы, распакованные архивы) создавай вне репозитория, в системной временной папке, и не оставляй в рабочем дереве: всё новое в нём попадает в изменения задачи.';
 export const SUBAGENT_CONTEXT ='Ты работаешь внутри harness. Его инструменты (mcp__harness__agent, mcp__harness__ask, mcp__harness__worker_done, mcp__harness__send_message) отложенные: перед первым вызовом загрузи их через tool_search по слову «harness». Ответ «Tool ... not found in registry» значит «ещё не загружен» — сделай tool_search «harness» и повтори вызов. Субагентов запускай инструментом mcp__harness__agent с теми же аргументами, что у встроенного agent (subagent_type, prompt, model) — harness откроет каждого субагента отдельным чатом и вернёт тебе его результат так же. Несколько субагентов параллельно — по одному вызову mcp__harness__agent на шаг, каждый с run_in_background: true: они работают одновременно, а результаты придут сообщениями (несколько вызовов в одном шаге GigaCode может отклонить как «tool_call bridge refused … name» — тогда повтори их по одному). Нужен субагент в фоне (ты продолжаешь, человек может тебе писать) — mcp__harness__agent с run_in_background: true: он работает своим чатом, его результат придёт тебе сообщением. Встроенный agent в фоне не запускай: ни harness, ни человек такого субагента не видят, а с концом хода его работа может пропасть. Только если и после tool_search «harness» инструмента нет — запускай встроенным agent (не в фоне) и напиши об этом одной строкой в отчёте; не отказывайся из-за этого от субагентов и ревьюеров. Вопросы человеку — через mcp__harness__ask (варианты в options): вызов ждёт ответа и возвращает его; если вернулся без ответа — заверши ход.';
 const CONTEXT_LAUNCHERS = new Set(['gigacode', 'qwen', 'gemini', 'mock']);
@@ -236,6 +238,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions, addWo
     db.worktreeMeta ||= {};
     const key = wtKey(p);
     const meta = { ...db.worktreeMeta[key], ...patch };
+    if (patch.createdBy && !meta.createdAt) meta.createdAt = Date.now(); // «новое» in the sidebar survives a reload
     for (const [k, v] of Object.entries(meta)) if (v === undefined) delete meta[k];
     db.worktreeMeta[key] = meta;
     store.save();
@@ -818,6 +821,10 @@ export function createOrchestration({ config, store, bus, tasks, sessions, addWo
     const review = { ...task.review, ...patch };
     tasks.update(task.id, { review, agentState: review.state }, 'harness');
   }
+  function stopReview(task, why) {
+    setReview(task, { state: 'review_stopped', stoppedReason: why, stoppedAt: Date.now() });
+    tasks.addLog(task.id, 'harness', `Ревью прервано: ${why}`, 'review_stopped', {});
+  }
 
   async function startReview(task, worker, report) {
     const rc = reviewCfg();
@@ -836,7 +843,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions, addWo
       key, id: task.id, title: task.title, description: task.description, branch: worker.branch || task.branch || '', base: task.targets[0],
       cwd: worker.cwd, round, previous: prev?.findings ? `\nПредыдущие замечания (раунд ${round - 1}):\n${prev.findings}\n` : '',
     });
-    setReview(task, { round, workerSessionId: worker.id, reviewerSessionId: prev?.reviewerSessionId ?? null, state: 'reviewing', report, findings: prev?.findings ?? null, startedAt: Date.now() });
+    setReview(task, { round, workerSessionId: worker.id, reviewerSessionId: prev?.reviewerSessionId ?? null, state: 'reviewing', report, findings: prev?.findings ?? null, startedAt: Date.now(), maxRounds: rc.maxRounds || 2 });
     let reviewer = prev?.reviewerSessionId && sessions.find(prev.reviewerSessionId);
     if (reviewer) {
       sessions.deliver(reviewer.id, { from: 'harness', text: `Повторное ревью после исправлений (раунд ${round}).\n\n${text}` });
@@ -889,6 +896,11 @@ export function createOrchestration({ config, store, bus, tasks, sessions, addWo
   function resumeReviews() {
     for (const task of db.tasks) {
       const rv = task.review;
+      // a review whose reviewer is gone (deleted, archived, never created) cannot finish: said so, not «ревью…» forever
+      if (rv?.state === 'reviewing') {
+        const r = rv.reviewerSessionId && sessions.find(rv.reviewerSessionId);
+        if (!r || r.archived) { stopReview(task, r ? 'чат ревьюера в архиве' : 'ревьюер не запущен или удалён'); continue; }
+      }
       const reviewer = rv?.state === 'reviewing' && rv.reviewerSessionId && sessions.find(rv.reviewerSessionId);
       if (!reviewer || reviewer.status === 'running' || sessions.isRunning(reviewer.id) || reviewer.queue?.length) continue;
       const since = rv.startedAt || 0;
@@ -951,7 +963,9 @@ export function createOrchestration({ config, store, bus, tasks, sessions, addWo
   function preamble(s) {
     const context = s.ephemeral && atDepthLimit(s) ? `${NO_SUBAGENTS}.` : SUBAGENT_CONTEXT;
     const block = config.orchestration?.subagents !== 'builtin' && CONTEXT_LAUNCHERS.has(s.launcherId) ? context : '';
-    return [block, TEMP_FILES, rolePreamble(s), WORKTREE_RULE, peerContext(s), s.atRoot ? hintsLine(s.repoHints) : null, s.taskId ? linksLine(tasks.find(s.taskId)) : null].filter(Boolean).join('\n\n');
+    // the chat a person started (no parent): it leads; helpers and workers get their own role rules instead
+    const lead = block && !s.parentId && !s.ephemeral && (s.role || 'solo') === 'solo' ? DELEGATION : null;
+    return [block, lead, TEMP_FILES, rolePreamble(s), WORKTREE_RULE, peerContext(s), s.atRoot ? hintsLine(s.repoHints) : null, s.taskId ? linksLine(tasks.find(s.taskId)) : null].filter(Boolean).join('\n\n');
   }
 
   function rolePreamble(s) {
@@ -1072,7 +1086,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions, addWo
     }
     if (op === 'push') return `Пользователь явно просит отправить ветку этого рабочего дерева в origin. Выполни: git push -u origin HEAD. ${keep} В конце ответь строкой RESULT: OK <ветка> или RESULT: ERROR <причина>.`;
     return [
-      `Пользователь явно просит создать pull request. Создай PR через MCP ${config.integrations.pr?.server || 'sourcecontrol'}: head ${o.branch}, base ${o.base}; заголовок и описание утверждены пользователем, не меняй:`,
+      `Пользователь явно просит создать pull request. Создай PR через MCP ${config.integrations.pr?.server || 'sourcecontrol'}: head ${o.branch}, base ${o.base}; если открытый PR из ${o.branch} в ${o.base} уже есть, второй не создавай — ответь его ссылкой. Заголовок и описание утверждены пользователем, не меняй:`,
       `Заголовок: ${o.title}`,
       `Описание:\n${o.body || ''}`,
       `${keep} В конце ответь строкой RESULT: <ссылка на PR> или RESULT: ERROR <причина>.`,
@@ -1216,6 +1230,8 @@ export function createOrchestration({ config, store, bus, tasks, sessions, addWo
   sessions.hooks.peerContext = (s) => [!s.worktreeRulesSent && WORKTREE_RULE, peerContext(s)].filter(Boolean).join('\n');
   sessions.hooks.sessionGone = (s, how) => {
     delete s.claimedFiles;
+    // its reviewer went away: the card must not spin «ревью…» forever
+    for (const t of db.tasks.filter((x) => x.review?.state === 'reviewing' && x.review.reviewerSessionId === s.id)) stopReview(t, how === 'removed' ? 'чат ревьюера удалён' : 'чат ревьюера в архиве');
     for (const t of db.tasks.filter((x) => x.assigneeSessionId === s.id)) {
       tasks.update(t.id, { assigneeSessionId: null, agentState: null }, 'harness'); // the column stays
       tasks.addLog(t.id, 'harness', how === 'removed' ? 'Сессия агента удалена' : 'Сессия агента перенесена в архив', 'agent_gone', { sessionId: s.id, how });
@@ -1802,6 +1818,25 @@ export function createOrchestration({ config, store, bus, tasks, sessions, addWo
      * «Доработка»: the fix request goes to the task's worker (the same CLI session, queued if it runs) or, without one,
      * to a new worker in the task's existing worktree/branch. The card goes back to in_progress.
      */
+    /**
+     * POST /api/tasks/:id/review: the harness review again for the task's worker (after «ревью прервано», or by hand).
+     * A stopped round is retried as the same round; a gone or archived reviewer chat is replaced by a new one.
+     */
+    async review(taskId) {
+      const task = tasks.get(taskId);
+      if (config.orchestration?.reviewMode !== 'harness') fail(409, 'ревью силами harness выключено (orchestration.reviewMode)');
+      const rv = task.review;
+      const worker = sessions.find(rv?.workerSessionId || task.assigneeSessionId);
+      if (!worker || worker.kind !== 'chat' || worker.archived) fail(409, `у задачи ${task.id} нет чата исполнителя для ревью`);
+      const reviewer = rv?.reviewerSessionId && sessions.find(rv.reviewerSessionId);
+      if (rv?.state === 'reviewing' && reviewer && !reviewer.archived) fail(409, 'ревью уже идёт');
+      if (rv?.workerSessionId === worker.id) {
+        setReview(task, { round: rv.state === 'review_stopped' ? Math.max(0, (rv.round || 1) - 1) : rv.round, reviewerSessionId: reviewer && !reviewer.archived ? reviewer.id : null });
+      }
+      await startReview(tasks.get(task.id), worker, rv?.report || `${tasks.key(task)}: ${worker.title}`);
+      return tasks.get(task.id);
+    },
+
     /** GET /api/tasks/:id/rework-preview: exactly the text rework() would send now (no side effects). */
     reworkPreview(taskId, { notes = '', agent } = {}) {
       const task = tasks.get(taskId);

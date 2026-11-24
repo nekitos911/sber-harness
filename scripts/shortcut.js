@@ -1,10 +1,13 @@
-// Shortcuts to this folder's launcher, with the app's own icon: a .lnk on Windows, a .desktop entry on Linux.
+// Shortcuts to this folder's launcher, with the app's own icon: a .lnk on Windows, a .desktop entry on Linux, a small
+// app bundle on macOS. `npm run shortcut` (= `node scripts/shortcut.js`) makes or refreshes them.
 // Windows makes a .lnk through the shell's COM API, which is PowerShell's business here (one call, hidden — no console
 // stays open). Linux reads .desktop files; one per user lives in ~/.local/share/applications, the desktop gets a copy.
+// macOS starts apps, not scripts: ~/Applications/sber-harness.app runs start-harness.sh (Launchpad, Spotlight, Dock).
 import { spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { resolve, join, win32 } from 'node:path';
+import { dirname, resolve, join, win32 } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 /** Where a user's shortcuts live: the desktop (when the shell knows it) and the Start menu. */
 export function shortcutDirs(env = process.env) {
@@ -33,8 +36,10 @@ export function shortcutScript({ target, workDir, icon, link, name }) {
 }
 
 /** Writes (or rewrites) the shortcuts; returns the files it made, an empty list on a platform without them. */
-export function makeShortcuts({ root = resolve('.'), env = process.env, platform = process.platform } = {}) {
-  return platform === 'win32' ? windowsShortcuts({ root, env }) : platform === 'linux' ? linuxLaunchers({ root, env }) : [];
+export function makeShortcuts({ root = resolve('.'), env = process.env, platform = process.platform, run = spawnSync } = {}) {
+  if (platform === 'win32') return windowsShortcuts({ root, env });
+  if (platform === 'darwin') return macBundles({ root, env, run });
+  return platform === 'linux' ? linuxLaunchers({ root, env }) : [];
 }
 
 function windowsShortcuts({ root, env }) {
@@ -58,18 +63,22 @@ function windowsShortcuts({ root, env }) {
  * whole, `%` is the format's field code and becomes `%%`, and the entry is runnable — the desktop runs the other mode.
  */
 export function desktopEntry({ exec, icon, workDir, name = 'sber-harness' }) {
-  const quote = (s) => `"${String(s).replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\$/g, '\\$').replace(/`/g, '\\`')}"`;
+  // the quoting rule escapes \ " ` $ inside the quotes; the string rule, applied before it, then doubles each backslash
+  const quote = (s) => `"${String(s).replace(/[\\"`$]/g, '\\$&')}"`.replace(/\\/g, '\\\\');
   return [
     '[Desktop Entry]',
     'Type=Application',
     'Version=1.0',
     `Name=${name}`,
     'Comment=Локальная IDE для кодовых агентов',
-    `Exec=${quote(exec).replace(/%/g, '%%')}`,
+    // through /bin/sh: a copy that lost its run bit (an archive, a Windows share) still starts
+    `Exec=/bin/sh ${quote(exec).replace(/%/g, '%%')}`,
     `Path=${workDir}`,
     `Icon=${icon}`,
     'Terminal=false',
     'StartupNotify=true',
+    // the window's class (Electron takes it from the app name): the dock groups the window under this entry's icon
+    `StartupWMClass=${name}`,
     'Categories=Development;IDE;',
     '',
   ].join('\n');
@@ -92,4 +101,54 @@ function linuxLaunchers({ root, env }) {
     made.push(file);
   }
   return made;
+}
+
+const shQuote = (s) => `'${String(s).replace(/'/g, "'\\''")}'`;
+const xml = (s) => String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]);
+
+/** Info.plist of the launcher bundle. LSUIElement: the bundle shows no Dock icon of its own, the window's is the one. */
+export function infoPlist(name = 'sber-harness') {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key><string>${xml(name)}</string>
+  <key>CFBundleDisplayName</key><string>${xml(name)}</string>
+  <key>CFBundleIdentifier</key><string>local.${xml(name)}.launcher</string>
+  <key>CFBundleExecutable</key><string>${xml(name)}</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleIconFile</key><string>app-icon</string>
+  <key>CFBundleVersion</key><string>1</string>
+  <key>LSUIElement</key><true/>
+</dict>
+</plist>
+`;
+}
+
+/** The bundle's executable: the repository's own launcher, through /bin/sh so that its run bit does not matter. */
+export const bundleScript = (launcher) => `#!/bin/sh\nexec /bin/sh ${shQuote(launcher)}\n`;
+
+function macBundles({ root, env, run }) {
+  const home = env.HOME || homedir();
+  const name = 'sber-harness';
+  const made = [];
+  for (const dir of [join(home, 'Applications'), join(home, 'Desktop')]) {
+    const contents = join(dir, `${name}.app`, 'Contents');
+    mkdirSync(join(contents, 'MacOS'), { recursive: true });
+    mkdirSync(join(contents, 'Resources'), { recursive: true });
+    const exe = join(contents, 'MacOS', name);
+    writeFileSync(exe, bundleScript(join(root, 'start-harness.sh')));
+    chmodSync(exe, 0o755);
+    writeFileSync(join(contents, 'Info.plist'), infoPlist(name));
+    // the icon is a nicety: without sips (or with a failed one) Finder shows the generic app icon
+    run('sips', ['-s', 'format', 'icns', join(root, 'build', 'app-icon.png'), '--out', join(contents, 'Resources', 'app-icon.icns')], { stdio: 'ignore', timeout: 30000 });
+    made.push(join(dir, `${name}.app`));
+  }
+  return made;
+}
+
+// `npm run shortcut`: the shortcuts for this checkout, wherever it was started from
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  const made = makeShortcuts({ root: resolve(dirname(fileURLToPath(import.meta.url)), '..') });
+  console.log(made.length ? `Ярлыки:\n${made.join('\n')}` : 'На этой системе ярлыки не создаются: запускайте start-harness.');
 }

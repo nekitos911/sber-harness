@@ -7,6 +7,8 @@ export interface MenuItem {
   label: string
   icon?: ReactNode
   hint?: string
+  /** A tooltip on the row (e.g. why it is disabled). */
+  tip?: string
   danger?: boolean
   disabled?: boolean
   /** A divider before this item. */
@@ -15,6 +17,9 @@ export interface MenuItem {
   children?: MenuItem[]
   onSelect?: () => void
 }
+
+/** Shift+F10 or the context-menu key on a focused row: open the menu a right click opens. */
+export const isMenuKey = (e: { key: string; shiftKey: boolean }) => e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')
 
 /** Controlled dropdown/context menu: arrows/typeahead/Enter, → opens a submenu, ← or Esc closes it. */
 export function Menu({ anchor, open, onClose, items, label, placement = 'bottom-start' }: {
@@ -67,6 +72,7 @@ export function Menu({ anchor, open, onClose, items, label, placement = 'bottom-
               aria-disabled={it.disabled || undefined}
               className="option"
               data-danger={it.danger || undefined}
+              data-tip={it.tip}
               data-active={i === nav.active || undefined}
               onPointerMove={() => { if (nav.active !== i) nav.setActive(i); setSub(it.children ? i : null) }}
               onClick={() => pick(i)}

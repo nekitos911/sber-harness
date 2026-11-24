@@ -1,16 +1,17 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { createContext, Fragment, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { ChipsInput } from '../components/ChipsInput'
 import { DEFAULT_REWORK } from '../components/board/Rework'
 import { FolderPicker } from '../components/FolderPicker'
-import { ArrowDown, ArrowUp, Bot, Cable, Check, CircleCheck, Pencil, CircleX, LogIn, PanelsTopLeft, Plus, RefreshCw, SquareKanban, TriangleAlert, X } from 'lucide-react'
+import { ArrowDown, ArrowUp, Bot, Cable, Check, CircleCheck, Pencil, CircleX, LogIn, PanelsTopLeft, Plus, RefreshCw, Search, SquareKanban, TriangleAlert, X } from 'lucide-react'
 import { api, ApiError, errorText, qs, tryApi } from '../api'
 import { openScreen, setState, toast, useFeature, useStore } from '../store'
 import { adoptSession } from '../lib/actions'
 import { desktopNotifyOn, setDesktopNotify } from '../lib/notify'
-import { ago, COLUMNS } from '../lib/format'
+import { ago, COLUMNS, plural } from '../lib/format'
 import { FULL_ACCESS, GRADE_ROLES, GRADES, mainAgent, loadAgentMeta, loadSettings, modeShort, normMeta, sameModel, useAgentMeta } from '../lib/agents'
 import { pickerModels } from '../lib/models'
 import { useNow } from '../lib/useNow'
+import { isMac, modKey, shortcut } from '../lib/keys'
 import type { AgentSettings, BoardColumn, BoardSettings, GitBranches, Grade, Session, Settings, TaskStatus } from '../types'
 import { Skeleton } from '../components/bits'
 import { ModelPicker } from '../components/pickers/ModelPicker'
@@ -80,6 +81,21 @@ export function SettingsView() {
   const [saveError, setSaveError] = useState<{ field: string | null; text: string } | null>(null)
   const [saving, setSaving] = useState(false)
   const changes = useMemo(() => !!orig && !!form && JSON.stringify(orig) !== JSON.stringify(form), [orig, form])
+  const [query, setQuery] = useState('')
+  const q = query.trim().toLowerCase()
+  const searchRef = useRef<HTMLInputElement>(null)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!modKey(e) || e.code !== 'KeyF' || e.shiftKey || e.altKey) return
+      e.preventDefault()
+      searchRef.current?.focus()
+      searchRef.current?.select()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+  const found = useSettingsFilter(scroll, q)
+  const nav = useSectionNav(scroll, `${category}|${q}|${!!form}`)
 
   useEffect(() => {
     if (conn !== 'open' || changes) return
@@ -119,32 +135,47 @@ export function SettingsView() {
       <form className="settings" onSubmit={(e) => { e.preventDefault(); if (changes) void save() }}>
         <div className="settings-layout">
           <nav className="settings-nav" aria-label="Разделы настроек">
-            {CATEGORIES.map(({ name, Icon }) => (
-              <button key={name} type="button" aria-current={category === name ? 'page' : undefined}
-                onClick={() => setState({ settingsCategory: name })}><Icon aria-hidden />{name}</button>
-            ))}
+            <div className="settings-search">
+              <Search aria-hidden />
+              <input ref={searchRef} className="input" type="search" placeholder="Поиск настроек" aria-label="Поиск настроек" value={query}
+                aria-keyshortcuts={isMac ? 'Meta+F' : 'Control+F'}
+                onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => { if (e.key === 'Escape' && query) { e.preventDefault(); setQuery('') } }} />
+              {!query && <kbd>{shortcut('F')}</kbd>}
+            </div>
+            {q ? (found ? nav.titles.map((t, i) => <SectionLink key={t + i} title={t} current={i === nav.current} onClick={() => nav.go(i)} />)
+              : <p className="settings-nav-empty">Ничего не найдено</p>)
+              : CATEGORIES.map(({ name, Icon }) => (
+                <Fragment key={name}>
+                  <button type="button" aria-current={category === name ? 'page' : undefined}
+                    onClick={() => setState({ settingsCategory: name })}><Icon aria-hidden />{name}</button>
+                  {category === name && nav.titles.length > 1 && nav.titles.map((t, i) => <SectionLink key={t + i} title={t} current={i === nav.current} onClick={() => nav.go(i)} />)}
+                </Fragment>
+              ))}
           </nav>
           <div ref={scroll} className="settings-body" id="settings-scroll">
-            {category === 'Рабочее место' && <>
+            <Searching.Provider value={!!q}>
+            {q && !found && <p className="muted">Нет настроек со словами «{query.trim()}».</p>}
+            {(q || category === 'Рабочее место') && <>
               <BasicSettings form={form} update={update} fieldError={fieldError} main={main} />
               <GeneralSection form={form} update={update} />
             </>}
-            {category === 'Агенты' && <>
+            {(q || category === 'Агенты') && <>
               {main && <AgentSection id={main} form={form} update={update} fieldError={fieldError} primary />}
               {others.length > 0 && <section className="settings-section">
                 <h2>Другие агенты</h2>
-                {others.map((id) => <Disclosure key={id} className="agent-options" summary={labels.find((a) => a.id === id)?.label ?? id}>
+                {others.map((id) => <Disclosure key={id} className="agent-options" open={q ? true : undefined} summary={labels.find((a) => a.id === id)?.label ?? id}>
                   <AgentSection id={id} form={form} update={update} fieldError={fieldError} />
                 </Disclosure>)}
               </section>}
               <OrchestrationSection form={form} update={update} />
               {form.checks && <ChecksCard form={form} update={update} />}
             </>}
-            {category === 'Подключения' && <ConnectionsSection form={form} update={update} fieldError={fieldError} />}
-            {category === 'Доска и Git' && <>
+            {(q || category === 'Подключения') && <ConnectionsSection form={form} update={update} fieldError={fieldError} />}
+            {(q || category === 'Доска и Git') && <>
               <BoardSection form={form} update={update} />
               <GitSection form={form} update={update} fieldError={fieldError} />
             </>}
+            </Searching.Provider>
           </div>
         </div>
         {(changes || saveError) && (
@@ -161,6 +192,78 @@ export function SettingsView() {
       </form>
     </Shell>
   )
+}
+
+const Searching = createContext(false) // «Поиск настроек» is on: folded parts open, so their rows can match
+
+function SectionLink({ title, current, onClick }: { title: string; current: boolean; onClick: () => void }) {
+  return <button type="button" className="settings-nav-sub" aria-current={current ? 'location' : undefined} onClick={onClick}>{title}</button>
+}
+
+/** The visible sections (their h2) for the nav, the one at the top of the scroll, and a jump to one. */
+function useSectionNav(body: RefObject<HTMLDivElement | null>, key: string) {
+  const [titles, setTitles] = useState<string[]>([])
+  const [current, setCurrent] = useState(0)
+  const heads = () => [...(body.current?.querySelectorAll<HTMLElement>('.settings-section > h2') ?? [])]
+    .filter((h) => !h.closest('.agent-options, [data-unmatched]'))
+  // every render: sections come and go with the settings (a handful of nodes; an unchanged list does not re-render)
+  useLayoutEffect(() => {
+    const next = heads().map((h) => h.textContent ?? '')
+    setTitles((t) => (t.join('\n') === next.join('\n') ? t : next))
+  })
+  useEffect(() => {
+    const el = body.current
+    if (!el) return
+    const on = () => {
+      const hs = heads()
+      const top = el.getBoundingClientRect().top + 48
+      let i = 0
+      hs.forEach((h, j) => { if (h.parentElement!.getBoundingClientRect().top <= top) i = j })
+      if (hs.length && el.scrollTop + el.clientHeight >= el.scrollHeight - 2) i = hs.length - 1 // a short last section never reaches the top
+      setCurrent(i)
+    }
+    on()
+    el.addEventListener('scroll', on, { passive: true })
+    return () => el.removeEventListener('scroll', on)
+  }, [body, key]) // eslint-disable-line react-hooks/exhaustive-deps
+  const go = (i: number) => heads()[i]?.parentElement?.scrollIntoView({ block: 'start', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' })
+  return { titles, current, go }
+}
+
+/**
+ * «Поиск настроек»: rows whose label or hint has the words stay, the rest (and sections, cards, «Расширенные» left
+ * empty) are hidden by a data attribute; a section whose title matches keeps all its rows. Whether anything matched.
+ */
+function useSettingsFilter(body: RefObject<HTMLDivElement | null>, q: string): boolean {
+  const [found, setFound] = useState(true)
+  useLayoutEffect(() => {
+    const el = body.current
+    if (!el) return
+    el.querySelectorAll('[data-unmatched]').forEach((n) => n.removeAttribute('data-unmatched'))
+    if (!q) { setFound(true); return }
+    const has = (n: Element | null | undefined) => !!n?.textContent?.toLowerCase().includes(q)
+    const hide = (n: Element) => n.setAttribute('data-unmatched', '')
+    let any = false
+    for (const sec of el.querySelectorAll('.settings-section')) {
+      if (sec.parentElement?.closest('.settings-section')) continue // another agent's section: rows of the outer one
+      const head = has(sec.querySelector(':scope > h2'))
+      const rows = [...sec.querySelectorAll('.set-row')]
+      for (const r of rows) if (!head && !has(r.querySelector('.set-label'))) hide(r)
+      const hit = rows.length ? head || rows.some((r) => !r.hasAttribute('data-unmatched')) : has(sec)
+      if (hit) any = true; else hide(sec)
+    }
+    for (const r of el.querySelectorAll('.set-row')) {
+      if (r.closest('.settings-section')) continue // rows between sections (MCP timeouts)
+      if (has(r.querySelector('.set-label'))) any = true; else hide(r)
+    }
+    // boxes left with nothing in them
+    for (const box of el.querySelectorAll('.set-rows, .set-card, .settings-adv, .agent-options')) {
+      const rows = box.querySelectorAll('.set-row')
+      if (rows.length && [...rows].every((r) => r.closest('[data-unmatched]'))) hide(box)
+    }
+    setFound(any)
+  })
+  return found
 }
 
 function Shell({ children }: { children: ReactNode }) {
@@ -192,6 +295,7 @@ function BasicSettings({ form, update, fieldError, main }: SectionProps & { main
         <div className="set-rows">
           <Row label="Модель">
             <ModelPicker variant="field" agentId={main} label="Модель по умолчанию" value={a.model} onChange={(m) => set({ model: m })} placement="bottom-start" emptyText="как в CLI" />
+            <CatalogStatus id={main} />
           </Row>
           {a.approvalModes.length > 0 && (
             <Row label="Режим" hint={modeLabels[a.approvalMode ?? '']} error={fieldError('mode')}>
@@ -386,32 +490,33 @@ function AgentSection({ id, form, update, fieldError, primary }: SectionProps & 
             <Switch label="Наследовать MCP пользователя" checked={!!a.inheritUserMcp} onChange={(v) => set({ inheritUserMcp: v })} />
           </Row>
         )}
+        {a.maxStarting !== undefined && (
+          <Row label="Одновременных запусков" hint="Сколько процессов агента могут одновременно стартовать (загружать MCP). Работающих агентов это не ограничивает: следующий стартует, как только предыдущий ответил.">
+            <Select label="Одновременных запусков" value={String(a.maxStarting)} onChange={(v) => set({ maxStarting: Number(v) })}
+              options={[...new Set([1, 2, 3, 4, 6, 8, 12, 0, a.maxStarting])].map((n) => ({ value: String(n), label: n === 0 ? 'без предела' : String(n) }))} />
+          </Row>
+        )}
+        {a.userHooks !== undefined && (
+          <Row label="Хуки GigaCode" hint="Хуки из ~/.gigacode/settings.json в запусках харнесса. Выключите, если какой-то хук зависает и мешает ходам.">
+            <Switch label="Хуки GigaCode" checked={a.userHooks !== false} onChange={(v) => set({ userHooks: v })} />
+          </Row>
+        )}
       </div>
       </Advanced>
     </section>
   )
 }
 
-/** CLI resolution and what the last session reported. */
+/** Is the CLI there and signed in: one line; paths, commands and model names in agent files fold under «Подробнее». */
 function AgentStatus({ id }: { id: string }) {
   const meta = useAgentMeta(id)
   const now = useNow()
   const [checking, setChecking] = useState(false)
-  const [refreshing, setRefreshing] = useState(false)
   const [editPath, setEditPath] = useState(false)
-  const refreshOn = useFeature('models-refresh')
   const agentLabel = useStore((s) => s.agents.find((agent) => agent.id === id)?.label ?? id)
   const login = async () => {
     const s = await tryApi<Session>('POST', '/sessions', { kind: 'terminal', agent: id, title: 'Вход в ' + agentLabel })
     if (s) adoptSession(s)
-  }
-  const refreshModels = async () => {
-    setRefreshing(true)
-    const res = await tryApi<{ error?: string }>('POST', `/agents/${encodeURIComponent(id)}/models/refresh`)
-    setRefreshing(false)
-    if (res?.error) toast(`Список моделей не обновлён: ${res.error}`, 'error')
-    loadAgentMeta(id, true)
-    void loadSettings(true)
   }
   const recheck = async () => {
     setChecking(true)
@@ -421,69 +526,91 @@ function AgentStatus({ id }: { id: string }) {
     } catch { /* keep the last answer */ }
     setChecking(false)
   }
-  if (meta === undefined) return <div className="status-card"><Skeleton rows={3} label="Проверяем CLI…" /></div>
+  if (meta === undefined) return <div className="status-card"><Skeleton rows={2} label="Проверяем CLI…" /></div>
   if (meta === null) return <p className="set-note">Состояние CLI недоступно в этой версии сервера.</p>
   const r = meta.resolved
   const seen = meta.seen
+  const signedIn = meta.auth === 'ok' || (meta.auth === undefined && r.identity)
+  const needsLogin = meta.auth === 'required' || (meta.auth === undefined && !r.identity)
+  const badRefs = meta.modelRefs?.filter((m) => m.available === false).length ?? 0
   const Ok = ({ ok }: { ok: boolean }) => (ok ? <CircleCheck className="ok" aria-label="да" /> : <CircleX className="bad" aria-label="нет" />)
   return (
     <div className="status-card" data-bad={!r.ok || undefined}>
-      <div className="status-head">
+      <div className="status-head status-auth">
         <Ok ok={r.ok} />
         <strong>{r.ok ? 'CLI найден' : 'CLI не найден'}</strong>
         {seen?.version && <span className="mono muted">v{seen.version}</span>}
+        {r.ok && (signedIn ? <span className="muted">· вход выполнен</span>
+          : needsLogin ? <><TriangleAlert className="warn" aria-hidden />нужен вход</>
+            : <span className="muted">· вход проверится при первом запуске</span>)}
+        {r.ok && !signedIn && <Button size="sm" variant={needsLogin ? undefined : 'ghost'} icon={<LogIn />} onClick={() => void login()}>Войти в {agentLabel}</Button>}
         <span className="grow" />
         {/* not found: the path field below has the one «Проверить» */}
         {r.ok && <Button size="sm" variant="ghost" icon={<RefreshCw className={checking ? 'spinner' : undefined} />} onClick={() => void recheck()} disabled={checking}>Проверить</Button>}
       </div>
       {!r.ok && <CliPathFix id={id} error={r.error ?? ''} onChecked={() => void recheck()} />}
-      {/* not found: the path fix is the whole story — no login, catalogue or MCP rows repeating the same error */}
-      {r.ok && <>
-      <dl className="status-grid">
-        <dt>Вход</dt>
-        <dd className="status-auth">
-          {meta.auth === 'ok' || (meta.auth === undefined && r.identity) ? <><Ok ok />выполнен</>
-            : meta.auth === 'required' || (meta.auth === undefined && !r.identity) ? <><TriangleAlert className="warn" aria-hidden />требуется вход</>
-              : <span className="muted">неизвестно (станет ясно при первом запуске)</span>}
-          {meta.auth !== 'ok' && r.ok && <Button size="sm" icon={<LogIn />} onClick={() => void login()}>Войти в {agentLabel}</Button>}
-        </dd>
-        <dt>Каталог моделей</dt>
-        <dd className="status-auth">
-          {meta.catalog?.error ? <span className="field-error">{meta.catalog.error}</span>
-            : meta.catalog?.at ? <span>обновлён {ago(meta.catalog.at, now)}</span> : <span className="muted">ещё не запрашивался</span>}
-          {refreshOn && <Button size="sm" variant="ghost" icon={<RefreshCw className={refreshing ? 'spinner' : undefined} />} disabled={refreshing || !r.ok} onClick={() => void refreshModels()}>Обновить список</Button>}
-        </dd>
-      </dl>
-      <Disclosure summary="Диагностика CLI">
-      <dl className="status-grid">
-        {r.command && <><dt>Команда</dt><dd>{editPath ? <CliPathFix id={id} error="" initial={r.command} onChecked={() => { setEditPath(false); void recheck() }} /> : <AutoValue value={r.command} mono open={false} onToggle={() => setEditPath(true)} />}</dd></>}
-        {r.node && <><dt>Node</dt><dd className="mono">{r.node}</dd></>}
-        {r.entry && <><dt>Точка входа</dt><dd className="mono">{r.entry}</dd></>}
-        {seen && (
-          <>
-            <dt>Команды</dt><dd>{seen.slashCommands.length ? `${seen.slashCommands.length} slash-команд` : <span className="muted">не сообщались</span>}</dd>
-          </>
-        )}
-        {!!meta.modelRefs?.length && (
-          <>
-            <dt>Модели в агентах и командах</dt>
-            <dd className="model-refs">
-              {meta.modelRefs.map((m) => (
-                <span key={`${m.file}:${m.model}`} className="model-ref" data-bad={m.available === false || undefined}>
-                  {m.available === false ? <TriangleAlert className="warn" aria-hidden /> : <Ok ok />}
-                  <span className="mono">{m.model}</span>
-                  <span className="muted mono ellipsis" data-tip={m.file}>{m.file}</span>
-                  {m.available === false && <span className="field-warn">недоступна: переименуйте модель в файле агента</span>}
-                </span>
-              ))}
-            </dd>
-          </>
-        )}
-      </dl>
-      {seen && <p className="set-note">По данным последней сессии, {ago(seen.at, now)}.</p>}
-      </Disclosure>
-      </>}
+      {/* not found: the path fix is the whole story — no details repeating the same error */}
+      {r.ok && (
+        <Disclosure summary={<span>Подробнее{badRefs > 0 && <span className="field-warn"> · {badRefs} {plural(badRefs, 'модель', 'модели', 'моделей')} в файлах агентов недоступны</span>}</span>}>
+          <dl className="status-grid">
+            {r.command && <><dt>Путь к CLI</dt><dd>{editPath ? <CliPathFix id={id} error="" initial={r.command} onChecked={() => { setEditPath(false); void recheck() }} /> : <AutoValue value={r.command} mono open={false} onToggle={() => setEditPath(true)} />}</dd></>}
+            {r.node && <><dt>Node</dt><dd className="mono">{r.node}</dd></>}
+            {r.entry && <><dt>Точка входа</dt><dd className="mono">{r.entry}</dd></>}
+            {seen && <><dt>Команды</dt><dd>{seen.slashCommands.length ? `${seen.slashCommands.length} slash-команд` : <span className="muted">не сообщались</span>}</dd></>}
+            {!!meta.modelRefs?.length && (
+              <>
+                <dt>Модели в агентах и командах</dt>
+                <dd className="model-refs">
+                  {meta.modelRefs.map((m) => (
+                    <span key={`${m.file}:${m.model}`} className="model-ref" data-bad={m.available === false || undefined}>
+                      {m.available === false ? <TriangleAlert className="warn" aria-hidden /> : <Ok ok />}
+                      <span className="mono">{m.model}</span>
+                      <span className="muted mono ellipsis" data-tip={m.file}>{m.file}</span>
+                      {m.available === false && <span className="field-warn">недоступна: переименуйте модель в файле агента</span>}
+                    </span>
+                  ))}
+                </dd>
+              </>
+            )}
+          </dl>
+          {seen && <p className="set-note">По данным последней сессии, {ago(seen.at, now)}.</p>}
+        </Disclosure>
+      )}
     </div>
+  )
+}
+
+/**
+ * Where the model list comes from, under the model picker. A failed /models with a list to offer anyway (the config's
+ * or the last one) is a calm note — the server tries again within the hour; red only when there is nothing to pick.
+ */
+function CatalogStatus({ id }: { id: string }) {
+  const meta = useAgentMeta(id)
+  const now = useNow()
+  const refreshOn = useFeature('models-refresh')
+  const [refreshing, setRefreshing] = useState(false)
+  if (!meta?.resolved.ok) return null
+  const c = meta.catalog
+  const hasList = (meta.models?.length ?? 0) > 0
+  const refresh = async () => {
+    setRefreshing(true)
+    const res = await tryApi<{ error?: string; timedOut?: boolean; models?: unknown[] }>('POST', `/agents/${encodeURIComponent(id)}/models/refresh`)
+    setRefreshing(false)
+    if (res?.error) toast(res.models?.length ? `Список моделей пока прежний: ${res.error}` : `Список моделей не обновлён: ${res.error}`, res.models?.length ? 'info' : 'error')
+    loadAgentMeta(id, true)
+    void loadSettings(true)
+  }
+  const from = c?.at ? `список от ${ago(c.at, now)}` : 'список из настроек'
+  const text = refreshing || c?.running ? <span className="muted">список моделей обновляется…</span>
+    : c?.error && hasList ? <span className="muted" data-tip={c.error}>{from}; {c.timedOut ? c.error : 'CLI не отдал список'} — повторю позже</span>
+      : c?.error ? <span className="field-error">Список моделей не получен: {c.error}</span>
+        : c?.at ? <span className="muted">список моделей обновлён {ago(c.at, now)}</span> : null
+  if (!text && !refreshOn) return null
+  return (
+    <span className="status-auth set-hint">
+      {text}
+      {refreshOn && <Button size="sm" variant="ghost" icon={<RefreshCw className={refreshing ? 'spinner' : undefined} />} disabled={refreshing} onClick={() => void refresh()}>Обновить список</Button>}
+    </span>
   )
 }
 
@@ -983,6 +1110,13 @@ function GeneralSection({ form, update }: Omit<SectionProps, 'fieldError'>) {
             options={Object.keys(form.agents).filter((k) => k !== 'claude' && (form.agents[k].enabled !== false || k === form.defaultAgent))
               .map((k) => ({ value: k, label: labels.find((x) => x.id === k)?.label ?? k, hint: k }))} />
         </Row>
+        <Row label="Тема" hint="Хранится в этом браузере.">
+          <Segmented label="Тема" value={scheme} onChange={(v) => setState({ theme: v })} options={[{ value: 'dark', label: 'Тёмная' }, { value: 'light', label: 'Светлая' }]} />
+        </Row>
+        <Row label="Уведомления на рабочем столе" hint={denied ? 'Браузер запретил уведомления для этой страницы: разрешите их в настройках сайта.' : 'Вопросы агентов, готовые задачи и ошибки, пока вкладка в фоне. Хранится в этом браузере.'}>
+          <Switch label="Уведомления на рабочем столе" checked={on} disabled={!supported || denied}
+            onChange={(v) => void setDesktopNotify(v).then((res) => { setOn(res); if (v && !res) toast('Браузер не разрешил уведомления', 'error') })} />
+        </Row>
         {form.sessions !== undefined && (
           <Row label="Автоархив неактивных чатов через" hint="Чаты без активности дольше этого уходят в архив (история сохраняется, вернуть — на экране «Агенты»).">
             <Select label="Автоархив неактивных чатов" value={!form.sessions.autoArchiveDays ? 'off' : String(form.sessions.autoArchiveDays)}
@@ -991,14 +1125,18 @@ function GeneralSection({ form, update }: Omit<SectionProps, 'fieldError'>) {
           </Row>
         )}
         {form.recovery !== undefined && (
-          <>
-            <Row label="Продолжать прерванные сессии автоматически" hint="После перезапуска harness или ПК прерванные ходы продолжаются сами (координаторы — после своих исполнителей). Иначе — окно «Восстановление сессий».">
-              <Switch label="Продолжать прерванные сессии автоматически" checked={!!form.recovery.autoResume} onChange={(v) => update({ ...form, recovery: { ...form.recovery, autoResume: v } })} />
-            </Row>
-            <Row label="Сообщение для продолжения" hint="Что получает агент, когда его прерванный ход продолжают." wide>
-              <Textarea rows={2} aria-label="Сообщение для продолжения" value={form.recovery.message ?? ''} onChange={(e) => update({ ...form, recovery: { ...form.recovery, message: e.target.value } })} />
-            </Row>
-          </>
+          <Row label="Продолжать прерванные сессии автоматически" hint="После перезапуска harness или ПК прерванные ходы продолжаются сами (координаторы — после своих исполнителей). Иначе — окно «Восстановление сессий».">
+            <Switch label="Продолжать прерванные сессии автоматически" checked={!!form.recovery.autoResume} onChange={(v) => update({ ...form, recovery: { ...form.recovery, autoResume: v } })} />
+          </Row>
+        )}
+      </div>
+      {/* rarely changed: what happens to an interrupted or silent agent */}
+      <Advanced id="general">
+      <div className="set-rows">
+        {form.recovery !== undefined && (
+          <Row label="Сообщение для продолжения" hint="Что получает агент, когда его прерванный ход продолжают." wide>
+            <Textarea rows={2} aria-label="Сообщение для продолжения" value={form.recovery.message ?? ''} onChange={(e) => update({ ...form, recovery: { ...form.recovery, message: e.target.value } })} />
+          </Row>
         )}
         {form.session?.revive && (
           <>
@@ -1012,14 +1150,8 @@ function GeneralSection({ form, update }: Omit<SectionProps, 'fieldError'>) {
             </Row>
           </>
         )}
-        <Row label="Тема" hint="Хранится в этом браузере.">
-          <Segmented label="Тема" value={scheme} onChange={(v) => setState({ theme: v })} options={[{ value: 'dark', label: 'Тёмная' }, { value: 'light', label: 'Светлая' }]} />
-        </Row>
-        <Row label="Уведомления на рабочем столе" hint={denied ? 'Браузер запретил уведомления для этой страницы: разрешите их в настройках сайта.' : 'Вопросы агентов, готовые задачи и ошибки, пока вкладка в фоне. Хранится в этом браузере.'}>
-          <Switch label="Уведомления на рабочем столе" checked={on} disabled={!supported || denied}
-            onChange={(v) => void setDesktopNotify(v).then((res) => { setOn(res); if (v && !res) toast('Браузер не разрешил уведомления', 'error') })} />
-        </Row>
       </div>
+      </Advanced>
     </section>
   )
 }
@@ -1151,8 +1283,9 @@ function ChecksCard({ form, update }: { form: Settings; update: (s: Settings) =>
 function Advanced({ id, children }: { id: string; children: ReactNode }) {
   const key = `harness.settings.adv.${id}`
   const [open, setOpen] = useState(() => { try { return localStorage.getItem(key) === '1' } catch { return false } })
+  const searching = useContext(Searching)
   return (
-    <Disclosure className="settings-adv" open={open} onToggle={(v) => { setOpen(v); try { localStorage.setItem(key, v ? '1' : '0') } catch { /* not remembered */ } }}
+    <Disclosure className="settings-adv" open={open || searching} onToggle={(v) => { setOpen(v); try { localStorage.setItem(key, v ? '1' : '0') } catch { /* not remembered */ } }}
       summary={<span>Расширенные</span>}>
       {children}
     </Disclosure>

@@ -11,12 +11,12 @@ import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, v
 import { CSS } from '@dnd-kit/utilities'
 import { CloudOff, Columns3, Eye, EyeOff, ListFilter, Plus, RefreshCw, Search, SquareKanban } from 'lucide-react'
 import { api, errorText, tryApi } from '../api'
-import { getState, setState, toast, upsert, useFeature, useStore } from '../store'
+import { getState, openTask, setState, toast, upsert, useFeature, useStore } from '../store'
 import { COLUMNS, statusLabel } from '../lib/format'
 import { byOrder } from '../lib/tasks'
 import type { Task, TaskStatus } from '../types'
 import { TaskCard, type BoardCtx } from '../components/board/TaskCard'
-import { TaskDrawer } from '../components/board/TaskDrawer'
+import { TaskPage } from '../components/board/TaskPage'
 import { Button, Popover, Segmented, Select } from '../components/ui'
 import { TaskList } from '../components/board/TaskList'
 import { ErrorBoundary } from '../components/ErrorBoundary'
@@ -33,7 +33,8 @@ export function BoardView() {
   const agents = useStore((s) => s.agents)
   const syncEnabled = useStore((s) => s.integrations.tasks)
   const trackerProblem = useStore((s) => s.integrations.tasksProblem)
-  const focusTaskId = useStore((s) => s.focusTaskId)
+  // the task page over the board (store view): the board stays mounted under it, its filters and scroll kept
+  const openId = useStore((s) => (s.view.kind === 'screen' && s.view.detail?.kind === 'task' ? s.view.detail.id : null))
   const settings = useSettings()
   const board = settings?.board
   const notifications = useStore((s) => s.notifications)
@@ -53,7 +54,6 @@ export function BoardView() {
   const setLayout = (v: 'list' | 'board') => { setLayoutState(v); saveDraft('board:layout', v === 'list' ? null : v) }
   const [repo, setRepo] = useState('')
   const [showHidden, setShowHidden] = useState(false)
-  const [openId, setOpenId] = useState<string | null>(null)
   const [drag, setDrag] = useState<{ id: string; cols: Cols; from: TaskStatus } | null>(null)
   const reworkOn = useFeature('rework')
   const importOn = useFeature('tracker-import')
@@ -65,10 +65,6 @@ export function BoardView() {
   const [reworkDrop, setReworkDrop] = useState<{ id: string; beforeId: string | null; afterId: string | null } | null>(null)
   const dropAnchor = useRef<HTMLElement | null>(null)
   const [syncing, setSyncing] = useState(false)
-
-  useEffect(() => {
-    if (focusTaskId) { setOpenId(focusTaskId); setState({ focusTaskId: null }) }
-  }, [focusTaskId])
 
   const byId = useMemo(() => new Map(tasks.map((t) => [t.id, t])), [tasks])
 
@@ -97,7 +93,7 @@ export function BoardView() {
       sessions: new Map(sessions.map((s) => [s.id, s])),
       workspaces: new Map(workspaces.map((w) => [w.id, w])),
       agents: new Map(agents.map((a) => [a.id, a])),
-      onOpen: setOpenId,
+      onOpen: openTask,
       showRepo: !repo && workspaces.length > 1,
       trackerSync,
     }
@@ -212,7 +208,6 @@ export function BoardView() {
   }
 
   const dragged = drag ? byId.get(drag.id) : undefined
-  const openTaskObj = openId ? byId.get(openId) : undefined
 
   if (!loaded) return <div className="board-view"><div className="board-loading"><Skeleton rows={8} label="Загрузка задач…" /></div></div>
 
@@ -237,7 +232,8 @@ export function BoardView() {
   const activeFilters = Number(!!repo) + Number(!!hiddenStatuses && allStatuses) + Number(showHidden)
 
   return (
-    <div className="board-view">
+    <>
+    <div className="board-view" inert={!!openId}>
       <header className="view-head">
         <h1>Задачи</h1>
         <span className="count">{tasks.length}</span>
@@ -263,7 +259,7 @@ export function BoardView() {
               <Plus />
               Добавить по ключу
             </button>
-            <ImportPopover anchor={importRef} open={importOpen} onClose={() => setImportOpen(false)} onImported={(id) => setOpenId(id)} />
+            <ImportPopover anchor={importRef} open={importOpen} onClose={() => setImportOpen(false)} onImported={openTask} />
           </>
         )}
         {syncEnabled && (
@@ -282,7 +278,7 @@ export function BoardView() {
 
       <div className="board-area">
       {layout === 'list' && tasks.length > 0 ? (
-        <TaskList ids={lanes.flatMap((c) => shown[c.status] ?? [])} byId={byId} sessions={ctx.sessions} onOpen={setOpenId} />
+        <TaskList ids={lanes.flatMap((c) => shown[c.status] ?? [])} byId={byId} sessions={ctx.sessions} onOpen={openTask} />
       ) : (
       <DndContext
         sensors={sensors}
@@ -324,9 +320,10 @@ export function BoardView() {
           onSent={() => void move(reworkDrop.id, 'in_progress', reworkDrop.beforeId, reworkDrop.afterId)}
           onMoveOnly={() => void move(reworkDrop.id, 'in_progress', reworkDrop.beforeId, reworkDrop.afterId)} />
       )}
-      {openTaskObj && <ErrorBoundary area="карточку задачи"><TaskDrawer key={openTaskObj.id} task={openTaskObj} ctx={ctx} onClose={() => setOpenId(null)} /></ErrorBoundary>}
       </div>
     </div>
+    {openId && <ErrorBoundary area="страницу задачи"><TaskPage key={openId} task={byId.get(openId)} ctx={ctx} /></ErrorBoundary>}
+    </>
   )
 }
 

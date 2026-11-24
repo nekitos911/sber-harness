@@ -1,5 +1,5 @@
 import { memo, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent } from 'react'
-import { Check, CircleDot, LoaderCircle, X, ExternalLink, FolderGit2, GitCommitHorizontal, GitCompare, GitMerge, GitPullRequest, Link2, ListChecks, Lock, Play, Wrench } from 'lucide-react'
+import { Check, CircleDot, LoaderCircle, MessageSquare, PauseCircle, RotateCcw, X, ExternalLink, FolderGit2, GitCommitHorizontal, GitCompare, GitMerge, GitPullRequest, Link2, ListChecks, Lock, Play, Wrench } from 'lucide-react'
 import { PRIORITY } from '../../lib/format'
 import { pendingDeps, taskKey, trackerDiffers, unusualTargets } from '../../lib/tasks'
 import type { AgentInfo, Priority, Session, Task, Workspace } from '../../types'
@@ -11,6 +11,8 @@ import { ago, normPath, plural } from '../../lib/format'
 import { PrGlyph } from '../PrChip'
 import { openDialog, openSession, openTab, openWorktree, showPanel, useFeature, useStore, wtKey } from '../../store'
 import { HandoffPopover, ReworkPopover } from './Rework'
+import { agentChip, chipStates, type ChipChat } from '../../lib/agentChip'
+import { tryApi } from '../../api'
 
 export interface BoardCtx {
   byId: Map<string, Task>
@@ -102,7 +104,7 @@ export const TaskCard = memo(function TaskCard({ task, ctx }: { task: Task; ctx:
       {(session || task.externalUrl || task.assigneeSessionId || goneOf(task)) && (
         <div className="card-foot">
           {!session && <AgentGone task={task} ctx={ctx} />}
-          {session && (REVIEW.has(task.agentState ?? '') ? <AgentBadge task={task} session={session} ctx={ctx} /> : <CardLive task={task} session={session} />)}
+          {session && (chipStates(task) ? <AgentBadge task={task} session={session} ctx={ctx} /> : <CardLive task={task} session={session} />)}
           <span className="grow" />
           {task.externalUrl && (
             <a className="icon-btn icon-btn-sm" href={task.externalUrl} target="_blank" rel="noreferrer noopener" aria-label="Открыть в трекере" data-tip="Открыть в трекере" onClick={stop} onKeyDown={stop} onPointerDown={stop}>
@@ -126,19 +128,6 @@ function PriorityMark({ p }: { p: Priority }) {
     </svg>
   )
 }
-
-const AGENT_STATE: Record<NonNullable<Task['agentState']>, { text: string; tone: string; spin?: boolean }> = {
-  running: { text: 'агент работает', tone: 'run', spin: true },
-  waiting: { text: 'ждёт ответа', tone: 'wait' },
-  done: { text: 'агент закончил', tone: 'done' },
-  failed: { text: 'агент: ошибка', tone: 'fail' },
-  checking: { text: 'проверка…', tone: 'run', spin: true },
-  reviewing: { text: 'ревью…', tone: 'run', spin: true },
-  approved: { text: 'ревью ✓', tone: 'done' },
-  changes_requested: { text: 'замечания ревью', tone: 'run' },
-}
-
-const REVIEW = new Set(['reviewing', 'approved', 'changes_requested'])
 
 /** The task's agent went away (task log agent_gone) and no agent took the task since. */
 function goneOf(task: Task): { how: string; sessionId?: string } | null {
@@ -219,17 +208,45 @@ function CardLive({ task, session }: { task: Task; session: Session }) {
   )
 }
 
-/** What the agent (and the harness review) is doing; click opens that chat (the reviewer's while reviewing). */
-function AgentBadge({ task, session, ctx }: { task: Task; session: Session; ctx: BoardCtx }) {
-  const st = AGENT_STATE[task.agentState!]
-  const reviewer = [...ctx.sessions.values()].filter((x) => x.parentId === session.id && x.role === 'reviewer').sort((a, b) => b.createdAt - a.createdAt)[0]
-  const target = (task.agentState === 'reviewing' || task.agentState === 'approved' || task.agentState === 'changes_requested') && reviewer ? reviewer : session
-  const Icon = st.spin ? LoaderCircle : task.agentState === 'failed' ? X : task.agentState === 'waiting' ? CircleDot : Check
+/** Session -> what agentChip needs: its visual state, words and since when it is in it. */
+export const chipChat = (s: Session): ChipChat => {
+  const v = sessionVisualState(s)
+  return { id: s.id, title: s.title, state: v, label: STATE_LABEL[v], since: s.finishedAt ?? s.lastEventAt ?? s.lastActivityAt, archived: s.archived, queued: s.queued }
+}
+
+/**
+ * What the harness does with the task (checks, review) and since when; the tooltip names the chat a click opens.
+ * A review nobody runs reads as stalled; a stopped or stuck one offers «Повторить ревью» (feature review-retry).
+ */
+export function AgentBadge({ task, session, ctx }: { task: Task; session: Session; ctx: BoardCtx }) {
+  const now = useNow()
+  const retryOn = useFeature('review-retry')
+  const [busy, setBusy] = useState(false)
+  const rid = task.review?.reviewerSessionId
+  const reviewer = (rid ? ctx.sessions.get(rid) : undefined)
+    ?? (task.review ? undefined : [...ctx.sessions.values()].filter((x) => x.parentId === session.id && x.role === 'reviewer').sort((a, b) => b.createdAt - a.createdAt)[0])
+  const c = agentChip(task, chipChat(session), reviewer ? chipChat(reviewer) : null, now, dur)
+  const Icon = c.spin ? LoaderCircle : c.stalled ? PauseCircle : c.tone === 'fail' ? X : c.tone === 'wait' ? CircleDot : Check
+  const go = (fn: () => void) => (e: MouseEvent) => { e.stopPropagation(); fn() }
+  const retry = async () => {
+    setBusy(true)
+    await tryApi('POST', `/tasks/${encodeURIComponent(task.id)}/review`)
+    setBusy(false)
+  }
   return (
-    <button type="button" className="agent-badge" data-tone={st.tone} data-tip={`${target.title}: открыть чат`}
-      onPointerDown={stop} onKeyDown={stop} onClick={(e) => { e.stopPropagation(); openSession(target.id) }}>
-      <Icon className={st.spin ? 'spinner' : undefined} aria-hidden />
-      {st.text}
-    </button>
+    <span className="agent-badge-wrap" onPointerDown={stop} onKeyDown={stop}>
+      <button type="button" className="agent-badge" data-tone={c.tone} data-stalled={c.stalled || undefined} data-tip={c.tip} aria-label={`${c.text}. ${c.tip}`}
+        onClick={go(() => c.open && openSession(c.open))}>
+        <Icon className={c.spin ? 'spinner' : undefined} aria-hidden />
+        {c.text}
+      </button>
+      {task.agentState === 'review_stopped' && (
+        <button type="button" className="btn btn-ghost btn-xs" onClick={go(() => openSession(session.id))}><MessageSquare />Чат исполнителя</button>
+      )}
+      {c.retry && retryOn && (
+        <button type="button" className="btn btn-ghost btn-xs" disabled={busy} onClick={go(() => void retry())}
+          data-tip="Запустить ревью силами harness ещё раз для исполнителя этой задачи"><RotateCcw className={busy ? 'spinner' : undefined} />Повторить ревью</button>
+      )}
+    </span>
   )
 }

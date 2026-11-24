@@ -1,0 +1,58 @@
+/* The chat's original task (bar above the transcript) and the «Обзор» tab of the right panel. */
+
+.task-fold { min-width: 0; }
+.task-fold-head {
+  display: flex; align-items: center; gap: 6px; width: 100%; min-width: 0; padding: 0; border: 0; background: none;
+  color: var(--ink-2); font-size: 12px; text-align: left;
+}
+.task-fold-head .chev { width: 13px; height: 13px; flex: none; color: var(--ink-3); transition: transform 120ms var(--ease-out); }
+.task-fold[data-open] .task-fold-head .chev { transform: rotate(90deg); }
+.task-fold-body { display: grid; gap: 6px; justify-items: start; padding: 6px 0 2px 19px; }
+.task-fold-text { max-height: 40vh; width: 100%; overflow-y: auto; font-size: 13px; color: var(--ink); }
+
+.task-bar { flex-shrink: 0; padding: 5px 16px; border-bottom: 1px solid var(--rule-soft); background: var(--ground); }
+.task-bar .task-fold-head { height: 20px; }
+.task-bar .task-fold-head:hover { color: var(--ink); }
+
+.chat-kids { display: inline-flex; align-items: center; gap: 4px; }
+.chat-kids svg { width: 12px; height: 12px; flex: none; }
+
+.msg-wrap[data-mid] { scroll-margin-top: 12px; }
+.msg-wrap[data-flash] { animation: card-flash 1.2s var(--ease-out); }
+@media (prefers-reduced-motion: reduce) { .msg-wrap[data-flash] { animation: none; outline: 2px solid var(--signal); } }
+
+.ov p.muted { font-size: 12px; }
+.ov-task { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 12px; }
+.ov-counts { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 12px; color: var(--ink-2); }
+.ov-counts [data-b="run"] { color: var(--lamp-run); }
+.ov-counts [data-b="wait"] { color: var(--lamp-ask); }
+.ov-counts [data-b="fail"] { color: var(--lamp-fail); }
+.ov-counts [data-b="done"] { color: var(--lamp-done); }
+
+.ov-tree, .ov-list, .ov-events { display: grid; min-width: 0; }
+.ov-sub { padding-left: calc(var(--depth, 0) * 14px); min-width: 0; }
+.ov-sub[data-archived] .ov-sub-row { opacity: 0.7; }
+.ov-sub-row { display: flex; align-items: center; gap: 6px; min-width: 0; height: 28px; font-size: 12px; }
+.ov-fold { display: inline-flex; padding: 2px; border: 0; background: none; color: var(--ink-3); }
+.ov-fold .chev { width: 13px; height: 13px; transition: transform 120ms var(--ease-out); }
+.ov-fold[aria-expanded="true"] .chev { transform: rotate(90deg); }
+.ov-sub-title { flex: 1; min-width: 0; padding: 0; border: 0; background: none; color: var(--ink); text-align: left; }
+.ov-sub-title:hover { text-decoration: underline; }
+.ov-sub-body { display: grid; gap: 6px; padding: 2px 0 8px 40px; min-width: 0; }
+.ov-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; font-size: 11.5px; }
+.ov-report { max-height: 30vh; overflow-y: auto; padding: 6px 8px; border-radius: var(--r-2); background: var(--deck); font-size: 12px; }
+
+.ov-row, .ov-event {
+  display: flex; align-items: center; gap: 8px; min-width: 0; height: 28px; padding: 0 6px; border: 0; border-radius: var(--r-2);
+  background: none; color: var(--ink); font-size: 12px; text-align: left;
+}
+.ov-row:hover, .ov-event:hover { background: var(--deck); }
+.ov-row > svg, .ov-event > svg { width: 13px; height: 13px; flex: none; color: var(--ink-3); }
+.ov-events { list-style: none; margin: 0 -6px; padding: 0; }
+.ov-event { width: 100%; }
+.ov-event > .num { flex: none; width: 36px; font-size: 11px; }
+.ov-event[data-k="error"] > svg { color: var(--lamp-fail); }
+.ov-event[data-k="question"] > svg, .ov-event[data-k="permission"] > svg { color: var(--lamp-ask); }
+.ov-event[data-k="user"] > svg { color: var(--signal); }
+.ov-events > li { min-width: 0; }
+.ov-event > .ellipsis { flex: 1; min-width: 0; }

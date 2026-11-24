@@ -56,3 +56,10 @@ export function stateSummary(list: StateInput[]): { state: VisualState; text: st
   }
   return out
 }
+
+/** How long after GigaCode last wrote a CLI chat in its own terminal the harness keeps hands off it (server: 3 min). */
+export const CLI_LIVE_MS = 180_000
+
+/** A chat taken from the CLI history that GigaCode is writing to right now in a terminal: read-only here until then. */
+export const cliLive = (s: Pick<Session, 'status'> & Partial<Pick<Session, 'origin' | 'cliLiveAt'>>, now: number) =>
+  s.origin === 'cli' && s.status !== 'running' && !!s.cliLiveAt && now - s.cliLiveAt < CLI_LIVE_MS
