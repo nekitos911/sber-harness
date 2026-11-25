@@ -3,7 +3,7 @@ export { Button, IconButton, Input, Textarea, Switch, Checkbox, Segmented, Chip,
 export { Select, type Option } from './Select'
 export { ComboList, type ComboItem } from './Combobox'
 export { Popover, type Placement } from './Popover'
-export { Menu, MenuButton, isMenuKey, type MenuItem } from './Menu'
+export { Menu, MenuButton, PointMenu, isMenuKey, type MenuItem } from './Menu'
 export { Disclosure } from './Disclosure'
 export { Modal as Dialog } from './Dialog'
 export { TooltipLayer } from './Tooltip'

@@ -128,3 +128,15 @@ export function MenuButton({ label, icon, items, placement = 'bottom-start', up 
     </>
   )
 }
+
+/** A right-click menu where the pointer is: a zero-size point anchors the same Menu. `at` null = closed. */
+export function PointMenu({ at, onClose, items, label }: { at: { x: number; y: number } | null; onClose: () => void; items: MenuItem[]; label: string }) {
+  const point = useRef<HTMLSpanElement>(null)
+  if (!at) return null
+  return (
+    <>
+      <span ref={point} aria-hidden style={{ position: 'fixed', left: at.x, top: at.y, width: 0, height: 0 }} />
+      <Menu anchor={point} open onClose={onClose} items={items} label={label} />
+    </>
+  )
+}

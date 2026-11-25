@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { ArrowDown, Bot, Check, Copy, Ellipsis, ExternalLink, FolderPlus, KeyRound, Link2, LoaderCircle, ShieldCheck, Wrench, X, GitCompareArrows, MessageSquare, PlugZap, RotateCcw, ScrollText, Square, Trash2, TriangleAlert } from 'lucide-react'
+import { ArrowDown, Bot, Check, Copy, Ellipsis, ExternalLink, FolderOpen, FolderPlus, LayoutList, Search, KeyRound, Link2, LoaderCircle, ShieldCheck, Wrench, X, GitCompareArrows, MessageSquare, PlugZap, RotateCcw, ScrollText, Square, Trash2, TriangleAlert } from 'lucide-react'
 import { api, errorText, tryApi } from '../api'
-import { getState, openDialog, openScreen, openSession, openTask, setState, showPanel, useFeature, useStore, upsertSession } from '../store'
+import { closeTab, getState, openDialog, openScreen, openSession, openTask, setState, showPanel, toast, useFeature, useStore, upsertSession } from '../store'
 import { loadMessages, loadSubagents } from '../ws'
 import { basename, normPath, plural, ROLE } from '../lib/format'
 import { useGit } from '../lib/git'
@@ -11,7 +11,9 @@ import { loadDraft, saveDraft } from '../lib/draft'
 import { VerdictChip } from '../components/panel/VerdictsTab'
 import type { Message, Session } from '../types'
 import { Branch, Loading, Skeleton, StatusIcon, statusText } from '../components/bits'
-import { MenuButton } from '../components/ui/Menu'
+import { MenuButton, PointMenu, type MenuItem } from '../components/ui/Menu'
+import { openFile, REVEAL } from '../components/WorktreeMenu'
+import { isMac } from '../lib/keys'
 import { Button, Chip, IconButton, Popover } from '../components/ui'
 import { FolderPicker } from '../components/FolderPicker'
 import { ReworkPopover } from '../components/board/Rework'
@@ -250,6 +252,10 @@ export function ChatView({ id, active }: { id: string; active: boolean }) {
     return () => io.disconnect()
   }, [active, more, limit])
 
+  // the chat's right-click menu (hooks before the early return below)
+  const [menuAt, setMenuAt] = useState<{ x: number; y: number } | null>(null)
+  const openOn = useFeature('open-file')
+
   if (!session) return <Loading label="Загрузка сессии…" />
   // sent from this chat and not in it yet (or refused): shown at the end at once
   const outgoing = outbox.filter((o) => o.sessionId === id && (!!o.error || !arrived(o, list, session)))
@@ -271,6 +277,23 @@ export function ChatView({ id, active }: { id: string; active: boolean }) {
   }
   const reset = () => newCliSession(session)
   const reconnect = reconnectOn ? () => void reconnectMcp(session) : undefined
+  const chatMenu = (): MenuItem[] => {
+    const picked = window.getSelection()?.toString() ?? ''
+    const copyText = (text: string, what: string) => void navigator.clipboard.writeText(text).then(() => toast(`Скопировано: ${what}`, 'ok'), () => toast('Буфер обмена недоступен', 'error'))
+    const tab = `s:${session.id}`
+    return [
+      ...(picked.trim() ? [{ label: 'Копировать', icon: <Copy />, onSelect: () => copyText(picked, 'выделенное') }] : []),
+      { label: 'Найти в чате', icon: <Search />, hint: `${isMac ? '⌘' : 'Ctrl'}+F`, onSelect: () => setFind((n) => n + 1) },
+      { label: 'Обзор чата', icon: <LayoutList />, onSelect: () => showPanel('overview') },
+      { label: 'Изменения', icon: <GitCompareArrows />, onSelect: () => showPanel('changes') },
+      ...(reconnect ? [{ label: 'Переподключить MCP', icon: <PlugZap />, divider: true, tip: 'Перезапустить процесс агента: MCP-серверы подключатся заново, контекст чата сохранится', onSelect: reconnect }] : []),
+      { label: 'Лог агента', icon: <ScrollText />, divider: !reconnect, onSelect: showLog },
+      { label: 'Копировать ID сессии', icon: <Copy />, divider: true, onSelect: () => copyText(session.id, session.id) },
+      { label: 'Копировать путь папки', icon: <Copy />, onSelect: () => copyText(session.cwd, session.cwd) },
+      ...(openOn ? [{ label: REVEAL, icon: <FolderOpen />, onSelect: () => openFile(session.cwd, 'reveal') }] : []),
+      { label: 'Закрыть вкладку', icon: <X />, danger: true, divider: true, hint: `${isMac ? '⌘' : 'Ctrl'}+W`, onSelect: () => { closeTab(session.worktreePath || session.cwd, tab); closeTab(session.cwd, tab) } },
+    ]
+  }
   const takeOver = () => openDialog({
     kind: 'confirm', title: 'Перехватить чат у терминала?', ok: 'Перехватить',
     text: 'GigaCode сейчас ведёт этот чат в терминале. Сообщение отсюда пойдёт в ту же сессию CLI и может помешать его работе. Лучше дождаться, пока он закончит.',
@@ -297,7 +320,10 @@ export function ChatView({ id, active }: { id: string; active: boolean }) {
       {/* its own row above the find bar's anchor: the bar never covers the find bar or the messages */}
       <TaskBar session={session} list={list} onTop={() => list[0] && jump(list[0].id)} />
       {find > 0 && <FindBar root={transcript} focusKey={find} older={older} reveal={reveal} onClose={closeFind} />}
-      <div className="chat-scroll" ref={scroller} tabIndex={-1} onScroll={(e) => syncBottom(e.currentTarget)}>
+      <PointMenu at={menuAt} onClose={() => setMenuAt(null)} items={menuAt ? chatMenu() : []} label="Чат" />
+      {/* right click in the chat (as in Orca): an inner card with its own menu (a file) has handled it already */}
+      <div className="chat-scroll" ref={scroller} tabIndex={-1} onScroll={(e) => syncBottom(e.currentTarget)}
+        onContextMenu={(e) => { if (e.defaultPrevented || (e.target as HTMLElement).closest('a, input, textarea')) return; e.preventDefault(); setMenuAt({ x: e.clientX, y: e.clientY }) }}>
         <div className="chat-col" ref={transcript} role="log" aria-live="polite" aria-relevant="additions">
           {!messages && !loadError && <Skeleton rows={6} label="Загрузка истории…" />}
           {loadError && (

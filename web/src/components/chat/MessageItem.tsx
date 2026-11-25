@@ -10,7 +10,8 @@ import { parseDiff, type DiffFile, type DiffLine } from '../../lib/diff'
 import type { Message, ToolCall } from '../../types'
 import { Markdown } from '../Markdown'
 import { DiffLines } from '../DiffLines'
-import { Disclosure, IconButton } from '../ui'
+import { Disclosure, IconButton, PointMenu } from '../ui'
+import { fileMenuItems } from './Turn'
 import { isSubagentTool, SubagentCard } from './SubagentCard'
 import { ThoughtBlock, Thumb } from './ToolSteps'
 import { isImagePath, splitAttachments } from '../../lib/attachments'
@@ -241,7 +242,12 @@ function EditBlock({ tool, sessionId, file, created, added, removed, lines }: Ed
     e.preventDefault()
     if (cwd) void openChatFileDiff(cwd, file)
   }
+  // right click: the same file menu as a row of «Изменено N файлов» (open, reveal, copy the path, its diff)
+  const [at, setAt] = useState<{ x: number; y: number } | null>(null)
+  const canOpen = useFeature('open-file')
   return (
+    <div onContextMenu={(e) => { if (!cwd) return; e.preventDefault(); setAt({ x: e.clientX, y: e.clientY }) }}>
+    {cwd && <PointMenu at={at} onClose={() => setAt(null)} items={at ? fileMenuItems(cwd, file, canOpen) : []} label={`Действия с ${basename(file)}`} />}
     <Disclosure
       className="msg tool tool-edit"
       defaultOpen={lines.length <= 16}
@@ -260,6 +266,7 @@ function EditBlock({ tool, sessionId, file, created, added, removed, lines }: Ed
       <DiffLines lines={lines} numbers={lines.some((l) => l.new !== null)} limit={400} label={`Изменения ${basename(file)}`} />
       {tool.status === 'error' && tool.output && <pre className="tool-err">{tool.output.slice(0, OUTPUT_LIMIT)}</pre>}
     </Disclosure>
+    </div>
   )
 }
 

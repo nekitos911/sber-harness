@@ -177,14 +177,10 @@ function TurnFilesView({ msgs, cwd }: { msgs: Message[]; cwd: string }) {
 /** The harness's and agents' own scratch files (a commit message draft, brainstorm notes): never shown as the work. */
 export const SERVICE_FILE = /(^|[\\/])(\.gigacode[\\/]tmp|\.superpowers)[\\/]/
 
-/** One file of «Изменено N файлов»: the name opens it, the row folds its lines out, «…» / right click — the rest (as in Orca). */
-function TurnFileRow({ f, path, c, cwd }: { f: string; path: string; c: { added: number; removed: number; lines: DiffLine[] }; cwd: string }) {
-  const [menu, setMenu] = useState(false)
-  const more = useRef<HTMLButtonElement>(null)
-  const canOpen = useFeature('open-file')
-  const dir = path.includes('/') || path.includes('\\') ? path.slice(0, path.length - basename(path).length) : ''
+/** What a file of a chat offers (the «Изменено N файлов» rows, an edit step's card): open, reveal, copy, its diff. */
+export function fileMenuItems(cwd: string, f: string, canOpen: boolean): MenuItem[] {
   const abs = /^([a-zA-Z]:)?[\\/]/.test(f) ? f : `${cwd.replace(/[\\/]+$/, '')}${cwd.includes('\\') ? '\\' : '/'}${f}`
-  const items: MenuItem[] = !menu ? [] : [
+  return [
     { label: 'Открыть файл', icon: <FileText />, onSelect: () => void openChatFile(cwd, f) },
     ...(canOpen ? [
       { label: 'Открыть приложением по умолчанию', icon: <ExternalLink />, onSelect: () => openFile(abs, 'file') },
@@ -193,6 +189,15 @@ function TurnFileRow({ f, path, c, cwd }: { f: string; path: string; c: { added:
     { label: 'Копировать путь', icon: <ClipboardCopy />, onSelect: () => void navigator.clipboard.writeText(abs).then(() => toast(`Скопировано: ${abs}`, 'ok'), () => toast('Буфер обмена недоступен', 'error')) },
     { label: 'Показать изменения', icon: <GitCompare />, divider: true, onSelect: () => void openChatFileDiff(cwd, f) },
   ]
+}
+
+/** One file of «Изменено N файлов»: the name opens it, the row folds its lines out, «…» / right click — the rest (as in Orca). */
+function TurnFileRow({ f, path, c, cwd }: { f: string; path: string; c: { added: number; removed: number; lines: DiffLine[] }; cwd: string }) {
+  const [menu, setMenu] = useState(false)
+  const more = useRef<HTMLButtonElement>(null)
+  const canOpen = useFeature('open-file')
+  const dir = path.includes('/') || path.includes('\\') ? path.slice(0, path.length - basename(path).length) : ''
+  const items: MenuItem[] = !menu ? [] : fileMenuItems(cwd, f, canOpen)
   return (
     <div onContextMenu={(e) => { e.preventDefault(); setMenu(true) }}>
       <Disclosure
