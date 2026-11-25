@@ -95,9 +95,13 @@ export function backgroundSteps(file, offset = 0) {
     } catch {
       continue;
     }
-    if (ev?.type !== 'assistant' || !Array.isArray(ev.message?.content)) continue;
-    for (const c of ev.message.content) {
-      if (c?.type === 'text' && c.text?.trim()) items.push({ kind: 'text', text: c.text });
+    if (ev?.type !== 'assistant') continue;
+    // GigaCode writes Gemini-style parts ({ text } | { functionCall: { id, name, args } }, seen on the target
+    // 2026-11-25); the stream-json shape (content: [{ type: 'text' | 'tool_use' }]) is read too
+    const parts = Array.isArray(ev.message?.parts) ? ev.message.parts : Array.isArray(ev.message?.content) ? ev.message.content : [];
+    for (const c of parts) {
+      if (typeof c?.text === 'string' && c.text.trim() && (c.type === undefined || c.type === 'text')) items.push({ kind: 'text', text: c.text });
+      else if (c?.functionCall?.name) items.push({ kind: 'tool', id: c.functionCall.id ?? null, name: c.functionCall.name, input: c.functionCall.args ?? null });
       else if (c?.type === 'tool_use' && c.name) items.push({ kind: 'tool', id: c.id ?? null, name: c.name, input: c.input ?? null });
     }
   }

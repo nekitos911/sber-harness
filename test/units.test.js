@@ -7,7 +7,7 @@ import { render } from '../server/orchestration.js';
 import { readRegistry } from '../server/registry.js';
 import { findLiteralSecrets } from '../server/config.js';
 import { expandCommand } from '../server/launchers.js';
-import { backgroundLaunch, backgroundResult, outputFileIn } from '../server/background-agents.js';
+import { backgroundLaunch, backgroundResult, backgroundSteps, outputFileIn } from '../server/background-agents.js';
 import { tmpDir, rmrf } from './helpers.js';
 
 const dir = tmpDir();
@@ -154,4 +154,22 @@ test('a background sub-agent settles on the result in its file: the last one, an
   assert.equal(failed.isError, true);
   assert.match(failed.output, /error_during_execution/, 'an error says what the file tail says');
   assert.equal(backgroundResult(path.join(dir, 'no-such-file.jsonl')), null);
+});
+
+test('a background sub-agent\'s steps from its file: GigaCode\'s parts (text, functionCall) and the stream-json content shape', () => {
+  const file = path.join(dir, 'bg-steps.jsonl');
+  // the shape GigaCode wrote on the target (2026-11-25): message.parts with text / functionCall { id, name, args }
+  const gigacode = { type: 'assistant', message: { parts: [{ text: 'Смотрю маршруты' }, { functionCall: { id: 'c1', name: 'read_file', args: { absolute_path: 'routes.ts' } } }] } };
+  const streamJson = { type: 'assistant', message: { content: [{ type: 'text', text: 'Сверяю схемы' }, { type: 'tool_use', id: 'c2', name: 'grep', input: { pattern: 'schema' } }] } };
+  fs.writeFileSync(file, `${JSON.stringify(gigacode)}\n${JSON.stringify({ type: 'user', message: { parts: [{ functionResponse: {} }] } })}\n${JSON.stringify(streamJson)}\n{"type":"assistant","mess`);
+  const first = backgroundSteps(file, 0);
+  assert.deepEqual(first.items, [
+    { kind: 'text', text: 'Смотрю маршруты' },
+    { kind: 'tool', id: 'c1', name: 'read_file', input: { absolute_path: 'routes.ts' } },
+    { kind: 'text', text: 'Сверяю схемы' },
+    { kind: 'tool', id: 'c2', name: 'grep', input: { pattern: 'schema' } },
+  ]);
+  // the line still being written is left for the next look
+  fs.appendFileSync(file, `age":{"parts":[{"text":"Готово"}]}}\n`);
+  assert.deepEqual(backgroundSteps(file, first.offset).items, [{ kind: 'text', text: 'Готово' }]);
 });
