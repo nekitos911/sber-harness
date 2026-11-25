@@ -923,7 +923,7 @@ function OrchestrationSection({ form, update }: Omit<SectionProps, 'fieldError'>
             <Switch label="Проверять, доделан ли план" checked={o.planCheck !== false} onChange={(v) => update({ ...form, orchestration: { ...o, planCheck: v } })} />
           </Row>
         )}
-        {o.subagentMcpExclude !== undefined && <SubagentMcpRow off={o.subagentMcpExclude} onChange={(list) => update({ ...form, orchestration: { ...o, subagentMcpExclude: list } })} />}
+        {o.subagentMcpExclude !== undefined && <SubagentMcpRow agentId={agentId} off={o.subagentMcpExclude} onChange={(list) => update({ ...form, orchestration: { ...o, subagentMcpExclude: list } })} />}
         {o.subagentRetention !== undefined && (
           <Row label="Оставлять закончивших субагентов в боковой панели" hint="Иначе закончивший субагент уходит в архив; его чат открывается по ссылке в чате агента.">
             <Switch label="Оставлять закончивших субагентов" checked={o.subagentRetention === 'keep'}
@@ -1321,17 +1321,24 @@ function AutoValue({ value, mono, open, onToggle }: { value: string; mono?: bool
 }
 
 /** Which of the CLI's MCP servers a sub-agent or worker starts with: each one costs start time, harness always comes. */
-function SubagentMcpRow({ off, onChange }: { off: string[]; onChange: (list: string[]) => void }) {
+function SubagentMcpRow({ agentId, off, onChange }: { agentId: string; off: string[]; onChange: (list: string[]) => void }) {
   const can = useFeature('mcp-connections')
   const [names, setNames] = useState<string[] | null>(null)
+  const [seen, setSeen] = useState<string[]>([])
   useEffect(() => {
     if (!can) return
     void tryApi<{ servers: { name: string; enabled: boolean }[] }>('GET', '/mcp/config')
       .then((r) => setNames((r?.servers ?? []).filter((x) => x.enabled && x.name !== 'harness').map((x) => x.name)))
   }, [can])
+  // the servers the CLI itself reported on its last start: without mcpServersFrom the harness's own list is empty
+  useEffect(() => {
+    if (!agentId) return
+    void tryApi<{ mcpServers?: { name: string }[]; seen?: { mcpServers?: { name: string }[] } | null }>('GET', `/agents/${encodeURIComponent(agentId)}/info`)
+      .then((r) => setSeen([...(r?.mcpServers ?? []), ...(r?.seen?.mcpServers ?? [])].map((x) => x.name).filter((n) => n && n !== 'harness')))
+  }, [agentId])
   // a server switched off earlier but no longer configured stays listed: it can still be switched back on
-  const all = [...new Set([...(names ?? []), ...off])].sort()
-  if (!can || !all.length) return null
+  const all = [...new Set([...(names ?? []), ...seen, ...off])].sort()
+  if (!all.length) return null
   return (
     <Row label="MCP-серверы субагентов" wide hint="Субагенты стартуют только с отмеченными серверами (harness подключается всегда). Каждый лишний сервер добавляет секунды к старту.">
       <div className="set-chips">

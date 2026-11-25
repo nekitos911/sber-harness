@@ -230,14 +230,15 @@ function userMcpServers(file = USER_SETTINGS) {
 
 /** Per-session settings.json for the Gemini-CLI family. Never contains the CLI's `permissions` block. */
 /**
- * agents.<id>.mcpExclude under agents.<id>.mcpExcludeKey (default "excludeMCPServers", verified on the target
- * 2026-11-18: a one-shot run with it started no java-lsp and printed no MCP warning): servers the harness runs do not
- * start — GigaCode merges the user's settings.json, so a server missing from the run file still starts without it.
+ * agents.<id>.mcpExclude under agents.<id>.mcpExcludeKey (default "mcp.excluded": on the target, 2026-11-25, GigaCode
+ * honours only that key — a top-level "excludeMCPServers" in a run file was ignored and every server started):
+ * servers the harness runs do not start — GigaCode merges the user's settings.json, so a server missing from the run
+ * file still starts without it.
  */
 function mcpExclusion(agentCfg, rest) {
   const list = (agentCfg.mcpExclude || []).filter((x) => x !== 'harness');
   if (!list.length) return {};
-  const [head, ...tail] = (agentCfg.mcpExcludeKey || 'excludeMCPServers').split('.');
+  const [head, ...tail] = (agentCfg.mcpExcludeKey || 'mcp.excluded').split('.');
   if (!tail.length) return { [head]: list };
   const obj = { ...(rest[head] || {}) };
   let cur = obj;

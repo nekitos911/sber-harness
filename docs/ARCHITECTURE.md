@@ -1390,8 +1390,8 @@ load или агент без `loadSession` → `session/new` + системна
 хранится и возвращается как 0, и `acpIdleTimeoutMin`) и заново загружается через `session/load` на следующем сообщении (заметка — только если load не удался); `transport`
 и `acpIdleMin` есть в /api/settings. Обнаружение моделей агента ACP спрашивает тёплый процесс в скрытой дополнительной сессии
 (без холодного старта); если его нет, работает в безголовом режиме, как раньше. Исключения MCP для запусков harness: `agents.<id>.mcpExclude`
-(никогда не `harness`) записываются в настройки запуска под ключом `agents.<id>.mcpExcludeKey` (по умолчанию `excludeMCPServers`,
-можно указать `mcp.excluded`); `GET /api/agents/:id/info` → `mcpServers: [{ name, status,
+(никогда не `harness`) записываются в настройки запуска под ключом `agents.<id>.mcpExcludeKey` (по умолчанию `mcp.excluded` —
+GigaCode читает только его, верхнеуровневый `excludeMCPServers` игнорирует; старый ключ можно задать явно); `GET /api/agents/:id/info` → `mcpServers: [{ name, status,
 excluded }]` из последнего init для переключателей. Замечания: ответ карточки вопроса — обычное сообщение
 (`POST /api/sessions/:id/messages` с «Ответ на вопрос «…»: …»); любая доставка в сессию снимает `waitingFor`
 'answer'/'permission'; открытая карточка вопроса сессии получает `question.answered: true, answer, answeredAt` (текст

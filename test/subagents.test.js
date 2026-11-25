@@ -336,8 +336,8 @@ test('orchestration.subagentMcpExclude: helpers start without those MCP servers,
     await waitFor(async () => (await messages(caller.id)).some((m) => m.kind === 'assistant' && m.text.includes('worker_run result:')), { timeout: 20000 });
     const child = (await state()).sessions.find((s) => s.parentId === caller.id && s.ephemeral);
     const settingsOf = (id) => JSON.parse(fs.readFileSync(path.join(h.dataDir, 'runs', id, 'settings.json'), 'utf8'));
-    assert.deepEqual(settingsOf(child.id).excludeMCPServers, ['confluence']);
-    assert.equal(settingsOf(caller.id).excludeMCPServers, undefined);
+    assert.deepEqual(settingsOf(child.id).mcp?.excluded, ['confluence']);
+    assert.equal(settingsOf(caller.id).mcp?.excluded, undefined);
   } finally {
     await h.api('PUT', '/api/settings', { orchestration: { subagentMcpExclude: [] } });
   }
@@ -353,16 +353,16 @@ test('a sub-agent asks for an MCP server off for sub-agents: mcp_enable, then a 
     // the caller knows the task needs it: on from the start
     const wanted = (await call(caller.id, 'agent', { subagent_type: 'java-reviewer', prompt: 'трекер нужен #done ок', mcp: ['confluence'], run_in_background: true })).body;
     await waitFor(async () => (await state()).sessions.find((s) => s.id === wanted.sessionId)?.report, { timeout: 20000, what: 'helper with mcp done' });
-    assert.equal(settingsOf(wanted.sessionId).excludeMCPServers, undefined);
+    assert.equal(settingsOf(wanted.sessionId).mcp?.excluded, undefined);
     // found out on the way: asks, ends its turn, comes back with the server on the same CLI session
     const child = (await call(caller.id, 'agent', { subagent_type: 'java-reviewer', prompt: '#silent 1500 смотрю', run_in_background: true })).body;
     await waitFor(async () => (await state()).sessions.find((s) => s.id === child.sessionId)?.status === 'running', { what: 'helper running' });
-    assert.deepEqual(settingsOf(child.sessionId).excludeMCPServers, ['confluence']);
+    assert.deepEqual(settingsOf(child.sessionId).mcp?.excluded, ['confluence']);
     const r = (await call(child.sessionId, 'mcp_enable', { server: 'confluence' })).body;
     assert.match(r.note, /Заверши ход сейчас/);
     const back = await waitFor(async () => (await messages(child.sessionId)).find((m) => m.kind === 'user' && /MCP-сервер «confluence» подключён/.test(m.text)), { timeout: 20000, what: 'continued' });
     assert.ok(back);
-    await waitFor(async () => settingsOf(child.sessionId).excludeMCPServers === undefined, { what: 'the new run has the server' });
+    await waitFor(async () => settingsOf(child.sessionId).mcp?.excluded === undefined, { what: 'the new run has the server' });
     // a server that is not off: nothing to restart
     assert.match((await call(child.sessionId, 'mcp_enable', { server: 'onework' })).body.note, /не отключён/);
   } finally {

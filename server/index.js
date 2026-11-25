@@ -397,7 +397,7 @@ export async function startServer(opts = {}) {
         transport: a.transport || 'headless',
         acpIdleMin: a.acpIdleMin ?? a.acpIdleTimeoutMin ?? 30,
         mcpExclude: a.mcpExclude || [],
-        mcpExcludeKey: a.mcpExcludeKey || 'excludeMCPServers',
+        mcpExcludeKey: a.mcpExcludeKey || 'mcp.excluded',
         model: a.model ?? null,
         models: a.models || [],
         modelGrades: a.settings?.agents?.modelGrades || {},
@@ -536,7 +536,7 @@ export async function startServer(opts = {}) {
       p.mcpExclude = a.mcpExclude;
     }
     if ('mcpExcludeKey' in a) {
-      if (typeof a.mcpExcludeKey !== 'string' || !/^[\w-]+(\.[\w-]+)*$/.test(a.mcpExcludeKey)) fail(400, `${where('mcpExcludeKey')}: путь ключа, например excludeMCPServers`);
+      if (typeof a.mcpExcludeKey !== 'string' || !/^[\w-]+(\.[\w-]+)*$/.test(a.mcpExcludeKey)) fail(400, `${where('mcpExcludeKey')}: путь ключа, например mcp.excluded`);
       p.mcpExcludeKey = a.mcpExcludeKey;
     }
     if ('mcpDisabled' in a) {
