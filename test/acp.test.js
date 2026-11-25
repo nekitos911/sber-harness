@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { startServer } from '../server/index.js';
 import { CODE_ROOT } from '../server/config.js';
-import { acpEvents, acpMcpServers, patientRequest } from '../server/acp.js';
+import { acpEvents, acpMcpServers, patientRequest, createAcp } from '../server/acp.js';
 import { tmpDir, rmrf, waitFor, waitPidGone } from './helpers.js';
 
 const root = tmpDir();
@@ -20,6 +20,9 @@ fs.writeFileSync(path.join(root, 'outside.txt'), 'снаружи');
 // an «agent» that never answers initialize and says nothing on stderr
 const deadAgent = path.join(root, 'dead-agent.js');
 fs.writeFileSync(deadAgent, 'setInterval(() => {}, 1000);\n');
+// one that never answers initialize but keeps writing to stderr (MCP warnings): its start is waited for patiently
+const chattyAgent = path.join(root, 'chatty-agent.js');
+fs.writeFileSync(chattyAgent, "setInterval(() => process.stderr.write('Warning: MCP server still starting\\n'), 200);\n");
 fs.copyFileSync(path.join(CODE_ROOT, 'harness.config.json'), configFile);
 let h;
 
@@ -37,6 +40,9 @@ async function harness() {
         // a process that never answers initialize (and says nothing on stderr)
         acpdead: { launcher: 'mock', label: 'ACP dead', transport: 'acp', firstEventTimeoutMs: 1500, command: [process.execPath, deadAgent], approvalMode: 'auto', approvalModes: ['default', 'auto'] },
         // the same mock, unloaded after 0.4 s idle
+        // the first session/new times out on a SessionStart hook, the next one works
+        acpnewhook: { launcher: 'mock', label: 'ACP new hook', transport: 'acp', env: { MOCK_ACP_NEW_HOOKTIMEOUT: path.join(root, 'newhook.flag') }, command: [process.execPath, path.join(CODE_ROOT, 'scripts', 'mock-acp-agent.js')], approvalMode: 'auto', approvalModes: ['default', 'auto'] },
+        acpchatty: { launcher: 'mock', label: 'ACP chatty', transport: 'acp', firstEventTimeoutMs: 1500, command: [process.execPath, chattyAgent], approvalMode: 'auto', approvalModes: ['default', 'auto'] },
         acpidle: { launcher: 'mock', label: 'ACP idle', transport: 'acp', acpIdleMin: 0.4 / 60, command: [process.execPath, path.join(CODE_ROOT, 'scripts', 'mock-acp-agent.js')], approvalMode: 'auto', approvalModes: ['default', 'auto'] },
       },
     },
@@ -357,6 +363,7 @@ test('an ACP agent that never answers initialize: the start is retried by itself
   assert.equal(x.queue.length, 1);
   assert.ok(x.startRetryAt > Date.now());
   await h.api('POST', `/api/sessions/${s.id}/stop`);
+  assert.equal((await session(s.id)).startRetryAt, null, 'Stop cancels the retry and its countdown');
 });
 
 test('patientRequest: waits while the agent writes to stderr, fails after a silence', async () => {
@@ -366,9 +373,11 @@ test('patientRequest: waits while the agent writes to stderr, fails after a sile
   const started = Date.now();
   const writer = setInterval(() => fs.appendFileSync(errFile, '[perf] acp agent event loop stall\n'), 100);
   const p = patientRequest(never, 'initialize', {}, { idleMs: 400, errFile, pollMs: 50 });
-  setTimeout(() => clearInterval(writer), 1000);
   await assert.rejects(p, /ACP initialize: нет ответа/);
-  assert.ok(Date.now() - started >= 1300, 'kept waiting while stderr grew');
+  clearInterval(writer);
+  const took = Date.now() - started;
+  // past the 400 ms silence limit while stderr grew, but never past 2 × the limit: a start that keeps writing is not forever
+  assert.ok(took >= 700 && took < 1500, `took ${took} ms`);
   const answered = await patientRequest({ request: async () => 'ok' }, 'initialize', {}, { idleMs: 400, errFile });
   assert.equal(answered, 'ok');
 });
@@ -386,4 +395,83 @@ test('«Переподключить MCP»: a new agent process on the same CLI 
   assert.notEqual(records().filter((r) => r.env.HARNESS_SESSION_ID === s.id).at(-1).pid, pid, 'a new process');
   assert.ok((await messages(s.id)).some((m) => m.kind === 'system' && /Агент перезапущен: MCP-серверы подключаются заново/.test(m.text)));
   await idle(s.id);
+});
+
+test('a hook timeout while the session starts (session/new): the messages wait in the queue once, never run twice', async () => {
+  const s = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'acpnewhook', cwd, prompt: 'первое' })).body;
+  const err = await waitFor(async () => (await messages(s.id)).find((m) => m.kind === 'error'), { timeout: 30000, what: 'the start failed' });
+  assert.match(err.text, /Хук ACP new hook не ответил вовремя/);
+  assert.match(err.text, /Повторю запуск сам через 20 с/);
+  // the person does not wait for the automatic retry: the queue goes with the next message, in one turn
+  await send(s.id, 'второе');
+  await waitFor(async () => (await said(s.id)).some((t) => /ACP mock, turn 1\./.test(t)), { timeout: 20000, what: 'the turn ran' });
+  await idle(s.id);
+  await new Promise((r) => setTimeout(r, 1000));
+  assert.ok(!(await said(s.id)).some((t) => /turn 2/.test(t)), JSON.stringify(await said(s.id)));
+  assert.equal((await session(s.id)).queue.length, 0);
+});
+
+test('a sub-agent whose turn the harness retries (hook timeout) is not reported «no_report» to its caller before the retry', async () => {
+  const caller = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'acphooks', cwd, prompt: 'привет' })).body;
+  await idle(caller.id);
+  const r = await h.api('POST', '/api/agent/worker_run', { spec: 'сделай #hooktimeout', background: true }, { 'x-harness-session': caller.id });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  const id = r.body.sessionId;
+  // the hook retry ran (and failed too): the harness goes on continuing it by itself
+  await waitFor(async () => (await messages(id)).some((m) => m.kind === 'error'), { timeout: 30000, what: 'the retry failed' });
+  await new Promise((r) => setTimeout(r, 500));
+  const child = await session(id);
+  assert.equal(child.report ?? null, null, `the caller was told ${JSON.stringify(child.report)} while the harness still retries`);
+  assert.ok(!child.archived);
+  await h.api('POST', `/api/sessions/${id}/stop`);
+});
+
+test('Stop during a long ACP start (the agent writes to stderr, initialize not answered yet) ends the turn at once', async () => {
+  const s = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'acpchatty', cwd, prompt: 'привет' })).body;
+  await new Promise((r) => setTimeout(r, 700));
+  const at = Date.now();
+  await h.api('POST', `/api/sessions/${s.id}/stop`);
+  const x = await waitFor(async () => { const y = await session(s.id); return y.status === 'stopped' && !y.phase && !y.warm && y; }, { timeout: 10000, what: 'the turn ended' });
+  assert.ok(Date.now() - at < 3000, `stopped after ${Date.now() - at} ms`);
+  assert.equal(x.queue.length, 0);
+  assert.ok(!(await messages(s.id)).some((m) => m.kind === 'error'), 'a stop is not an error');
+});
+
+test('an idle ACP process that was busy with a helper prompt when its idle time ran out is still unloaded after it', async () => {
+  const warm = new Map();
+  const acp = createAcp({ onWarm: (sid, w) => warm.set(sid, w) });
+  const o = {
+    sid: 'idle-helper', agent: 'idlehelper', launcher: { acpArgs: () => ['--acp'] }, ctx: { harnessMcp: { url: 'http://127.0.0.1:9/mcp' } },
+    command: { file: process.execPath, args: [path.join(CODE_ROOT, 'scripts', 'mock-acp-agent.js')] }, cwd, env: process.env,
+    logFile: path.join(root, 'idle-helper.log'), roots: [cwd], idleMs: 300, prompt: 'привет', onEvent: () => {},
+  };
+  try {
+    assert.equal((await acp.turn(o).done).sawResult, true);
+    const helper = acp.helperPrompt('idlehelper', '#slow'); // ~4 s: the idle time runs out meanwhile
+    await new Promise((r) => setTimeout(r, 1000));
+    assert.equal(acp.warm('idle-helper'), true, 'not unloaded under a running helper');
+    await helper;
+    await waitFor(() => !acp.warm('idle-helper'), { timeout: 3000, what: 'unloaded after the helper' });
+    assert.equal(warm.get('idle-helper'), false);
+  } finally {
+    acp.close();
+  }
+});
+
+test('a sub-agent whose start is retried later by itself is not reported «failed» to its caller meanwhile', async () => {
+  const flag = path.join(root, 'newhook.flag');
+  fs.writeFileSync(flag, '1'); // the caller starts normally
+  const caller = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'acpnewhook', cwd, prompt: 'привет' })).body;
+  await idle(caller.id);
+  fs.rmSync(flag); // ...its sub-agent's first session/new times out
+  const r = await h.api('POST', '/api/agent/worker_run', { spec: 'посмотри', background: true }, { 'x-harness-session': caller.id });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  const id = r.body.sessionId;
+  const err = await waitFor(async () => (await messages(id)).find((m) => m.kind === 'error'), { timeout: 30000, what: 'the start failed' });
+  assert.match(err.text, /Повторю запуск сам через 20 с/);
+  await new Promise((r) => setTimeout(r, 500));
+  const child = await session(id);
+  assert.equal(child.report ?? null, null, `the caller was told ${JSON.stringify(child.report)} before the retry`);
+  assert.equal(child.queue.length, 1);
+  await h.api('POST', `/api/sessions/${id}/stop`);
 });

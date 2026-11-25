@@ -9,7 +9,7 @@ import {
 } from '@dnd-kit/core'
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { CloudOff, Columns3, Eye, EyeOff, ListFilter, Plus, RefreshCw, Search, SquareKanban } from 'lucide-react'
+import { CloudOff, Columns3, Eye, EyeOff, ListFilter, Plus, RefreshCw, Search } from 'lucide-react'
 import { api, errorText, tryApi } from '../api'
 import { getState, openTask, setState, toast, upsert, useFeature, useStore } from '../store'
 import { COLUMNS, statusLabel } from '../lib/format'
@@ -17,7 +17,7 @@ import { byOrder } from '../lib/tasks'
 import type { Task, TaskStatus } from '../types'
 import { TaskCard, type BoardCtx } from '../components/board/TaskCard'
 import { TaskPage } from '../components/board/TaskPage'
-import { Button, Popover, Segmented, Select } from '../components/ui'
+import { Button, IconButton, Popover, Segmented, Select } from '../components/ui'
 import { TaskList } from '../components/board/TaskList'
 import { ErrorBoundary } from '../components/ErrorBoundary'
 import { useSettings } from '../lib/agents'
@@ -230,6 +230,7 @@ export function BoardView() {
     </>
   )
   const activeFilters = Number(!!repo) + Number(!!hiddenStatuses && allStatuses) + Number(showHidden)
+  const listIds = lanes.flatMap((c) => shown[c.status] ?? [])
 
   return (
     <>
@@ -257,16 +258,15 @@ export function BoardView() {
           <>
             <button ref={importRef} type="button" className="btn" aria-expanded={importOpen} onClick={() => setImportOpen(!importOpen)} data-tip="Добавить задачу из трекера по ключу или ссылке">
               <Plus />
-              Добавить по ключу
+              По ключу
             </button>
             <ImportPopover anchor={importRef} open={importOpen} onClose={() => setImportOpen(false)} onImported={openTask} />
           </>
         )}
+        {/* a local task: the list had no way to create one, only the board's column «+» */}
+        <Button icon={<Plus />} onClick={() => setCreating(true)}>Новая задача</Button>
         {syncEnabled && (
-          <button type="button" className="btn" onClick={sync} disabled={syncing}>
-            <RefreshCw className={syncing ? 'spinner' : undefined} />
-            Синхронизировать
-          </button>
+          <IconButton label={syncing ? 'Синхронизация с трекером…' : 'Синхронизировать с трекером'} icon={<RefreshCw className={syncing ? 'spinner' : undefined} />} onClick={sync} disabled={syncing} />
         )}
       </header>
       {trackerProblem && (
@@ -277,8 +277,24 @@ export function BoardView() {
       )}
 
       <div className="board-area">
-      {layout === 'list' && tasks.length > 0 ? (
-        <TaskList ids={lanes.flatMap((c) => shown[c.status] ?? [])} byId={byId} sessions={ctx.sessions} onOpen={openTask} />
+      {tasks.length === 0 && (
+        <div className="board-empty">
+          <p><strong>Задач пока нет.</strong> Сюда попадают задачи, назначенные на вас в трекере, задачи от агентов и добавленные по ключу.</p>
+          {syncEnabled
+            ? <Button variant="primary" icon={<RefreshCw />} busy={syncing} onClick={() => void sync()}>Синхронизировать с трекером</Button>
+            : <Button variant="primary" icon={<Plus />} onClick={() => setCreating(true)}>Новая задача</Button>}
+        </div>
+      )}
+      {layout === 'list' ? (
+        <>
+          {creating && <QuickAdd status="todo" repo={repo} onDone={() => setCreating(false)} />}
+          {tasks.length === 0 ? null : listIds.length > 0 ? <TaskList ids={listIds} byId={byId} sessions={ctx.sessions} onOpen={openTask} /> : (
+            <div className="board-empty">
+              <p><strong>Ничего не найдено.</strong> {query.trim() ? `Ни одна задача не подходит под «${query.trim()}».` : 'Все задачи скрыты фильтрами.'}</p>
+              <Button size="sm" onClick={() => { setQuery(''); setRepo(''); setShowHidden(false); setAllStatuses(true) }}>Показать все задачи</Button>
+            </div>
+          )}
+        </>
       ) : (
       <DndContext
         sensors={sensors}
@@ -289,24 +305,13 @@ export function BoardView() {
         onDragCancel={() => setDrag(null)}
         accessibility={{
           announcements,
-          screenReaderInstructions: { draggable: 'Чтобы переместить задачу, нажмите пробел. Стрелки — перемещение, пробел — отпустить, Escape — отмена.' },
+          screenReaderInstructions: { draggable: 'Чтобы переместить задачу, нажмите пробел. Стрелки двигают её, пробел отпускает, Escape отменяет.' },
         }}
       >
-        {tasks.length === 0 && (
-          <div className="board-empty">
-            <SquareKanban className="empty-icon" aria-hidden />
-            <p>Здесь появятся задачи, назначенные на вас в трекере{syncEnabled ? ' (кнопка «Синхронизировать»)' : ''}, созданные агентами или добавленные по ключу.</p>
-            <div className="row">
-              {syncEnabled && <Button icon={<RefreshCw />} busy={syncing} onClick={() => void sync()}>Синхронизировать</Button>}
-              {importOn && <Button icon={<Plus />} onClick={() => setImportOpen(true)}>Добавить по ключу</Button>}
-              <Button variant="primary" icon={<Plus />} onClick={() => setCreating(true)}>Новая задача</Button>
-            </div>
-          </div>
-        )}
         <div className="board">
           {lanes.map((c, i) => (
             <Column key={c.status} create={creating && i === 0} onCreateShown={() => setCreating(false)} status={c.status} label={c.label} ids={shown[c.status]} ctx={ctx} repo={repo} dragging={!!drag} muted={c.muted}
-              tip={columnTip(c.trackerStatuses.length ? c.trackerStatuses : Object.entries(settings?.integrations?.tasks?.statusMap ?? {}).filter(([, v]) => v === c.status).map(([k]) => k))} />
+              tip={columnTip(c.trackerStatuses.length ? c.trackerStatuses : Object.entries(settings?.integrations?.tasks?.statusMap ?? {}).filter(([, v]) => v === c.status).map(([k]) => k), !!board?.moveSyncsTracker)} />
           ))}
         </div>
         <DragOverlay dropAnimation={{ duration: 180, easing: 'cubic-bezier(0.23, 1, 0.32, 1)' }}>
@@ -361,9 +366,9 @@ function ImportPopover({ anchor, open, onClose, onImported }: { anchor: RefObjec
   )
 }
 
-/** What a column means: which tracker statuses land in it, and that moving a card never changes the tracker. */
-function columnTip(from: string[]) {
-  return `Колонка доски.${from.length ? ` Статусы трекера: ${from.join(', ')}.` : ''}\nПеренос карточки не меняет статус в трекере.`
+/** What a column means: which tracker statuses land in it, and whether moving a card changes the tracker (board.moveSyncsTracker). */
+function columnTip(from: string[], syncs: boolean) {
+  return `Колонка доски.${from.length ? ` Статусы трекера: ${from.join(', ')}.` : ''}\n${syncs ? 'Перенос карточки переводит задачу и в трекере.' : 'Перенос карточки не меняет статус в трекере.'}`
 }
 
 function Column({ status, label, ids, ctx, repo, dragging, tip, muted, create, onCreateShown }: { status: TaskStatus; label: string; ids: string[]; ctx: BoardCtx; repo: string; dragging: boolean; tip: string; muted?: boolean; create?: boolean; onCreateShown?: () => void }) {
@@ -436,7 +441,7 @@ function QuickAdd({ status, repo, onDone }: { status: TaskStatus; repo: string; 
       <input
         className="input"
         autoFocus
-        placeholder="Название задачи, Enter — добавить"
+        placeholder="Название задачи и Enter"
         aria-label="Название новой задачи"
         value={title}
         disabled={busy}

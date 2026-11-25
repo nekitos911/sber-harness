@@ -110,7 +110,7 @@ function TaskBody({ task, ctx }: { task: Task; ctx: BoardCtx }) {
         )}
         <MenuButton label="Ещё действия" icon={<Ellipsis />} align="right" items={[
           { label: 'Назначить агенту…', icon: <UserPlus />, onSelect: () => setPanel('assign') },
-          { label: 'Отправить в сессию…', icon: <Send />, onSelect: () => setPanel('send') },
+          { label: 'Отправить в чат…', icon: <Send />, onSelect: () => setPanel('send') },
           ...(!task.hidden ? [{ label: imported ? 'Скрыть с доски' : 'Удалить задачу', icon: imported ? <EyeOff /> : <Trash2 />, danger: !imported, divider: true, onSelect: () => setConfirmDelete(true) }] : []),
         ]} />
       </DetailBar>
@@ -119,7 +119,6 @@ function TaskBody({ task, ctx }: { task: Task; ctx: BoardCtx }) {
         <header className="dp-head">
           <div className="dp-title">
             <TitleField id={titleId} task={task} />
-            <span className="dp-key mono">{key}</span>
           </div>
           <div className="dp-primary">
             {/* One primary action: take into work → open the running session → send back for rework once it finished. */}
@@ -132,7 +131,7 @@ function TaskBody({ task, ctx }: { task: Task; ctx: BoardCtx }) {
               <>
                 <button type="button" className="btn" onClick={() => openSession(session.id)}>
                   <StatusIcon session={session} />
-                  Открыть сессию
+                  Открыть чат
                 </button>
                 <button ref={primaryRef} type="button" className="btn btn-primary" onClick={() => setPop('rework')}>
                   <Wrench />
@@ -142,13 +141,14 @@ function TaskBody({ task, ctx }: { task: Task; ctx: BoardCtx }) {
             ) : (
               <button type="button" className="btn btn-primary" onClick={() => openSession(session.id)}>
                 <StatusIcon session={session} />
-                Открыть сессию
+                Открыть чат
               </button>
             )}
             {!session && <HandoffPopover task={task} anchor={primaryRef} open={pop === 'handoff'} onClose={() => setPop(null)} />}
             {reworkable && <ReworkPopover task={task} anchor={primaryRef} open={pop === 'rework'} onClose={() => setPop(null)} />}
           </div>
           <div className="dp-sub">
+            <span className="dp-sub-key mono">{key}</span>
             <span className="dp-status" data-s={task.status}><span className="col-mark" data-s={task.status} aria-hidden />{statusLabel(task.status)}</span>
             {task.externalStatus && <span className="chip" data-tip="Статус в трекере">трекер: {task.externalStatus}</span>}
             {task.hidden && <span className="chip">скрыта с доски</span>}
@@ -164,7 +164,7 @@ function TaskBody({ task, ctx }: { task: Task; ctx: BoardCtx }) {
           </Meta>
           <Meta label="Агент">
             {session ? <TaskAgent task={task} session={session} ctx={ctx} /> : <span className="muted">Не назначен</span>}
-            {session && <span className="dp-agent-meta muted">{session.title} · {ctx.agents.get(session.agent)?.label ?? session.agent}</span>}
+            {session && <span className="dp-agent-meta muted" data-tip={session.title}>{ctx.agents.get(session.agent)?.label ?? session.agent}</span>}
           </Meta>
           <Meta label="Целевые ветки">
             <TargetsLine targets={task.targets} workspaceId={task.workspaceId} onChange={(targets) => void patch({ targets })} />
@@ -405,7 +405,7 @@ function DepsField({ task, ctx, onChange }: { task: Task; ctx: BoardCtx; onChang
           const dep = ctx.byId.get(d)
           const waiting = dep && dep.status !== 'done'
           return (
-            <span key={d} className={waiting ? 'chip chip-fail' : 'chip chip-done'} data-tip={dep ? `${dep.title} — ${COLUMNS.find((c) => c.id === dep.status)?.label}` : 'задача удалена'}>
+            <span key={d} className={waiting ? 'chip chip-fail' : 'chip chip-done'} data-tip={dep ? `${dep.title} (${COLUMNS.find((c) => c.id === dep.status)?.label})` : 'задача удалена'}>
               {waiting && <Lock aria-hidden />}
               <button type="button" className="chip-link mono" onClick={() => dep && ctx.onOpen(d)}>{d}</button>
               <button type="button" className="chip-x" aria-label={`Убрать зависимость ${d}`} onClick={() => toggle(d)}><X /></button>
@@ -595,7 +595,7 @@ function Ports({ task }: { task: Task }) {
     const res = await tryApi<TaskPort>('POST', `/tasks/${encodeURIComponent(task.id)}/port`, { target })
     setBusy(null)
     if (!res) return
-    if (res.status === 'conflict') toast(`Конфликт при переносе в ${target} — агент разбирается`, 'info')
+    if (res.status === 'conflict') toast(`Конфликт при переносе в ${target}: агент разбирается`, 'info')
     else toast(`Перенесено в ${target}`, 'ok')
     if (res.sessionId) openSession(res.sessionId)
   }
@@ -613,7 +613,7 @@ function Ports({ task }: { task: Task }) {
               {p ? <span className={PORT_STATUS[p.status].cls}>{PORT_STATUS[p.status].label}</span> : <span className="chip">не перенесено</span>}
               <span className="grow" />
               {p?.sessionId && (
-                <button type="button" className="icon-btn icon-btn-sm" aria-label="Открыть сессию портирования" data-tip="Открыть сессию" onClick={() => openSession(p.sessionId!)}>
+                <button type="button" className="icon-btn icon-btn-sm" aria-label="Открыть чат портирования" data-tip="Открыть чат" onClick={() => openSession(p.sessionId!)}>
                   <SquareArrowOutUpRight />
                 </button>
               )}
@@ -787,7 +787,7 @@ function TaskPrs({ task }: { task: Task }) {
   const enabled = useStore((s) => s.integrations.pr)
   const sessions = useStore((s) => s.sessions)
   const worktrees = useStore((s) => s.worktrees)
-  if (!task.targets.length) return null
+  if (!task.targets.length || (!task.branch && !task.pr && !task.assigneeSessionId && !task.ports.length)) return null
   // Where task.branch is checked out: the assignee's folder, else a worktree on that branch.
   const assignee = sessions.find((x) => x.id === task.assigneeSessionId)
   const mainCwd = assignee?.cwd ?? Object.values(worktrees).flat().find((w) => task.branch && w.branch === task.branch)?.path ?? null
@@ -795,7 +795,7 @@ function TaskPrs({ task }: { task: Task }) {
     <section className="dp-card">
       <h3 className="dp-card-head">Пулл-реквесты</h3>
       {!enabled ? (
-        <div className="pr-off"><span className="muted">PR-интеграция не настроена.</span><button type="button" className="btn btn-sm" onClick={openPrSettings}>Настроить</button></div>
+        <div className="pr-off"><span className="muted">PR-сервис не подключён.</span><button type="button" className="btn btn-sm" onClick={openPrSettings}>Настроить</button></div>
       ) : (
         <div className="ports">
           <PrRow target={task.targets[0]} cwd={mainCwd} branch={task.branch} known={task.pr ?? null} />
@@ -816,7 +816,7 @@ function PrRow({ target, cwd, branch, known }: { target: string; cwd: string | n
   return (
     <div className="port-row">
       <GitMerge aria-hidden />
-      <span className="mono ellipsis" data-tip={`${branch ?? '—'} → ${target}`}>{target}</span>
+      <span className="mono ellipsis" data-tip={`${branch ?? 'ветки нет'} → ${target}`}>{target}</span>
       <span className="grow" />
       {shown ? <PrChip pr={shown} /> : !cwd || !branch ? (
         <span className="muted">ветки ещё нет</span>

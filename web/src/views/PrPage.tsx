@@ -177,7 +177,7 @@ export function PrPage({ pr }: { pr: PrItem }) {
               {actionsOn ? (
                 <div className="dp-side-actions">
                   <Button variant={st.k === 'approved' ? 'primary' : undefined} icon={<GitMerge />} disabled={it.mergeable === false}
-                    tip={it.mergeable === false ? 'Конфликт с базовой веткой: сначала разрешите его' : st.k === 'approved' ? undefined : 'Ревью ещё не завершено — сервис может не дать'}
+                    tip={it.mergeable === false ? 'Конфликт с базовой веткой: сначала разрешите его' : st.k === 'approved' ? undefined : 'Ревью ещё не завершено: сервис может не дать влить'}
                     onClick={() => prAction(it, 'merge')}>Влить в {it.base}</Button>
                   <Button variant="ghost" icon={<XCircle />} onClick={() => prAction(it, 'decline')}>Закрыть PR</Button>
                 </div>
@@ -201,7 +201,7 @@ export function PrPage({ pr }: { pr: PrItem }) {
                   {task && <span className="ellipsis">{task.title}</span>}
                 </button>
               ) : <p className="muted">Не связан с задачей.</p>}
-              {it.sessionId && <button type="button" className="chip pr-agent" onClick={() => openSession(it.sessionId!)} data-tip="Открыть чат агента"><Bot aria-hidden />агент harness</button>}
+              {it.sessionId && <button type="button" className="chip pr-agent" onClick={() => openSession(it.sessionId!)} data-tip="Открыть чат агента"><Bot aria-hidden />чат агента</button>}
             </section>
           </aside>
         </div>

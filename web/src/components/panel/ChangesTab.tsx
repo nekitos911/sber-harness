@@ -18,6 +18,7 @@ import { BranchPicker } from '../pickers/BranchPicker'
 import { copy, openFile, openFolder, REVEAL } from '../WorktreeMenu'
 import { flowState } from '../../lib/flow'
 import { touchedRoots, type Root } from '../../lib/toolRun'
+import { Changes } from './OverviewTab'
 import { loadWorktreesOf } from '../../ws'
 
 // what the agent wrote per change set: a remount (tab switch, panel toggle) shows it again without a new run
@@ -102,7 +103,7 @@ export function ChangesTab({ cwd, inline = false }: { cwd: string; inline?: bool
     setMsg(join(r))
   }
 
-  if (git?.error) return inline ? <p className="muted wpanel-section">{git.error}</p> : <LinkedWorktrees cwd={cwd} error={git.error} />
+  if (git?.error) return inline ? <p className="wpanel-note">{git.error}</p> : <LinkedWorktrees cwd={cwd} />
   if (!status) return <div className="wpanel-section"><Skeleton rows={4} /></div>
 
   const edit = (v: string) => {
@@ -247,7 +248,7 @@ export function ChangesTab({ cwd, inline = false }: { cwd: string; inline?: bool
             </button>
           )}
         </div>
-        {title.length > TITLE_MAX && <p className="scm-hint">Первая строка — заголовок: <span className="num">{title.length}/{TITLE_MAX}</span>, лучше короче.</p>}
+        {title.length > TITLE_MAX && <p className="scm-hint">Первая строка станет заголовком: <span className="num">{title.length}/{TITLE_MAX}</span>, лучше короче.</p>}
         <GenerateStatus g={gen} onRetry={() => void generate()} />
       </>}
 
@@ -445,7 +446,7 @@ function ChangeRow({ cwd, f, git, staged = false, stageOn = false, onStage, onDi
  * A folder without git (the projects folder): the work happens in worktrees its chats made — the task's worktrees and
  * the ones created by its agents — each with its changes; a click shows that worktree's changes.
  */
-function LinkedWorktrees({ cwd, error }: { cwd: string; error: string }) {
+function LinkedWorktrees({ cwd }: { cwd: string }) {
   const sessions = useStore((s) => s.sessions)
   const tasks = useStore((s) => s.tasks)
   const workspaces = useStore((s) => s.workspaces)
@@ -496,15 +497,25 @@ function LinkedWorktrees({ cwd, error }: { cwd: string; error: string }) {
   const seenLine = seen.length > 0 && (
     <p className="muted linked-seen" data-tip={seen.map((r) => r.path).join('\n')}>Смотрит: {[...new Set(seen.map((r) => r.name))].join(', ')}</p>
   )
+  // a plain folder (no git, no projects inside): nothing to diff against, so the files its agents changed, by their steps
+  const holdsProjects = workspaces.some((w) => w.isGit && normPath(w.path).startsWith(`${normPath(cwd)}/`))
+  if (!list.length && !holdsProjects) {
+    return (
+      <>
+        <p className="wpanel-note">Папка без git: здесь файлы, которые меняли агенты этого чата, по их шагам. Чтобы видеть полный diff и коммитить, сделайте её репозиторием (git init).</p>
+        <Changes list={here.flatMap((x) => getState().messages[x.id] ?? [])} cwd={cwd} />
+      </>
+    )
+  }
   if (!list.length) {
     return (
-      <div className="empty">
+      <div className="wpanel-empty">
+        <strong>{running ? 'Пока без изменений' : 'Изменений нет'}</strong>
         {running
-          ? <p>Агент работает в папке с проектами и пока ничего не менял: изучает задачу и код. Рабочее дерево он создаст сам в нужном проекте — оно и его изменения появятся здесь.</p>
-          : <p>Это папка с проектами, а не сам проект. Изменения появятся здесь, когда агент этого чата начнёт работу в одном из проектов.</p>}
+          ? <p>Агент изучает задачу и код в папке с проектами. Рабочее дерево он создаст сам в нужном проекте, и его изменения появятся здесь.</p>
+          : <p>Это папка с проектами. Изменения появятся здесь, когда агент этого чата начнёт работу в одном из них.</p>}
         {seenLine}
         <button type="button" className="btn btn-sm" onClick={() => openDialog({ kind: 'workspace', from: cwd })}>Открыть проект…</button>
-        <Disclosure summary="Подробности"><p className="mono" style={{ fontSize: 11 }}>{error}</p></Disclosure>
       </div>
     )
   }
@@ -512,7 +523,7 @@ function LinkedWorktrees({ cwd, error }: { cwd: string; error: string }) {
     <>
     <div className="wpanel-section">
       <h3>{list.length > 1 ? 'Репозитории этой работы' : 'Репозиторий этой работы'}</h3>
-      {list.length > 1 && <p className="muted linked-hint">Ниже — изменения выбранного; нажмите другой, чтобы переключиться.</p>}
+      {list.length > 1 && <p className="muted linked-hint">Ниже изменения выбранного. Нажмите другой, чтобы переключиться.</p>}
       <ul className="linked-wts">
         {list.map((w) => (
           <li key={w.path} className="linked-wt-li">
@@ -558,10 +569,10 @@ function FlowStrip({ cwd, changed, ahead, upstream, branch, base, pr, prEnabled,
     push: { text: ahead ? `отправить ${ahead} ${plural(ahead, 'коммит', 'коммита', 'коммитов')} в origin` : 'отправить ветку в origin' },
     pushed: { text: 'всё отправлено' },
     'create-pr': { text: 'открыть пулл-реквест', action: { label: 'Создать PR', run: onCreatePr } },
-    'pr-off': { text: 'открыть PR — PR-интеграция не настроена', action: { label: 'Настроить', run: openPrSettings } },
+    'pr-off': { text: 'открыть PR (PR-интеграция не настроена)', action: { label: 'Настроить', run: openPrSettings } },
     review: { text: (pr?.reviewers?.length ?? 0) > 0 ? 'дождаться ревью и вливания' : 'назначить ревьюеров и дождаться вливания' },
-    merged: cleanup ? { text: 'PR влит — рабочее дерево больше не нужно', action: cleanup } : { text: 'PR влит' },
-    declined: { text: 'PR отклонён — поправить и создать заново' },
+    merged: cleanup ? { text: 'PR влит, рабочее дерево больше не нужно', action: cleanup } : { text: 'PR влит' },
+    declined: { text: 'PR отклонён: поправить и создать заново' },
   }[st.next]
   const steps = st.steps
   return (

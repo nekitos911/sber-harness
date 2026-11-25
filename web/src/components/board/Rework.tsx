@@ -148,7 +148,7 @@ export function HandoffPopover({ task, anchor, open, onClose }: { task: Task; an
             : await runJob('Передать агенту', (jobId) => api<Session & { jumped?: boolean }>('POST', `/tasks/${encodeURIComponent(task.id)}/start`,
               { agent: st.defaultAgent ?? undefined, notes: notes || undefined, location: 'root' }, { jobId })).then((s) => (s ? { session: s, jumped: s.jumped } : undefined))
           if (!r) return false
-          if (r.jumped) toast('Задача уже в работе: открыл текущую сессию')
+          if (r.jumped) toast('Задача уже в работе: открыт чат её агента')
           if ('releaseWarning' in r && r.releaseWarning) toast(r.releaseWarning, 'info')
           adoptSession(r.session)
           return true
@@ -187,7 +187,7 @@ export function useWhere(task: Task) {
       <span>Где</span>
       <Select label="Где работать" value={where} onChange={setWhere} placeholder="Выберите…"
         options={[
-          ...(rootWs ? [{ value: 'root', label: 'Все проекты — агент выберет репозиторий по SDD' }] : []),
+          ...(rootWs ? [{ value: 'root', label: 'Все проекты: агент выберет репозиторий по SDD' }] : []),
           ...repos.map((w) => ({ value: w.id, label: `Репозиторий: ${w.name}`, hint: sug?.id === w.id && !sure ? 'возможно' : undefined })),
         ]} />
       {where === sure && sug?.reason && <span className="field-hint">{sug.reason}</span>}
@@ -208,7 +208,7 @@ export function StartPopover({ task, anchor, open, onClose }: { task: Task; anch
       anchor={anchor} open={open} onClose={onClose}
       label="Дополнительно" draftKey={`start:${task.id}`}
       placeholder="например: только бэкенд, фронт не трогать"
-      before={kids ? <p className="field-hint">Координатор раздаст {kids} {plural(kids, 'подзадачу', 'подзадачи', 'подзадач')} — каждую в её репозиторий.</p> : where.field}
+      before={kids ? <p className="field-hint">Координатор раздаст {kids} {plural(kids, 'подзадачу', 'подзадачи', 'подзадач')}, каждую в её репозиторий.</p> : where.field}
       primary={{
         label: kids ? 'Запустить координатора' : 'Взять в работу', icon: <Play />,
         run: async (notes) => {
@@ -216,7 +216,7 @@ export function StartPopover({ task, anchor, open, onClose }: { task: Task; anch
           const st = getState()
           const s = await runJob('Взять в работу', (jobId) => api<Session & { jumped?: boolean }>('POST', `/tasks/${encodeURIComponent(task.id)}/start`, { agent: st.defaultAgent ?? undefined, notes: notes || undefined, ...(kids ? {} : where.body) }, { jobId }))
           if (!s) return false
-          if (s.jumped) toast('Задача уже в работе — открыл текущую сессию')
+          if (s.jumped) toast('Задача уже в работе: открыт чат её агента')
           adoptSession(s)
           return true
         },

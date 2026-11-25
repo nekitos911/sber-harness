@@ -440,7 +440,7 @@ export async function startServer(opts = {}) {
       session: { stallSec: config.session.stallSec, revive: { attempts: config.session.revive?.attempts ?? 3, stallWakeMin: config.session.revive?.stallWakeMin ?? 15 } },
       // how long an agent may spend on one MCP server: its start in ACP, and the harness server's own (a whole sub-agent run)
       mcp: { acpStartTimeoutMs: config.mcp?.acpStartTimeoutMs ?? 30000, harnessTimeoutMs: config.mcp?.harnessTimeoutMs ?? 3600000 },
-      sessions: { autoArchiveDays: config.sessions.autoArchiveDays },
+      sessions: { autoArchiveDays: config.sessions.autoArchiveDays, purgeArchivedDays: config.sessions.purgeArchivedDays ?? 30 },
       history: { adopt: config.history.adopt !== false, adoptDays: config.history.adoptDays },
       // «Разрешать всегда в этом проекте»: allow-list patterns per workspace id (stored in the db, not the config)
       permissions: { allowedToolsByWorkspace: db.prefs?.allowedToolsByWorkspace || {} },
@@ -456,6 +456,7 @@ export async function startServer(opts = {}) {
       orchestration: {
         reviewMode: config.orchestration.reviewMode, subagents: config.orchestration.subagents, workerMayCommit: !!config.orchestration.workerMayCommit, review: config.orchestration.review,
         subagentRetention: config.orchestration.subagentRetention, maxSubagentDepth: config.orchestration.maxSubagentDepth,
+        subagentMcpExclude: config.orchestration.subagentMcpExclude || [],
       },
       integrations: {
         tasks: { enabled: !!t.enabled, space: t.space ?? null, urlTemplate: t.urlTemplate ?? '', statusMap: t.statusMap || {}, closedStatuses: t.closedStatuses || [], onStartTransition: t.onStartTransition ?? null },
@@ -720,6 +721,10 @@ export async function startServer(opts = {}) {
       if (!['archive', 'keep'].includes(o.subagentRetention)) fail(400, 'orchestration.subagentRetention: "archive" или "keep"');
       p.subagentRetention = o.subagentRetention;
     }
+    if ('subagentMcpExclude' in o) {
+      if (!isStrList(o.subagentMcpExclude)) fail(400, 'orchestration.subagentMcpExclude: список имён MCP-серверов');
+      p.subagentMcpExclude = o.subagentMcpExclude.filter((x) => x !== 'harness'); // harness always comes: it is how they report
+    }
     if ('maxSubagentDepth' in o) {
       if (!Number.isInteger(o.maxSubagentDepth) || o.maxSubagentDepth < 0 || o.maxSubagentDepth > 5) fail(400, 'orchestration.maxSubagentDepth: целое число 0..5');
       p.maxSubagentDepth = o.maxSubagentDepth;
@@ -851,9 +856,14 @@ export async function startServer(opts = {}) {
       patch.mcp = { ...config.mcp, ...mm };
     }
     if (body.sessions !== undefined) {
-      const d = body.sessions?.autoArchiveDays ?? 0; // null = off, stored as 0
-      if (!isObj(body.sessions) || Object.keys(body.sessions).some((k) => k !== 'autoArchiveDays') || !Number.isInteger(d) || d < 0) fail(400, 'sessions: { autoArchiveDays: целое число ≥ 0 или null (0/null — выключено) }');
-      patch.sessions = { autoArchiveDays: d };
+      const keys = ['autoArchiveDays', 'purgeArchivedDays'];
+      if (!isObj(body.sessions) || Object.keys(body.sessions).some((k) => !keys.includes(k))) fail(400, 'sessions: { autoArchiveDays, purgeArchivedDays }');
+      const day = (k, dflt) => {
+        const v = k in body.sessions ? body.sessions[k] ?? 0 : config.sessions?.[k] ?? dflt; // null = off, stored as 0
+        if (!Number.isInteger(v) || v < 0) fail(400, `sessions.${k}: целое число ≥ 0 или null (0/null — выключено)`);
+        return v;
+      };
+      patch.sessions = { autoArchiveDays: day('autoArchiveDays', 7), purgeArchivedDays: day('purgeArchivedDays', 30) };
     }
     if (body.chat !== undefined) {
       const ms = body.chat?.steerAfterMs ?? 0;
@@ -1273,6 +1283,7 @@ export async function startServer(opts = {}) {
   syncRootWorkspace();
   await sessions.reresolveWorkspaces(); // data saved before the repo-first rule
   sessions.autoArchive();
+  sessions.purge();
   route('DELETE', '/api/workspaces/:id', ({ params }) => {
     getWs(params.id);
     db.workspaces = db.workspaces.filter((w) => w.id !== params.id);

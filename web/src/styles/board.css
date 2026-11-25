@@ -55,6 +55,12 @@
 
 .card-top { display: flex; align-items: center; gap: 6px; min-height: 18px; font-size: 11px; }
 .card-id { color: var(--ink-2); font-size: 11px; letter-spacing: 0.01em; }
+/* the tracker link by the key: quiet until the card is hovered or focused (always shown where nothing hovers) */
+.card-link { display: inline-grid; place-items: center; width: 18px; height: 18px; margin: -2px 0; border-radius: var(--r-1); color: var(--ink-3); opacity: 0; transition: opacity var(--t-fast) ease; }
+.card-link svg { width: 12px; height: 12px; }
+.card-link:hover { background: var(--deck-3); color: var(--ink); }
+.card:hover .card-link, .card:focus-within .card-link, .card-link:focus-visible { opacity: 1; }
+@media (hover: none) { .card-link { opacity: 1; } }
 .card-parent { color: var(--ink-3); font-size: 11px; white-space: nowrap; } /* ink-3: 4.5:1 or more on cards in both themes */
 /* «Взять в работу» appears on hover at the top-right (over key/priority); it never triggers the card click or a drag. */
 .card-start {
@@ -255,8 +261,13 @@
 .import-pop { display: grid; gap: 6px; width: min(360px, calc(100vw - 32px)); padding: 10px; }
 .import-form { display: flex; gap: 6px; }
 .import-form .input { flex: 1; min-width: 0; }
-.board-empty { display: grid; justify-items: center; gap: 10px; margin: 8px auto 0; max-width: 560px; padding: 20px 16px 4px; text-align: center; color: var(--ink-2); }
-.board-empty p { margin: 0; line-height: 1.5; }
+/* empty and «nothing found»: a short note where the rows would start, not a poster in the middle of the screen */
+.board-empty { display: grid; justify-items: start; gap: 10px; max-width: 640px; padding: 20px 24px 8px; color: var(--ink-3); }
+.board-empty p { margin: 0; line-height: 1.5; text-wrap: pretty; }
+.board-empty strong { color: var(--ink); font-weight: 600; }
+.board-area > .quick-add { max-width: 640px; padding: 12px 16px 4px; }
+/* the search gives way before «Новая задача» or the sync button wrap onto a second header line */
+.board-view > .view-head .search { width: clamp(150px, 18vw, 240px); }
 .where-summary { font-family: var(--font-mono); font-size: 11.5px; }
 .task-wts { display: grid; gap: 2px; margin: 0; padding: 0; list-style: none; }
 .task-wt { display: flex; align-items: center; gap: 8px; width: 100%; height: 26px; padding: 0 6px; border: 0; border-radius: var(--r-1); background: none; color: var(--ink); font-size: 12.5px; text-align: left; }
@@ -277,25 +288,42 @@
 .card-actions { display: flex; flex-wrap: wrap; gap: 2px; margin-left: -6px; }
 .btn-xs { height: 22px; padding: 0 6px; gap: 4px; font-size: 11.5px; }
 .btn-xs svg { width: 12px; height: 12px; }
-.card-foot .card-live + .grow { display: none; } /* the live line takes the room; the tracker link stays at the end */
-/* «Задачи» as a list */
-.task-list { flex: 1; min-height: 0; overflow-y: auto; padding: 8px 16px 24px; display: grid; align-content: start; gap: 1px; }
-.task-row { display: grid; grid-template-columns: minmax(0, 1fr) 150px 170px 300px; align-items: center; gap: 12px; min-height: 38px; padding: 0 6px 0 2px; border-radius: 8px; }
-.task-row:hover { background: var(--deck-2); }
-.task-row-main { display: flex; align-items: baseline; gap: 10px; min-width: 0; padding: 8px 6px; border: 0; background: none; color: var(--ink); font: inherit; text-align: left; cursor: pointer; }
-.task-row-main:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; border-radius: 6px; }
-.task-row-key { flex: none; font-size: 12px; color: var(--ink-3); }
+/* «Задачи» as a table: key · task · status · agent · one next step. The key has a column of its own so titles line up. */
+.task-list { flex: 1; min-height: 0; overflow-y: auto; padding: 0 16px 24px; display: grid; align-content: start; container: tasklist / inline-size; }
+.task-row {
+  display: grid; grid-template-columns: 104px minmax(0, 1fr) 168px 150px 144px; align-items: center; gap: 16px;
+  min-height: 40px; padding: 0 8px; border-bottom: 1px solid var(--rule-soft);
+}
+.task-row:not(.task-head):hover { background: var(--deck-2); }
+.task-head {
+  position: sticky; top: 0; z-index: 1; min-height: 32px; background: var(--canvas); border-bottom-color: var(--rule);
+  color: var(--ink-3); font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase;
+}
+.task-row-key { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--ink-3); }
+.task-row-cell-main { min-width: 0; }
+.task-row-main { display: flex; align-items: baseline; gap: 8px; width: 100%; min-width: 0; padding: 10px 0; border: 0; background: none; color: var(--ink); font: inherit; text-align: left; cursor: pointer; }
+.task-row-main:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: var(--r-1); }
+.task-row-parent { flex: none; padding-left: 4px; color: var(--ink-4); }
 .task-row-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
-.task-row-status { justify-self: start; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.task-row-agent { display: inline-flex; align-items: center; gap: 6px; min-width: 0; font-size: 12.5px; color: var(--ink-3); white-space: nowrap; }
+.task-row[data-status="done"] .task-row-title { color: var(--ink-2); }
+.task-row-status { display: flex; align-items: center; gap: 7px; min-width: 0; font-size: 12.5px; color: var(--ink-2); white-space: nowrap; }
+.task-row-ext { min-width: 0; color: var(--ink-3); font-size: 11.5px; } /* the tracker's own word, when it differs from the column */
+.task-row-agent { display: inline-flex; align-items: center; gap: 6px; min-width: 0; font-size: 12.5px; color: var(--ink-2); white-space: nowrap; }
 .task-row-agent .st { width: 14px; height: 14px; flex: none; }
-/* the row's action is visible at rest (a new user must see «Передать агенту»), full strength on hover */
-.task-row-actions { display: inline-flex; justify-content: flex-end; gap: 6px; opacity: 0.55; transition: opacity var(--t-fast) var(--ease-out); }
-.task-row:hover .task-row-actions, .task-row:focus-within .task-row-actions { opacity: 1; }
-.task-row[data-child] .task-row-main { padding-left: 20px; } /* a subtask sits under its task */
-@media (max-width: 900px) { .task-row { grid-template-columns: minmax(0, 1fr) auto; } .task-row-status, .task-row-agent { display: none; } }
+/* one quiet action per row at rest (still readable: a new user must see «Передать агенту»), a real button on hover */
+.task-row-actions { display: flex; justify-content: flex-end; }
+.task-row-actions .btn { background: transparent; border-color: transparent; color: var(--ink-2); }
+.task-row:hover .task-row-actions .btn, .task-row-actions .btn:focus-visible, .task-row-actions .btn[aria-expanded="true"] { background: var(--deck); border-color: var(--rule-strong); color: var(--ink); }
+/* narrower: the agent column goes first (its row still offers «Открыть чат»), then key and status */
+@container tasklist (max-width: 960px) {
+  .task-row { grid-template-columns: 92px minmax(0, 1fr) 150px 144px; }
+  .task-row > :nth-child(4) { display: none; }
+}
+@container tasklist (max-width: 560px) {
+  .task-row { grid-template-columns: minmax(0, 1fr) 144px; }
+  .task-row > :nth-child(1), .task-row > :nth-child(3), .task-row > :nth-child(4) { display: none; }
+}
 .drawer-blocked { margin: -6px 0 0; color: var(--lamp-run); font-size: 12.5px; }
-.task-row .task-row-status { justify-self: start; width: max-content; max-width: 150px; }
 .col-head h2 { white-space: nowrap; }
 /* the tracker task's links (a specification in «Внешние ссылки») */
 .drawer-links { display: grid; gap: 4px; margin: 8px 0 0; padding: 0; list-style: none; font-size: 12.5px; overflow-wrap: anywhere; }

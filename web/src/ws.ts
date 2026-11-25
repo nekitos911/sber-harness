@@ -185,15 +185,26 @@ export async function loadSubagents(sessionId: string) {
 export async function loadWorktreesOf(workspaceIds: string[]) {
   if (!workspaceIds.length) return
   const lists = await Promise.all(workspaceIds.map((id) => api<Worktree[]>('GET', `/workspaces/${encodeURIComponent(id)}/worktrees`).then(arr, () => [] as Worktree[])))
-  setState((s) => ({ worktrees: { ...s.worktrees, ...Object.fromEntries(workspaceIds.map((id, i) => [id, lists[i]])) } }))
+  setState((s) => {
+    const changed = workspaceIds.filter((id, i) => !sameJson(s.worktrees[id], lists[i]))
+    return changed.length ? { worktrees: { ...s.worktrees, ...Object.fromEntries(changed.map((id) => [id, lists[workspaceIds.indexOf(id)]])) } } : {}
+  })
 }
+
+/** A reload equal to what is held changes nothing: a new worktrees object rebuilt the whole sidebar tree on every turn. */
+export const sameJson = (a: unknown, b: unknown) => a !== undefined && JSON.stringify(a) === JSON.stringify(b)
 
 export async function loadWorktrees(workspaceId: string, enrich = false) {
   let list: Worktree[] = []
   try {
     list = arr(await api<Worktree[]>('GET', `/workspaces/${encodeURIComponent(workspaceId)}/worktrees${enrich ? '?enrich=1' : ''}`))
   } catch { /* not a git repo or gone: show none */ }
-  setState((s) => ({ worktrees: { ...s.worktrees, [workspaceId]: list } }))
+  setState((s) => {
+    // a plain list (rows at once, the enriched one follows) keeps the dirty/ahead already read: no badge flicker
+    const old = new Map((s.worktrees[workspaceId] ?? []).map((w) => [w.path, w]))
+    const next = enrich ? list : list.map((w) => { const o = old.get(w.path); return o && w.dirty == null ? { ...w, dirty: o.dirty, ahead: o.ahead } : w })
+    return sameJson(s.worktrees[workspaceId], next) ? {} : { worktrees: { ...s.worktrees, [workspaceId]: next } }
+  })
 }
 
 const startingSince = new Map<string, number>()

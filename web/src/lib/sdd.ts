@@ -1,7 +1,7 @@
 import { useEffect } from 'react'
 import { api, qs } from '../api'
 import { getState, hasFeature, setState, useFeature, useStore, wtKey } from '../store'
-import type { SddPlan } from '../types'
+import type { GitStatus, SddPlan } from '../types'
 
 const inflight = new Set<string>()
 
@@ -30,8 +30,17 @@ export function loadSdd(cwd: string, force = false, sessionId?: string | null) {
     .finally(() => inflight.delete(k))
 }
 
+const sigs = new WeakMap<GitStatus, string>()
+const gitSig = (st: GitStatus | null | undefined) => {
+  if (!st) return ''
+  let k = sigs.get(st)
+  if (k === undefined) sigs.set(st, (k = `${st.branch}|${st.files.map((x) => `${x.path}:${x.status}:${x.added}:${x.removed}`).join()}`))
+  return k
+}
+
 export function useSdd(cwd: string | null, sessionId?: string | null) {
-  const git = useStore((s) => (cwd ? s.git[wtKey(cwd)] : undefined))
+  // what changed in the worktree, not each git poll: every chat tab kept open re-read its plans on every poll (6 calls a switch)
+  const git = useStore((s) => gitSig(cwd ? s.git[wtKey(cwd)]?.status : undefined))
   const on = useFeature('sdd')
   useEffect(() => { if (cwd && on) loadSdd(cwd, true, sessionId) }, [cwd, git, on, sessionId])
   return useStore((s) => (cwd ? s.sdd[sddKey(cwd, sessionId)] : undefined))

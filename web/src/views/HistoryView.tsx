@@ -42,7 +42,7 @@ export function HistoryView({ tab }: { tab: HistoryTab }) {
         <span className="chat-title ellipsis">История: {tab.title || tab.id}</span>
       </header>
       <div className="history-banner" role="note">
-        <span>Сессия из CLI — только чтение.</span>
+        <span>Сессия из CLI, только для чтения.</span>
         <span className="grow" />
         <Button variant="primary" size="sm" icon={<Play />} busy={busy} onClick={() => void resume()}>Продолжить в harness</Button>
       </div>

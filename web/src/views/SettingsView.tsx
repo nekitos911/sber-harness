@@ -20,9 +20,10 @@ import { IntegrationStatus, useIntegrationsCheck } from '../components/Integrati
 import { Button, Chip, Disclosure, IconButton, Input, Segmented, Select, SuggestInput, Switch, Textarea } from '../components/ui'
 
 const MAIN = 'gigacode'
+// `name` is the store id (StatusBar and lib/pr open «Подключения» by it); `label` is what the nav says
 const CATEGORIES = [
-  { name: 'Рабочее место', Icon: PanelsTopLeft }, { name: 'Агенты', Icon: Bot },
-  { name: 'Подключения', Icon: Cable }, { name: 'Доска и Git', Icon: SquareKanban },
+  { name: 'Рабочее место', label: 'Основные', Icon: PanelsTopLeft }, { name: 'Агенты', label: 'Агенты', Icon: Bot },
+  { name: 'Подключения', label: 'Подключения', Icon: Cable }, { name: 'Доска и Git', label: 'Доска и Git', Icon: SquareKanban },
 ] as const
 const VARS = ['{taskUrl}', '{notes}', '{key}', '{title}', '{description}', '{targets}', '{branch}', '{repo}']
 const TIMEOUTS = [60, 120, 180, 300]
@@ -144,20 +145,21 @@ export function SettingsView() {
             </div>
             {q ? (found ? nav.titles.map((t, i) => <SectionLink key={t + i} title={t} current={i === nav.current} onClick={() => nav.go(i)} />)
               : <p className="settings-nav-empty">Ничего не найдено</p>)
-              : CATEGORIES.map(({ name, Icon }) => (
+              : CATEGORIES.map(({ name, label, Icon }) => (
                 <Fragment key={name}>
                   <button type="button" aria-current={category === name ? 'page' : undefined}
-                    onClick={() => setState({ settingsCategory: name })}><Icon aria-hidden />{name}</button>
+                    onClick={() => setState({ settingsCategory: name })}><Icon aria-hidden />{label}</button>
                   {category === name && nav.titles.length > 1 && nav.titles.map((t, i) => <SectionLink key={t + i} title={t} current={i === nav.current} onClick={() => nav.go(i)} />)}
                 </Fragment>
               ))}
           </nav>
           <div ref={scroll} className="settings-body" id="settings-scroll">
             <Searching.Provider value={!!q}>
-            {q && !found && <p className="muted">Нет настроек со словами «{query.trim()}».</p>}
+            {q && !found && <div className="empty settings-empty"><h2>Ничего не нашлось</h2><p>Нет настроек со словами «{query.trim()}». Попробуйте другое слово или очистите поиск клавишей Esc.</p></div>}
             {(q || category === 'Рабочее место') && <>
               <BasicSettings form={form} update={update} fieldError={fieldError} main={main} />
-              <GeneralSection form={form} update={update} />
+              <ChatsSection form={form} update={update} />
+              <InterfaceSection />
             </>}
             {(q || category === 'Агенты') && <>
               {main && <AgentSection id={main} form={form} update={update} fieldError={fieldError} primary />}
@@ -281,16 +283,22 @@ function Shell({ children }: { children: ReactNode }) {
 
 function BasicSettings({ form, update, fieldError, main }: SectionProps & { main: string }) {
   const labels = useStore((s) => s.agents)
-  const foldersOn = useFeature('folders')
   const a = form.agents[main]
   const set = (patch: Partial<AgentSettings>) => update({ ...form, agents: { ...form.agents, [main]: { ...a, ...patch } } })
   const modeLabels = a?.approvalModeLabels ?? {}
   if (!a) return null
   return (
     <section className="settings-section settings-basic" id="set-basic">
-      <h2>Рабочее место</h2>
+      <h2>Агент</h2>
+      {/* one card: the default-agent choice heads it, because it decides whose status, model and mode follow */}
       <div className="set-card">
-        <h3>{labels.find((x) => x.id === main)?.label ?? 'GigaCode'}</h3>
+        <div className="set-rows">
+          <Row label="Агент по умолчанию" hint="С ним начинаются новые чаты и «Взять в работу». Ниже его настройки.">
+            <Select label="Агент по умолчанию" value={form.defaultAgent === 'claude' ? '' : form.defaultAgent} placeholder="Выберите агента" onChange={(v) => update({ ...form, defaultAgent: v })}
+              options={Object.keys(form.agents).filter((k) => k !== 'claude' && (form.agents[k].enabled !== false || k === form.defaultAgent))
+                .map((k) => ({ value: k, label: labels.find((x) => x.id === k)?.label ?? k, hint: k }))} />
+          </Row>
+        </div>
         <AgentStatus id={main} />
         <div className="set-rows">
           <Row label="Модель">
@@ -298,22 +306,13 @@ function BasicSettings({ form, update, fieldError, main }: SectionProps & { main
             <CatalogStatus id={main} />
           </Row>
           {a.approvalModes.length > 0 && (
-            <Row label="Режим" hint={modeLabels[a.approvalMode ?? '']} error={fieldError('mode')}>
+            <Row label="Режим" hint={modeLabels[a.approvalMode ?? '']} error={fieldError('mode')} wide>
               <Segmented label="Режим подтверждений" value={a.approvalMode ?? ''} onChange={(m) => set({ approvalMode: m })}
                 options={a.approvalModes.map((m) => ({ value: m, label: modeShort(m), tone: FULL_ACCESS.has(m) ? 'access' : undefined }))} />
             </Row>
           )}
         </div>
       </div>
-      {foldersOn && form.workspaces !== undefined && (
-        <div className="set-card">
-          <div className="set-rows">
-            <Row label="Папка с проектами" hint="Стартовая папка агента. Её чаты видны над списком проектов. Подойдёт и обычная папка без Git.">
-              <ProjectsFolder value={form.workspaces?.root ?? null} onChange={(root) => update({ ...form, workspaces: { ...form.workspaces, root } })} />
-            </Row>
-          </div>
-        </div>
-      )}
     </section>
   )
 }
@@ -322,7 +321,11 @@ function ConnectionsSection(props: SectionProps) {
   const check = useIntegrationsCheck()
   return <>
     <Connections onSaved={check.recheck} />
-    <McpTimeoutsRows form={props.form} update={props.update} />
+    {/* these two rows used to float between sections without a heading */}
+    {props.form.mcp !== undefined && <section className="settings-section" id="set-mcp-wait">
+      <h2>Ожидание MCP-серверов</h2>
+      <McpTimeoutsRows form={props.form} update={props.update} />
+    </section>}
     <TrackerSection {...props} check={check} />
     <PrSection {...props} check={check} />
   </>
@@ -338,11 +341,11 @@ function McpTimeoutsRows({ form, update }: Omit<SectionProps, 'fieldError'>) {
       .map((x) => ({ value: String(x), label: x >= 60000 ? `${x / 60000} мин` : `${x / 1000} с` }))
   return (
     <div className="set-rows">
-      <Row label="Процесс на чат: подъём MCP-сервера" hint="Сколько ждать один MCP-сервер при запуске процесса чата. Не дождавшись, агент работает без него (в чате остаётся предупреждение) — вместо падения всей сессии. Действует на сообщения, которых ещё не было.">
+      <Row label="Процесс на чат: подъём MCP-сервера" hint="Сколько ждать один MCP-сервер при запуске процесса чата. Не дождавшись, агент работает без него и пишет предупреждение в чат; сессия не падает. Действует на новые сообщения.">
         <Select label="Подъём MCP-сервера на чат" value={String(mcp.acpStartTimeoutMs ?? 30000)} onChange={(v) => set({ acpStartTimeoutMs: Number(v) })}
           options={pick(mcp.acpStartTimeoutMs, [15000, 30000, 60000, 120000])} />
       </Row>
-      <Row label="Сервер harness: ожидание инструмента" hint="Сколько CLI ждёт ответа инструмента harness (worker_run ждёт целый прогон суб-агента). Менять не нужно, если не появляется «MCP tool timeout».">
+      <Row label="Сервер harness: ожидание инструмента" hint="Сколько CLI ждёт ответа инструмента harness (worker_run ждёт целый прогон субагента). Менять стоит, только если в чате появляется «MCP tool timeout».">
         <Select label="Ожидание инструмента harness" value={String(mcp.harnessTimeoutMs ?? 3600000)} onChange={(v) => set({ harnessTimeoutMs: Number(v) })}
           options={pick(mcp.harnessTimeoutMs, [600000, 1800000, 3600000])} />
       </Row>
@@ -410,7 +413,7 @@ function AgentSection({ id, form, update, fieldError, primary }: SectionProps & 
       {primary && gradesOpen && (
         <>
           <h3>Уровни моделей</h3>
-          <p className="set-note">Субагенты просят модель по уровню; здесь задано, какая модель стоит за каждым. Без указанной модели harness сам берёт уровень по типу субагента: ревьюер — review, разведка — fast, остальные — strong.</p>
+          <p className="set-note">Субагенты просят модель по уровню; здесь задано, какая модель стоит за каждым. Без указанной модели harness берёт уровень по типу субагента: ревьюер review, разведка fast, остальные strong.</p>
           <div className="set-rows">
             {GRADES.map((g) => (
               <Row key={g} label={g} hint={GRADE_ROLES[g]} error={gone(a.modelGrades[g]) ? 'Модели нет в каталоге сервера: субагенты этого уровня запустятся с моделью по умолчанию' : undefined}>
@@ -466,7 +469,7 @@ function AgentSection({ id, form, update, fieldError, primary }: SectionProps & 
         {primary && a.allowedTools !== undefined && <AllowedToolsRow a={a} set={set} />}
         {primary && a.autoSandbox !== undefined && (
           <Row label="Песочница для «Полного доступа»"
-            hint="Выключено (быстрее): «Полный доступ» работает как авто-правки, но без разрешающего списка — команды не спрашиваются. Включено: настоящий auto в песочнице рабочей папки GigaCode — запуск может быть медленнее.">
+            hint="Выключено (быстрее): «Полный доступ» работает как авто-правки без разрешающего списка, команды не спрашиваются. Включено: настоящий auto в песочнице рабочей папки GigaCode, запуск бывает медленнее.">
             <Switch label="Песочница для «Полного доступа»" checked={!!a.autoSandbox} onChange={(v) => set({ autoSandbox: v ? 'workspace' : null })} />
           </Row>
         )}
@@ -602,7 +605,7 @@ function CatalogStatus({ id }: { id: string }) {
   }
   const from = c?.at ? `список от ${ago(c.at, now)}` : 'список из настроек'
   const text = refreshing || c?.running ? <span className="muted">список моделей обновляется…</span>
-    : c?.error && hasList ? <span className="muted" data-tip={c.error}>{from}; {c.timedOut ? c.error : 'CLI не отдал список'} — повторю позже</span>
+    : c?.error && hasList ? <span className="muted" data-tip={c.error}>{from}; {c.timedOut ? c.error : 'CLI не отдал список'}, повторим позже</span>
       : c?.error ? <span className="field-error">Список моделей не получен: {c.error}</span>
         : c?.at ? <span className="muted">список моделей обновлён {ago(c.at, now)}</span> : null
   if (!text && !refreshOn) return null
@@ -687,7 +690,7 @@ function AllowedToolsRow({ a, set }: { a: AgentSettings; set: (p: Partial<AgentS
   return (
     <Row label="Разрешённые команды" hint="Что CLI выполняет без вопроса в любом чате (шаблон вида run_shell_command(git)). Остальное агент попросит разрешить. «Полный доступ» этот список не спрашивает." wide>
       {all
-        ? <span className="set-line">Список не используется: в наборе есть <code>*</code> — разрешено всё без вопроса.</span>
+        ? <span className="set-line">Список не используется: в наборе есть <code>*</code>, то есть разрешено всё без вопроса.</span>
         : <ChipsInput label="шаблон" values={list} onChange={(v) => set({ allowedTools: v })} />}
       {!all && missing.length > 0 && (
         <div className="chips quick-tools" aria-label="Быстро добавить">
@@ -743,7 +746,7 @@ function ReworkRow({ a, set }: { a: AgentSettings; set: (p: Partial<AgentSetting
   const value = a.reworkPromptTemplate || DEFAULT_REWORK
   const [custom, setCustom] = useState(!presets.includes(value))
   return (
-    <Row label="Команда доработки" hint="Сообщение агенту по кнопке «Доработать»: {notes} — что поправить, {taskUrl} — ссылка на задачу." wide>
+    <Row label="Команда доработки" hint="Сообщение агенту по кнопке «Доработать». {notes}: что поправить, {taskUrl}: ссылка на задачу." wide>
       <Select label="Команда доработки" mono value={custom ? CUSTOM : value}
         onChange={(v) => { if (v === CUSTOM) setCustom(true); else { setCustom(false); set({ reworkPromptTemplate: v === DEFAULT_REWORK ? null : v }) } }}
         options={[...presets.map((p) => ({ value: p, label: p.split('\n')[0], text: p, hint: p === DEFAULT_REWORK ? 'по умолчанию' : undefined })), { value: CUSTOM, label: 'Свой…', text: 'Свой шаблон' }]} />
@@ -817,7 +820,6 @@ function GitSection({ form, update, fieldError }: SectionProps) {
   const [branches, setBranches] = useState<string[]>([])
   const ws = workspaces.find((w) => w.isGit)
   const branchesOn = useFeature('branches')
-  const generateOn = useFeature('git-generate')
   const viaOn = useFeature('git-via-agent')
   useEffect(() => {
     if (!ws || !branchesOn) return
@@ -838,14 +840,9 @@ function GitSection({ form, update, fieldError }: SectionProps) {
         </Row>
         <TemplateRow f={GIT_TEMPLATES[0]} value={g[GIT_TEMPLATES[0].key] ?? ''} onChange={(v) => set({ [GIT_TEMPLATES[0].key]: v })} error={fieldError('git')} />
         {viaOn && (
-          <Row label="Коммит, push и PR" hint="Через агента — работают хуки и навыки GigaCode (например проверки перед коммитом), медленнее; напрямую — git и sourcecontrol из harness.">
+          <Row label="Коммит, push и PR" hint="Через агента работают хуки и навыки GigaCode (например, проверки перед коммитом), но это медленнее. Напрямую: git и sourcecontrol из harness. Тексты коммитов и PR агент пишет только по кнопке у поля «Сообщение» и в окне «Создать PR».">
             <Segmented label="Коммит, push и PR" value={g.via ?? 'agent'} onChange={(v) => set({ via: v })}
               options={[{ value: 'agent', label: 'Через агента' }, { value: 'harness', label: 'Напрямую' }]} />
-          </Row>
-        )}
-        {generateOn && (
-          <Row label="Сообщения коммитов и PR" hint="Пишет GigaCode — кнопкой ✨ у поля «Сообщение» и в окне «Создать PR». Само по себе ничего не запускается: ни в фоне, ни при открытии окна.">
-            <span className="muted">по кнопке ✨</span>
           </Row>
         )}
       </div>
@@ -862,7 +859,7 @@ function GitSection({ form, update, fieldError }: SectionProps) {
 function TemplateRow({ f, value, onChange, error }: { f: (typeof GIT_TEMPLATES)[number]; value: string; onChange: (v: string) => void; error?: string }) {
   const [custom, setCustom] = useState(!!value && !f.presets.includes(value))
   return (
-    <Row label={f.label} hint={<>{f.hint} <span className="set-preview">→ <span className="mono">{value ? render(value) : '—'}</span></span></>} error={error}>
+    <Row label={f.label} hint={<>{f.hint} <span className="set-preview">→ <span className="mono">{value ? render(value) : 'не задано'}</span></span></>} error={error}>
       <Select label={f.label} mono value={custom ? CUSTOM : value || CUSTOM}
         onChange={(v) => { if (v === CUSTOM) setCustom(true); else { setCustom(false); onChange(v) } }}
         options={[...f.presets.map((p) => ({ value: p, label: p, hint: render(p) })), { value: CUSTOM, label: 'Свой…', text: 'Свой' }]} />
@@ -891,11 +888,11 @@ function PrSection({ form, update, check }: Omit<SectionProps, 'fieldError'> & {
               { value: 'false', label: 'Выкл' },
             ]} />
         </Row>
-        <Row label="Ваш логин" hint="Для «Мои PR». Пусто — берётся из sourcecontrol (git_get_user), а если он не ответил — имя пользователя ОС.">
+        <Row label="Ваш логин" hint="Для «Мои PR». Если пусто, логин берётся из sourcecontrol (git_get_user), а если он не ответил, имя пользователя ОС.">
           <input className="input mono" aria-label="Ваш логин в sourcecontrol" placeholder="авто" value={pr.me ?? ''}
             onChange={(e) => update({ ...form, integrations: { ...form.integrations, pr: { ...pr, me: e.target.value || null } } })} />
         </Row>
-        <Row label="Ограничения" hint="Лимиты сервера sourcecontrol, в байтах UTF-8 (кириллица — 2 байта на букву).">
+        <Row label="Ограничения" hint="Лимиты сервера sourcecontrol в байтах UTF-8: буква кириллицы занимает 2 байта.">
           <span className="set-readonly">заголовок до <span className="num">{lim.titleBytes ?? 100}</span> байт, описание до <span className="num">{lim.bodyBytes ?? 512}</span> байт</span>
         </Row>
       </div>
@@ -911,19 +908,20 @@ function OrchestrationSection({ form, update }: Omit<SectionProps, 'fieldError'>
   const agentId = mainAgent(form)
   return (
     <section className="settings-section" id="set-orchestration">
-      <h2>Помощники агента</h2>
+      <h2>Субагенты</h2>
       <div className="set-rows">
-        <Row label="Показывать помощников отдельными чатами"
-          hint="Когда агент зовёт на помощь другого агента (ревью, исследование кода), тот открывается здесь отдельным чатом: видно, что он делает, ему можно ответить или остановить. Для этого агенту нужен навык ниже.">
-          <Switch label="Показывать помощников отдельными чатами" checked={(o.subagents ?? 'harness') === 'harness'}
+        <Row label="Показывать субагентов отдельными чатами"
+          hint="Субагента запускает агент: для ревью, исследования кода, части задачи. В отдельном чате видно, что он делает; ему можно ответить или остановить его. Нужен навык ниже.">
+          <Switch label="Показывать субагентов отдельными чатами" checked={(o.subagents ?? 'harness') === 'harness'}
             onChange={(v) => update({ ...form, orchestration: { ...o, subagents: v ? 'harness' : 'builtin' } })} />
           {(o.subagents ?? 'harness') === 'harness' && (
-            <InstallFile id={agentId} kind="skills" name="harness-orchestration" target="~/.gigacode/skills/harness-orchestration/SKILL.md" title="навык для помощников" action="Установить навык" />
+            <InstallFile id={agentId} kind="skills" name="harness-orchestration" target="~/.gigacode/skills/harness-orchestration/SKILL.md" title="Навык для субагентов" action="Установить навык" />
           )}
         </Row>
+        {o.subagentMcpExclude !== undefined && <SubagentMcpRow off={o.subagentMcpExclude} onChange={(list) => update({ ...form, orchestration: { ...o, subagentMcpExclude: list } })} />}
         {o.subagentRetention !== undefined && (
-          <Row label="Оставлять закончивших помощников в боковой панели" hint="Иначе закончивший помощник уходит в архив; его чат открывается по ссылке в чате агента.">
-            <Switch label="Оставлять закончивших помощников" checked={o.subagentRetention === 'keep'}
+          <Row label="Оставлять закончивших субагентов в боковой панели" hint="Иначе закончивший субагент уходит в архив; его чат открывается по ссылке в чате агента.">
+            <Switch label="Оставлять закончивших субагентов" checked={o.subagentRetention === 'keep'}
               onChange={(v) => update({ ...form, orchestration: { ...o, subagentRetention: v ? 'keep' : 'archive' } })} />
           </Row>
         )}
@@ -937,17 +935,9 @@ function OrchestrationSection({ form, update }: Omit<SectionProps, 'fieldError'>
       <Advanced id="orchestration">
         {o.maxSubagentDepth !== undefined && (
           <div className="set-rows">
-            <Row label="Помощники помощников" hint="Может ли помощник звать своих помощников. 1 — помощников зовёт только сам агент.">
-              <Select label="Глубина помощников" value={String(o.maxSubagentDepth)} onChange={(v) => update({ ...form, orchestration: { ...o, maxSubagentDepth: Number(v) } })}
+            <Row label="Глубина субагентов" hint="Может ли субагент запускать своих субагентов. При 1 субагентов запускает только сам агент.">
+              <Select label="Глубина субагентов" value={String(o.maxSubagentDepth)} onChange={(v) => update({ ...form, orchestration: { ...o, maxSubagentDepth: Number(v) } })}
                 options={[{ value: '1', label: '1' }, { value: '2', label: '2' }, { value: '3', label: '3' }]} />
-            </Row>
-          </div>
-        )}
-        {form.session?.stallSec !== undefined && (
-          <div className="set-rows">
-            <Row label="«Нет вывода» через" hint="Работающий агент без единого события дольше этого считается зависшим: красный значок и предложение остановить.">
-              <Select label="«Нет вывода» через" value={String(form.session.stallSec)} onChange={(v) => update({ ...form, session: { ...form.session, stallSec: Number(v) } })}
-                options={[...new Set([30, 60, 120, 300, 600, 900, form.session.stallSec])].sort((x, y) => x - y).map((s) => ({ value: String(s), label: s < 60 ? `${s} с` : `${s / 60} мин` }))} />
             </Row>
           </div>
         )}
@@ -1077,8 +1067,6 @@ function BoardSection({ form, update }: Omit<SectionProps, 'fieldError'>) {
   )
 }
 
-/** Local to this browser: desktop notifications for questions, results and errors while the tab is in the background. */
-/** Общие: default agent, notifications, theme. */
 /** Explicit path, or «Авто: <the detected projects folder>»; changed with the folder picker. */
 function ProjectsFolder({ value, onChange }: { value: string | null; onChange: (v: string | null) => void }) {
   const auto = useStore((s) => s.workspaces.find((w) => w.kind === 'root')?.path ?? null)
@@ -1095,37 +1083,34 @@ function ProjectsFolder({ value, onChange }: { value: string | null; onChange: (
   )
 }
 
-function GeneralSection({ form, update }: Omit<SectionProps, 'fieldError'>) {
-  const labels = useStore((s) => s.agents)
-  const scheme = useStore((s) => s.scheme)
-  const [on, setOn] = useState(desktopNotifyOn)
-  const supported = 'Notification' in window
-  const denied = supported && Notification.permission === 'denied'
+/** «Чаты»: where projects live, how long chats stay, what happens after an interruption. */
+function ChatsSection({ form, update }: Omit<SectionProps, 'fieldError'>) {
+  const foldersOn = useFeature('folders')
   return (
-    <section className="settings-section" id="set-general">
-      <h2>Общие</h2>
+    <section className="settings-section" id="set-chats">
+      <h2>Чаты</h2>
       <div className="set-rows">
-        <Row label="Агент по умолчанию" hint="Для «Новый чат» и «Взять в работу».">
-          <Select label="Агент по умолчанию" value={form.defaultAgent === 'claude' ? '' : form.defaultAgent} placeholder="Выберите агента" onChange={(v) => update({ ...form, defaultAgent: v })}
-            options={Object.keys(form.agents).filter((k) => k !== 'claude' && (form.agents[k].enabled !== false || k === form.defaultAgent))
-              .map((k) => ({ value: k, label: labels.find((x) => x.id === k)?.label ?? k, hint: k }))} />
-        </Row>
-        <Row label="Тема" hint="Хранится в этом браузере.">
-          <Segmented label="Тема" value={scheme} onChange={(v) => setState({ theme: v })} options={[{ value: 'dark', label: 'Тёмная' }, { value: 'light', label: 'Светлая' }]} />
-        </Row>
-        <Row label="Уведомления на рабочем столе" hint={denied ? 'Браузер запретил уведомления для этой страницы: разрешите их в настройках сайта.' : 'Вопросы агентов, готовые задачи и ошибки, пока вкладка в фоне. Хранится в этом браузере.'}>
-          <Switch label="Уведомления на рабочем столе" checked={on} disabled={!supported || denied}
-            onChange={(v) => void setDesktopNotify(v).then((res) => { setOn(res); if (v && !res) toast('Браузер не разрешил уведомления', 'error') })} />
-        </Row>
+        {foldersOn && form.workspaces !== undefined && (
+          <Row label="Папка с проектами" hint="Стартовая папка агента: её чаты видны над списком проектов. Подойдёт и обычная папка без Git.">
+            <ProjectsFolder value={form.workspaces?.root ?? null} onChange={(root) => update({ ...form, workspaces: { ...form.workspaces, root } })} />
+          </Row>
+        )}
         {form.sessions !== undefined && (
-          <Row label="Автоархив неактивных чатов через" hint="Чаты без активности дольше этого уходят в архив (история сохраняется, вернуть — на экране «Агенты»).">
+          <Row label="Автоархив неактивных чатов через" hint="Чаты без активности дольше этого уходят в архив. История сохраняется, вернуть чат можно на экране «Агенты».">
             <Select label="Автоархив неактивных чатов" value={!form.sessions.autoArchiveDays ? 'off' : String(form.sessions.autoArchiveDays)}
               onChange={(v) => update({ ...form, sessions: { ...form.sessions, autoArchiveDays: v === 'off' ? 0 : Number(v) } })}
               options={[{ value: 'off', label: 'выкл' }, { value: '1', label: '1 день' }, { value: '3', label: '3 дня' }, { value: '7', label: '7 дней' }, { value: '30', label: '30 дней' }]} />
           </Row>
         )}
+        {form.sessions !== undefined && (
+          <Row label="Удалять архив через" hint="Чаты в архиве дольше этого удаляются вместе с историей и логами. Закреплённые и привязанные к незакрытой задаче остаются.">
+            <Select label="Удалять архив через" value={!(form.sessions.purgeArchivedDays ?? 30) ? 'off' : String(form.sessions.purgeArchivedDays ?? 30)}
+              onChange={(v) => update({ ...form, sessions: { ...form.sessions, purgeArchivedDays: v === 'off' ? 0 : Number(v) } })}
+              options={[{ value: 'off', label: 'никогда' }, { value: '7', label: '7 дней' }, { value: '30', label: '30 дней' }, { value: '90', label: '90 дней' }]} />
+          </Row>
+        )}
         {form.recovery !== undefined && (
-          <Row label="Продолжать прерванные сессии автоматически" hint="После перезапуска harness или ПК прерванные ходы продолжаются сами (координаторы — после своих исполнителей). Иначе — окно «Восстановление сессий».">
+          <Row label="Продолжать прерванные сессии сами" hint="После перезапуска harness или компьютера прерванные ходы продолжаются без вас: координаторы после своих исполнителей. Выключено: откроется окно «Восстановление сессий».">
             <Switch label="Продолжать прерванные сессии автоматически" checked={!!form.recovery.autoResume} onChange={(v) => update({ ...form, recovery: { ...form.recovery, autoResume: v } })} />
           </Row>
         )}
@@ -1140,18 +1125,46 @@ function GeneralSection({ form, update }: Omit<SectionProps, 'fieldError'>) {
         )}
         {form.session?.revive && (
           <>
-            <Row label="Если агент оборвался" hint="Ошибка или обрыв связи посреди работы: программа сама продолжает ту же сессию с того же места (паузы 30 с, 2 мин, 5 мин). Не помогло — уведомление с «Повторить».">
+            <Row label="Если агент оборвался" hint="Ошибка или обрыв связи посреди работы: harness продолжает ту же сессию с того же места после пауз 30 с, 2 мин и 5 мин. Не помогло: придёт уведомление с кнопкой «Повторить».">
               <Select label="Если агент оборвался" value={String(form.session.revive.attempts)} onChange={(v) => update({ ...form, session: { ...form.session, revive: { ...form.session!.revive!, attempts: Number(v) } } })}
                 options={[{ value: '0', label: 'не продолжать, сразу уведомить' }, { value: '1', label: 'продолжить 1 раз' }, { value: '3', label: 'продолжить до 3 раз' }, { value: '5', label: 'продолжить до 5 раз' }]} />
             </Row>
-            <Row label="Будить молчащего агента через" hint="Агент ничего не пишет и при этом не выполняет команду (долгая сборка или тесты — нормальная тишина, их не трогаем): процесс останавливается, сессия продолжается с того же места.">
+            <Row label="Будить молчащего агента через" hint="Агент ничего не пишет и не выполняет команду. Долгая сборка или тесты считаются нормальной тишиной. Процесс останавливается, сессия продолжается с того же места.">
               <Select label="Будить молчащего агента через" value={String(form.session.revive.stallWakeMin)} onChange={(v) => update({ ...form, session: { ...form.session, revive: { ...form.session!.revive!, stallWakeMin: Number(v) } } })}
                 options={[{ value: '0', label: 'не будить' }, ...[10, 15, 30, 60].map((m) => ({ value: String(m), label: `${m} мин` }))]} />
             </Row>
           </>
         )}
+        {form.session?.stallSec !== undefined && (
+            <Row label="«Нет вывода» через" hint="Работающий агент без единого события дольше этого считается зависшим: в боковой панели он попадёт в «Ждут вас», в чате появится предложение остановить.">
+              <Select label="«Нет вывода» через" value={String(form.session.stallSec)} onChange={(v) => update({ ...form, session: { ...form.session, stallSec: Number(v) } })}
+                options={[...new Set([30, 60, 120, 300, 600, 900, form.session.stallSec])].sort((x, y) => x - y).map((s) => ({ value: String(s), label: s < 60 ? `${s} с` : `${s / 60} мин` }))} />
+            </Row>
+        )}
       </div>
       </Advanced>
+    </section>
+  )
+}
+
+/** «Интерфейс»: kept in this browser, saved at once (no «Сохранить»). */
+function InterfaceSection() {
+  const scheme = useStore((s) => s.scheme)
+  const [on, setOn] = useState(desktopNotifyOn)
+  const supported = 'Notification' in window
+  const denied = supported && Notification.permission === 'denied'
+  return (
+    <section className="settings-section" id="set-ui">
+      <h2>Интерфейс</h2>
+      <div className="set-rows">
+        <Row label="Тема" hint="Хранится в этом браузере.">
+          <Segmented label="Тема" value={scheme} onChange={(v) => setState({ theme: v })} options={[{ value: 'dark', label: 'Тёмная' }, { value: 'light', label: 'Светлая' }]} />
+        </Row>
+        <Row label="Уведомления на рабочем столе" hint={denied ? 'Браузер запретил уведомления для этой страницы: разрешите их в настройках сайта.' : 'Вопросы агентов, готовые задачи и ошибки, пока вкладка в фоне. Хранится в этом браузере.'}>
+          <Switch label="Уведомления на рабочем столе" checked={on} disabled={!supported || denied}
+            onChange={(v) => void setDesktopNotify(v).then((res) => { setOn(res); if (v && !res) toast('Браузер не разрешил уведомления', 'error') })} />
+        </Row>
+      </div>
     </section>
   )
 }
@@ -1248,7 +1261,7 @@ function ChecksCard({ form, update }: { form: Settings; update: (s: Settings) =>
     <section className="settings-section project-checks">
       <h2>Проверки проектов</h2>
       <p className="set-note">Укажите команду тестов или линтера для нужных проектов. Если проверка не пройдёт, агент получит вывод для исправления.</p>
-      {workspaces.length === 0 && <p className="muted">Откройте проект — здесь появится его проверка.</p>}
+      {workspaces.length === 0 && <p className="muted">Добавьте проект, и здесь появится поле для его проверки.</p>}
       <div className="set-rows">
         {workspaces.map((w) => {
           const cmd = c.byWorkspace[w.id] ?? ''
@@ -1261,7 +1274,7 @@ function ChecksCard({ form, update }: { form: Settings; update: (s: Settings) =>
                 <Button size="sm" disabled={!cmd.trim() || run?.busy} onClick={() => void tryNow(w.id)}>{run?.busy ? 'Идёт…' : 'Проверить'}</Button>
               </div>
               {run && !run.busy && run.ok !== undefined && (
-                <Disclosure className="check-result" summary={<span className={run.ok ? 'ok-text' : 'field-error'}>{run.ok ? 'Прошла' : `Не прошла (код ${run.code ?? '—'})`} · {Math.round((run.ms ?? 0) / 1000)} с</span>}>
+                <Disclosure className="check-result" summary={<span className={run.ok ? 'ok-text' : 'field-error'}>{run.ok ? 'Прошла' : run.code == null ? 'Не прошла' : `Не прошла (код ${run.code})`} · {Math.round((run.ms ?? 0) / 1000)} с</span>}>
                   <pre className="mono">{run.output?.trim() || '(нет вывода)'}</pre>
                 </Disclosure>
               )}
@@ -1299,5 +1312,32 @@ function AutoValue({ value, mono, open, onToggle }: { value: string; mono?: bool
       <span className="auto-text"><span className="muted">Авто: </span><span className={mono ? 'mono' : undefined}>{value}</span></span>
       <Button size="sm" variant="ghost" icon={<Pencil />} onClick={onToggle} aria-expanded={open}>{open ? 'Скрыть' : 'Изменить'}</Button>
     </div>
+  )
+}
+
+/** Which of the CLI's MCP servers a sub-agent or worker starts with: each one costs start time, harness always comes. */
+function SubagentMcpRow({ off, onChange }: { off: string[]; onChange: (list: string[]) => void }) {
+  const can = useFeature('mcp-connections')
+  const [names, setNames] = useState<string[] | null>(null)
+  useEffect(() => {
+    if (!can) return
+    void tryApi<{ servers: { name: string; enabled: boolean }[] }>('GET', '/mcp/config')
+      .then((r) => setNames((r?.servers ?? []).filter((x) => x.enabled && x.name !== 'harness').map((x) => x.name)))
+  }, [can])
+  // a server switched off earlier but no longer configured stays listed: it can still be switched back on
+  const all = [...new Set([...(names ?? []), ...off])].sort()
+  if (!can || !all.length) return null
+  return (
+    <Row label="MCP-серверы субагентов" wide hint="Субагенты стартуют только с отмеченными серверами (harness подключается всегда). Каждый лишний сервер добавляет секунды к старту.">
+      <div className="set-chips">
+        {/* the server's name next to its switch: an aria-label alone left a row of unnamed toggles */}
+        {all.map((n) => (
+          <label key={n} className="set-switch">
+            <Switch label={`MCP-сервер ${n} для субагентов`} checked={!off.includes(n)} onChange={(v) => onChange(v ? off.filter((x) => x !== n) : [...off, n])} />
+            <span className="mono">{n}</span>
+          </label>
+        ))}
+      </div>
+    </Row>
   )
 }

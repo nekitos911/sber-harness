@@ -1,15 +1,15 @@
-import { useEffect, useMemo, useState, type KeyboardEvent, type MouseEvent } from 'react'
+import { memo, useCallback, useEffect, useMemo, useState, type KeyboardEvent, type MouseEvent } from 'react'
 import { Archive, ArchiveRestore, Bot, ChevronRight, Ellipsis, LayoutList, MessageSquarePlus, PlugZap, RotateCcw, Search, Square } from 'lucide-react'
 import { tryApi } from '../api'
 import { openDialog, openSession, openTask, setState, showPanel, useFeature, useStore, useThrottledStore } from '../store'
 import { ensureMessages } from '../ws'
 import { CliGlyph } from '../components/Sidebar'
-import { Branch, StatusIcon } from '../components/bits'
+import { Branch, Loading, StatusIcon } from '../components/bits'
 import { Markdown } from '../components/Markdown'
 import { SubRow } from '../components/panel/OverviewTab'
 import { Checkbox, Chip, MenuButton, Select } from '../components/ui'
 import { WaitingItem } from './InboxView'
-import { ago, basename, fullTime, normPath, plural } from '../lib/format'
+import { ago, basename, fullTime, normPath } from '../lib/format'
 import { useNow } from '../lib/useNow'
 import { loadDraft, saveDraft } from '../lib/draft'
 import { useCurrentTool, useStateLine } from '../lib/live'
@@ -17,7 +17,7 @@ import { waitsForMe } from '../lib/pending'
 import { descendants } from '../lib/overview'
 import { dur, sessionVisualState, STATE_LABEL } from '../lib/sessionState'
 import { archiveMany, archiveSession, reconnectMcp, sessionMenu, stopSession } from '../lib/sessionActions'
-import { agentRows, archivable, CAT_LABEL, countCats, groupRows, inFilter, rowMatches, type Cat, type Filter, type GroupBy, type Row } from '../lib/agentsBoard'
+import { agentRows, archivable, CAT_LABEL, countCats, groupRows, inFilter, rowMatches, type Filter, type GroupBy, type Row } from '../lib/agentsBoard'
 import type { Session } from '../types'
 
 const GROUPS: Record<GroupBy, string> = { project: 'Проект', status: 'Статус', none: 'Нет' }
@@ -25,16 +25,25 @@ const FILTERS: Filter[] =['all', 'you', 'run', 'fail', 'done', 'archive']
 const EMPTY: Record<Filter, string> = {
   all: 'Агентов пока нет', you: 'Никто не ждёт вас', run: 'Сейчас никто не работает', fail: 'Ошибок нет', done: 'Готовых пока нет', archive: 'Архив пуст',
 }
-const SUMMARY: [Cat, string, string, string][] = [
-  ['run', 'работает', 'работают', 'работают'], ['you', 'ждёт вас', 'ждут вас', 'ждут вас'], ['fail', 'ошибка', 'ошибки', 'ошибок'], ['done', 'готов', 'готовы', 'готовы'],
-]
+/** Rows mounted on the first frame; the rest follow a chunk per frame (150 rows in one go was a 0.4-0.8 s task at 4x CPU). */
+const CHUNK = 24 // a screenful at 900 px and some
+function useGrowing(total: number): number {
+  const [n, setN] = useState(CHUNK)
+  useEffect(() => {
+    if (n >= total) return
+    const id = requestAnimationFrame(() => setN((x) => x + CHUNK))
+    return () => cancelAnimationFrame(id)
+  }, [n, total])
+  return n
+}
 
-/** «Агенты»: every chat as one dense row, its helpers folded under it; what needs the person comes first. */
+/** «Агенты»: every chat as one dense row, its subagents folded under it; what needs the person comes first. */
 export function AgentsView() {
   const sessions = useThrottledStore((s) => s.sessions, 500) // a list: twice a second is enough
   const workspaces = useStore((s) => s.workspaces)
   const tasks = useStore((s) => s.tasks)
   const filter = useStore((s) => s.agentsMode)
+  const loaded = useStore((s) => s.loaded) // before the first state, «no agents» would be a false claim
   const archive = filter === 'archive'
   const [query, setQuery] = useState('')
   const [group, setGroupState] = useState<GroupBy>(() => loadDraft<GroupBy>('agents:group') ?? 'project')
@@ -59,11 +68,14 @@ export function AgentsView() {
   const shown = rows.filter((r) => inFilter(r, filter) && rowMatches(r, query, fields))
   const groups = groupRows(shown, group, project)
   const flat = groups.flatMap((g) => g.rows)
+  const limit = useGrowing(flat.length)
+  let mounted = 0 // rows handed out so far, across groups
   const chosen = flat.filter((r) => picked.has(r.s.id))
   const settled = archive ? [] : rows.filter((r) => archivable(r, sessionVisualState))
   const running = chosen.filter((r) => r.s.status === 'running')
 
-  const toggle = (set: Set<string>, id: string) => { const n = new Set(set); if (n.has(id)) n.delete(id); else n.add(id); return n }
+  const toggleOpen = useCallback((id: string) => setOpen((o) => toggle(o, id)), [])
+  const togglePick = useCallback((id: string) => setPicked((p) => toggle(p, id)), [])
   const pickAll = (on: boolean) => setPicked(on ? new Set(flat.map((r) => r.s.id)) : new Set())
   const bulkArchive = async (list: Row[]) => { await archiveMany(list.map((r) => r.s)); setPicked(new Set()) }
   const bulkRestore = async () => { for (const r of chosen) await archiveSession(r.s, false); setPicked(new Set()) }
@@ -72,15 +84,11 @@ export function AgentsView() {
     <div className="agents-view">
       <header className="view-head">
         <h1>Агенты</h1>
-        <p className="ag-summary" aria-label="Сводка">
-          {SUMMARY.map(([c, one, few, many]) => (
-            <span key={c} data-c={c} data-zero={!counts[c] || undefined}><span className="num">{counts[c]}</span> {plural(counts[c], one, few, many)}</span>
-          ))}
-        </p>
+        {/* the counts live once, on the filter chips below */}
         <span className="grow" />
         <div className="search">
           <Search aria-hidden />
-          <input className="input" type="search" placeholder="Название, проект, ветка, задача, модель" aria-label="Поиск агентов" value={query} onChange={(e) => setQuery(e.target.value)} />
+          <input className="input" type="search" placeholder="Поиск агентов" aria-label="Поиск агентов по названию, проекту, ветке, задаче или модели" data-tip="Название, проект, ветка, задача или модель" value={query} onChange={(e) => setQuery(e.target.value)} />
         </div>
         <Select size="sm" label="Группировать" value={group} onChange={setGroup} display={`Группы: ${GROUPS[group]}`}
           options={(Object.keys(GROUPS) as GroupBy[]).map((g) => ({ value: g, label: GROUPS[g] }))} />
@@ -95,7 +103,7 @@ export function AgentsView() {
           {FILTERS.map((f) => {
             const n = f === 'all' ? active.length : f === 'archive' ? archivedCount : counts[f]
             return <Chip key={f} pressed={filter === f} onClick={() => { setState({ agentsMode: f }); setPicked(new Set()) }}>
-              {f === 'all' ? 'Все' : f === 'archive' ? 'Архив' : CAT_LABEL[f]}{n > 0 && <span className="ag-chip-n num">{n}</span>}
+              {f === 'all' ? 'Все' : f === 'archive' ? 'Архив' : CAT_LABEL[f]}{n > 0 && <span className="ag-chip-n num" data-c={f}>{n}</span>}
             </Chip>
           })}
         </div>
@@ -116,7 +124,7 @@ export function AgentsView() {
         )}
       </div>
 
-      {flat.length === 0 ? (
+      {!loaded ? <Loading label="Загружаем список агентов…" /> : flat.length === 0 ? (
         <div className="empty">
           <Bot className="empty-icon" aria-hidden />
           <h2>{query.trim() ? 'Ничего не найдено' : EMPTY[filter]}</h2>
@@ -138,22 +146,29 @@ export function AgentsView() {
             <span className="ag-c-time">Активность</span>
             <span />
           </div>
-          {groups.map((g) => (
-            <section key={g.key} aria-label={g.label || 'Агенты'}>
-              {g.label && <h2 className="ag-group">{g.label} <span className="num muted">{g.rows.length}</span></h2>}
-              <div role="list">
-                {g.rows.map((r) => (
-                  <AgentRow key={r.s.id} r={r} project={project(r.s)} open={open.has(r.s.id)} picked={picked.has(r.s.id)}
-                    onOpen={() => setOpen((o) => toggle(o, r.s.id))} onPick={() => setPicked((p) => toggle(p, r.s.id))} />
-                ))}
-              </div>
-            </section>
-          ))}
+          {groups.map((g) => {
+            if (mounted >= limit) return null
+            const rows = g.rows.slice(0, limit - mounted)
+            mounted += rows.length
+            return (
+              <section key={g.key} aria-label={g.label || 'Агенты'}>
+                {g.label && <h2 className="ag-group">{g.label} <span className="num muted">{g.rows.length}</span></h2>}
+                <div role="list">
+                  {rows.map((r) => (
+                    <AgentRow key={r.s.id} r={r} project={project(r.s)} open={open.has(r.s.id)} picked={picked.has(r.s.id)}
+                      onOpen={toggleOpen} onPick={togglePick} />
+                  ))}
+                </div>
+              </section>
+            )
+          })}
         </div>
       )}
     </div>
   )
 }
+
+const toggle = (set: Set<string>, id: string) => { const n = new Set(set); if (n.has(id)) n.delete(id); else n.add(id); return n }
 
 /** ↑/↓ between rows, Enter opens the chat, Space selects, →/← unfold / fold. */
 function rowKeys(e: KeyboardEvent<HTMLDivElement>, s: Session, open: boolean, onOpen: () => void, onPick: () => void) {
@@ -172,8 +187,15 @@ function rowKeys(e: KeyboardEvent<HTMLDivElement>, s: Session, open: boolean, on
   act()
 }
 
-function AgentRow({ r, project, open, picked, onOpen, onPick }: { r: Row; project: string; open: boolean; picked: boolean; onOpen: () => void; onPick: () => void }) {
+// rows are rebuilt on every list update (twice a second while agents stream): a row redraws only when its own data changed
+const sameList = <T,>(a: T[], b: T[]) => a.length === b.length && a.every((x, i) => x === b[i])
+const AgentRow = memo(AgentRowView, (p, n) => p.r.s === n.r.s && p.r.who === n.r.who && p.r.cat === n.r.cat && p.r.finished === n.r.finished &&
+  sameList(p.r.kids, n.r.kids) && p.project === n.project && p.open === n.open && p.picked === n.picked && p.onOpen === n.onOpen && p.onPick === n.onPick)
+
+function AgentRowView({ r, project, open, picked, onOpen: openId, onPick: pickId }: { r: Row; project: string; open: boolean; picked: boolean; onOpen: (id: string) => void; onPick: (id: string) => void }) {
   const s = r.s
+  const onOpen = () => openId(s.id)
+  const onPick = () => pickId(s.id)
   const v = sessionVisualState(s)
   const line = useStateLine(s)
   const tool = useCurrentTool(s)
@@ -182,7 +204,7 @@ function AgentRow({ r, project, open, picked, onOpen, onPick }: { r: Row; projec
   const reviveOn = useFeature('revive')
   const reconnectOn = useFeature('agent-reconnect')
   const recoveryOn = useFeature('recovery')
-  // what it (or its helper) asks: the question / the command, from its notification
+  // what it (or its subagent) asks: the question / the command, from its notification
   const who = r.who
   const ask = useStore((st) => {
     const kind = who.waitingFor === 'answer' ? 'question' : who.waitingFor === 'permission' ? 'permission' : null
@@ -206,7 +228,7 @@ function AgentRow({ r, project, open, picked, onOpen, onPick }: { r: Row; projec
   return (
     <div role="listitem" className="ag-item" data-open={open || undefined}>
       <div className="ag-row" role="group" data-id={s.id} data-s={v} data-cat={r.cat} data-picked={picked || undefined} tabIndex={0}
-        aria-label={`${s.title || s.id}: ${whoState}. Enter — открыть, пробел — выбрать, → — подробности`}
+        aria-label={`${s.title || s.id}: ${whoState}. Enter: открыть, пробел: выбрать, стрелка вправо: подробности`}
         onClick={onOpen} onKeyDown={(e) => rowKeys(e, s, open, onOpen, onPick)}>
         <span onClick={stop}><Checkbox checked={picked} onChange={onPick}><span className="sr-only">Выбрать «{s.title || s.id}»</span></Checkbox></span>
         <button type="button" className="ag-fold" tabIndex={-1} aria-expanded={open} aria-label={open ? 'Скрыть подробности' : 'Показать подробности'} onClick={(e) => { stop(e); onOpen() }}>
@@ -253,7 +275,7 @@ function AgentRow({ r, project, open, picked, onOpen, onPick }: { r: Row; projec
 
 const openOverview = (id: string) => { openSession(id); showPanel('overview') }
 
-/** Under an unfolded row: what waits for the person, the last report, the helpers' tree. */
+/** Under an unfolded row: what waits for the person, the last report, the subagents' tree. */
 function AgentDetail({ r }: { r: Row }) {
   const s = r.s
   const sessions = useStore((st) => st.sessions)

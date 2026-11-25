@@ -652,7 +652,9 @@ export function createOrchestration({ config, store, bus, tasks, sessions, addWo
       // awaitedBy: the caller waits inside worker_run/agent — a question of this child must reach it there (ask, waitRun)
       // background: nobody waits inside a call — its result comes to the caller as a message (reportToAsker)
       const background = a.background === true || a.run_in_background === true;
-      sessions.update(s.id, { ...(background ? { awaitedBy: null, askedParent: true } : { awaitedBy: caller.id }), ...(readOnly ? { readOnly: true } : {}) });
+      // `mcp`: servers the caller knows this task needs, on even when they are off for sub-agents (subagentMcpExclude)
+      const mcp = Array.isArray(a.mcp) ? a.mcp.filter((x) => typeof x === 'string') : [];
+      sessions.update(s.id, { ...(background ? { awaitedBy: null, askedParent: true } : { awaitedBy: caller.id }), ...(readOnly ? { readOnly: true } : {}), ...(mcp.length ? { mcpInclude: mcp } : {}) });
       const readOnlyNote = readOnly ? 'Работай только на чтение: ничего не создавай и не меняй (кроме отчёта через worker_done).' : null;
       sessions.deliver(s.id, { from: caller.id, text: [profile?.body, readOnlyNote, `## Задание\n${a.spec}`].filter(Boolean).join('\n\n') });
     } catch (e) {
@@ -965,7 +967,9 @@ export function createOrchestration({ config, store, bus, tasks, sessions, addWo
     const block = config.orchestration?.subagents !== 'builtin' && CONTEXT_LAUNCHERS.has(s.launcherId) ? context : '';
     // the chat a person started (no parent): it leads; helpers and workers get their own role rules instead
     const lead = block && !s.parentId && !s.ephemeral && (s.role || 'solo') === 'solo' ? DELEGATION : null;
-    return [block, lead, TEMP_FILES, rolePreamble(s), WORKTREE_RULE, peerContext(s), s.atRoot ? hintsLine(s.repoHints) : null, s.taskId ? linksLine(tasks.find(s.taskId)) : null].filter(Boolean).join('\n\n');
+    const off = s.parentId ? (config.orchestration?.subagentMcpExclude || []).filter((x) => !(s.mcpInclude || []).includes(x)) : [];
+    const mcpOff = off.length ? `Чтобы ты стартовал быстрее, для тебя отключены MCP-серверы: ${off.join(', ')}. Понадобился один из них — вызови mcp_enable({ server }) сервера harness и сразу заверши ход: харнесс перезапустит тебя с ним, контекст сохранится.` : null;
+    return [block, lead, mcpOff, TEMP_FILES, rolePreamble(s), WORKTREE_RULE, peerContext(s), s.atRoot ? hintsLine(s.repoHints) : null, s.taskId ? linksLine(tasks.find(s.taskId)) : null].filter(Boolean).join('\n\n');
   }
 
   function rolePreamble(s) {
@@ -1531,11 +1535,24 @@ export function createOrchestration({ config, store, bus, tasks, sessions, addWo
         worktree: str('current or new; omit it for the automatic choice (new when workspace is another repository, else current)', { enum: ['current', 'new'] }), workspace: str('another repository (workspace name): the sub-agent works there — for a task, in the task\'s worktree of that repository (made once, then shared: its reviewer lands in the same one)'),
         timeoutMin: { type: 'number', description: 'minutes to wait (default 60)' },
         run_in_background: { type: 'boolean', description: 'true: return at once — the sub-agent works in its own chat the user sees, its result comes to you as a message; meanwhile go on or end your turn (the user can write to you)' },
+        mcp: strArr('MCP servers this sub-agent needs (e.g. ["onework"]): started for it even when they are off for sub-agents'),
       }, ['prompt']),
       run: async (a, c) => {
         const r = await workerRun({ ...a, profile: a.subagent_type, spec: a.prompt }, c);
         sessions.adoptVirtual(c.id, r.sessionId, a.prompt); // one chat per helper, not the real one and a copy
         return r;
+      },
+    },
+    {
+      name: 'mcp_enable',
+      description: 'You are a sub-agent and need an MCP server that is off for sub-agents (your preamble lists them). Call it, then END YOUR TURN: the harness restarts you on the same session with that server and tells you to go on.',
+      inputSchema: obj({ server: str('MCP server name') }, ['server']),
+      run: (a, c) => {
+        if (!c) fail(400, 'mcp_enable — только для сессии харнесса');
+        const off = config.orchestration?.subagentMcpExclude || [];
+        if (!c.parentId || !off.includes(a.server)) return { ok: true, note: `«${a.server}» для тебя не отключён: если его инструментов нет, он не настроен у пользователя — сообщи об этом в отчёте.` };
+        sessions.update(c.id, { mcpInclude: [...new Set([...(c.mcpInclude || []), a.server])], mcpRestart: a.server });
+        return { ok: true, note: `Сервер «${a.server}» подключится после перезапуска. Заверши ход сейчас: харнесс перезапустит тебя на этой же сессии и пришлёт «продолжай».` };
       },
     },
     {

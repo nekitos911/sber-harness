@@ -7,7 +7,7 @@ import { randomBytes } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { CODE_ROOT } from './config.js';
 import { agentMcpServersFor, FULL_ACCESS_MODES, launchers } from './launchers.js';
-import { runTurn, isAlive, sameProcess, spawnOptions, endChild } from './runner.js';
+import { runTurn, isAlive, sameProcess, spawnOptions, endChild, readTail } from './runner.js';
 import { baseId, catalogueHit } from './models.js';
 import { secretEnv } from './mcp-client.js';
 import { readRegistry } from './registry.js';
@@ -327,6 +327,9 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     let agentCfg = db.agentMeta[s.agent]?.partialUnsupported ? { ...cfg, partialMessagesFlag: null } : cfg; // the CLI rejected it once
     // only when the person says so: the user's own GigaCode hooks stay on in the harness's runs by default
     if (agentCfg.userHooks === false) agentCfg = { ...agentCfg, settings: { ...agentCfg.settings, disableAllHooks: true } };
+    // a sub-agent or worker starts without the MCP servers the person switched off for them (each one costs start time)
+    const subOff = s.parentId ? (config.orchestration?.subagentMcpExclude || []).filter((x) => !(s.mcpInclude || []).includes(x)) : [];
+    if (subOff.length) agentCfg = { ...agentCfg, mcpExclude: [...new Set([...(agentCfg.mcpExclude || []), ...subOff])] };
     const sandbox = agentCfg.autoSandbox === undefined ? defaults.autoSandbox ?? null : agentCfg.autoSandbox;
     if (!db.agentMeta[s.agent]?.sandboxBroken) return sandbox === agentCfg.autoSandbox ? agentCfg : { ...agentCfg, autoSandbox: sandbox };
     return { ...agentCfg, autoSandbox: null, approvalModeMap: { ...(agentCfg.approvalModeMap ?? defaults.approvalModeMap ?? {}), auto: 'auto-edit' } };
@@ -1173,6 +1176,8 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
   // not worth starting again by itself: the executable, the launcher or the config is wrong (the person fixes it)
   const START_FATAL = /Не удалось запустить агента|ENOENT|нет режима ACP|не найден|неизвестный лаунчер|не настроен|не существует|недоступн/i;
   const START_RETRY_SEC = [20, 60, 180];
+  const times = (n) => `${n} ${n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20) ? 'раза' : 'раз'}`; // «4 раза», «5 раз»
+  const START_STREAK_MAX = 4; // failed starts in a row (all retry kinds together) before the harness stops retrying
   const START_BUSY = /ExtensionStoreBusyError|store is busy|EBUSY|resource busy or locked|Unable to update lock within the stale threshold|Lock file is already being held|protected storage is unavailable/i;
 
   /**
@@ -1309,6 +1314,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
       const carrier = userMsgs.at(-1) || store.messages(s.id).findLast((m) => m.kind === 'user');
       if (carrier) updateMessage(s, Object.assign(carrier, { runInfo }));
       fs.mkdirSync(runDir(s.id), { recursive: true });
+      trimRunDir(s.id, r.turn);
       if (!(agentCfg.transport === 'acp' && s.warm)) await spawnSlot(s.agent, r, s); // a warm ACP process starts nothing
       if (r.stopRequested) throw Object.assign(new Error('stopped before start'), { beforeStart: true }); // stopped while waiting for its slot
       launcher.prepare(ctx);
@@ -1346,16 +1352,24 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
       s.turnOffset = 0;
       s.phase = 'starting'; // spawned, no output yet (GigaCode may need a minute to start its MCP servers)
       emit(s);
+      peekStart(s, r, agentCfg.transport === 'acp' ? path.join(runDir(s.id), 'acp.err.txt') : turnFiles(s, r.turn).errFile);
       res = await handle.done;
     } catch (e) {
       res = e.beforeStart ? { stopped: true, stderrTail: '', eventCount: 0 } : { error: e.message, action: e.action };
     }
     r.releaseSlot?.();
+    clearInterval(r.peek);
     if (s.startWait) s.startWait = 0;
+    if (s.startNote) s.startNote = null;
+    // every way a start fails counts toward one streak: past START_STREAK_MAX nothing retries by itself any more
+    // (the busy, start and revive retries each had their own count, and together they looked like an endless restart)
+    const failedStart = !res.eventCount && !res.sawResult && !res.priorOutput && !r.stopRequested && !res.detached && (!!res.error || res.timedOut || (res.code != null && res.code !== 0));
+    s.startFailStreak = failedStart ? (s.startFailStreak || 0) + 1 : res.eventCount ? 0 : s.startFailStreak || 0;
+    const giveUp = s.startFailStreak >= START_STREAK_MAX;
     // the start collided with another process of the agent («Extension store is busy»): the same messages again in a few
     // seconds — not «Агент не запустился»
     const busy = (`${res.error || ''} ${res.stderrTail || ''}`.match(START_BUSY) || [])[0];
-    if (busy && !res.eventCount && !res.sawResult && !r.stopRequested && find(s.id) && (r.startRetries || 0) < 4) {
+    if (busy && !giveUp && !res.eventCount && !res.sawResult && !r.stopRequested && find(s.id) && (r.startRetries || 0) < 4) {
       const n = r.startRetries || 0;
       r.startRetries = n + 1;
       const sec = 2 + Math.round(Math.random() * 3) + n * 2; // spread: the others retry at other moments
@@ -1365,7 +1379,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
       Object.assign(s, { status: 'idle', pid: null, pidStartedAt: null, phase: null, turnOffset: null, queued: s.queue.length });
       addMessage(s, { kind: 'system', text: `Агент был занят другим запуском (${busy}) — повторяю через ${sec} с (попытка ${n + 1} из 4)` });
       emit(s);
-      const t = setTimeout(() => { if (find(s.id) && !runtime(s.id).running && s.queue.length) startTurn(s); }, sec * 1000);
+      const t = setTimeout(() => { const x = find(s.id); if (x && !x.archived && x.status !== 'stopped' && !runtime(s.id).running && x.queue.length) startTurn(x); }, sec * 1000);
       t.unref?.();
       return;
     }
@@ -1377,7 +1391,11 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
       // a start that timed out or died on a loaded machine is tried again by itself: a worker's messages from its
       // coordinator must not wait for a person to press «Повторить». A missing executable or model waits for the person.
       const n = r.startFails || 0;
-      if (!res.action && !START_FATAL.test(res.error) && n < START_RETRY_SEC.length) {
+      if (giveUp) {
+        const why = String(res.error).split('\n')[0].slice(0, 200);
+        res.error += `\nАгент не стартует ${times(s.startFailStreak)} подряд — больше сам не повторяю, чтобы не крутить перезапуски. «Повторить» запустит снова; сообщений в очереди: ${s.queue.length}.`;
+        hooks.notify?.({ kind: 'escalation', sessionId: s.id, taskId: s.taskId ?? null, text: `${s.title}: агент не стартует ${times(s.startFailStreak)} подряд — ${why}`, actions: ['retry', 'open'] });
+      } else if (!res.action && !START_FATAL.test(res.error) && n < START_RETRY_SEC.length) {
         r.startFails = n + 1;
         const sec = START_RETRY_SEC[n];
         const due = Date.now() + sec * 1000;
@@ -1459,6 +1477,63 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
       }, Math.max(60000, agentCfg.firstEventTimeoutMs || 0)).unref?.();
     });
   }
+
+  /**
+   * A long chat's run folder keeps the files of its last KEEP_TURNS turns (the transcript has the rest), and its
+   * stderr.log at most its last LOG_KEEP bytes — every turn used to add files there for good.
+   */
+  /**
+   * While the agent starts (no event yet): the last line it wrote to stderr since this start — «MCP server(s) failed to
+   * start: …», «event loop stall» — shows what the start waits for (session.startNote), every 3 s.
+   */
+  function peekStart(s, r, file) {
+    clearInterval(r.peek);
+    let from = 0;
+    try { from = fs.statSync(file).size; } catch {} // ACP appends every process to one file: only this start's part
+    r.peek = setInterval(() => {
+      if (!find(s.id) || s.phase !== 'starting') return clearInterval(r.peek);
+      let text = '';
+      try {
+        const size = fs.statSync(file).size;
+        if (size <= from) return;
+        const fd = fs.openSync(file, 'r');
+        const len = Math.min(size - from, 65536);
+        const buf = Buffer.alloc(len);
+        fs.readSync(fd, buf, 0, len, size - len);
+        fs.closeSync(fd);
+        text = buf.toString('utf8');
+      } catch { return; }
+      const line = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean).at(-1)?.slice(0, 300) ?? null;
+      if (line && line !== s.startNote) {
+        s.startNote = line;
+        emit(s);
+      }
+    }, 3000);
+    r.peek.unref?.();
+  }
+
+  function trimRunDir(sid, turn) {
+    const dir = runDir(sid);
+    try {
+      for (const f of fs.readdirSync(dir)) {
+        const n = Number(f.match(/^turn-(\d+)\./)?.[1]);
+        if (n && n <= turn - KEEP_TURNS) fs.rmSync(path.join(dir, f), { force: true });
+      }
+      for (const name of ['stderr.log', 'acp.err.txt']) {
+        const log = path.join(dir, name);
+        if (fs.existsSync(log) && fs.statSync(log).size > LOG_MAX) fs.writeFileSync(log, readTail(log, LOG_KEEP));
+      }
+      // long prompts went through files (prompt-<turn>.md): only the recent turns may still be read by the CLI
+      const prompts = path.join(dir, 'prompts');
+      for (const f of fs.existsSync(prompts) ? fs.readdirSync(prompts) : []) {
+        const n = Number(f.match(/^prompt-(\d+)\.md$/)?.[1]);
+        if (n && n <= turn - KEEP_TURNS) fs.rmSync(path.join(prompts, f), { force: true });
+      }
+    } catch {} // best effort: a file the antivirus holds is trimmed next turn
+  }
+  const KEEP_TURNS = 10;
+  const LOG_MAX = 5 * 1024 * 1024;
+  const LOG_KEEP = 1024 * 1024;
 
   function turnFiles(s, n) {
     const dir = runDir(s.id);
@@ -1557,7 +1632,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     } else if (unadopted && !res.sawResult) {
       // the saved pid is gone or now belongs to another process: what the file had is shown, the rest is lost
       markInterrupted(s);
-    } else if (hookTimedOut(res) && !r.hookRetried && r.lastItems) {
+    } else if (hookTimedOut(res) && !r.hookRetried && r.lastItems && !r.requeued) { // requeued: back in the queue already, a retry is due
       // a hook of the person's GigaCode did not answer (often a loaded machine at start): said so, which hook if stderr
       // names it, and the turn once more on a fresh process — nothing is switched off behind the person's back
       r.hookRetried = true;
@@ -1617,7 +1692,15 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     // broke (not the person's stop, not a login, not a missing executable or model) or woken: continue by itself
     const broke = status === 'error' && errorKind === 'turn' && !res.authTimedOut && !/Не удалось запустить агента/.test(res.error || '') && store.messages(s.id).findLast((m) => m.kind === 'error')?.action !== 'pick-model';
     const reason = woken || (broke ? (store.messages(s.id).findLast((m) => m.kind === 'error')?.text.split('\n')[0] || 'ошибка хода').slice(0, 200) : null);
-    const reviving = !!reason && !stopped && revivable(s) && !s.queue.length && scheduleRevive(s, reason);
+    // the harness also runs it again by itself when the same messages are retried now or its start is retried later:
+    // not over for whoever waits on it (a sub-agent's caller must not get «no_report»/«failed» before that retry)
+    const retrying = !!r.retryItems || (!!r.requeued && s.startRetryAt > Date.now());
+    const reviving = (!!reason && !stopped && revivable(s) && !s.queue.length && scheduleRevive(s, reason)) || retrying;
+    if (reason && !r.requeued && s.startFailStreak === START_STREAK_MAX) {
+      // the start path says this in its own error; a crash at start that the revive would retry is said here, once
+      addMessage(s, { kind: 'system', text: `⚠ Агент не стартует ${times(s.startFailStreak)} подряд — больше сам не повторяю, чтобы не крутить перезапуски. «Повторить» запустит снова.` });
+      hooks.notify?.({ kind: 'escalation', sessionId: s.id, taskId: s.taskId ?? null, text: `${s.title}: агент не стартует ${times(s.startFailStreak)} подряд — ${reason}`, actions: ['retry', 'open'] });
+    }
     if (!reason && status !== 'error' && s.revive) s.revive = null; // a turn that went well: the count starts over
     emit(s);
     hooks.turnClosed?.(s); // a call of this turn that is no longer polled stops being marked as waited for
@@ -1625,7 +1708,14 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     store.flush(); // a finished turn is never lost to a crash right after it
     if (s.archiveOnSettle && !s.archived) return api.archive(s.id, true); // a settled helper (subagentRetention)
     if (r.requeued) r.requeued = false; // no retry loop: the next message (or a model change) sends them
-    else if (r.retryItems || s.queue.length) startTurn(s);
+    else if (s.mcpRestart && !stopped) {
+      // it asked for an MCP server (mcp_enable): a new process on the same CLI session, with the server, goes on
+      const server = s.mcpRestart;
+      s.mcpRestart = null;
+      acp.drop(s.id);
+      s.queue.push({ id: newId('q'), from: 'harness', at: Date.now(), text: `[harness] MCP-сервер «${server}» подключён. Продолжай задачу с того места, где остановился.` });
+      startTurn(s);
+    } else if (r.retryItems || s.queue.length) startTurn(s);
   }
 
   /** The process of a turn already closed at `result` has exited (by itself or killed after exitGraceMs). */
@@ -1738,6 +1828,24 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     return { command: shellLine([exe.file, ...exe.args, ...(flag ? includeDirs.flatMap((d) => [flag, d]) : [])]), env: exe.env || {} };
   }
 
+  /** The top-most ancestor still in the harness (not archived): the one that decides about a cut sub-agent. */
+  function leadOf(s) {
+    let x = s;
+    for (let p = x.parentId && find(x.parentId); p && !p.archived; p = p.parentId && find(p.parentId)) x = p;
+    return x;
+  }
+  /** Interrupted sessions grouped under their leads: { lead, subs } (subs: interrupted descendants of the lead). */
+  function recoveryGroups(cut) {
+    const by = new Map();
+    for (const s of cut) {
+      const lead = leadOf(s);
+      const g = by.get(lead.id) || { lead, subs: [] };
+      if (s.id !== lead.id) g.subs.push(s);
+      by.set(lead.id, g);
+    }
+    return [...by.values()];
+  }
+
   // ---- revive: a turn that broke (an error, a dropped connection) or went silent is continued, not dropped ----
   // A few attempts with growing pauses (--resume keeps the context, the worktree keeps the files), then a notification
   // with «Повторить». session.revive = { count, reason, due } | { …, gaveUp } until a turn goes well.
@@ -1753,7 +1861,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
   }
   const delayText = (sec) => (sec < 60 ? `${sec} с` : `${Math.round(sec / 60)} мин`);
   /** Worth continuing by itself: a chat of the person or a worker, not one that waits for someone or cannot start at all. */
-  const revivable = (s) => s.kind === 'chat' && !s.virtual && !s.archived && !s.waitingFor && s.phase !== 'auth' && !!s.everStarted && reviveCfg().attempts > 0;
+  const revivable = (s) => s.kind === 'chat' && !s.virtual && !s.archived && !s.waitingFor && s.phase !== 'auth' && !!s.everStarted && reviveCfg().attempts > 0 && (s.startFailStreak || 0) < START_STREAK_MAX;
   function scheduleRevive(s, reason) {
     const cfg = reviveCfg();
     const n = s.revive?.gaveUp ? 0 : s.revive?.count || 0;
@@ -1881,7 +1989,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     return { workspaceId: folder?.id ?? null, worktreePath: null, system: false };
   }
 
-  const archiveTimer = setInterval(() => api.autoArchive(), 3600000); // hourly; also once on startup (index.js)
+  const archiveTimer = setInterval(() => { api.autoArchive(); api.purge(); }, 3600000); // hourly; also once on startup (index.js)
   archiveTimer.unref?.();
 
   // ---- public API ----
@@ -2230,6 +2338,7 @@ ${note.trim()}` : text });
       }
       s.queue = [];
       s.queued = 0;
+      s.startRetryAt = null; // nothing left to start: no «повтор через …» countdown either
       if (r.running && r.closedEarly) {
         r.handle?.terminate?.('post_result_linger');
         return emit(s);
@@ -2237,6 +2346,7 @@ ${note.trim()}` : text });
       if (r.running) {
         r.stopRequested = true;
         r.handle?.stop();
+        if (r.handle && !r.handle.pid) acp.drop(sid); // an ACP process still starting cannot be cancelled: it goes
         r.slotWake?.();
         s.status = 'stopped';
       }
@@ -2255,10 +2365,10 @@ ${note.trim()}` : text });
         // «Переподключить MCP»: a new agent process (its MCP servers start again) on the SAME CLI session — ACP loads it
         // with session/load, headless resumes it with --resume. A running turn is cut and continued in the new process.
         if (s.virtual) fail(409, 'внутренний субагент перезапускается вместе с родительским чатом');
-        if (r.running) {
+        // a turn still waiting for its start slot has no process yet: it starts a fresh one anyway
+        if (r.running && r.handle) {
           r.reviveKill = 'перезапуск агента: MCP-серверы подключаются заново';
-          r.handle?.stop();
-          r.slotWake?.();
+          r.handle.stop();
           if (!(s.queue || []).some(isContinue)) s.queue.push({ id: newId('q'), from: 'harness', at: Date.now(), text: CONTINUE('агент перезапущен, MCP-серверы подключены заново') });
         }
         acp.drop(sid);
@@ -2299,6 +2409,37 @@ ${note.trim()}` : text });
         emit(x);
       }
       return s;
+    },
+
+    /**
+     * sessions.purgeArchivedDays (default 30, 0 = off): chats archived longer ago are deleted with their transcript and
+     * run folder — never a pinned one or one a task that is not done still names. Run folders of sessions that no longer
+     * exist (a crash between the two writes) go too, once a day old.
+     */
+    purge(now = Date.now()) {
+      const days = Number(config.sessions?.purgeArchivedDays ?? 30);
+      let n = 0;
+      if (days > 0) {
+        const cutoff = now - days * 86400000;
+        const held = (s) => db.tasks.some((t) => t.assigneeSessionId === s.id && t.status !== 'done');
+        for (const s of db.sessions.filter((x) => x.archived && !x.virtual && !x.pinnedAt && (x.archivedAt || x.lastActivityAt || 0) < cutoff)) {
+          if (!find(s.id) || runtime(s.id).running || held(s)) continue; // a parent removed before may have taken it along
+          api.remove(s.id, { force: true });
+          n++;
+        }
+      }
+      const known = new Set(db.sessions.map((x) => x.id));
+      let orphans = 0;
+      try {
+        for (const name of fs.readdirSync(path.join(store.dataDir, 'runs'))) {
+          const dir = path.join(store.dataDir, 'runs', name);
+          if (known.has(name) || !/^s_\w+$/.test(name) || now - fs.statSync(dir).mtimeMs < 86400000) continue;
+          fs.rmSync(dir, { recursive: true, force: true });
+          orphans++;
+        }
+      } catch {} // no runs folder yet
+      if (n || orphans) console.log(`[harness] purged ${n} archived session(s), ${orphans} leftover run folder(s)`);
+      return { sessions: n, orphans };
     },
 
     /**
@@ -2499,31 +2640,54 @@ ${note.trim()}` : text });
     },
 
     // ---- recovery after a restart ----
+    /**
+     * The chats to bring back after an interruption, one row per LEAD: an interrupted sub-agent is not a row of its own —
+     * it goes under its top-most live ancestor (the orchestrator), which decides whether it is still needed.
+     */
     recoveryList() {
+      const groups = recoveryGroups(db.sessions.filter((s) => s.interrupted && !s.virtual));
       return {
-        sessions: db.sessions.filter((s) => s.interrupted).map((s) => ({
-          id: s.id, title: s.title, cwd: s.cwd, taskId: s.taskId, role: s.role, reason: s.interrupted.reason, at: s.interrupted.at, lastActivity: s.interrupted.lastActivity,
+        sessions: groups.map(({ lead, subs }) => ({
+          id: lead.id, title: lead.title, cwd: lead.cwd, taskId: lead.taskId, role: lead.role,
+          interrupted: !!lead.interrupted,
+          reason: (lead.interrupted || subs[0].interrupted).reason, at: Math.max(...[lead, ...subs].filter((x) => x.interrupted).map((x) => x.interrupted.at)),
+          lastActivity: lead.interrupted?.lastActivity ?? null,
+          subagents: subs.map((x) => ({ id: x.id, title: x.title, role: x.role })),
         })),
         message: config.recovery?.message || '',
       };
     },
-    /** Sends the message to each interrupted session (workers/reviewers before their coordinators). */
+    /**
+     * Continues each lead (ids may name sub-agents too: their lead is meant). The lead gets the message if it was cut
+     * itself, plus the list of its cut sub-agents: they are NOT started here — the lead continues or stops each one.
+     */
     recoveryResume(ids, message) {
       if (!Array.isArray(ids) || ids.some((x) => typeof x !== 'string')) fail(400, 'sessionIds: нужен массив id сессий');
       const text = (typeof message === 'string' && message.trim()) || config.recovery?.message;
       if (!text) fail(400, 'нужен текст сообщения (recovery.message пуст)');
-      const list = ids.map(get).filter((s) => s.interrupted).sort((a, b) => (a.role === 'coordinator') - (b.role === 'coordinator'));
-      for (const s of list) api.deliver(s.id, { from: 'user', text });
-      return { resumed: list.map((s) => s.id) };
+      const wanted = new Set(ids.map(get).map(leadOf).map((x) => x.id));
+      const groups = recoveryGroups(db.sessions.filter((s) => s.interrupted && !s.virtual)).filter((g) => wanted.has(g.lead.id));
+      for (const { lead, subs } of groups) {
+        for (const x of subs) {
+          x.interrupted = null; // its lead decides now; the chat stays as it was
+          emit(x);
+        }
+        const note = subs.length
+          ? `[harness] Работа прервалась, и эти твои субагенты остановились посреди хода: ${subs.map((x) => `${x.id} «${x.title}»`).join(', ')}. Сами они не продолжены. Нужен — send_message(to: <id>, body: "продолжай"); больше не нужен — worker_stop(session_id: <id>). Их чаты и рабочие деревья сохранены.`
+          : '';
+        api.deliver(lead.id, { from: 'user', text: [lead.interrupted ? text : '', note].filter(Boolean).join('\n\n') });
+      }
+      return { resumed: groups.map((g) => g.lead.id) };
     },
     recoveryDismiss(ids) {
       if (!Array.isArray(ids) || ids.some((x) => typeof x !== 'string')) fail(400, 'sessionIds: нужен массив id сессий');
-      const list = ids.map(get).filter((s) => s.interrupted);
+      const leads = new Set(ids.map(get).map(leadOf).map((x) => x.id));
+      const list = db.sessions.filter((s) => s.interrupted && leads.has(leadOf(s).id));
       for (const s of list) {
         s.interrupted = null;
         emit(s);
       }
-      return { dismissed: list.map((s) => s.id) };
+      return { dismissed: [...leads] };
     },
 
     /** Harness shutdown: agent turns keep running (re-attached on the next start); terminals are closed. */

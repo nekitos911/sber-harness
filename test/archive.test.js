@@ -81,3 +81,51 @@ test('auto-archive on start: only idle, unwaited, uninterrupted sessions without
     await srv.close();
   }
 });
+
+test('purge on start: archived longer than purgeArchivedDays are deleted with their files; pinned, task-held and leftover run folders', async () => {
+  const dataDir = path.join(root, 'данные чистка');
+  fs.mkdirSync(path.join(dataDir, 'runs'), { recursive: true });
+  const old = Date.now() - 40 * 86400000;
+  const chat = (id, extra = {}) => ({
+    id, kind: 'chat', title: id, agent: 'mock', launcherId: 'mock', cwd: root, workspaceId: null, branch: null, role: 'solo', parentId: null,
+    taskId: null, status: 'idle', externalSessionId: null, settingsPath: null, model: null, approvalMode: null, autoReport: false, queued: 0,
+    queue: [], preview: '', command: null, pid: null, createdAt: old, lastActivityAt: old, archived: true, archivedAt: old, ...extra,
+  });
+  const sessions = [chat('s_gone'), chat('s_pinned', { pinnedAt: old }), chat('s_held'), chat('s_fresh', { archivedAt: Date.now() }), chat('s_live', { archived: false })];
+  const tasks = [{ id: 'T-1', title: 'не закрыта', status: 'review', assigneeSessionId: 's_held', deps: [], labels: [], targets: ['main'], ports: [], log: [], order: 1 }];
+  fs.writeFileSync(path.join(dataDir, 'db.json'), JSON.stringify({ seq: { task: 1 }, tasks, workspaces: [], notifications: [], sessions }));
+  for (const id of ['s_gone', 's_orphan', 's_young_orphan']) fs.mkdirSync(path.join(dataDir, 'runs', id, 'attachments'), { recursive: true });
+  fs.writeFileSync(path.join(dataDir, 'runs', 's_gone', 'turn-1.out.ndjson'), '{}');
+  const dayAgo = new Date(Date.now() - 2 * 86400000);
+  for (const id of ['s_gone', 's_orphan']) fs.utimesSync(path.join(dataDir, 'runs', id), dayAgo, dayAgo);
+  const configFile = path.join(root, 'config чистка.json');
+  fs.copyFileSync(path.join(CODE_ROOT, 'harness.config.json'), configFile);
+  const srv = await startServer({ dataDir, configFile, port: 0, configOverrides: { mcpServersFrom: null, history: { adopt: false }, terminal: { autoRespawn: false }, sessions: { autoArchiveDays: 0, purgeArchivedDays: 30 }, agents: { mock: { modelsDiscovery: null } } } });
+  try {
+    const st = await (await fetch(`${srv.url}/api/state`, { headers: { 'x-harness-token': srv.token } })).json();
+    assert.deepEqual(st.sessions.map((s) => s.id).sort(), ['s_fresh', 's_held', 's_live', 's_pinned']);
+    assert.ok(!fs.existsSync(path.join(dataDir, 'runs', 's_gone')), 'its run folder went with it');
+    assert.ok(!fs.existsSync(path.join(dataDir, 'runs', 's_orphan')), 'a leftover run folder of no session');
+    assert.ok(fs.existsSync(path.join(dataDir, 'runs', 's_young_orphan')), 'a folder younger than a day may belong to a session being created');
+  } finally {
+    await srv.close();
+  }
+});
+
+test('a long chat keeps the files of its last 10 turns in its run folder (the transcript has all of them)', async () => {
+  const h = await startTestServer();
+  try {
+    const session = async (id) => (await h.api('GET', '/api/state')).body.sessions.find((s) => s.id === id);
+    const s = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', cwd: root, prompt: 'ход 1' })).body;
+    for (let n = 2; n <= 13; n++) {
+      await waitFor(async () => { const x = await session(s.id); return x.status === 'idle' && !x.pid && !x.turnClosing; }, { what: `turn ${n - 1}` });
+      await h.api('POST', `/api/sessions/${s.id}/messages`, { text: `ход ${n}` });
+    }
+    await waitFor(async () => { const x = await session(s.id); return x.status === 'idle' && !x.pid && x.turnCount === 13; }, { what: 'turn 13' });
+    const turns = fs.readdirSync(path.join(h.dataDir, 'runs', s.id)).filter((f) => /^turn-\d+\.out\.ndjson$/.test(f)).map((f) => Number(f.match(/\d+/)[0])).sort((a, b) => a - b);
+    assert.deepEqual(turns, [4, 5, 6, 7, 8, 9, 10, 11, 12, 13]);
+    assert.equal((await h.api('GET', `/api/sessions/${s.id}/messages`)).body.filter((m) => m.kind === 'user').length, 13);
+  } finally {
+    await h.close();
+  }
+});

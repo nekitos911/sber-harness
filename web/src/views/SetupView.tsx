@@ -127,8 +127,8 @@ export function SetupView() {
           <div className="firstrun-body">
             <strong>Где ваши проекты</strong>
             <span className="muted">
-              {root ? <>Папка со всеми проектами: <span className="mono">{root.path}</span> — агент сам выберет нужный проект.</>
-                : projects.length ? <>Открыто: {projects.map((w) => w.name).join(', ')}. Если все проекты лежат в одной папке, укажите её — тогда агент выберет проект сам.</>
+              {root ? <>Папка со всеми проектами: <span className="mono">{root.path}</span>. Агент сам выберет нужный проект.</>
+                : projects.length ? <>Открыто: {projects.map((w) => w.name).join(', ')}. Если все проекты лежат в одной папке, укажите её, и агент будет выбирать проект сам.</>
                   : 'Откройте репозиторий или выберите общую папку для нескольких проектов.'}
             </span>
             <div className="firstrun-actions">
@@ -139,7 +139,7 @@ export function SetupView() {
         </li>
 
       </ol>
-      <Disclosure summary="Команда для задач и помощники" className="firstrun-options">
+      <Disclosure summary="Команда для задач и субагенты" className="firstrun-options">
         <ul className="setup-steps">
         <li className="firstrun-step" data-done={commandOk || undefined} data-optional>
           {commandOk ? <Check className="setup-mark" aria-label="готово" /> : <Circle className="setup-mark" aria-label="не заполнено" />}
@@ -164,10 +164,10 @@ export function SetupView() {
 
         {skill && skill !== 'installed' && (
           <li className="firstrun-step" data-optional>
-            <Switch checked={installSkill} onChange={setInstallSkill} label="Показывать помощников агента" />
+            <Switch checked={installSkill} onChange={setInstallSkill} label="Показывать субагентов отдельными чатами" />
             <div className="firstrun-body">
-              <strong>Показывать помощников агента <span className="muted">· необязательно</span></strong>
-              <span className="muted">У каждого помощника появится свой чат. В нём можно посмотреть ход работы, ответить или остановить агента.</span>
+              <strong>Показывать субагентов отдельными чатами <span className="muted">· необязательно</span></strong>
+              <span className="muted">Субагента запускает агент. У каждого субагента появится свой чат: в нём видно ход работы, ему можно ответить или остановить его.</span>
               <span className="muted">Для этого в папку агента запишется файл с инструкцией (навык).</span>
             </div>
           </li>

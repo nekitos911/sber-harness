@@ -12,7 +12,7 @@ const review = (o = {}) => ({ state: 'reviewing' as const, round: 2, maxRounds: 
 test('a running reviewer: spins, says round, who and how long, opens the reviewer chat', () => {
   const c = agentChip({ agentState: 'reviewing', review: review() }, worker, chat('running'), now, dur)
   assert.deepEqual([c.spin, c.stalled, c.open], [true, false, 'r'])
-  assert.equal(c.tip, 'Ревью силами harness, раунд 2 из 2: ревьюер «Ревью PROJ-1» работает 12 мин — открыть чат ревьюера')
+  assert.equal(c.tip, 'Ревью силами harness, раунд 2 из 2: ревьюер «Ревью PROJ-1» работает 12 мин. Открыть чат ревьюера')
 })
 
 test('a reviewing task whose reviewer does not run for long looks stalled and offers a retry', () => {

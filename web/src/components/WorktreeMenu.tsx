@@ -249,7 +249,7 @@ export function CleanupDialog({ workspaceId }: { workspaceId: string }) {
                 <Checkbox checked={picked.has(w.path)} disabled={!!res} onChange={(v) => toggle(w.path, v)}>
                   <span className="mono">{w.meta?.label || w.branch || basename(w.path)}</span>
                 </Checkbox>
-                <span className="muted">{task ? `${task.externalId ?? task.id} · ${COLUMNS.find((c) => c.id === task.status)?.label ?? ''}` : '—'}</span>
+                <span className="muted">{task ? `${task.externalId ?? task.id} · ${COLUMNS.find((c) => c.id === task.status)?.label ?? ''}` : 'нет'}</span>
                 <span>{w.pr ? <span className="pr-state" data-state={w.pr.state}>PR {w.pr.state === 'merged' ? 'влит' : w.pr.state === 'open' ? 'открыт' : 'отклонён'}</span> : <span className="muted">нет PR</span>}</span>
                 <span className="cleanup-badges">
                   {(w.meta?.createdBy ?? w.createdBy) === 'agent' && <span className="chip">агент</span>}

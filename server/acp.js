@@ -103,7 +103,7 @@ export function patientRequest(rpc, method, params, { idleMs, errFile, pollMs = 
     rpc.request(method, params).then((v) => { clearInterval(tick); resolve(v); }, (e) => { clearInterval(tick); reject(e); });
   });
 }
-const PATIENCE = 4;
+const PATIENCE = 2; // a start that keeps writing still gives up after 2 × the limit: waiting longer only hid a dead start
 
 /**
  * The MCP servers an ACP session gets, in ACP shape (MCP SDK schema): stdio { name, command, args, env: [{ name, value }] },
@@ -278,6 +278,7 @@ export function createAcp({ onWarm = () => {} } = {}) {
     if (!(idleMs > 0)) return;
     const t = setTimeout(() => {
       if (!c.turn && !c.held.size && !c.helpers?.size) drop(c.sid); // still idle: unload, the next message reloads
+      else if (!c.dead && conns.get(c.sid) === c) armIdle(c, idleMs); // busy (e.g. a helper prompt): looked at again later
     }, idleMs);
     t.unref?.();
     idleTimers.set(c.sid, t);

@@ -62,7 +62,8 @@ export function App() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (modKey(e) && e.key.toLowerCase() === 'k') { e.preventDefault(); setPalette(true) }
+      // e.code: Ctrl+K on the Russian layout is e.key «л»
+      if (modKey(e) && e.code === 'KeyK') { e.preventDefault(); setPalette(true) }
       // Close the active tab: Ctrl/⌘+W where the browser lets it through, Alt+W always (e.code: any keyboard layout).
       if (e.code === 'KeyW' && !e.shiftKey && ((modKey(e) && !e.altKey) || (e.altKey && !e.ctrlKey && !e.metaKey))) {
         const st = getState()
@@ -194,7 +195,7 @@ function ConnectionBanner() {
   return (
     <div className="banner" role="alert">
       <WifiOff aria-hidden />
-      {loaded ? 'Связь с сервером потеряна. Переподключаемся…' : 'Сервер harness недоступен. Запустите его (npm start) — подключимся автоматически.'}
+      {loaded ? 'Связь с сервером потеряна. Переподключаемся…' : 'Сервер harness недоступен. Запустите его (npm start), и страница подключится сама.'}
       <button type="button" className="btn btn-sm" onClick={reconnectNow}>Повторить</button>
     </div>
   )
@@ -208,7 +209,7 @@ function AuthExpired() {
   return (
     <div className="auth-scrim" role="alertdialog" aria-modal="true" aria-labelledby="auth-title" aria-describedby="auth-text">
       <div className="auth-card">
-        <h2 id="auth-title">Сервер перезапущен — обновите страницу</h2>
+        <h2 id="auth-title">Сервер перезапущен, обновите страницу</h2>
         <p id="auth-text">
           Страница держит ключ доступа прошлого запуска сервера. После обновления всё продолжит работать: вкладки и черновики сохранятся.
           {dirty && ' Несохранённые правки в открытых файлах будут потеряны.'}

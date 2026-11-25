@@ -159,7 +159,7 @@ export function Composer({ session, active, force = false }: { session: Session;
         ref={ref}
         rows={1}
         className="composer-input"
-        placeholder={session.waitingFor === 'answer' ? 'Ответ на вопрос агента — здесь или в карточке выше' : running && !session.turnClosing ? 'Enter — в очередь, Ctrl+Enter — сразу агенту (шаг прервётся)' : session.status === 'stopped' ? 'Остановлено. Следующее сообщение продолжит работу' : 'Задайте вопрос; @ — файлы, / — команды'}
+        placeholder={session.waitingFor === 'answer' ? 'Ответьте агенту здесь или в карточке вопроса выше' : running && !session.turnClosing ? 'Enter ставит в очередь, Ctrl+Enter отправляет сразу (шаг прервётся)' : session.status === 'stopped' ? 'Остановлено. Следующее сообщение продолжит работу' : 'Задайте вопрос. @ добавит файл, / вызовет команду'}
         aria-label="Сообщение агенту"
         value={text}
         onChange={(e) => { update(e.target.value); setCaret(e.target.selectionStart) }}
@@ -238,7 +238,7 @@ function agentLine(text: string, from: string) {
   if (!m) return <><span className="muted">{from === 'harness' ? 'от харнесса: ' : 'от агента: '}</span>{text.replace(/^\[harness\]\s*/, '')}</>
   const first = m[2].trim().split('\n').find((l) => l.trim()) ?? ''
   const done = /finished.*with status: (\w+)/.exec(first) || /^(?:Updated result|Result) \((\w+)\)/.exec(first)
-  const what = done ? `закончил — ${done[1]}` : first.replace(/^Question:\s*/, 'вопрос: ')
+  const what = done ? `закончил: ${done[1]}` : first.replace(/^Question:\s*/, 'вопрос: ')
   return <><strong>{m[1]}</strong><span className="muted">: {what}</span></>
 }
 
@@ -272,10 +272,10 @@ ${q.text}` : q.text)
       <div className="cq-head">
         <button type="button" className="cq-toggle" aria-expanded={shown} onClick={() => setOpen(!shown)}>
           {shown ? <ChevronUp aria-hidden /> : <ChevronDown aria-hidden />}
-          <span>{running ? `В очереди: ${queue.length} — уйдёт после текущего шага (раньше, если шаг только ждёт субагентов)` : `В очереди: ${queue.length} — агент сейчас не работает`}</span>
+          <span>{running ? `В очереди: ${queue.length}. Уйдёт после текущего шага (раньше, если шаг только ждёт субагентов)` : `В очереди: ${queue.length}. Агент сейчас не работает`}</span>
         </button>
         {running
-          ? <button type="button" className="link-btn" data-tip="Остановить текущий шаг и отправить очередь сразу; контекст сохраняется, помощники доработают и пришлют результат" onClick={() => void tryApi('POST', `/sessions/${session.id}/queue/send`, { interrupt: true })}>Прервать шаг и отправить очередь</button>
+          ? <button type="button" className="link-btn" data-tip="Остановить текущий шаг и отправить очередь сразу; контекст сохраняется, субагенты доработают и пришлют результат" onClick={() => void tryApi('POST', `/sessions/${session.id}/queue/send`, { interrupt: true })}>Прервать шаг и отправить очередь</button>
           : <button type="button" className="link-btn" onClick={() => void tryApi('POST', `/sessions/${session.id}/queue/send`)}>Отправить сейчас</button>}
       </div>
       {shown && queue.map((q) => (

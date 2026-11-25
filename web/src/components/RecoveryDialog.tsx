@@ -11,7 +11,7 @@ import { Ellipsis } from 'lucide-react'
 
 const REASON: Record<RecoveryItem['reason'], string> = { reboot: 'Перезагрузка ПК', harness_restart: 'Перезапуск harness', crash: 'Сбой' }
 
-const preChecked = (s: RecoveryItem) => s.role === 'worker' || s.role === 'coordinator' || s.role === 'reviewer'
+const preChecked = (s: RecoveryItem) => s.role === 'worker' || s.role === 'coordinator' || s.role === 'reviewer' || !!s.subagents?.length
 
 export function RecoveryDialog() {
   const recovery = useStore((s) => s.recovery)
@@ -67,7 +67,7 @@ export function RecoveryDialog() {
       onClose={closeDialog}
       onSubmit={() => (left.length ? void resume(chosen) : closeDialog())}
     >
-      <p className="muted" style={{ marginTop: -6 }}>{reasons ? `${reasons}: ` : ''}эти сессии прервались посреди хода. Можно отправить сообщение ниже всем сессиям в списке или только отмеченным. Через «…» можно убрать сессию из списка.</p>
+      <p className="muted" style={{ marginTop: -6 }}>{reasons ? `${reasons}: ` : ''}эти агенты прервались посреди хода. Сообщение ниже уйдёт всем в списке или только отмеченным; прерванных субагентов каждый агент продолжит или остановит сам. Через «…» можно убрать строку из списка.</p>
       <ul className="recovery-list">
         {items.map((it) => {
           const s = sessions.find((x) => x.id === it.id)
@@ -84,11 +84,17 @@ export function RecoveryDialog() {
               </Checkbox>
               <span className="recovery-meta">
                 <span className="mono ellipsis" data-tip={it.cwd}>{basename(it.cwd)}</span>
-                {it.lastActivity && <span className="ellipsis">прервано на: <span className="mono">{it.lastActivity}</span></span>}
+                {it.interrupted === false ? <span className="ellipsis">сам не прерван</span>
+                  : it.lastActivity && <span className="ellipsis">прервано на: <span className="mono">{it.lastActivity}</span></span>}
                 <span className="num">{ago(it.at)}</span>
               </span>
+              {!!it.subagents?.length && (
+                <span className="recovery-meta muted" data-tip={it.subagents.map((x) => x.title).join('\n')}>
+                  +{it.subagents.length} {plural(it.subagents.length, 'прерванный субагент', 'прерванных субагента', 'прерванных субагентов')}: продолжит или остановит сам агент
+                </span>
+              )}
               {done ? <span className="recovery-state">продолжена</span>
-                : <MenuButton label={`Действия: ${it.title}`} icon={<Ellipsis />} align="right" items={[{ label: 'Не продолжать — убрать из списка', onSelect: () => void dismiss(it.id) }]} />}
+                : <MenuButton label={`Действия: ${it.title}`} icon={<Ellipsis />} align="right" items={[{ label: 'Не продолжать, убрать из списка', onSelect: () => void dismiss(it.id) }]} />}
             </li>
           )
         })}

@@ -4,7 +4,7 @@
 // #mcp (a harness MCP tool behind GigaCode's ToolCall wrapper asking for permission), #late (the fixture's tool-call
 // stream), #read <path> (fs/read_text_file), #slow (streams ~4 s, honours session/cancel), #die (exits mid-turn),
 // #maxtokens (ends with stopReason max_tokens), #hooktimeout (fails like GigaCode whose hooks never answer, unless the
-// run settings say disableAllHooks).
+// run settings say disableAllHooks). Env MOCK_ACP_NEW_HOOKTIMEOUT=<file>: the first session/new fails that way once.
 // loadSession: true; sessions live in MOCK_AGENT_STATE_DIR (acp-<id>.json), a load replays the history.
 // MOCK_AGENT_ARGV_FILE: appends { acp: true, argv, mcpServers } on session/new|load.
 import fs from 'node:fs';
@@ -146,6 +146,12 @@ async function prompt({ sessionId, prompt: parts }) {
 const handlers = {
   initialize: (params) => { clientFs = !!params?.clientCapabilities?.fs?.readTextFile; return { protocolVersion: 1, agentCapabilities: { loadSession: true }, authMethods: [] }; },
   'session/new': (params) => {
+    // MOCK_ACP_NEW_HOOKTIMEOUT=<file>: the first session/new times out on a SessionStart hook (the file marks it done)
+    const once = process.env.MOCK_ACP_NEW_HOOKTIMEOUT;
+    if (once && !fs.existsSync(once)) {
+      fs.writeFileSync(once, '1');
+      throw Object.assign(new Error('Internal error'), { code: -32603, data: { details: 'Request timed out waiting for hook-execution-response' } });
+    }
     record(params);
     const sessionId = randomUUID();
     fs.writeFileSync(stateFile(sessionId), JSON.stringify({ turns: 0, cwd: params.cwd, history: [] }));

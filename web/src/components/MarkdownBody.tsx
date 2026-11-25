@@ -1,4 +1,4 @@
-import { useRef, useState, type ComponentPropsWithoutRef } from 'react'
+import { useRef, useState, type ComponentPropsWithoutRef, type ReactElement } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Check, Copy } from 'lucide-react'
@@ -28,6 +28,17 @@ const components: Components = {
   a: ({ href, children }) => <a href={href} target="_blank" rel="noreferrer noopener">{children}</a>,
 }
 
+// Parsed trees by text (ReactMarkdown is a pure function): a chat shown again, its older messages, the same report on
+// another screen are not parsed again — parsing was most of the cost of opening a long chat.
+const parsed = new Map<string, ReactElement>()
+const plugins = [remarkGfm]
+
 export default function MarkdownBody({ text }: { text: string }) {
-  return <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>{text}</ReactMarkdown>
+  let tree = parsed.get(text)
+  if (!tree) {
+    tree = ReactMarkdown({ remarkPlugins: plugins, components, children: text }) as ReactElement
+    parsed.set(text, tree)
+    if (parsed.size > 1000) parsed.delete(parsed.keys().next().value!) // oldest out
+  }
+  return tree
 }

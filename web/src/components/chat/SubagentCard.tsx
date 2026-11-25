@@ -29,16 +29,16 @@ export function SubagentCard({ tool, sessionId, at }: { tool: ToolCall; sessionI
   const input = (tool.input ?? {}) as Obj
   // a harness call without subSessionId: its chat is found by the id in its output, else by its prompt among the children
   const lookup = !tool.subSessionId && !!sessionId && /^(mcp__harness__|harness\.)(agent|worker_run)$/.test(tool.name)
-  const call = { at: at ?? 0, prompt: str(input.prompt), output: tool.output }
+  const call = { at: at ?? 0, prompt: str(input.prompt) || str(input.spec), output: tool.output } // worker_run asks by «spec»
   const found = useStore((s) => (lookup ? childOfCall(call, s.sessions.filter((x) => x.parentId === sessionId)
     .map((x) => ({ id: x.id, createdAt: x.createdAt, first: s.messages[x.id]?.find((m) => m.kind === 'user')?.text }))) : null))
   // the children started after the call: their first messages are read to match the prompt
   const unread = useStore((s) => (lookup && !found ? s.sessions.filter((x) => x.parentId === sessionId && x.createdAt >= call.at - 2000 && !s.messages[x.id]).map((x) => x.id).join(' ') : ''))
   useEffect(() => { for (const id of unread.split(' ').filter(Boolean)) ensureMessages(id) }, [unread])
   const subId = tool.subSessionId ?? found
-  const type = str(input.subagent_type) || str(input.description) || 'агент'
+  const type = str(input.subagent_type) || str(input.profile) || str(input.description)
   const model = str(input.model) || str(input.grade)
-  const ask = str(input.prompt) || str(input.description)
+  const ask = str(input.prompt) || str(input.spec) || str(input.description)
   // run_in_background: the call answers at once while the sub-agent works outside this stream — its own output file
   // settles it, and the chat of the sub-agent gets that answer (sessions.js, watchBackground)
   const bg = backgroundRun(tool.output)
@@ -74,21 +74,21 @@ export function SubagentCard({ tool, sessionId, at }: { tool: ToolCall; sessionI
             : background ? <Radio className="tool-st" data-s="bg" aria-label="работал в фоне" />
               : <Check className="tool-st" data-s="ok" aria-label="готово" />}
         <Bot className="agent-ico" aria-hidden />
-        <span className="agent-kind">Субагент <strong>{type}</strong>{background && <span className="muted"> · {running ? 'в фоне' : 'работал в фоне'}</span>}</span>
+        <span className="agent-kind">Субагент{type && <> <strong>{type}</strong></>}{background && <span className="muted"> · {running ? 'в фоне' : 'работал в фоне'}</span>}</span>
         {model && <span className="mono muted">{model}</span>}
         <span className="tool-sum ellipsis">{ask.split('\n').find((l) => l.trim()) ?? ''}</span>
-        {(background || found) && chat && <span className="agent-live mono muted" data-tip="его шаги — в чате субагента">
+        {(background || found) && chat && <span className="agent-live mono muted" data-tip="Его шаги видны в чате субагента">
           {chat.status === 'running' ? 'работает' : `закончил · ${relTime(chat.lastActivityAt, Date.now())}`}
         </span>}
       </>}
     >
       <div className="agent-body">
         {background && /harness/.test(tool.name) && <p className="muted agent-bg-note">Работает в фоне отдельным чатом («Открыть чат субагента»). Его результат придёт главному агенту сообщением, а пока главному агенту можно писать.</p>}
-        {background && !/harness/.test(tool.name) && <p className="muted agent-bg-note">Запущен в фоне встроенным инструментом GigaCode: ход субагента идёт вне этого потока, его шаги CLI пишет только в свой файл{chat ? ' — ответ появится в чате субагента' : ''}. Харнес прочитает результат, когда субагент закончит.{bg?.outputFile && <> Его вывод пишется в <span className="mono">{bg.outputFile}</span>.</>}</p>}
+        {background && !/harness/.test(tool.name) && <p className="muted agent-bg-note">Запущен в фоне встроенным инструментом GigaCode: ход субагента идёт вне этого потока, его шаги CLI пишет только в свой файл{chat ? '; ответ появится в чате субагента' : ''}. Харнес прочитает результат, когда субагент закончит.{bg?.outputFile && <> Его вывод пишется в <span className="mono">{bg.outputFile}</span>.</>}</p>}
         {progress.length > 0 && (
           <pre ref={feed} className="agent-feed" aria-live={running ? 'polite' : undefined}>{progress.join('\n')}</pre>
         )}
-        {running && !progress.length && <p className="muted agent-wait">{/harness/.test(tool.name) ? 'Работает отдельным чатом: его шаги — в «Открыть чат субагента».' : background ? 'Работает в фоне: его шаги — в «Открыть чат субагента», строки о своей работе CLI в этот поток не пишет.' : 'Субагент запущен, ждём первых шагов…'}</p>}
+        {running && !progress.length && <p className="muted agent-wait">{/harness/.test(tool.name) ? 'Работает отдельным чатом: его шаги видны в «Открыть чат субагента».' : background ? 'Работает в фоне: его шаги видны в «Открыть чат субагента», в этот поток CLI о них не пишет.' : 'Субагент запущен, ждём первых шагов…'}</p>}
         {tool.output && (
           <div className="agent-result" data-error={tool.status === 'error' && !chat || undefined}>
             <div className="tool-label">{bg ? 'Ответ субагента' : 'Результат'}</div>

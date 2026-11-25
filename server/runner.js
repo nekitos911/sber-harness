@@ -298,7 +298,7 @@ function tailFile(file, offset, maxLine, onLine, onOffset) {
  *   pid null = not adopted (unknown or reused pid): only the output already in the file is read.
  * @returns {{ pid, startedAt, turn, stop(), detach(), done: Promise<{code, signal, sawResult, timedOut, stopped, detached, error, stderrTail, eventCount}> }}
  */
-const FIRST_EVENT_PATIENCE = 3;
+const FIRST_EVENT_PATIENCE = 2;
 const fileSize = (file) => {
   try {
     return fs.statSync(file).size;

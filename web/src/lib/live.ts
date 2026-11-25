@@ -83,5 +83,6 @@ export function useStartingLabel(s: Session) {
   const starting = s.status === 'running' && s.phase === 'starting'
   const sec = useElapsed(s.lastActivityAt, starting)
   if (starting && s.startWait) return `Ждёт своей очереди на запуск (${s.startWait}-й): агенты стартуют по очереди, чтобы не перегружать машину`
+  if (starting && s.startNote) return `Запуск · ${sec} с — ${s.startNote}`
   return starting ? `Запуск… ждём MCP · ${sec} с` : ''
 }

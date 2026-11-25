@@ -19,7 +19,7 @@ export function VerdictsTab({ cwd, plans, scope }: { cwd: string; plans: SddPlan
           Показать все планы папки
         </label>
       )}
-      {plans.length === 0 && <p className="muted wpanel-section">У этого чата нет планов /full-task.</p>}
+      {plans.length === 0 && <p className="wpanel-note">У этого чата нет планов /full-task.</p>}
       {plans.map((p) => {
         const done = planDone(p)
         const n = p.progress.items.length

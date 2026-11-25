@@ -12,7 +12,7 @@ export const GRADES: Grade[] = ['default', 'fast', 'strong', 'review', 'explore'
 /** What each grade is for: the settings screen hint and the picker's «уровень: …» line. */
 export const GRADE_ROLES: Record<Grade, string> = {
   default: 'модель по умолчанию, если уровень не задан',
-  fast: 'поиск и разведка, файловые помощники',
+  fast: 'поиск, разведка и работа с файлами',
   strong: 'основная работа субагентов',
   review: 'ревью и аудит',
   explore: 'глубокое исследование кода',

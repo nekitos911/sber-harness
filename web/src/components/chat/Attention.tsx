@@ -57,7 +57,7 @@ export function QuestionCard({ id, text, options, multiSelect, answered, closed,
         <div className="ask-multi">
           {options.map((o) => (
             <Checkbox key={o.label} checked={picked.includes(o.label)} onChange={(v) => setPicked(v ? [...picked, o.label] : picked.filter((x) => x !== o.label))}>
-              {o.label}{o.description && <span className="muted"> — {o.description}</span>}
+              {o.label}{o.description && <span className="muted">: {o.description}</span>}
             </Checkbox>
           ))}
           <Button size="sm" variant="primary" busy={busy !== null} disabled={!picked.length} onClick={() => void reply(picked.join(', '))}>Ответить</Button>

@@ -11,6 +11,7 @@ import type { Notification, NotificationKind } from '../types'
 import { LinkButton, ReplyOptions } from '../components/chat/MessageItem'
 import { AskToolCard, isAskCard, MessageQuestion, PermissionCard, permissionSettled, questionSettled } from '../components/chat/Attention'
 import { ensureMessages } from '../ws'
+import { Loading } from '../components/bits'
 import type { Message, Session, Task } from '../types'
 
 /** Sessions a restart interrupted: reopens the recovery dialog. */
@@ -21,8 +22,8 @@ function Interrupted() {
     <section className="inbox-waiting" aria-label="Прерванные сессии">
       <button type="button" className="inbox-recovery" onClick={() => openDialog({ kind: 'recovery' })}>
         <RotateCcw aria-hidden />
-        Прерванные сессии ({n})
-        <span className="muted">— продолжить или отпустить</span>
+        Прерванные сессии ({n}):
+        <span className="muted">продолжить или отпустить</span>
       </button>
     </section>
   )
@@ -104,7 +105,7 @@ function DoneItem({ t, s }: { t: Task; s?: Session }) {
     <div className="inbox-wait">
       <span className="inbox-wait-head">
         <button type="button" className="chip" onClick={() => (s ? openSession(s.id) : openTask(t.id))}>{t.externalId ?? t.id}: {t.title}</button>
-        <span className="muted">агент закончил — проверьте результат</span>
+        <span className="muted">агент закончил, проверьте результат</span>
       </span>
       <span className="inbox-actions">
         {cwd && <button type="button" className="btn btn-sm" onClick={() => openTab({ kind: 'diff', cwd, path: null })}><GitCompare />Дифф</button>}
@@ -133,7 +134,7 @@ export function WaitingItem({ s }: { s: Session }) {
     <div className="inbox-wait">
       <button type="button" className="chip" onClick={() => openSession(s.id)}>{s.title}</button>
       {open ? (open.kind === 'permission' ? <PermissionCard m={open} /> : open.kind === 'tool' ? <AskToolCard m={open} /> : <MessageQuestion m={open} />)
-        : <span className="muted">{s.waitingFor === 'permission' ? 'ждёт разрешения' : s.waitingFor === 'auth' ? 'нужен вход в CLI' : 'ждёт ответа'} — откройте чат</span>}
+        : <span className="muted">{s.waitingFor === 'permission' ? 'ждёт разрешения' : s.waitingFor === 'auth' ? 'нужен вход в CLI' : 'ждёт ответа'}: откройте чат</span>}
     </div>
   )
 }
@@ -147,6 +148,7 @@ function markRead(ids: string[]) {
 }
 
 export function InboxView() {
+  const loaded = useStore((s) => s.loaded) // before the first state, «nothing new» would be a false claim
   const notifications = useStore((s) => s.notifications)
   const sessions = useStore((s) => s.sessions)
   const tasks = useStore((s) => s.tasks)
@@ -181,7 +183,7 @@ export function InboxView() {
       </header>
       <Interrupted />
       <WaitingForYou />
-      {list.length === 0 && pending > 0 ? null : list.length === 0 ? ( // the cards above are the content: no «Пусто» under them
+      {!loaded ? <Loading label="Загружаем уведомления…" /> : list.length === 0 && pending > 0 ? null : list.length === 0 ? ( // the cards above are the content: no «Пусто» under them
         <div className="empty">
           <Inbox className="empty-icon" aria-hidden />
           <h2>Новых уведомлений нет</h2>
@@ -247,7 +249,7 @@ function Item({ n }: { n: Notification }) {
               className="textarea"
               autoFocus
               rows={2}
-              placeholder="Ответ агенту. Enter — отправить"
+              placeholder="Ответ агенту. Enter: отправить"
               aria-label="Ответ агенту"
               value={text}
               onChange={(e) => setText(e.target.value)}

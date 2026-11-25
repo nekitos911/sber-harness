@@ -23,7 +23,7 @@
 .app[data-rail] .topbar-left { width: auto; border-right: 0; } /* the 48 px rail: no divider at 132 px that lines up with nothing */
 .topbar-left .brand-mark { width: 16px; height: 16px; margin-right: 8px; color: var(--ink); }
 .topbar-right { display: flex; align-items: center; gap: 2px; padding: 0 6px; flex-shrink: 0; }
-.topbar-right .btn { height: 24px; font-size: 12px; color: var(--ink-3); }
+.topbar-right .btn { height: 24px; font-size: var(--fs-sm); color: var(--ink-3); }
 
 /* the resize frame Windows draws into the top edge would sit over the buttons; the window is still resizable by its edges */
 html[data-desktop="win32"] .topbar { border-top: 0; }
@@ -42,7 +42,7 @@ html[data-desktop="win32"] .topbar { border-top: 0; }
 
 .statusbar {
   grid-column: 1 / -1; display: flex; align-items: center; gap: 14px; padding: 0 10px; min-width: 0;
-  border-top: 1px solid var(--rule); background: var(--ground); color: var(--ink-3); font-size: 11.5px;
+  border-top: 1px solid var(--rule); background: var(--ground); color: var(--ink-3); font-size: var(--fs-sm);
 }
 .statusbar > span { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .statusbar .end { margin-left: auto; }
@@ -51,13 +51,13 @@ html[data-desktop="win32"] .topbar { border-top: 0; }
 .sb-skill[data-ready="true"] { color: var(--lamp-done); }
 .sb-skill:hover, .sb-mcp:hover { color: var(--ink); }
 .sb-mcp[data-bad] { color: var(--lamp-fail); }
-.popover.sb-mcp-pop { display: grid; width: min(430px, calc(100vw - 24px)); overflow-y: auto; padding: 12px 14px; font-size: 13px; }
+.popover.sb-mcp-pop { display: grid; width: min(430px, calc(100vw - 24px)); overflow-y: auto; padding: 12px 14px; font-size: var(--fs-md); }
 .sb-mcp-head { padding-bottom: 8px; color: var(--ink); }
 .sb-mcp-row { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; align-items: center; gap: 6px 10px; padding: 10px 0; border-top: 1px solid var(--rule-soft); }
 .sb-mcp-row > svg { width: 15px; height: 15px; color: var(--lamp-done); }
 .sb-mcp-row[data-bad] > svg { color: var(--lamp-fail); }
 .sb-mcp-name { min-width: 0; overflow-wrap: anywhere; }
-.sb-mcp-err { grid-column: 2 / -1; color: var(--ink-2); overflow-wrap: anywhere; font-size: 12px; }
+.sb-mcp-err { grid-column: 2 / -1; color: var(--ink-2); overflow-wrap: anywhere; font-size: var(--fs-sm); }
 .sb-mcp-err p { margin: 0 0 4px; }
 .sb-mcp-pop > .link-btn { justify-self: start; margin-top: 6px; }
 .statusbar .conn::after { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--lamp-done); }
@@ -104,7 +104,7 @@ html[data-desktop="win32"] .topbar { border-top: 0; }
 
 .sb-head {
   display: flex; align-items: center; gap: 4px; height: 28px; padding: 0 0 0 8px; margin-top: 2px; flex-shrink: 0;
-  color: var(--ink-3); font-size: 11.5px; font-weight: 600;
+  color: var(--ink-3); font-size: var(--fs-sm); font-weight: 600;
 }
 .sb-head span { flex: 1; }
 
@@ -112,7 +112,7 @@ html[data-desktop="win32"] .topbar { border-top: 0; }
 .tree-group { margin-bottom: 8px; }
 .tree-row {
   position: relative; display: flex; align-items: center; gap: 7px;
-  height: 26px; padding: 0 4px 0 calc(8px + var(--depth, 0) * 16px); font-size: 13px;
+  height: 26px; padding: 0 4px 0 calc(8px + var(--depth, 0) * 16px); font-size: var(--fs-md);
   border-radius: var(--r-1); color: var(--ink-2); cursor: pointer; user-select: none;
   transition: background-color var(--t-fast) ease;
 }
@@ -120,8 +120,8 @@ html[data-desktop="win32"] .topbar { border-top: 0; }
 .tree-row:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
 .tree-row > svg { width: 14px; height: 14px; flex-shrink: 0; color: var(--ink-3); }
 .tree-row .label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tree-row .meta { font-size: 11px; color: var(--ink-3); flex-shrink: 0; font-variant-numeric: tabular-nums; min-width: 34px; text-align: right; }
-.tree-row .agent { font-family: var(--font-mono); font-size: 11px; color: var(--ink-3); flex-shrink: 0; max-width: 84px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tree-row .meta { font-size: var(--fs-xs); color: var(--ink-3); flex-shrink: 0; font-variant-numeric: tabular-nums; min-width: 34px; text-align: right; }
+.tree-row .agent { font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--ink-3); flex-shrink: 0; max-width: 84px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tree-row .actions { display: none; gap: 1px; }
 .tree-row:hover .actions, .tree-row:focus-within .actions { display: flex; }
 .tree-project > .actions { display: flex; visibility: hidden; }
@@ -131,14 +131,14 @@ html[data-desktop="win32"] .topbar { border-top: 0; }
 }
 
 /* Hierarchy: project (bold) → worktrees (16 px in) → sessions (32 px in); a guide line under an open project. */
-.tree-project { font-weight: 600; font-size: 13.5px; color: var(--ink); }
+.tree-project { font-weight: 600; font-size: var(--fs-base); color: var(--ink); }
 .tree-group[data-root] > .tree-project { font-weight: 400; color: var(--ink-2); }
 .tree-children { position: relative; }
 .tree-children::before { content: ""; position: absolute; left: 14px; top: 0; bottom: 6px; width: 1px; background: var(--rule-strong); pointer-events: none; z-index: 1; }
-.tree-path { font-weight: 400; font-size: 11.5px; color: var(--ink-3); }
+.tree-path { font-weight: 400; font-size: var(--fs-sm); color: var(--ink-3); }
 
-.tree-more { width: 100%; height: 24px; border: 0; background: none; font: inherit; font-size: 12px; color: var(--ink-3); text-align: left; }
-.tree-more .muted { color: var(--ink-4); }
+.tree-more { width: 100%; height: 24px; border: 0; background: none; font: inherit; font-size: var(--fs-sm); color: var(--ink-3); text-align: left; }
+.tree-more .muted { color: var(--ink-3); }
 .tree-more svg { width: 13px !important; height: 13px !important; }
 .tree-project .chev { width: 12px; height: 12px; color: var(--ink-4); transition: transform var(--t-fast) var(--ease-out); }
 .tree-project[aria-expanded="true"] .chev { transform: rotate(90deg); }
@@ -149,20 +149,20 @@ html[data-desktop="win32"] .topbar { border-top: 0; }
 .wt[data-active="true"] { background: var(--deck-2); border-radius: 6px; box-shadow: inset 0 0 0 1px var(--rule-soft); }
 .tree-wt .label { color: var(--ink); font-weight: 400; }
 .wt-badges { display: inline-flex; gap: 6px; flex-shrink: 0; }
-.wt-stat { display: inline-flex; align-items: center; gap: 1px; font-size: 11px; color: color-mix(in srgb, var(--lamp-run) 70%, var(--ink-3)); }
+.wt-stat { display: inline-flex; align-items: center; gap: 1px; font-size: var(--fs-xs); color: color-mix(in srgb, var(--lamp-run) 70%, var(--ink-3)); }
 .wt-stat svg { width: 10px; height: 10px; }
 
 /* Session activity rows: status, title - what it is doing, model, time. */
-.tree-sess { height: 28px; gap: 6px; font-size: 13px; }
+.tree-sess { height: 28px; gap: 6px; font-size: var(--fs-md); }
 .tree-sess .label { color: var(--ink); }
 .tree-sess .st { width: 14px; height: 14px; flex: none; }
 .sess-doing { color: var(--ink-3); }
 /* Colour only on the 14 px state icon: titles keep the text colour, the right meta stays muted. */
 .tree-sess .label { min-width: 72px; } /* the title never collapses to nothing; the meta on the right gives way */
-.sess-state { flex-shrink: 1; min-width: 0; max-width: 34%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.sess-state { flex-shrink: 1; min-width: 0; max-width: 34%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-xs); color: var(--ink-3); font-variant-numeric: tabular-nums; }
 .sub-glyph { color: var(--ink-4); }
 .attention { margin: 2px 0 8px; padding-bottom: 6px; border-bottom: 1px solid var(--rule-soft); }
-.attention-head { padding: 4px 8px; font-size: 11.5px; font-weight: 600; color: var(--ink-3); }
+.attention-head { padding: 4px 8px; font-size: var(--fs-sm); font-weight: 600; color: var(--ink-3); }
 .attention-pin .attention-head { display: flex; align-items: center; gap: 4px; }
 .attention-pin .attention-head svg { width: 11px; height: 11px; }
 .attention-row .label strong { font-weight: 600; }
@@ -171,12 +171,12 @@ html[data-desktop="win32"] .topbar { border-top: 0; }
 .attention-row:hover .attention-x, .attention-row:focus-within .attention-x, .attention-x:focus-visible { opacity: 1; }
 @media (hover: none) { .attention-row .attention-x { opacity: 1; } }
 .wt-stat-plain { color: var(--ink-3); }
-.wt-term { padding: 0 3px; border: 0; border-radius: 3px; background: none; color: var(--ink-3); font: inherit; font-size: 11px; cursor: pointer; }
+.wt-term { padding: 0 3px; border: 0; border-radius: 3px; background: none; color: var(--ink-3); font: inherit; font-size: var(--fs-xs); cursor: pointer; }
 .wt-term:hover { background: var(--deck-3); color: var(--ink); }
 .tree-system-head { font-weight: 500; color: var(--ink-3); }
 .sess-state .agent { font-family: var(--font-mono); }
 /* «1 ждёт ответа · 2 работают» under a worktree header or a collapsed project */
-.state-summary { display: block; padding: 0 8px 2px 44px; font-size: 11px; color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.state-summary { display: block; padding: 0 8px 2px 44px; font-size: var(--fs-xs); color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .state-summary [data-s] { color: var(--state-ink, var(--ink-3)); }
 .tree-sess[aria-current="true"] { background: var(--deck-3); }
 /* answered while the person was elsewhere (until opened): a green mark on a soft tint and a bold title, not a solid green disc */
@@ -200,8 +200,8 @@ html[data-desktop="win32"] .topbar { border-top: 0; }
 .tree-wt > .caret svg, .tree-sess > .caret svg { width: 12px; height: 12px; color: var(--ink-4); }
 .tree-sess[data-seen] .st[data-s="done"] { color: var(--ink-4); }
 
-.tree-note { padding: 2px 6px 4px calc(28px + var(--depth, 0) * 16px); font-size: 12px; color: var(--ink-3); }
-.sb-empty { display: grid; gap: 10px; justify-items: start; padding: 8px 10px; color: var(--ink-3); font-size: 12.5px; }
+.tree-note { padding: 2px 6px 4px calc(28px + var(--depth, 0) * 16px); font-size: var(--fs-sm); color: var(--ink-3); }
+.sb-empty { display: grid; gap: 10px; justify-items: start; padding: 8px 10px; color: var(--ink-3); font-size: var(--fs-md); }
 
 .sb-foot { display: flex; align-items: center; gap: 2px; padding: 4px 6px; flex-shrink: 0; border-top: 1px solid var(--rule-soft); }
 .sb-foot .nav-item { width: auto; flex: 1; }
@@ -216,7 +216,7 @@ html[data-desktop="win32"] .topbar { border-top: 0; }
 .tab {
   position: relative; display: flex; align-items: center; gap: 7px; flex-shrink: 0;
   max-width: 220px; padding: 0 4px 0 12px;
-  border-right: 1px solid var(--rule-soft); color: var(--ink-3); cursor: pointer; user-select: none; font-size: 12.5px;
+  border-right: 1px solid var(--rule-soft); color: var(--ink-3); cursor: pointer; user-select: none; font-size: var(--fs-md);
   transition: background-color var(--t-fast) ease, color var(--t-fast) ease, opacity var(--t-fast) var(--ease-in), transform var(--t-fast) var(--ease-in);
 }
 .tab:hover { color: var(--ink-2); background: var(--deck); }
@@ -226,7 +226,7 @@ html[data-desktop="win32"] .topbar { border-top: 0; }
 .tab .st { width: 13px; height: 13px; }
 .tab-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tab[data-file] .tab-title { font-style: italic; }
-.tab-rename { height: 20px; width: 14ch; min-width: 0; padding: 0 6px; font-size: 12.5px; }
+.tab-rename { height: 20px; width: 14ch; min-width: 0; padding: 0 6px; font-size: var(--fs-md); }
 .tab .gs { width: auto; margin-left: -3px; }
 /* × like VS Code: always on the active tab, on hover or keyboard focus for the others; a 22 px hit area. */
 .tab-close { opacity: 0; flex-shrink: 0; min-width: 22px; }
@@ -248,7 +248,7 @@ html[data-desktop="win32"] .topbar { border-top: 0; }
   display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 6px 16px; flex-shrink: 0; flex-wrap: wrap;
   border-bottom: 1px solid var(--rule);
 }
-.view-head h1 { font-size: 17px; line-height: 1.25; font-weight: 600; letter-spacing: -.018em; }
+.view-head h1 { font-size: var(--fs-xl); line-height: 1.25; font-weight: 600; letter-spacing: -.018em; }
 .search { position: relative; width: 220px; }
 .search svg { position: absolute; left: 8px; top: 7px; width: 14px; height: 14px; color: var(--ink-4); pointer-events: none; }
 .search .input { padding-left: 28px; }
@@ -262,7 +262,7 @@ html[data-desktop="win32"] .topbar { border-top: 0; }
 .sess-warm { flex-shrink: 0; font-size: 9px; color: var(--ink-4); }
 .sess-warm[data-warm] { color: var(--lamp-done); }
 .tree-sess[data-leaving] { opacity: 0; transform: translateX(-8px); transition: opacity 150ms var(--ease-in), transform 150ms var(--ease-in); }
-.tree-rename { height: 20px; min-width: 0; flex: 1; padding: 0 6px; font-size: 12.5px; }
+.tree-rename { height: 20px; min-width: 0; flex: 1; padding: 0 6px; font-size: var(--fs-md); }
 .sess-subs { flex-shrink: 0; padding: 0 5px; border: 0; border-radius: 3px; background: var(--deck-3); color: var(--ink-3); font-size: 10.5px; line-height: 16px; }
 .sess-subs:hover, .sess-subs[aria-expanded="true"] { color: var(--ink); }
 @media (prefers-reduced-motion: reduce) { .tree-sess[data-leaving] { transform: none; } }
@@ -290,10 +290,10 @@ button.wt-maker:hover { background: var(--deck-3); color: var(--ink); }
 .wt-maker svg { width: 12px; height: 12px; }
 .wt-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--lamp-fail); }
 .wt[data-sleeping] > .tree-wt { opacity: 0.55; }
-.wt-error { width: 100%; height: 22px; border: 0; background: none; color: var(--lamp-fail); font: inherit; font-size: 12px; text-align: left; gap: 6px; }
+.wt-error { width: 100%; height: 22px; border: 0; background: none; color: var(--lamp-fail); font: inherit; font-size: var(--fs-sm); text-align: left; gap: 6px; }
 .wt-error svg { width: 12px !important; height: 12px !important; color: var(--lamp-fail) !important; }
 .wt-error-pop { display: grid; gap: 8px; max-width: 360px; padding: 10px; }
-.wt-error-text { margin: 0; font-family: var(--font-mono); font-size: 11.5px; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink-2); }
+.wt-error-text { margin: 0; font-family: var(--font-mono); font-size: var(--fs-sm); white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink-2); }
 .agent-glyph { display: inline-grid; place-items: center; width: 14px; height: 14px; flex-shrink: 0; border-radius: 3px; background: var(--deck-3); color: var(--ink-2); font-size: 9.5px; font-weight: 700; }
 .agent-glyph[data-agent="gigacode"] { background: color-mix(in srgb, var(--signal) 22%, var(--deck-3)); color: var(--ink); }
 .agent-glyph[data-agent="claude"] { background: color-mix(in srgb, var(--lamp-run) 22%, var(--deck-3)); color: var(--ink); }
@@ -305,11 +305,11 @@ button.wt-maker:hover { background: var(--deck-3); color: var(--ink); }
 .sbp { width: 300px; padding: 6px; }
 .sbp-sub { width: 260px; }
 .sbp-title { padding: 6px 8px 4px; font-weight: 600; color: var(--ink); }
-.sbp-sec { padding: 10px 8px 4px; font-size: 11px; font-weight: 600; color: var(--ink-3); }
+.sbp-sec { padding: 10px 8px 4px; font-size: var(--fs-xs); font-weight: 600; color: var(--ink-3); }
 .sbp-row { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 28px; padding: 0 8px; border: 0; border-radius: var(--r-1); background: none; color: var(--ink-2); font: inherit; text-align: left; cursor: pointer; }
 .sbp-row:hover, .sbp-row[aria-expanded="true"] { background: var(--deck-3); color: var(--ink); }
 .sbp-row:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
-.sbp-row .muted { color: var(--ink-3); font-size: 12px; }
+.sbp-row .muted { color: var(--ink-3); font-size: var(--fs-sm); }
 .sbp-row > svg { width: 14px; height: 14px; color: var(--ink-3); flex: none; }
 .sbp-row .grow { flex: 1; min-width: 0; }
 .sbp-check { display: inline-flex; width: 14px; flex: none; }
@@ -319,13 +319,13 @@ button.wt-maker:hover { background: var(--deck-3); color: var(--ink); }
 .sbp-seg .segmented button { flex: 1; }
 .sbp-list { display: grid; gap: 2px; max-height: 260px; overflow: auto; padding: 4px 8px; }
 .sbp-div { height: 1px; margin: 4px 8px; background: var(--rule); }
-.sbp-hint { margin: 4px 8px; font-size: 11px; color: var(--ink-3); }
+.sbp-hint { margin: 4px 8px; font-size: var(--fs-xs); color: var(--ink-3); }
 .sbp-foot { display: flex; justify-content: flex-end; padding: 6px 4px 2px; margin-top: 4px; border-top: 1px solid var(--rule); }
 .sb-group { padding-top: 6px; }
 .tree-project[draggable="true"] { cursor: grab; }
 .tree-project[data-drop-over] { box-shadow: inset 0 0 0 1px var(--focus); }
 .sess-l1 { display: block; overflow: hidden; text-overflow: ellipsis; }
-.sess-l2 { display: block; overflow: hidden; text-overflow: ellipsis; font-size: 11px; color: var(--ink-3); }
+.sess-l2 { display: block; overflow: hidden; text-overflow: ellipsis; font-size: var(--fs-xs); color: var(--ink-3); }
 .tree-sess[data-detail] { height: auto; min-height: 24px; padding-top: 3px; padding-bottom: 3px; }
 
 /* ---------- narrow windows: panel and sidebar over the content ---------- */
@@ -345,15 +345,19 @@ button.wt-maker:hover { background: var(--deck-3); color: var(--ink); }
 .wt-orphan .wt-mark svg { color: var(--signal); }
 
 /* calm session rows: title truncates first, then the activity; on the right the model gives way, the time never */
-.sess-model { flex: 0 1 auto; min-width: 0; max-width: 30%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11.5px; color: var(--ink-3); }
-.sess-time { flex: none; min-width: 3.4em; text-align: right; font-size: 11px; color: var(--ink-3); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.sess-model { flex: 0 1 auto; min-width: 0; max-width: 30%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-sm); color: var(--ink-3); }
+.sess-time { flex: none; min-width: 3.4em; text-align: right; font-size: var(--fs-xs); color: var(--ink-3); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .tree-sess .label { min-width: 50%; } /* the title keeps half the row; the model gives way first */
 /* nav counters: a dot and the number — grey a plain count, amber running, violet waiting for you */
 .nav-dots { display: inline-flex; gap: 8px; }
-.nav-dot { display: inline-flex; align-items: center; gap: 4px; font-size: 11.5px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.nav-dot { display: inline-flex; align-items: center; gap: 4px; font-size: var(--fs-sm); color: var(--ink-2); font-variant-numeric: tabular-nums; }
 .nav-dot::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--ink-4); }
 .nav-dot[data-k="run"]::before { width: 9px; height: 9px; background: none; border: 1.5px solid color-mix(in srgb, var(--lamp-run) 22%, transparent); border-top-color: var(--lamp-run); animation: spin 0.9s linear infinite; }
 @media (prefers-reduced-motion: reduce) { .nav-dot[data-k="run"]::before { animation: none; } }
 .nav-dot[data-k="wait"]::before { background: var(--lamp-ask); }
 .app[data-rail] .nav-dots { flex-direction: column; gap: 0; font-size: 9px; }
 .cli-glyph { display: inline-block; width: 12px; height: 12px; margin-right: 5px; vertical-align: -1.5px; color: var(--ink-3); }
+.topbar-right .topbar-cmd kbd { margin-left: var(--sp-1); font-size: var(--fs-xs); line-height: 15px; }
+/* the default 288 px sidebar: a model cut to «Qw…» says nothing and steals the title's room; it returns when widened */
+.sidebar { container: sidebar / inline-size; }
+@container sidebar (max-width: 340px) { .tree-sess .sess-model { display: none; } }

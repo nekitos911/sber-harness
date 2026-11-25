@@ -7,7 +7,7 @@ import { endJob, startJob, useJobStep } from '../lib/jobs'
 import { loadDraft, saveDraft } from '../lib/draft'
 import { ago, normPath } from '../lib/format'
 import { dur, sessionVisualState, STATE_LABEL, type VisualState } from '../lib/sessionState'
-import { useCurrentTool, useTurnStart } from '../lib/live'
+import { useCurrentTool, useElapsed, useTurnStart } from '../lib/live'
 import { FULL_ACCESS, modeShort, useSettings } from '../lib/agents'
 import { useNow } from '../lib/useNow'
 import { listedChat } from '../lib/pending'
@@ -81,7 +81,7 @@ export function HomeView() {
 const EXAMPLES = [
   { label: 'спецификация по SDD', text: 'Подготовь спецификацию по SDD к задаче ' },
   { label: 'объяснить, как устроено', text: 'Объясни простыми словами, как устроено ' },
-  { label: 'оценить задачу', text: 'Оцени задачу: что придётся поменять и какие есть риски — ' },
+  { label: 'оценить задачу', text: 'Оцени задачу: что придётся поменять и какие есть риски. Задача: ' },
 ]
 
 function Handoff({ task, onSending }: { task: boolean; onSending: (busy: boolean) => void }) {
@@ -210,7 +210,7 @@ function Handoff({ task, onSending }: { task: boolean; onSending: (busy: boolean
         <button type="button" className="link-btn" onClick={() => openScreen('settings')}>Настроить агента</button>
       </p>}
       {needsProject && (repos.length ? (
-        <p className="handoff-note">Выберите проект — или укажите папку, где лежат все проекты: тогда агент выберет сам.
+        <p className="handoff-note">Выберите проект или укажите папку, где лежат все проекты: тогда агент выберет его сам.
           <button type="button" className="btn btn-sm" onClick={() => setPicking(true)}><FolderOpen />Папка со всеми проектами…</button>
         </p>
       ) : (
@@ -291,11 +291,12 @@ function NowRow({ s, task }: { s: Session; task?: Task }) {
   const trees = task?.worktrees?.length ? task.worktrees : own ? [{ path: own.path, dirty: own.dirty ?? 0 }] : []
   const changes = trees.reduce((n, w) => n + (w.dirty ?? 0), 0)
   const since = s.lastEventAt ?? s.lastActivityAt
-  const activity = v === 'running' ? (tool ? `Выполняет: ${tool}` : 'думает')
+  const sec = useElapsed(start || s.lastActivityAt, RUN.has(v)) // the 30 s clock showed a fresh turn as «0 с» for half a minute
+  const activity = v === 'running' ? (tool ? `Выполняет: ${tool}` : 'думает') : v === 'starting' ? STATE_LABEL[v]
     : v === 'waiting_permission' || v === 'waiting_answer' || v === 'stalled' ? `${STATE_LABEL[v]} ${dur(now - since)}`
       : WAIT.has(v) ? STATE_LABEL[v]
         : task?.status === 'done' || task?.agentState === 'done' || v === 'done' ? 'задача выполнена' : 'ответил'
-  const elapsed = RUN.has(v) && start ? dur(now - start) : ago(s.lastActivityAt, now)
+  const elapsed = RUN.has(v) ? dur(sec * 1000) : ago(s.lastActivityAt, now)
   const key = task?.externalId ?? task?.id
   return (
     <div className="now-row" data-s={v} role="button" tabIndex={0} onClick={() => openSession(s.id)}

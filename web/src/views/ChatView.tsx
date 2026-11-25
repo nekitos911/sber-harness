@@ -32,7 +32,7 @@ import { modKey } from '../lib/keys'
 import { descendants, firstTask } from '../lib/overview'
 import { chatTask, TaskFold } from '../components/panel/OverviewTab'
 
-const PAGE = 200
+const PAGE = 100 // messages drawn at first; scrolling up brings the next page (opening a 800-message chat drew 200 at once)
 const PLACEHOLDER = { status: 'idle', phase: null, lastActivityAt: 0 } as Session // hooks run before the session is known
 const EMPTY: Message[] = []
 
@@ -49,7 +49,7 @@ function InterruptedBar({ session }: { session: Session }) {
   }
   return (
     <div className="chat-alert chat-alert-soft" role="status">
-      <span>Ход прервал перезапуск harness{session.interrupted?.lastActivity ? <> — на шаге <span className="mono">{session.interrupted.lastActivity}</span></> : null}. Продолжить с того же места?</span>
+      <span>Ход прервал перезапуск harness{session.interrupted?.lastActivity ? <> на шаге <span className="mono">{session.interrupted.lastActivity}</span></> : null}. Продолжить с того же места?</span>
       <span className="grow" />
       <button type="button" className="btn btn-sm btn-primary" disabled={busy} onClick={() => void act('resume')}>Продолжить</button>
       <button type="button" className="btn btn-sm" disabled={busy} onClick={() => void act('dismiss')}>Не нужно</button>
@@ -60,13 +60,6 @@ function InterruptedBar({ session }: { session: Session }) {
 export function ChatView({ id, active }: { id: string; active: boolean }) {
   const session = useStore((s) => s.sessions.find((x) => x.id === id))
   const messages = useStore((s) => s.messages[id])
-  // a key of this chat's own helpers (what the panel shows changes it); the list itself is read when the key changes
-  const kidsKey = useStore((s) => s.sessions.filter((x) => x.parentId === id && !x.archived).map((x) => `${x.id}:${x.status}:${x.waitingFor ?? ''}:${x.title}:${x.lastActivityAt}`).join('|'))
-  // archived ones (settled sub-agents once the turn is over) leave the panel; their chats open from the transcript card.
-  // Once this chat's turn is over only children still working or waiting stay — a finished one in its own worktree is
-  // not archived (a per-service orchestrator lives on), it is in the sidebar under that worktree.
-  const parentBusy = useStore((s) => s.sessions.find((x) => x.id === id)?.status === 'running')
-  const workers = useMemo(() => getState().sessions.filter((s) => s.parentId === id && !s.archived && (parentBusy || s.status === 'running' || !!s.waitingFor)), [kidsKey, id, parentBusy]) // eslint-disable-line react-hooks/exhaustive-deps
   const [loadError, setLoadError] = useState<string | null>(null)
   const [limit, setLimit] = useState(PAGE)
   const [log, setLog] = useState<string | null>(null)
@@ -245,6 +238,18 @@ export function ChatView({ id, active }: { id: string; active: boolean }) {
     if (stick.current) el.scrollTop = el.scrollHeight
   }, [list.length, lastText, active, running, id, newSince, syncBottom])
 
+  // scrolled near the top: the next page comes by itself (the button stays for the keyboard and screen readers)
+  const olderBtn = useRef<HTMLButtonElement>(null)
+  const more = hidden > 0
+  useEffect(() => {
+    const el = olderBtn.current
+    const root = scroller.current
+    if (!active || !more || !el || !root) return
+    const io = new IntersectionObserver((es) => { if (restored.current && es.some((e) => e.isIntersecting)) olderBtn.current?.click() }, { root, rootMargin: '400px 0px 0px 0px' })
+    io.observe(el)
+    return () => io.disconnect()
+  }, [active, more, limit])
+
   if (!session) return <Loading label="Загрузка сессии…" />
   // sent from this chat and not in it yet (or refused): shown at the end at once
   const outgoing = outbox.filter((o) => o.sessionId === id && (!!o.error || !arrived(o, list, session)))
@@ -279,7 +284,7 @@ export function ChatView({ id, active }: { id: string; active: boolean }) {
   }
 
   return (
-    <div className="chat" ref={chatRoot}>
+    <div className="chat" ref={chatRoot} data-find={find > 0 || undefined}>
       <ChatHeader session={session} cliLive={cliLive} onLog={showLog} onReset={reset} onReconnect={reconnect} onDelete={() => openDialog({ kind: 'session-delete', id })} />
       <SddStrip cwd={session.cwd} sessionId={session.id} />
       {log !== null && (
@@ -304,12 +309,12 @@ export function ChatView({ id, active }: { id: string; active: boolean }) {
           {messages && list.length === 0 && (
             <div className="empty chat-empty">
               <MessageSquare className="empty-icon" aria-hidden />
-              <h2>Начните разговор</h2>
-              <p>Опишите задачу агенту. <kbd>Enter</kbd> — отправить, <kbd>Shift</kbd>+<kbd>Enter</kbd> — новая строка.</p>
+              <h2>Опишите задачу агенту</h2>
+              <p><kbd>Enter</kbd> отправляет, <kbd>Shift</kbd>+<kbd>Enter</kbd> переносит строку. Файлы добавляются через @, команды через /.</p>
             </div>
           )}
           {hidden > 0 && (
-            <button type="button" className="btn btn-ghost btn-sm chat-older" onClick={showOlder}>
+            <button ref={olderBtn} type="button" className="btn btn-ghost btn-sm chat-older" onClick={showOlder}>
               Показать ранее ({hidden})
             </button>
           )}
@@ -336,23 +341,24 @@ export function ChatView({ id, active }: { id: string; active: boolean }) {
           </button>
         )}
         <div className="chat-col">
-          <WorkersPanel sessionId={id} workers={workers} />
+          <WorkersPanel sessionId={id} />
           {sessionVisualState(session) === 'stalled' && <StallBanner session={session} />}
           <SlowStartHint session={session} />
           {session.interrupted && session.status !== 'running' && <InterruptedBar session={session} />}
           {session.status === 'error' && (
             <div className="chat-alert" role="alert">
-              {retryIn > 0 ? `Агент не запустился вовремя — повторю запуск сам через ${retryIn} с` : errorLine(session, list)}
-              <span className="grow" />
-              {reviveOn && <button type="button" className="btn btn-sm btn-primary" onClick={() => void tryApi('POST', `/sessions/${session.id}/revive`)} data-tip="Продолжить с того места, где оборвался"><RotateCcw />Повторить</button>}
-              <button type="button" className="btn btn-sm" onClick={() => void showLog()}>Лог</button>
-              {reconnect && <button type="button" className="btn btn-sm" onClick={reconnect} data-tip="Перезапустить процесс агента: MCP-серверы подключатся заново, контекст чата сохранится"><PlugZap />Переподключить MCP</button>}
-              <button type="button" className="btn btn-sm" onClick={reset} data-tip={NEW_CLI_SESSION_TIP}>Новая сессия CLI</button>
+              <span className="chat-alert-text">{retryIn > 0 ? `Агент не запустился вовремя. Повторю запуск сам через ${retryIn} с` : errorLine(session, list)}</span>
+              <span className="chat-alert-actions">
+                {reviveOn && <button type="button" className="btn btn-sm btn-primary" onClick={() => void tryApi('POST', `/sessions/${session.id}/revive`)} data-tip="Продолжить с того места, где оборвался"><RotateCcw />Повторить</button>}
+                <button type="button" className="btn btn-sm" onClick={() => void showLog()}>Лог</button>
+                {reconnect && <button type="button" className="btn btn-sm" onClick={reconnect} data-tip="Перезапустить процесс агента: MCP-серверы подключатся заново, контекст чата сохранится"><PlugZap />Переподключить MCP</button>}
+                <button type="button" className="btn btn-sm" onClick={reset} data-tip={NEW_CLI_SESSION_TIP}>Новая сессия CLI</button>
+              </span>
             </div>
           )}
           {session.archived ? (
             <div className="virtual-bar">
-              <span>Чат в архиве — только чтение.</span>
+              <span>Чат в архиве: только чтение.</span>
               <button type="button" className="btn btn-sm" onClick={() => void archiveSession(session, false)}>Вернуть из архива</button>
             </div>
           ) : session.virtual ? (
@@ -362,7 +368,7 @@ export function ChatView({ id, active }: { id: string; active: boolean }) {
             </div>
           ) : cliLive && !takenOver ? (
             <div className="virtual-bar" role="status">
-              <span>Этот чат сейчас ведёт GigaCode в терминале — чтобы не помешать, писать сюда можно после того, как он закончит.</span>
+              <span>Этот чат сейчас ведёт GigaCode в терминале. Чтобы не помешать, пишите сюда, когда он закончит.</span>
               <button type="button" className="btn btn-sm" onClick={takeOver} data-tip="Писать отсюда, не дожидаясь терминала">Перехватить</button>
             </div>
           ) : <Composer session={session} active={active} force={cliLive} />}
@@ -460,7 +466,7 @@ function ChatHeader({ session, cliLive, onLog, onReset, onReconnect, onDelete }:
         </button>
       )}
       {kids > 0 && (
-        <button type="button" className="chip chat-kids" onClick={() => showPanel('overview')} data-tip="Кто что делал: субагенты, исполнители, их отчёты — во вкладке «Обзор»">
+        <button type="button" className="chip chat-kids" onClick={() => showPanel('overview')} data-tip="Кто что делал: субагенты, исполнители, их отчёты: вкладка «Обзор»">
           <Bot aria-hidden />{kids} {plural(kids, 'субагент', 'субагента', 'субагентов')}
         </button>
       )}
@@ -587,7 +593,7 @@ function SlowStartHint({ session }: { session: Session }) {
   const close = () => { saveDraft('hint:acp', true); setHidden(true) }
   return (
     <div className="chat-hint" role="note">
-      <span>Каждое сообщение заново запускает GigaCode и MCP-серверы. Включите режим ACP в настройках — процесс будет оставаться запущенным.</span>
+      <span>Каждое сообщение заново запускает GigaCode и MCP-серверы. Включите режим ACP в настройках, и процесс останется запущенным между сообщениями.</span>
       <span className="grow" />
       <button type="button" className="btn btn-sm" onClick={() => { close(); openScreen('settings') }}>Открыть настройки</button>
       <IconButton size="sm" label="Больше не показывать" icon={<X />} onClick={close} />
@@ -670,5 +676,5 @@ function errorLine(s: Session, list: Message[]): string {
   if (s.errorKind === 'not_started') return 'Агент не запустился. Проверьте команду агента в конфигурации и лог.'
   // «Агент завершился с ошибкой (код 1):» is followed by the CLI's own words on the next line
   const last = [...list].reverse().find((m) => m.kind === 'error')?.text.split('\n').map((l) => l.trim()).filter(Boolean).slice(0, 2).join(' ').slice(0, 240)
-  return last ? `Ход прервался: ${last}` : 'Ход завершился с ошибкой — подробности в логе.'
+  return last ? `Ход прервался: ${last}` : 'Ход завершился с ошибкой. Подробности в логе.'
 }

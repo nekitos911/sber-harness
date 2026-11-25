@@ -1,33 +1,32 @@
 /* ---------- «Агенты»: a dense control panel, one row per chat ---------- */
 
 .agents-view { container-type: inline-size; }
-.ag-summary { display: flex; flex-wrap: wrap; gap: 4px 12px; margin: 0 0 0 6px; color: var(--ink-2); font-size: 12.5px; }
-.ag-summary [data-zero] { color: var(--ink-4); }
-.ag-summary [data-c="run"]:not([data-zero]) .num { color: var(--lamp-run); }
-.ag-summary [data-c="you"]:not([data-zero]) .num { color: var(--lamp-ask); }
-.ag-summary [data-c="fail"]:not([data-zero]) .num { color: var(--lamp-fail); }
-.ag-summary [data-c="done"]:not([data-zero]) .num { color: var(--lamp-done); }
-.ag-summary .num { font-weight: 600; }
+/* filter chips carry the counts; what needs the person keeps its lamp colour on an unpressed chip */
+button.chip[aria-pressed="false"] .ag-chip-n[data-c="you"] { color: var(--lamp-ask); opacity: 1; font-weight: 600; }
+button.chip[aria-pressed="false"] .ag-chip-n[data-c="fail"] { color: var(--lamp-fail); opacity: 1; font-weight: 600; }
+button.chip[aria-pressed="false"] .ag-chip-n[data-c="run"] { color: var(--lamp-run); opacity: 1; }
 
 .ag-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 16px; flex-shrink: 0; border-bottom: 1px solid var(--rule-soft); }
 .ag-chips, .ag-bulk { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-.ag-chip-n { margin-left: 6px; opacity: 0.75; }
+.ag-chip-n { margin-left: var(--sp-1); }
 
 .ag-list { flex: 1; min-height: 0; overflow-y: auto; padding: 0 16px 24px; }
 /* one grid for the head and every row: the columns line up */
 .ag-row {
   display: grid; grid-template-columns: 20px 14px minmax(0, 2.4fr) minmax(0, 1.5fr) 96px 104px minmax(0, 120px) 96px 156px;
   align-items: center; gap: 10px; min-height: 46px; padding: 4px 6px; border-bottom: 1px solid var(--rule-soft);
-  position: relative; cursor: default; font-size: 12.5px;
+  position: relative; cursor: default; font-size: var(--fs-md);
 }
 .ag-row[data-id]:hover { background: var(--deck-2); }
+/* off-screen rows skip style, layout and paint until scrolled to (150+ rows) */
+.ag-item { content-visibility: auto; contain-intrinsic-size: auto 46px; }
 .ag-row[data-id]:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; border-radius: var(--r-1); }
 .ag-row[data-picked] { background: color-mix(in srgb, var(--signal) 8%, transparent); }
 /* what needs the person: a thin mark at the left edge, the same colour as its lamp */
 .ag-row[data-cat="you"]::before, .ag-row[data-cat="fail"]::before { content: ""; position: absolute; left: 0; top: 6px; bottom: 6px; width: 2px; border-radius: 1px; background: var(--lamp-fail); }
 .ag-row[data-cat="you"]::before { background: var(--lamp-ask); }
-.ag-head { position: sticky; top: 0; z-index: 1; min-height: 32px; background: var(--canvas); color: var(--ink-3); font-size: 11.5px; }
-.ag-group { margin: 0; padding: 14px 6px 4px; color: var(--ink-2); font-size: 12px; font-weight: 600; }
+.ag-head { position: sticky; top: 0; z-index: 1; min-height: 32px; background: var(--canvas); color: var(--ink-3); font-size: var(--fs-sm); }
+.ag-group { margin: 0; padding: 14px 6px 4px; color: var(--ink-2); font-size: var(--fs-sm); font-weight: 600; }
 
 .ag-fold { display: grid; place-items: center; width: 14px; height: 22px; padding: 0; border: 0; background: none; cursor: pointer; }
 .ag-chev { width: 14px; height: 14px; color: var(--ink-3); transition: transform var(--t-fast) var(--ease-out); }
@@ -35,16 +34,16 @@
 .ag-main { display: grid; gap: 1px; min-width: 0; }
 .ag-title { display: flex; align-items: center; gap: 7px; min-width: 0; }
 .ag-title .st { flex: none; }
-.ag-name { min-width: 0; padding: 0; border: 0; background: none; color: var(--ink); font: inherit; font-size: 13px; font-weight: 500; text-align: left; cursor: pointer; }
+.ag-name { min-width: 0; padding: 0; border: 0; background: none; color: var(--ink); font: inherit; font-size: var(--fs-md); font-weight: 500; text-align: left; cursor: pointer; }
 .ag-name:hover { text-decoration: underline; }
-.ag-doing { padding-left: 21px; color: var(--ink-3); font-size: 12px; }
+.ag-doing { padding-left: 21px; color: var(--ink-3); font-size: var(--fs-sm); }
 .ag-doing[data-s] { color: var(--state-ink, var(--ink-3)); }
 .ag-doing[data-s="idle"], .ag-doing[data-s="done"], .ag-doing[data-s="stopped"] { color: var(--ink-3); }
 .ag-where { display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--ink-2); }
 .ag-where .branch { min-width: 0; max-width: 55%; }
 .ag-c-subs { color: var(--ink-2); white-space: nowrap; }
 .ag-run-dot { display: inline-block; width: 6px; height: 6px; margin-left: 6px; border-radius: 50%; background: var(--lamp-run); vertical-align: 1px; }
-.ag-c-model { color: var(--ink-3); font-size: 11.5px; }
+.ag-c-model { color: var(--ink-3); font-size: var(--fs-sm); }
 .ag-c-time { white-space: nowrap; }
 .ag-actions { display: flex; align-items: center; justify-content: flex-end; gap: 2px; }
 /* calm rows keep their quiet actions out of sight until the row is pointed at */
@@ -52,9 +51,9 @@
 .ag-row:hover .ag-quiet, .ag-row:focus-within .ag-quiet { opacity: 1; }
 
 .ag-detail { display: grid; gap: 12px; padding: 10px 12px 14px 50px; border-bottom: 1px solid var(--rule-soft); background: var(--lane); }
-.ag-detail h3 { margin: 0 0 6px; color: var(--ink-2); font-size: 12px; font-weight: 600; }
+.ag-detail h3 { margin: 0 0 6px; color: var(--ink-2); font-size: var(--fs-sm); font-weight: 600; }
 .ag-detail .inbox-wait { margin: 0; }
-.ag-report { max-height: 30vh; overflow-y: auto; font-size: 13px; overflow-wrap: anywhere; }
+.ag-report { max-height: 30vh; overflow-y: auto; font-size: var(--fs-md); overflow-wrap: anywhere; }
 .ag-detail-foot { display: flex; flex-wrap: wrap; gap: 6px; }
 
 /* narrower: drop the model, then task and place, then sub-agents and time; the row keeps state, title, actions */

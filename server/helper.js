@@ -6,7 +6,7 @@ import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { CODE_ROOT } from './config.js';
 import { launchers } from './launchers.js';
-import { runTurn } from './runner.js';
+import { runTurn, readTail } from './runner.js';
 import { secretEnv } from './mcp-client.js';
 
 const fail = (status, message) => { throw Object.assign(new Error(message), { status }); };
@@ -39,6 +39,10 @@ export function runHelper({ config, store, getUrl, agent, kind, prompt, extraArg
   launcher.prepare(ctx);
   const run = `${Date.now()}-${randomBytes(3).toString('hex')}`; // concurrent runs never share their output files
   const files = { logFile: path.join(dir, logName), outFile: path.join(dir, `out-${run}.ndjson`), errFile: path.join(dir, `err-${run}.txt`) };
+  // one log for every run of this kind: kept to its last megabyte once it passes five
+  try {
+    if (fs.statSync(files.logFile).size > 5 * 1024 * 1024) fs.writeFileSync(files.logFile, readTail(files.logFile, 1024 * 1024));
+  } catch {} // no log yet
   let text = '';
   let resultText = null;
   const handle = runTurn({

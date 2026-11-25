@@ -344,7 +344,7 @@ function TerminalDialog(init: Partial<Where>) {
       </label>
       <label className="field">
         <span>Команда при запуске</span>
-        <input className="input mono" placeholder={program === 'shell' ? 'например, npm run dev' : 'по умолчанию — CLI агента'} value={command} onChange={(e) => setCommand(e.target.value)} />
+        <input className="input mono" placeholder={program === 'shell' ? 'например, npm run dev' : 'по умолчанию: CLI агента'} value={command} onChange={(e) => setCommand(e.target.value)} />
       </label>
       <label className="field">
         <span>Название</span>
@@ -438,7 +438,7 @@ function StartForm({ task }: { task: Task }) {
         const s = await tryApi<Session & { jumped?: boolean }>('POST', `/tasks/${encodeURIComponent(task.id)}/start`, { agent, notes: notes.trim() || undefined, ...(kids.length ? {} : where.body) }, { jobId })
         if (!s) return
         closeDialog()
-        if (s.jumped) toast('Задача уже в работе — открыл текущую сессию')
+        if (s.jumped) toast('Задача уже в работе: открыта её текущая сессия')
         adoptSession(s)
       })}
     >
@@ -589,7 +589,7 @@ function SessionDeleteDialog({ id }: { id: string }) {
   return (
     <Modal title={`Удалить «${s.title || s.id}»?`} submitLabel={running ? 'Остановить и удалить' : 'Удалить'} danger busy={busy} progress={step}
       onClose={closeDialog} onSubmit={() => run(async () => { if (await deleteSession(s)) closeDialog() })}>
-      <p>История чата будет удалена. {running ? 'Агент сейчас работает — он будет остановлен.' : 'Если она ещё понадобится, лучше убрать чат в архив.'}</p>
+      <p>История чата будет удалена. {running ? 'Агент сейчас работает, он будет остановлен.' : 'Если она ещё понадобится, лучше убрать чат в архив.'}</p>
     </Modal>
   )
 }
@@ -602,7 +602,7 @@ function SessionArchiveDialog({ id }: { id: string }) {
   return (
     <Modal title={`Убрать «${s.title || s.id}» в архив?`} submitLabel="Остановить и убрать в архив" busy={busy} progress={step}
       onClose={closeDialog} onSubmit={() => run(async () => { if (await archiveSession(s, true, { stop: true })) closeDialog() })}>
-      <p>{s.turnClosing ? 'Агент заканчивает ход' : 'Агент сейчас работает'} — он будет остановлен. История чата сохранится.</p>
+      <p>{s.turnClosing ? 'Агент заканчивает ход' : 'Агент сейчас работает'}, он будет остановлен. История чата сохранится.</p>
     </Modal>
   )
 }
@@ -651,11 +651,11 @@ function BindTaskDialog({ id }: { id: string }) {
         closeDialog()
       })}
     >
-      <p className="muted">Чат работал без задачи. Укажите её: ветка и рабочие деревья, которые сделал агент, будут связаны с задачей, а коммит начнётся с её ключа — «{key ?? 'КЛЮЧ'} текст коммита».</p>
+      <p className="muted">Чат работал без задачи. Укажите её: ветка и рабочие деревья, которые сделал агент, будут связаны с задачей, а коммит начнётся с её ключа: «{key ?? 'КЛЮЧ'} текст коммита».</p>
       <div className="field">
         <span>Задача</span>
         <input className="input" autoFocus aria-label="Ключ или ссылка на задачу" placeholder="PROJ-123 или ссылка на задачу" value={ref} onChange={(e) => setRef(e.target.value)} />
-        {ref.trim() && !key && <span className="field-error">Не вижу ключа задачи — например PROJ-123</span>}
+        {ref.trim() && !key && <span className="field-error">Не вижу ключа задачи, например PROJ-123</span>}
       </div>
       <Checkbox checked={rename} onChange={setRename}>Переименовать ветку по правилу веток задач (feature/{key ?? 'КЛЮЧ'}), если она ещё не отправлена</Checkbox>
     </Modal>

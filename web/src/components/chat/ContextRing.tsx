@@ -63,7 +63,7 @@ export function ContextRing({ session, running }: { session: Session; running: b
         {share > 0.5 && compress && (
           <Button size="sm" busy={busy} disabled={running || busy} onClick={() => void sendCompress()} tip={running ? 'Дождитесь конца хода' : `Отправить агенту ${compress}`}>Сжать контекст</Button>
         )}
-        <p className="ctx-foot">Разбивка по категориям — команда {agent?.contextCommand ?? '/context'} (появится позже)</p>
+        <p className="ctx-foot">Разбивка по категориям: команда {agent?.contextCommand ?? '/context'} (появится позже)</p>
       </Popover>
     </>
   )

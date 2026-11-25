@@ -1,7 +1,7 @@
 // Run: node --test web/src/lib/overview.test.ts
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { bucket, childOfCall, descendants, places, taskHead, taskText, timeline } from './overview.ts'
+import { bucket, childOfCall, clock, descendants, dockRows, places, plainInline, runningShells, taskHead, taskText, timeline } from './overview.ts'
 import type { Message, Session } from '../types'
 
 const s = (id: string, parentId: string | null, extra: Partial<Session> = {}) =>
@@ -56,4 +56,40 @@ test('a harness agent call finds its chat: by the id in its output, else by its 
   assert.equal(childOfCall({ at: 10, prompt: 'Проверь тесты подробно', output: null }, kids), 'k1')
   assert.equal(childOfCall({ at: 10, prompt: 'Нет такого', output: 'работает в фоне' }, kids), null)
   assert.equal(childOfCall({ at: 10, prompt: '', output: null }, kids), null)
+})
+
+test('plain inline text of a markdown line', () => {
+  assert.equal(plainInline('Перенести **модуль** `ledger/5.ts` в *новый* сервис'), 'Перенести модуль ledger/5.ts в новый сервис')
+  assert.equal(plainInline('## См. [доку](http://x) и __init__.py, a * b * c'), 'См. доку и __init__.py, a * b * c')
+  assert.equal(taskHead('Почини **тест** `refund`'), 'Почини тест refund')
+})
+
+test('dock: live descendants indented under a live parent, finished ones newest first', () => {
+  const list = [
+    s('w1', 'a', { createdAt: 2, status: 'running' }), s('r1', 'w1', { createdAt: 3, waitingFor: 'answer' }),
+    s('w2', 'a', { createdAt: 4, status: 'done', finishedAt: 10 }), s('g', 'w2', { createdAt: 5, status: 'running' }),
+    s('w3', 'a', { createdAt: 6, status: 'stopped', finishedAt: 20 }),
+  ]
+  const d = dockRows(list, 'a')
+  assert.deepEqual(d.live.map((r) => `${r.s.id}${r.indent}`), ['w10', 'r11', 'g0'])
+  assert.deepEqual(d.done.map((x) => x.id), ['w3', 'w2'])
+})
+
+test('running shells: running calls and this turn\'s background ones, not other tools', () => {
+  const t = (id: string, name: string, input: object, status: 'running' | 'ok', turn = 2) =>
+    m(id, 'tool', '', { turn, tool: { id, name, input, output: null, status } })
+  const list = [
+    t('m1', 'run_shell_command', { command: 'npm run dev', is_background: true }, 'ok', 1),
+    t('m2', 'Bash', { command: 'sleep 100', run_in_background: true }, 'ok'),
+    t('m3', 'run_shell_command', { command: 'git status' }, 'ok'),
+    t('m4', 'read_file', { path: 'x' }, 'running'),
+    t('m5', 'run_shell_command', { command: 'npm test\n--watch' }, 'running'),
+  ]
+  assert.deepEqual(runningShells(list).map((r) => [r.command, r.background]), [['sleep 100', true], ['npm test', false]])
+})
+
+test('clock', () => {
+  assert.equal(clock(39_000), '39 с')
+  assert.equal(clock(699_000), '11 мин 39 с')
+  assert.equal(clock(7_500_000), '2 ч 05 мин')
 })

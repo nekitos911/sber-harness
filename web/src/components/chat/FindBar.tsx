@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
 import { ChevronDown, ChevronUp, X } from 'lucide-react'
 import { IconButton } from '../ui'
+import { firstIndex } from '../../lib/sorted'
 
 // CSS Custom Highlight API: matches are painted without touching the DOM React renders (styles: ::highlight(chat-find))
 const hl = typeof Highlight !== 'undefined' && typeof CSS !== 'undefined' && 'highlights' in CSS ? CSS.highlights : null
@@ -76,7 +77,8 @@ export function FindBar({ root, focusKey, older, reveal, onClose }: {
     fresh.current = false
     const scroller = root.current?.closest('.chat-scroll')
     const top = scroller?.getBoundingClientRect().top ?? 0
-    const i = ranges.findIndex((r) => r.getBoundingClientRect().top >= top)
+    // ranges are in document order: a binary search measures ~log n of them (each measure forced a layout: 1.4 s for 3000 matches)
+    const i = firstIndex(ranges, (r) => r.getBoundingClientRect().top >= top)
     setCur(i >= 0 ? i : ranges.length - 1)
     setGo((g) => g + 1)
   }, [ranges, root])

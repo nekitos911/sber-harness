@@ -93,7 +93,7 @@ export function StatusBar() {
                   icon={<RefreshCw />} onClick={() => void reconnect(m.name)}>Переподключить</Button>}
                 {error && <div className="sb-mcp-err" role="status">
                   {/UNABLE_TO_VERIFY_LEAF_SIGNATURE|SELF_SIGNED_CERT|CERT_UNTRUSTED/i.test(error)
-                    && <p>Не удалось проверить цепочку сертификатов. Если корень есть в хранилище Windows, проверьте, что Node не ниже 22.9 (иначе хранилище ему не видно). Если корня нет ни в хранилище, ни у Node — укажите его файлом: <code>mcpCaFile</code> в <code>harness.config.local.json</code> ведёт на PEM, после чего Harness перезапускается; добавленный корень дополняет хранилище, а не заменяет его.</p>}
+                    && <p>Не удалось проверить цепочку сертификатов. Если корень есть в хранилище Windows, проверьте, что Node не ниже 22.9 (иначе хранилище ему не видно). Если корня нет ни в хранилище, ни у Node, укажите его файлом: <code>mcpCaFile</code> в <code>harness.config.local.json</code> ведёт на PEM, после чего Harness перезапускается; добавленный корень дополняет хранилище, а не заменяет его.</p>}
                   {error}
                 </div>}
               </div>

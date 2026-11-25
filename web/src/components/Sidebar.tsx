@@ -2,7 +2,7 @@ import { createContext, memo, useContext, useEffect, useMemo, useRef, useState, 
 import { ArrowUp, Bot, ChevronDown, Ellipsis, Folder, FolderTree, TriangleAlert, GitPullRequest, Pin, ChevronRight, FolderGit2, FolderPlus, GitBranch, GitBranchPlus, House, Inbox, MessageSquarePlus, Moon, Search, Settings, SquareKanban, SquareTerminal, Sun, X } from 'lucide-react'
 import { getState, useFeature, openDialog, openScreen, openSession, openWorktree, setState, showPanel, useActiveCwd, useStore, useThrottledStore, wtKey, type Screen } from '../store'
 import { archiveSession, dismissSession, renameSession, sessionMenu, unseenDone, unseenReply } from '../lib/sessionActions'
-import { loadWorktrees } from '../ws'
+import { loadWorktrees, sameJson } from '../ws'
 import { api } from '../api'
 import { runJob } from '../lib/jobs'
 import { useCurrentTool, useStateLine } from '../lib/live'
@@ -60,7 +60,8 @@ export function Sidebar() {
   const openPrs = (loadMine ? minePrs : null) ?? taskPrs
   // the same chats as «Ждут вас» below (a question, a permission, a login; failed or cut in the last day)
   const review = useReviewIds()
-  const waiting = agents.filter((s) => needsYou(s, now, review) && sessionVisualState(s) !== 'stalled').length
+  // …minus a plain answer not opened yet («ответил»): «Агенты» does not count it as waiting (128 here, 0 there)
+  const waiting = agents.filter((s) => { const v = sessionVisualState(s); return v !== 'stalled' && (!!WAITS[v] || review.has(s.id)) && needsYou(s, now, review) }).length
   const allWorktrees = useStore((s) => s.worktrees)
   const leaving = useLeaving(sessions)
   const sbp = useSbPrefs() // «Чаты из CLI», «Скрывать чаты старше» in the workspace parameters
@@ -83,14 +84,14 @@ export function Sidebar() {
   const gitIds = projects.filter((w) => !isFolder(w)).map((w) => w.id).join()
   const folderSig = tree.all.filter((s) => { const o = workspaces.find((w) => w.id === tree.owner(s)); return !!o && isFolder(o) }).map((s) => s.id + s.status).join()
   useEffect(() => { void refreshWorktrees(gitIds.split(',').filter(Boolean)) }, [gitIds, folderSig])
+  // every row reads this context: a new Map on each worktree reload (a turn starting or ending) redrew all of them
+  const made = Object.values(allWorktrees).flat().filter((w) => (w.meta?.createdBy ?? w.createdBy) === 'agent' && w.meta?.createdBySession)
+  const madeKey = made.map((w) => `${w.meta?.createdBySession}>${w.path}>${w.meta?.label ?? ''}`).join('|')
   const madeBy = useMemo(() => {
     const m = new Map<string, Worktree[]>()
-    for (const list of Object.values(allWorktrees)) for (const w of list) {
-      const id = (w.meta?.createdBy ?? w.createdBy) === 'agent' ? w.meta?.createdBySession : undefined
-      if (id) m.set(id, [...(m.get(id) ?? []), w])
-    }
+    for (const w of made) m.set(w.meta!.createdBySession!, [...(m.get(w.meta!.createdBySession!) ?? []), w])
     return m
-  }, [allWorktrees])
+  }, [madeKey]) // eslint-disable-line react-hooks/exhaustive-deps
   // Quiet projects (no sessions, no changes, not on screen) wait behind «Ещё N»; «Скрыть без сессий и изменений» drops them.
   const [showAll, setShowAllState] = useState(() => loadDraft<boolean>('sb:all') ?? false)
   const setShowAll = (v: boolean) => { setShowAllState(v); saveDraft('sb:all', v || null) }
@@ -280,13 +281,15 @@ async function refreshWorktrees(ids: string[]) {
   const lists = await Promise.all(ids.map((id) => api<Worktree[]>('GET', `/workspaces/${encodeURIComponent(id)}/worktrees`).catch(() => null)))
   setState((s) => {
     const next = { ...s.worktrees }
+    let changed = false
     ids.forEach((id, i) => {
       const list = lists[i]
       if (!Array.isArray(list)) return
       const old = new Map((s.worktrees[id] ?? []).map((w) => [normPath(w.path), w]))
-      next[id] = list.map((w) => { const o = old.get(normPath(w.path)); return o && w.dirty == null ? { ...w, dirty: o.dirty, ahead: o.ahead } : w })
+      const merged = list.map((w) => { const o = old.get(normPath(w.path)); return o && w.dirty == null ? { ...w, dirty: o.dirty, ahead: o.ahead } : w })
+      if (!sameJson(s.worktrees[id], merged)) { next[id] = merged; changed = true }
     })
-    return { worktrees: next }
+    return changed ? { worktrees: next } : {}
   })
 }
 
@@ -385,34 +388,50 @@ function AttentionSection({ tree }: { tree: Tree }) {
   const workspaces = useStore((s) => s.workspaces)
   const now = useNow()
   const review = useReviewIds()
+  const [all, setAll] = useState(false)
   const list = tree.all
     .filter((s) => needsYou(s, now, review))
     .sort((a, b) => (a.lastEventAt ?? a.lastActivityAt) - (b.lastEventAt ?? b.lastActivityAt))
   if (!list.length) return null
+  // dozens of answered chats pushed the projects off screen (and redrew every row twice a second): the rest behind «Ещё N»
+  const shown = all ? list : list.slice(0, ATTENTION_PREVIEW)
   return (
     <section className="attention" aria-label="Ждут вас">
       <div className="attention-head">Ждут вас <span className="num">· {list.length}</span></div>
-      {list.map((s) => {
-        const v = sessionVisualState(s)
+      {shown.map((s) => {
         const ws = workspaces.find((w) => w.id === tree.owner(s))
         const where = [ws?.kind === 'root' ? basename(ws.path) : ws?.name, s.branch ?? (ws && normPath(ws.path) !== normPath(s.cwd) ? basename(s.cwd) : null)].filter(Boolean).join(' · ')
-        const since = s.lastEventAt ?? s.lastActivityAt
-        return (
-          <div key={s.id} className="tree-row tree-sess attention-row" role="button" tabIndex={0} style={depth(0)} data-s={v} data-unseen={unseenReply(s) || undefined}
-            data-tip={s.title} data-tip-trunc onClick={() => openSession(s.id)} onKeyDown={activate(() => openSession(s.id))}>
-            <StatusIcon session={s} />
-            <span className="label"><strong>{s.title || s.id}</strong>{where && <span className="sess-doing"> · {where}</span>}</span>
-            <span className="sess-state">{v === 'stalled' ? `нет вывода ${dur(now - since)}` : v === 'error' ? WAITS[v] : WAITS[v] ?? (review.has(s.id) ? 'проверить' : 'ответил')}</span>
-            {(v === 'error' || v === 'interrupted' || !WAITS[v]) && (
-              <button type="button" className="icon-btn icon-btn-sm attention-x" aria-label={`Убрать «${s.title || s.id}» из «Ждут вас»`} data-tip="Убрать из «Ждут вас» (чат останется)"
-                onClick={(e) => { e.stopPropagation(); void dismiss(s) }} onKeyDown={(e) => e.stopPropagation()}><X /></button>
-            )}
-          </div>
-        )
+        const v = sessionVisualState(s)
+        const state = v === 'stalled' ? `нет вывода ${dur(now - (s.lastEventAt ?? s.lastActivityAt))}` : v === 'error' ? WAITS[v]! : WAITS[v] ?? (review.has(s.id) ? 'проверить' : 'ответил')
+        return <AttentionRow key={s.id} s={s} where={where} state={state} />
       })}
+      {list.length > ATTENTION_PREVIEW && (
+        <button type="button" className="tree-row tree-more" style={depth(0)} aria-expanded={all} onClick={() => setAll(!all)}>
+          <Ellipsis aria-hidden />
+          {all ? 'Свернуть' : `Ещё ${list.length - ATTENTION_PREVIEW}`}
+        </button>
+      )}
     </section>
   )
 }
+
+const ATTENTION_PREVIEW = 8
+
+const AttentionRow = memo(function AttentionRow({ s, where, state }: { s: Session; where: string; state: string }) {
+  const v = sessionVisualState(s)
+  return (
+    <div className="tree-row tree-sess attention-row" role="button" tabIndex={0} style={depth(0)} data-s={v} data-unseen={unseenReply(s) || undefined}
+      data-tip={s.title} data-tip-trunc onClick={() => openSession(s.id)} onKeyDown={activate(() => openSession(s.id))}>
+      <StatusIcon session={s} />
+      <span className="label"><strong>{s.title || s.id}</strong>{where && <span className="sess-doing"> · {where}</span>}</span>
+      <span className="sess-state">{state}</span>
+      {(v === 'error' || v === 'interrupted' || !WAITS[v]) && (
+        <button type="button" className="icon-btn icon-btn-sm attention-x" aria-label={`Убрать «${s.title || s.id}» из «Ждут вас»`} data-tip="Убрать из «Ждут вас» (чат останется)"
+          onClick={(e) => { e.stopPropagation(); void dismiss(s) }} onKeyDown={(e) => e.stopPropagation()}><X /></button>
+      )}
+    </div>
+  )
+})
 
 /** «Закреплённые»: the chats the person pinned (chat menu → «Закрепить вверху»), in the order they were pinned. */
 function PinnedSection({ tree }: { tree: Tree }) {
@@ -712,7 +731,7 @@ function WorktreeNode(props: {
 function OrphanRow({ ws, wt }: { ws: Workspace; wt: Worktree }) {
   const remove = () => openDialog({
     kind: 'confirm', title: 'Удалить оставшуюся папку?', danger: true, ok: 'Удалить папку',
-    text: `${wt.path} — git её больше не знает; папка и всё в ней будут удалены.`,
+    text: `${wt.path}: git её больше не знает. Папка и всё в ней будут удалены.`,
     // runJob shows a failure (with «Повторить») itself
     onConfirm: () => void runJob('Удаление папки', (jobId) => api('DELETE', `/workspaces/${encodeURIComponent(ws.id)}/worktrees`, { path: wt.path, orphan: true }, { jobId }))
       .then((r) => { if (r !== undefined) void loadWorktrees(ws.id, true) }),
@@ -771,7 +790,7 @@ function WorktreeRow({ ws, wt, sessions, terminals, dup, kids, active, fromOf, p
   // made by an agent: which chat (worktrees from the projects folder's chats are otherwise a mystery)
   const byAgent = (wt.meta?.createdBy ?? wt.createdBy) === 'agent'
   const maker = useStore((s) => (byAgent && wt.meta?.createdBySession ? s.sessions.find((x) => x.id === wt.meta?.createdBySession) : undefined))
-  const makerTip = maker ? `Создал агент в чате «${maker.title || maker.id}» — открыть чат` : 'Создано агентом'
+  const makerTip = maker ? `Создал агент в чате «${maker.title || maker.id}». Открыть чат` : 'Создано агентом'
   const fresh = isFresh(wt.path, useNow())
   return (
     <div className="wt" data-active={active} data-sleeping={mark === 'sleep' || undefined} data-new={fresh || undefined}>
@@ -937,7 +956,7 @@ function SessionRowView({ s, nested, level = 0, caret, via, from, showLocation }
   const when = cards.showTime ? relTime(s.lastActivityAt, now).replace('только что', 'сейчас') : '' // short: the title needs the room
   // worktrees its agent made elsewhere (a chat in the projects folder makes them in the projects): which, and one click there
   const made = (useContext(MadeBy).get(s.id) ?? []).filter((w) => normPath(w.path) !== normPath(s.worktreePath ?? s.cwd))
-  const madeTip = made.length ? `Агент создал рабочие ${made.length > 1 ? 'деревья' : 'дерево'}: ${made.map((w) => w.meta?.label || basename(w.path)).join(', ')} — открыть ${made[0].meta?.label || basename(made[0].path)}` : ''
+  const madeTip = made.length ? `Агент создал рабочие ${made.length > 1 ? 'деревья' : 'дерево'}: ${made.map((w) => w.meta?.label || basename(w.path)).join(', ')}. Открыть ${made[0].meta?.label || basename(made[0].path)}` : ''
   return (
     <>
     <div

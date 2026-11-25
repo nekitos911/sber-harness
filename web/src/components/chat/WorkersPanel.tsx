@@ -1,151 +1,204 @@
-import { useState } from 'react'
-import { normPath } from '../../lib/format'
-import { ChevronDown } from 'lucide-react'
+import { memo, useEffect, useMemo, useState, type CSSProperties } from 'react'
+import { ChevronDown, SquareTerminal } from 'lucide-react'
 import { tryApi } from '../../api'
-import { openDialog, openSession, useStore } from '../../store'
-import { archiveSession } from '../../lib/sessionActions'
-import { plural, relTime, tokens } from '../../lib/format'
-import { useNow } from '../../lib/useNow'
-import { useCurrentTool, useStartingLabel } from '../../lib/live'
+import { getState, openDialog, openSession, useStore } from '../../store'
+import { ensureMessages } from '../../ws'
+import { basename, normPath, plural, tokens } from '../../lib/format'
+import { useCurrentTool, useElapsed } from '../../lib/live'
+import { stopSession } from '../../lib/sessionActions'
+import { sessionVisualState, STATE_LABEL } from '../../lib/sessionState'
+import { clock, dockRows, runningShells, type ShellRun } from '../../lib/overview'
+import { mcpParts, toolKind } from '../../lib/toolRun'
 import type { Session, SubAgent } from '../../types'
 import { StatusIcon, SubStateIcon, subStateLabel } from '../bits'
 
 const BUSY = new Set(['working', 'restarting', 'compacting'])
+const MAX_INDENT = 3
 
 /**
- * Above the composer: harness workers (real chats: open, stop) and the agent's own internal
- * sub-agents from its registry (read-only, no actions).
+ * Above the composer, like Orca's: the sub-agents this chat started (and theirs) that work or wait right now, each with
+ * its current tool, tokens, clock and «Остановить», and under it the shell commands it runs; finished ones fold into
+ * «История». The agent's own registry sub-agents (no chat of their own) follow, read-only. Hidden when there is nothing.
  */
-export function WorkersPanel({ sessionId, workers }: { sessionId: string; workers: Session[] }) {
+export function WorkersPanel({ sessionId }: { sessionId: string }) {
+  // a key of what the dock draws, not the sessions array: any session's activity anywhere must not redraw it
+  const key = useStore((s) => {
+    const { live, done } = dockRows(s.sessions, sessionId)
+    return `${live.map((r) => `${r.s.id}:${r.indent}:${r.s.status}:${r.s.waitingFor ?? ''}`).join('|')}#${done.map((x) => x.id).join('|')}`
+  })
+  const { live, done } = useMemo(() => dockRows(getState().sessions, sessionId), [key, sessionId]) // eslint-disable-line react-hooks/exhaustive-deps
   const sub = useStore((s) => s.subagents[sessionId])
-  const all = useStore((s) => s.sessions)
-  const reviewers = all.filter((s) => s.role === 'reviewer' && workers.some((w) => w.id === s.parentId))
-  const parent = all.find((s) => s.id === sessionId)
-  // Children in another worktree (or persistent ones) are their own orchestrators: a separate group.
-  // its own orchestrator: a persistent child in ANOTHER worktree (one in the same worktree is an ordinary worker)
-  const place = (x: Session) => normPath(x.worktreePath ?? x.cwd)
-  // a helper (ephemeral: its result returns to the caller) is a helper wherever it works — sent to another repository it
-  // works in that repository's worktree, not as an orchestrator
-  const elsewhere = workers.filter((w) => !w.virtual && !w.ephemeral && !!w.persistent && !!parent && place(w) !== place(parent))
-  const own = workers.filter((w) => !w.virtual && !elsewhere.includes(w))
-  const inner = workers.filter((w) => w.virtual)
+  const internal = sub?.items ?? []
   const [open, setOpen] = useState(true)
   const [showHistory, setShowHistory] = useState(false)
-  const now = useNow()
-  const internal = sub?.items ?? []
-  const current = new Set(workers.map((w) => w.id))
-  const history = all.filter((s) => s.parentId === sessionId && s.kind === 'chat' && !s.system && !current.has(s.id))
-  if (!workers.length && !internal.length && !history.length) return null
+  const total = live.length + internal.length
+  if (!total && !done.length) return null
 
-  const total = workers.length + internal.length
-  const busy = workers.filter((w) => w.status === 'running').length + internal.filter((a) => BUSY.has(a.state)).length
+  const busy = live.filter((r) => r.s.status === 'running' && !r.s.waitingFor).length + internal.filter((a) => BUSY.has(a.state)).length
+  const waiting = live.filter((r) => r.s.waitingFor).length
 
   return (
-    <div className="workers">
-      {total > 0 && <button type="button" className="workers-head" aria-expanded={open} onClick={() => setOpen(!open)}>
-        <span>{total} {plural(total, 'агент', 'агента', 'агентов')}</span>
-        {busy > 0 && <span className="workers-busy">В работе: {busy}</span>}
-        <span className="grow" />
-        <ChevronDown className="chev" aria-hidden />
-      </button>}
-      <div className="collapse" data-open={open}>
-        <div>
-          {own.map((w) => (
-            <div key={w.id} role="presentation">
-              <WorkerRow w={w} now={now} />
-              {reviewers.filter((r) => r.parentId === w.id).map((r) => <WorkerRow key={r.id} w={r} now={now} nested />)}
+    <section className="dock" aria-label="Субагенты этого чата">
+      {total > 0 && (
+        <>
+          <button type="button" className="dock-head" aria-expanded={open} onClick={() => setOpen(!open)}>
+            <ChevronDown className="chev" aria-hidden />
+            <strong>{total} {plural(total, 'субагент', 'субагента', 'субагентов')}</strong>
+            {busy > 0 && <span className="dock-busy">в работе: {busy}</span>}
+            {waiting > 0 && <span className="dock-wait">ждут вас: {waiting}</span>}
+          </button>
+          {open && (
+            <div className="dock-list">
+              {live.map((r) => <AgentRow key={r.s.id} id={r.s.id} indent={Math.min(r.indent, MAX_INDENT)} />)}
+              {internal.length > 0 && (
+                <>
+                  <div className="dock-sub">
+                    Встроенные субагенты агента
+                    {sub && sub.problems.length > 0 && <span data-tip={sub.problems.join('\n')}> · пропущено записей: {sub.problems.length}</span>}
+                  </div>
+                  {internal.map((a) => <InternalRow key={a.id} a={a} />)}
+                </>
+              )}
             </div>
-          ))}
-          {elsewhere.length > 0 && (
-            <>
-              <div className="workers-sub">Оркестраторы в других рабочих деревьях</div>
-              {elsewhere.map((w) => <WorkerRow key={w.id} w={w} now={now} />)}
-            </>
           )}
-          {inner.length > 0 && (
-            <>
-              <div className="workers-sub" data-tip="Субагенты, которых GigaCode запустил сам, внутри этого чата: их видно, но писать им нельзя">Встроенные субагенты GigaCode</div>
-              {inner.map((w) => <WorkerRow key={w.id} w={w} now={now} />)}
-            </>
-          )}
-          {internal.length > 0 && (
-            <>
-              <div className="workers-sub">
-                Внутренние агенты
-                {sub && sub.problems.length > 0 && <span data-tip={sub.problems.join('\n')}> · пропущено записей: {sub.problems.length}</span>}
-              </div>
-              {internal.map((a) => <InternalRow key={a.id} a={a} now={now} />)}
-            </>
-          )}
-        </div>
-      </div>
-      {history.length > 0 && <>
-        <button type="button" className="workers-head" aria-expanded={showHistory} onClick={() => setShowHistory(!showHistory)}>
-          История помощников · {history.length}<span className="grow" /><ChevronDown className="chev" aria-hidden />
-        </button>
-        {showHistory && history.map((w) => <div className="worker-row" key={w.id}>
-          <StatusIcon session={w} /><button type="button" className="worker-title ellipsis" data-tip={w.preview || w.title} onClick={() => openSession(w.id)}>{w.title}</button>
-        </div>)}
-      </>}
-    </div>
+        </>
+      )}
+      {done.length > 0 && (
+        <>
+          <button type="button" className="dock-head dock-history" aria-expanded={showHistory} onClick={() => setShowHistory(!showHistory)}>
+            <ChevronDown className="chev" aria-hidden />
+            История · {done.length}
+          </button>
+          {showHistory && <div className="dock-list">{done.map((s) => <DoneRow key={s.id} id={s.id} />)}</div>}
+        </>
+      )}
+    </section>
   )
 }
 
-/** A harness worker stops by itself; GigaCode's built-in sub-agent lives in its parent's process — only the whole turn stops. */
-function stopWorker(w: Session) {
-  if (!w.virtual) return void tryApi('POST', `/sessions/${w.id}/stop`)
+/** A GigaCode built-in sub-agent lives in its parent's process: only the whole turn stops, so ask first. */
+function stopAgent(s: Session) {
+  if (!s.virtual) return stopSession(s)
   openDialog({
     kind: 'confirm', title: 'Остановить весь ход чата?', danger: true, ok: 'Остановить ход',
     text: 'Это встроенный субагент GigaCode: он работает внутри процесса родительского чата, и отдельно его не остановить. Остановится текущий ход чата вместе со всеми его субагентами.',
-    onConfirm: () => void tryApi('POST', `/sessions/${w.parentId}/stop`),
+    onConfirm: () => void tryApi('POST', `/sessions/${encodeURIComponent(s.parentId ?? s.id)}/stop`),
   })
 }
 
-function WorkerRow({ w, now, nested }: { w: Session; now: number; nested?: boolean }) {
-  const tool = useCurrentTool(w)
-  const starting = useStartingLabel(w)
-  const lines = w.preview.split('\n').map((l) => l.trim()).filter(Boolean)
-  // the server keeps the last 200 characters: a one-line tail starts mid-word («обы дожать…») — cut to a word, mark it
-  const cut = lines.length === 1 && w.preview.length >= 200
-  const last = cut ? `…${lines[0].replace(/^\S*\s+/, '')}` : lines.pop()
-  const doing = starting || tool || (w.status === 'running' ? (w.background && last ? `работает · ${last}` : 'работает') : w.background ? `закончил · ${relTime(w.lastActivityAt, now)}` : last)
-  // a helper whose turn ended without worker_done still answered: its last text went back to the agent as the result
-  const answered = !!w.ephemeral && w.status !== 'running' && w.report?.status === 'no_report'
+/** «Bash», «read_file», «Playwright / click»: the tool as the CLI names it, an MCP one by server and tool. */
+const toolLabel = (name: string) => (toolKind(name) === 'mcp' ? mcpParts(name).filter(Boolean).join(' / ') : name)
+
+/** What it does instead of a tool: its waiting state in words; nothing while it simply works. */
+function stateWords(s: Session) {
+  const v = sessionVisualState(s)
+  if (v === 'running') return ''
+  if (v === 'starting') return s.startWait ? `в очереди на запуск: ${s.startWait}-й` : 'запуск'
+  return STATE_LABEL[v]
+}
+
+/** Seconds since `at`, ticking by itself: only this leaf redraws every second, never the row. */
+function Since({ at }: { at: number }) {
+  return <>{clock(useElapsed(at, true) * 1000)}</>
+}
+
+// one row per session id: it reads its own session, so another agent's activity does not redraw it
+const AgentRow = memo(function AgentRow({ id, indent }: { id: string; indent: number }) {
+  const s = useStore((st) => st.sessions.find((x) => x.id === id))
+  if (!s) return null
+  return <AgentRowView s={s} indent={indent} />
+})
+
+function AgentRowView({ s, indent }: { s: Session; indent: number }) {
+  const tool = useCurrentTool(s)
+  const shells = useShells(s)
+  const home = useStore((st) => { const p = s.parentId ? st.sessions.find((x) => x.id === s.parentId) : undefined; return p ? normPath(p.worktreePath ?? p.cwd) : null })
+  const place = normPath(s.worktreePath ?? s.cwd)
+  const doing = tool ? toolLabel(tool) : stateWords(s)
+  const used = s.tokensIn + s.tokensOut
+  const role = s.virtual ? 'GigaCode' : s.role === 'reviewer' ? 'ревью' : null
   return (
-    <div className="worker-row" data-nested={nested || undefined} data-enter={w.createdAt > Date.now() - 3000 || undefined}>
-      {answered
-        ? <span data-tip="Ответил: ход закончен без отчёта worker_done, его последний ответ передан главному агенту как результат"><StatusIcon session={{ ...w, status: 'done' }} /></span>
-        : <StatusIcon session={w} />}
-      <button type="button" className="worker-title ellipsis" onClick={() => openSession(w.id)} data-tip={w.title} data-tip-trunc>
-        {(w.role === 'reviewer' || w.role === 'subagent') && <span className="role-tag">{w.role === 'reviewer' ? 'ревью' : 'субагент'}</span>}
-        {w.title}
-        {doing && <span className="muted"> · {doing}</span>}
-      </button>
-      <span className="worker-meta mono num">
-        {w.tokensIn + w.tokensOut > 0 && <span data-tip="токены">{tokens(w.tokensIn + w.tokensOut)}</span>}
-        <span>{relTime(w.lastActivityAt, now)}</span>
-      </span>
-      {w.status === 'running'
-        ? <button type="button" className="link-btn" onClick={() => stopWorker(w)}>Остановить</button>
-        : <button type="button" className="link-btn" onClick={() => void archiveSession(w)}>Убрать</button>}
+    <>
+      <div className="dock-row" style={{ '--indent': indent } as CSSProperties} data-state={sessionVisualState(s)}>
+        <StatusIcon session={s} />
+        <button type="button" className="dock-title" onClick={() => openSession(s.id)} data-tip={`Открыть чат «${s.title}»`}>
+          {role && <span className="role-tag">{role}</span>}
+          <span className="ellipsis">{s.title}</span>
+          {doing && <span className="dock-doing ellipsis">{doing}</span>}
+        </button>
+        {home && place !== home && <span className="dock-place mono ellipsis" data-tip={s.worktreePath ?? s.cwd}>{basename(s.worktreePath ?? s.cwd)}</span>}
+        <span className="dock-meta num">
+          {used > 0 && <span data-tip="Токены: вход и выход">{tokens(used)}</span>}
+          <span data-tip="Сколько работает"><Since at={s.createdAt} /></span>
+        </span>
+        {s.status === 'running'
+          ? <button type="button" className="dock-stop" onClick={() => stopAgent(s)}>Остановить</button>
+          : <span className="dock-stop-slot" aria-hidden />}
+      </div>
+      {shells.map((r) => <ShellRow key={r.id} r={r} indent={indent + 1} />)}
+    </>
+  )
+}
+
+/** Its shell commands running now, through a string key: a streamed word in its transcript does not redraw the row. */
+function useShells(s: Session): ShellRun[] {
+  const running = s.status === 'running'
+  useEffect(() => { if (running) ensureMessages(s.id) }, [running, s.id])
+  const key = useStore((st) => (running && st.messages[s.id] ? JSON.stringify(runningShells(st.messages[s.id])) : '[]'))
+  return useMemo(() => JSON.parse(key) as ShellRun[], [key])
+}
+
+function ShellRow({ r, indent }: { r: ShellRun; indent: number }) {
+  return (
+    <div className="dock-row dock-shell" style={{ '--indent': indent } as CSSProperties}
+      data-tip={`${r.command}\nКоманда агента. Харнес не может остановить её отдельно: остановите агента.`}>
+      <SquareTerminal className="dock-shell-icon" aria-hidden />
+      <span className="dock-title dock-cmd mono ellipsis">{r.command}</span>
+      {r.background && <span className="dock-bg">в фоне</span>}
+      <span className="dock-meta num"><Since at={r.at} /></span>
+      <span className="dock-stop-slot" aria-hidden />
     </div>
   )
 }
 
-function InternalRow({ a, now }: { a: SubAgent; now: number }) {
+const DoneRow = memo(function DoneRow({ id }: { id: string }) {
+  const s = useStore((st) => st.sessions.find((x) => x.id === id))
+  if (!s) return null
+  // a one-off whose turn ended without worker_done still answered: its last text went back to the agent as the result
+  const answered = !!s.ephemeral && s.report?.status === 'no_report'
+  const used = s.tokensIn + s.tokensOut
+  const end = s.finishedAt ?? s.report?.at ?? s.lastActivityAt
+  return (
+    <div className="dock-row" data-archived={s.archived || undefined}>
+      <StatusIcon session={answered ? { ...s, status: 'done' } : s} />
+      <button type="button" className="dock-title" onClick={() => openSession(s.id)} data-tip={s.preview || s.title}>
+        <span className="ellipsis">{s.title}</span>
+        {s.archived && <span className="dock-doing">в архиве</span>}
+      </button>
+      <span className="dock-meta num">
+        {used > 0 && <span data-tip="Токены: вход и выход">{tokens(used)}</span>}
+        <span data-tip="Сколько работал">{clock(end - s.createdAt)}</span>
+      </span>
+      <span className="dock-stop-slot" aria-hidden />
+    </div>
+  )
+})
+
+function InternalRow({ a }: { a: SubAgent }) {
   const doing = a.activity?.tool ?? a.lastText?.split('\n').filter(Boolean).pop()
   const at = a.activity?.since ?? a.lastActivity
   return (
-    <div className="worker-row worker-internal" data-state={a.state} aria-label={`${a.name}: ${subStateLabel(a.state)}`}>
+    <div className="dock-row" data-state={a.state} data-internal aria-label={`${a.name}: ${subStateLabel(a.state)}`}>
       <SubStateIcon state={a.state} />
-      <span className="worker-title ellipsis">
-        {a.name}
-        {doing && <span className="muted"> · {doing}</span>}
+      <span className="dock-title">
+        <span className="ellipsis">{a.name}</span>
+        {doing && <span className="dock-doing ellipsis">{doing}</span>}
       </span>
-      <span className="worker-meta mono num">
+      <span className="dock-meta num">
         {a.tokensIn + a.tokensOut > 0 && <span>{tokens(a.tokensIn + a.tokensOut)}</span>}
-        <span>{a.state === 'unverifiable' ? 'нет сигнала' : at ? relTime(at, now) : subStateLabel(a.state)}</span>
+        <span>{a.state === 'unverifiable' ? 'нет сигнала' : at && BUSY.has(a.state) ? <Since at={at} /> : subStateLabel(a.state)}</span>
       </span>
+      <span className="dock-stop-slot" aria-hidden />
     </div>
   )
 }

@@ -132,6 +132,10 @@ export interface Session {
   phase?: 'starting' | 'streaming' | 'auth' | null
   /** waits for a start slot of its agent: its place in that line (server/sessions.js spawnSlot) */
   startWait?: number
+  /** while it starts: the last line the agent wrote to stderr since this start (what the start waits for) */
+  startNote?: string | null
+  /** failed starts in a row; at 4 the harness stops retrying by itself */
+  startFailStreak?: number
   startRetryAt?: number | null // the harness retries starting the agent by itself at that time
   cliLiveAt?: number | null // a CLI-origin chat GigaCode itself wrote to (in a terminal outside the harness) at that time
   lastEventAt?: number | null // last stdout event of the current turn (newer servers)
@@ -368,7 +372,7 @@ export interface Settings {
   // «нет вывода» after stallSec of silence (≥ 30); revive: a broken turn is continued by itself (attempts), a silent one woken
   session?: { stallSec?: number; revive?: { attempts: number; stallWakeMin: number } }
   recovery?: { autoResume?: boolean; message?: string } // interrupted sessions after a restart
-  sessions?: { autoArchiveDays?: number | null } // archive chats idle longer than this (null = never)
+  sessions?: { autoArchiveDays?: number | null; purgeArchivedDays?: number | null } // archive idle chats / delete archived ones after N days (0/null = never)
   chat?: { steerAfterMs?: number } // a person's message ends a step that only waits for sub-agents after this (0 = never)
   agents: Record<string, AgentSettings>
   defaultAgent: string
@@ -388,7 +392,7 @@ export interface Settings {
     via?: 'agent' | 'harness' // commit / push / PR through the agent (its hooks and skills run) or git from the harness
   }
   tasks: { refreshSec: number }
-  orchestration?: { reviewMode?: 'builtin' | 'harness'; subagents?: 'harness' | 'builtin'; workerMayCommit?: boolean; review?: ReviewSettings; subagentRetention?: 'archive' | 'keep'; maxSubagentDepth?: number }
+  orchestration?: { reviewMode?: 'builtin' | 'harness'; subagents?: 'harness' | 'builtin'; workerMayCommit?: boolean; review?: ReviewSettings; subagentRetention?: 'archive' | 'keep'; maxSubagentDepth?: number; subagentMcpExclude?: string[] }
   board?: BoardSettings
   integrations?: {
     tasks?: { enabled?: boolean; space?: string | string[]; urlTemplate?: string; statusMap?: Record<string, string>; closedStatuses?: string[]; includeClosed?: boolean; onStartTransition?: string | null }
@@ -442,7 +446,7 @@ export type ClientEvent =
   | { t: 'term.resize'; id: string; cols: number; rows: number }
 
 /** GET /api/recovery: sessions a restart interrupted mid-turn (feature recovery). */
-export interface RecoveryItem { id: string; title: string; cwd: string; taskId: string | null; role: SessionRole; reason: 'harness_restart' | 'reboot' | 'crash'; at: number; lastActivity: string | null }
+export interface RecoveryItem { id: string; title: string; cwd: string; taskId: string | null; role: SessionRole; reason: 'harness_restart' | 'reboot' | 'crash'; at: number; lastActivity: string | null; interrupted?: boolean; subagents?: { id: string; title: string; role: SessionRole }[] } // one row per lead: its cut sub-agents are its to decide
 export interface RecoveryState { sessions: RecoveryItem[]; message: string }
 
 /** GET /api/history?cwd=: a chat the agent CLI recorded itself (feature cli-history). */

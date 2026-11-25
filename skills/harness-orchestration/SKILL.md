@@ -53,6 +53,9 @@ worker_start(task_id | spec, worktree?: "current" | "new-child" | "new-top-level
   your turn: the harness wakes you with each report (`worker_done`), question (`ask`) or escalation.
 - To talk to a worker in any state: `send_message(to: <session_id>, body)`. A working worker gets it when its turn
   ends; a finished one gets it as a follow-up and reports again with `worker_done`.
+- Sub-agents may start without some MCP servers (to start faster; their preamble lists them). If the task needs one,
+  pass it at start: `agent({ ..., mcp: ["onework"] })`. A sub-agent that finds out on the way calls
+  `mcp_enable({ server })` and ends its turn: the harness restarts it on the same session with that server.
 - Groups: `send_message(to: "@all" | "@idle" | "@worktree:<path>", body)` reaches your live workers; use only for
   deliberate fan-out.
 - Need their state without waiting: `worker_inspect(session_id)` (status, activity, branch, diff stat, last text,

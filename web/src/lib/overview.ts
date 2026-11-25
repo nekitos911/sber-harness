@@ -20,12 +20,23 @@ export const gotoMessage = (sessionId: string, messageId: string) =>
 
 export const firstLine =(text: string) => text.split('\n').map((l) => l.trim()).find(Boolean)?.replace(/\s+/g, ' ') ?? ''
 
+/**
+ * One line of a person's markdown as plain text: «**модуль** `ledger/5.ts`» → «модуль ledger/5.ts». Underscores stay
+ * (paths and identifiers use them far more often than emphasis does).
+ */
+export const plainInline = (line: string) => line
+  .replace(/^\s*(#{1,6}|>|[-*+])\s+/, '')
+  .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
+  .replace(/`([^`]+)`/g, '$1')
+  .replace(/\*\*(\S(?:.*?\S)?)\*\*/g, '$1')
+  .replace(/(^|[^\w*])\*(\S(?:.*?\S)?)\*(?!\w)/g, '$1$2')
+
 /** The message that started the chat. */
 export const firstTask = (list: Message[]): Message | null => list.find((m) => m.kind === 'user') ?? null
 
 /** One line of the task: «/full-task KEY · title» for a command with a bound task, else the first line. */
 export function taskHead(text: string, task?: { key: string; title: string } | null): string {
-  const line = firstLine(taskText(text))
+  const line = plainInline(firstLine(taskText(text)))
   if (!line.startsWith('/') || !task) return line
   return `${line.includes(task.key) ? line : `${line} ${task.key}`} · ${task.title}`
 }
@@ -110,7 +121,7 @@ export function timeline(list: Message[], kids: Session[]): ChatEvent[] {
     const at = { key: m.id, at: m.at, messageId: m.id }
     if (m.kind === 'user') {
       const kind = !m.from || m.from === 'user' ? 'user' : m.from === 'harness' ? 'harness' : 'agent'
-      out.push({ ...at, kind, text: firstLine(taskText(m.text)), from: m.from })
+      out.push({ ...at, kind, text: plainInline(firstLine(taskText(m.text))), from: m.from })
     } else if (m.kind === 'error') out.push({ ...at, kind: 'error', text: firstLine(m.text) })
     else if (m.kind === 'question' || (m.options?.length && m.kind !== 'permission')) out.push({ ...at, kind: 'question', text: firstLine(m.question?.text || m.text) })
     else if (m.kind === 'permission') out.push({ ...at, kind: 'permission', text: m.permission?.tool || firstLine(m.text) })
@@ -127,4 +138,61 @@ export function timeline(list: Message[], kids: Session[]): ChatEvent[] {
     if (end) out.push({ key: `end-${s.id}`, at: end, kind: 'sub-end', text: s.title, sessionId: s.id })
   }
   return out.sort((a, b) => a.at - b.at)
+}
+
+// ---------- the running-agents dock above the composer ----------
+
+export interface DockRow { s: Session; indent: number }
+
+/** A chat that is doing something or waits for a person: it stays in the dock's main list. */
+export const isLive = (s: Pick<Session, 'status' | 'waitingFor'>) => s.status === 'running' || !!s.waitingFor
+
+/**
+ * The dock of chat `id`: its live descendants (indented under a live parent, flat under a finished one) and the finished
+ * ones for «История», newest first.
+ */
+export function dockRows(sessions: Session[], id: string): { live: DockRow[]; done: Session[] } {
+  const live: DockRow[] = []
+  const done: Session[] = []
+  const indent = new Map<string, number>()
+  for (const { s } of descendants(sessions, id)) {
+    if (!isLive(s)) { done.push(s); continue }
+    const up = s.parentId ? indent.get(s.parentId) : undefined
+    indent.set(s.id, up === undefined ? 0 : up + 1)
+    live.push({ s, indent: indent.get(s.id)! })
+  }
+  const end = (s: Session) => s.finishedAt ?? s.lastActivityAt
+  return { live, done: done.sort((a, b) => end(b) - end(a)) }
+}
+
+// the CLIs' shell tools (toolRun.ts KIND 'shell', plus «execute»); toolRun is not imported so this file stays pure
+const SHELL = /^(run_shell_command|bash|shell|exec_command|execute)$/i
+
+export interface ShellRun { id: string; command: string; at: number; background: boolean }
+
+/**
+ * Shell commands a running agent has going right now: calls still running, and background ones started in its current
+ * turn. shortcut: the CLI does not report when a background command ends, so it is listed until the turn ends.
+ */
+export function runningShells(list: Message[]): ShellRun[] {
+  const out: ShellRun[] = []
+  const turn = list[list.length - 1]?.turn
+  for (let i = Math.max(0, list.length - 80); i < list.length; i++) {
+    const t = list[i].tool
+    if (list[i].kind !== 'tool' || !t || !SHELL.test(t.name)) continue
+    const input = (t.input ?? {}) as { command?: unknown; is_background?: unknown; run_in_background?: unknown }
+    const background = input.is_background === true || input.run_in_background === true
+    if (t.status !== 'running' && !(background && t.status === 'ok' && list[i].turn === turn)) continue
+    out.push({ id: list[i].id, command: typeof input.command === 'string' ? firstLine(input.command) : t.name, at: list[i].at, background })
+  }
+  return out
+}
+
+/** 39 с · 11 мин 39 с · 2 ч 05 мин: a running clock, finer than sessionState's dur(). */
+export function clock(ms: number) {
+  const s = Math.max(0, Math.floor(ms / 1000))
+  if (s < 60) return `${s} с`
+  const m = Math.floor(s / 60)
+  if (m < 60) return `${m} мин ${String(s % 60).padStart(2, '0')} с`
+  return `${Math.floor(m / 60)} ч ${String(m % 60).padStart(2, '0')} мин`
 }

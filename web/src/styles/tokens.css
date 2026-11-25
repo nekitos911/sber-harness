@@ -1,5 +1,11 @@
-/* Neutral dark workbench (Orca-like): near-black ground, hairline rules, colour only for state.
-   Dark is the default; JS sets data-theme from the OS preference or the manual toggle. */
+/* Neutral workbench (Orca-like): near-black ground, hairline rules, colour only for state.
+   Dark is the default (a tool used for hours next to terminals); the toggle sets data-theme="light".
+
+   The system, in one place:
+   - surfaces:  canvas (work) < ground (chrome) < deck (raised) < deck-2 (hover) < deck-3 (selected); well = inset fields
+   - text:      ink (primary) / ink-2 (supporting) / ink-3 (meta, >= 4.5:1 on every surface) / ink-4 (icons, rules only, >= 3:1)
+   - state:     lamp-* = one colour per agent state, each paired with a shape or a word; *-soft = its tinted background
+   - spacing:   4 px grid (--sp-*); type: 11 / 12 / 13 / 14 / 15 / 18 / 22 (--fs-*); radius 4 / 6 / 10; two elevations */
 :root {
   color-scheme: dark;
 
@@ -17,8 +23,8 @@
 
   --ink: #e8e8e8;
   --ink-2: #b9b9b9;
-  --ink-3: #a5a5a5;      /* secondary text, meta */
-  --ink-4: #6a6a6a;      /* placeholders, disabled, rules-as-text only */
+  --ink-3: #a5a5a5;      /* secondary text, meta: 7.3:1 on canvas */
+  --ink-4: #6a6a6a;      /* icons, chevrons, rules: 3.3:1 (non-text only, never body copy) */
 
   --primary: #e8e8e8;     /* primary button: light on dark */
   --primary-ink: #161616;
@@ -71,10 +77,28 @@
   --font-ui: "Segoe UI Variable Text", "Segoe UI", "Inter", "Ubuntu", "Cantarell", "Noto Sans", system-ui, sans-serif;
   --font-mono: "Cascadia Code", "Cascadia Mono", "JetBrains Mono", "DejaVu Sans Mono", "Noto Sans Mono", Consolas, monospace;
 
-  --r-1: 4px;
-  --r-2: 6px;
-  --r-3: 10px;
+  --r-1: 4px;            /* controls, chips */
+  --r-2: 6px;            /* popovers, cards in a list */
+  --r-3: 10px;           /* dialogs, settings groups */
   --h-ctl: 30px;
+
+  /* spacing: a 4 px grid */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 24px;
+  --sp-6: 32px;
+  --sp-7: 48px;
+
+  /* type: 13 px body for dense lists, 14 px for forms and prose; weight and ink carry most of the hierarchy */
+  --fs-xs: 11px;         /* counters, column heads */
+  --fs-sm: 12px;         /* meta, hints */
+  --fs-md: 13px;         /* rows, dense UI */
+  --fs-base: 14px;       /* body, controls */
+  --fs-lg: 15px;         /* section titles */
+  --fs-xl: 18px;         /* screen titles */
+  --fs-2xl: 22px;        /* the one headline of a screen (Главная) */
 
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);      /* enter */
   --ease-in: cubic-bezier(0.55, 0, 1, 0.45);       /* exit: short, gets out of the way */
@@ -100,30 +124,30 @@
 
   --ink: #1b1b1b;
   --ink-2: #444444;
-  --ink-3: #686868;
-  --ink-4: #949494;
+  --ink-3: #636363;      /* 6.0:1 on white, 4.7:1 on deck-3 */
+  --ink-4: #8a8a8a;      /* icons only: 3.4:1 */
 
   --primary: #1c1c1c;
   --primary-ink: #ffffff;
-  --signal: #2f6fd1;
-  --signal-soft: rgba(47, 111, 209, 0.1);
-  --focus: rgba(47, 111, 209, 0.6);
+  --signal: #2a64c0;      /* 5.7:1 on white, 5.0:1 on signal-soft */
+  --signal-soft: rgba(42, 100, 192, 0.1);
+  --focus: rgba(42, 100, 192, 0.65);
 
-  --lamp-run: #c4760a;
-  --lamp-wait: #2f6fd1;
-  --lamp-done: #23914d;
+  --lamp-run: #9a5a00;    /* amber dark enough for text: 5.5:1 */
+  --lamp-wait: #2a64c0;
+  --lamp-done: #1b7a40;   /* 5.3:1 */
   --lamp-fail: #d33b3b;
   --lamp-off: #8f8f8f;
   --lamp-ask: #7a4fe0;
-  --lamp-stall: #d9541a;
+  --lamp-stall: #c2470f;  /* 5.0:1 */
 
-  --run-soft: rgba(196, 118, 10, 0.1);
+  --run-soft: rgba(196, 118, 10, 0.1);  /* tint stays the warm amber; text on it uses lamp-run */
   --fail-soft: rgba(211, 59, 59, 0.08);
   --done-soft: rgba(35, 145, 77, 0.1);
   --pr-merged: #7c4dcc;
   --full-access: #8a6d00;
   --full-access-soft: rgba(196, 160, 0, 0.14);
-  --pri-high: #c8561a;
+  --pri-high: #b84d14;
 
   --add-bg: rgba(35, 145, 77, 0.1);
   --add-ink: #1b6f3b;

@@ -102,3 +102,39 @@ test('crash (server.json left behind) and autoResume: the configured message goe
   assert.equal(interruptReason({ startedAt: 3000, bootTime: 2000, crashed: true }), 'crash');
   assert.equal(interruptReason({ startedAt: 3000, bootTime: 2000, crashed: false }), 'harness_restart');
 });
+
+test('recovery lists leads only: cut sub-agents go under their orchestrator, which gets them by id and decides', async () => {
+  const dataDir = path.join(root, 'данные лидеры');
+  fs.mkdirSync(dataDir);
+  const at = Date.now() - 60000;
+  const cut = { at, reason: 'reboot', lastActivity: 'Edit' };
+  const chat = (id, extra = {}) => ({
+    id, kind: 'chat', title: id, agent: 'mock', launcherId: 'mock', cwd, workspaceId: null, branch: null, role: 'solo', parentId: null,
+    taskId: null, status: 'idle', externalSessionId: null, settingsPath: null, model: null, approvalMode: null, autoReport: false, queued: 0,
+    queue: [], preview: '', command: null, pid: null, createdAt: at, lastActivityAt: at, everStarted: true, ...extra,
+  });
+  const sessions = [
+    chat('s_coord', { role: 'coordinator', interrupted: cut }),
+    chat('s_worker', { role: 'worker', parentId: 's_coord', interrupted: cut }),
+    chat('s_lead', {}), // not cut itself: its cut helper is still its call
+    chat('s_helper', { role: 'worker', parentId: 's_lead', ephemeral: true, interrupted: cut }),
+  ];
+  fs.writeFileSync(path.join(dataDir, 'db.json'), JSON.stringify({ seq: { task: 0 }, tasks: [], workspaces: [], notifications: [], sessions }));
+  const h = await harness(dataDir);
+  try {
+    const list = (await h.api('GET', '/api/recovery')).body.sessions;
+    assert.deepEqual(list.map((x) => [x.id, x.interrupted, x.subagents.map((y) => y.id)]).sort(), [['s_coord', true, ['s_worker']], ['s_lead', false, ['s_helper']]]);
+    // naming the sub-agent means its lead
+    const r = (await h.api('POST', '/api/recovery/resume', { sessionIds: ['s_worker', 's_helper'], message: 'продолжай' })).body;
+    assert.deepEqual(r.resumed.sort(), ['s_coord', 's_lead']);
+    const told = await waitFor(async () => (await h.messages('s_coord')).find((m) => m.kind === 'user'), { what: 'coordinator told' });
+    assert.match(told.text, /^продолжай\n\n\[harness\] .*s_worker «s_worker».*send_message.*worker_stop/s);
+    assert.match((await waitFor(async () => (await h.messages('s_lead')).find((m) => m.kind === 'user'))).text, /^\[harness\] .*s_helper/, 'a lead that was not cut gets only the list');
+    const st = await h.state();
+    assert.ok(['s_worker', 's_helper'].every((id) => !st.sessions.find((s) => s.id === id).interrupted), 'no longer listed');
+    assert.equal((await h.messages('s_worker')).length, 0, 'the sub-agent is not started by the harness');
+    assert.equal((await h.api('GET', '/api/recovery')).body.sessions.length, 0);
+  } finally {
+    await h.srv.close();
+  }
+});

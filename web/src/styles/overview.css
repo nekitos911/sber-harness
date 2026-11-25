@@ -56,3 +56,12 @@
 .ov-event[data-k="user"] > svg { color: var(--signal); }
 .ov-events > li { min-width: 0; }
 .ov-event > .ellipsis { flex: 1; min-width: 0; }
+
+/* Panel empty states: top-aligned with the content, the panel's text size, a title line, one action. */
+.wpanel-empty { display: grid; justify-items: start; gap: 6px; padding: 12px; font-size: 12.5px; line-height: 1.5; color: var(--ink-3); }
+.wpanel-empty strong { color: var(--ink); font-size: 13px; font-weight: 600; }
+.wpanel-empty p { margin: 0; max-width: 46ch; text-wrap: pretty; }
+.wpanel-empty .btn { margin-top: 4px; }
+.wpanel-note { margin: 0; padding: 10px 12px; border-bottom: 1px solid var(--rule-soft); font-size: 12.5px; line-height: 1.5; color: var(--ink-3); text-wrap: pretty; }
+.wpanel-section > p.muted, .ov p.muted { margin: 0; font-size: 12.5px; }
+.ov-sub-row { padding-right: 6px; } /* the tree bleeds 6 px into the section padding: its clock must not touch the edge */

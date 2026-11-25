@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type CSSProperties } from 'react'
+import { memo, useEffect, useMemo, useState, type CSSProperties } from 'react'
 import { Bot, ChevronRight, CircleHelp, ExternalLink, FolderGit2, GitCommitHorizontal, MessageSquare, ShieldAlert, TriangleAlert, User, Workflow } from 'lucide-react'
 import { openSession, openTask, openWorktree, useStore } from '../../store'
 import { ensureMessages } from '../../ws'
@@ -171,7 +171,7 @@ function Places({ sessions }: { sessions: Session[] }) {
 }
 
 /** Files the chat's edit tools changed (as in «Изменено N файлов»), each once with its +/−; click opens the diff. */
-function Changes({ list, cwd }: { list: Message[]; cwd: string }) {
+export function Changes({ list, cwd }: { list: Message[]; cwd: string }) {
   const files = useMemo(() => {
     const map = new Map<string, { file: string; added: number; removed: number }>()
     for (const m of list) {
@@ -206,7 +206,8 @@ const EVENT_ICON: Record<ChatEvent['kind'], typeof User> = {
   user: User, harness: Workflow, agent: MessageSquare, error: TriangleAlert, question: CircleHelp, permission: ShieldAlert,
   git: GitCommitHorizontal, 'sub-start': Bot, 'sub-end': Bot,
 }
-const hhmm = (at: number) => new Date(at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
+const HHMM = new Intl.DateTimeFormat('ru-RU', { hour: '2-digit', minute: '2-digit' }) // one formatter, not one per event
+const hhmm = (at: number) => HHMM.format(at)
 
 function Timeline({ list, kids, sessionId, sessions }: { list: Message[]; kids: Session[]; sessionId: string; sessions: Session[] }) {
   const events = useMemo(() => timeline(list, kids), [list, kids])
@@ -231,21 +232,25 @@ function Timeline({ list, kids, sessionId, sessions }: { list: Message[]; kids: 
       <h3>Хронология</h3>
       {events.length === 0 ? <p className="muted">Пока пусто.</p> : (
         <ol className="ov-events">
-          {events.map((e) => {
-            const Icon = EVENT_ICON[e.kind]
-            const go = () => (e.messageId ? gotoMessage(sessionId, e.messageId) : e.sessionId && openSession(e.sessionId))
-            return (
-              <li key={e.key}>
-                <button type="button" className="ov-event" data-k={e.kind} onClick={go} data-tip={fullTime(e.at)}>
-                  <span className="muted num">{hhmm(e.at)}</span>
-                  <Icon aria-hidden />
-                  <span className="ellipsis"><strong>{who(e)}</strong>{e.text && <span className="muted"> · {e.text}</span>}</span>
-                </button>
-              </li>
-            )
-          })}
+          {events.map((e) => <TimelineRow key={e.key} e={e} who={who(e)} sessionId={sessionId} />)}
         </ol>
       )}
     </section>
   )
 }
+
+// the panel redraws on every event of every agent; an event already listed has nothing new to draw
+const TimelineRow = memo(function TimelineRow({ e, who, sessionId }: { e: ChatEvent; who: string; sessionId: string }) {
+  const Icon = EVENT_ICON[e.kind]
+  const go = () => (e.messageId ? gotoMessage(sessionId, e.messageId) : e.sessionId && openSession(e.sessionId))
+  return (
+    <li>
+      <button type="button" className="ov-event" data-k={e.kind} onClick={go} data-tip={fullTime(e.at)}>
+        <span className="muted num">{hhmm(e.at)}</span>
+        <Icon aria-hidden />
+        <span className="ellipsis"><strong>{who}</strong>{e.text && <span className="muted"> · {e.text}</span>}</span>
+      </button>
+    </li>
+  )
+}, (p, n) => p.who === n.who && p.sessionId === n.sessionId && p.e.key === n.e.key && p.e.kind === n.e.kind && p.e.at === n.e.at &&
+  p.e.text === n.e.text && p.e.messageId === n.e.messageId && p.e.sessionId === n.e.sessionId) // events are rebuilt on each change: compare what is drawn

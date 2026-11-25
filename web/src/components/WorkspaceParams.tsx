@@ -72,7 +72,7 @@ export function WorkspaceParams({ projects }: { projects: Workspace[] }) {
           </Sub>
           <div className="sbp-sec">Скрыть рабочие деревья</div>
           {FILTERS.map(([k, label]) => <SwitchRow key={k} label={label} checked={!!p[k]} onChange={toggle(k)} />)}
-          <p className="sbp-hint">Чаты, которые ждут вас, видны всегда — в «Ждут вас».</p>
+          <p className="sbp-hint">Чаты, которые ждут вас, видны всегда: в разделе «Ждут вас».</p>
           <div className="sbp-sec">Группировка и порядок</div>
           <div className="sbp-seg">
             <Segmented size="sm" label="Группировать по" value={p.group} onChange={(group) => setSbPrefs({ group })}

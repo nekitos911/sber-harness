@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef, useState } from 'react'
 import { useCompact, useRail } from '../lib/useMedia'
-import { Archive, ArrowLeft, ArrowRight, ClipboardCopy, Command, FileText, FolderOpen, History, GitCompare, MessageSquare, MessageSquarePlus, PanelLeft, PanelRight, Pencil, Pin, PinOff, Plus, SquareTerminal, X } from 'lucide-react'
+import { Archive, ArrowLeft, ArrowRight, ClipboardCopy, FileText, FolderOpen, History, GitCompare, MessageSquare, MessageSquarePlus, PanelLeft, PanelRight, Pencil, Pin, PinOff, Plus, Search, SquareTerminal, X } from 'lucide-react'
 import { activateTab, closeTab, dirtyKey, hasFeature, navigate, openDialog, setState, tabKey, toast, useStore, wtKey, type Tab } from '../store'
 import { loadDraft, saveDraft } from '../lib/draft'
 import { tryApi } from '../api'
@@ -52,9 +52,11 @@ export function TopBar({ onCommand }: { onCommand: () => void }) {
       </div>
       {cwd ? <TabBar key={wtKey(cwd)} cwd={cwd} /> : <div className="grow" />}
       <div className="topbar-right">
-        <button type="button" className="btn btn-ghost" onClick={onCommand} data-tip={`Команды (${shortcut('K')})`}>
-          <Command />
-          Команда
+        {/* the ⌘ glyph means nothing on Windows: the real shortcut of this machine instead */}
+        <button type="button" className="btn btn-ghost topbar-cmd" onClick={onCommand} aria-keyshortcuts={shortcut('K').replace('Ctrl', 'Control').replace('⌘', 'Meta+')}>
+          <Search aria-hidden />
+          Команды
+          <kbd>{shortcut('K')}</kbd>
         </button>
         {cwd && (
           <button type="button" className="icon-btn" aria-pressed={panelOn} aria-label="Панель файлов и изменений" data-tip="Панель файлов и изменений" onClick={() => setState(compact ? { panelOverlay: !panelOverlay, sbOverlay: false } : { panel: !panel })}>
@@ -140,7 +142,7 @@ function TabBar({ cwd }: { cwd: string }) {
     const t = tabs.find((x) => tabKey(x) === key)
     if (t?.kind !== 'session' || sessions.find((x) => x.id === t.id)?.status !== 'running' || loadDraft<boolean>('hint:close-running')) return
     saveDraft('hint:close-running', true)
-    toast('Агент продолжает работать — сессия в боковой панели')
+    toast('Агент продолжает работать: сессия в боковой панели')
   }
   const [menu, setMenu] = useState<{ key: string; el: HTMLElement } | null>(null)
   const [renaming, setRenaming] = useState<string | null>(null)

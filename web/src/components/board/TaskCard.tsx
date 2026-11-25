@@ -35,7 +35,8 @@ export const TaskCard = memo(function TaskCard({ task, ctx }: { task: Task; ctx:
   const waiting = pendingDeps(task, ctx.byId)
   const kids = ctx.kids.get(task.id) ?? []
   const kidsDone = kids.filter((k) => k.status === 'done').length
-  const canStart = (task.status === 'backlog' || task.status === 'todo') && session?.status !== 'running'
+  // a blocked task gets no hand-off button: its «блок: …» chip already says why
+  const canStart = (task.status === 'backlog' || task.status === 'todo') && session?.status !== 'running' && !waiting.length
   const startRef = useRef<HTMLButtonElement>(null)
   const [starting, setStarting] = useState(false) // the same «Передать агенту» popover as in the task drawer
 
@@ -43,6 +44,12 @@ export const TaskCard = memo(function TaskCard({ task, ctx }: { task: Task; ctx:
     <>
       <div className="card-top">
         <span className="card-id mono">{task.parentId ? task.id : key}</span>
+        {/* the tracker link sits by the key: a footer row of its own made every imported card a line taller */}
+        {task.externalUrl && (
+          <a className="card-link" href={task.externalUrl} target="_blank" rel="noreferrer noopener" aria-label="Открыть в трекере" data-tip="Открыть в трекере" onClick={stop} onKeyDown={stop} onPointerDown={stop}>
+            <ExternalLink />
+          </a>
+        )}
         {parent && <span className="card-parent mono" data-tip={`Подзадача ${parent.id}: ${parent.title}`}>↳ {taskKey(parent, ctx.byId)}</span>}
         <span className="grow" />
         {task.hidden && <span className="chip">скрыта</span>}
@@ -81,9 +88,7 @@ export const TaskCard = memo(function TaskCard({ task, ctx }: { task: Task; ctx:
         <button
           type="button"
           className="btn btn-sm card-start"
-          data-tip={waiting.length ? `Ждёт: ${waiting.join(', ')}` : undefined}
           aria-label={`Передать агенту ${task.id}`}
-          disabled={waiting.length > 0}
           onPointerDown={stop}
           onKeyDown={stop}
           ref={startRef}
@@ -101,16 +106,10 @@ export const TaskCard = memo(function TaskCard({ task, ctx }: { task: Task; ctx:
         </span>
       )}
       {ctx.trackerSync[task.id] && <span className="card-sync" role="status">{ctx.trackerSync[task.id].text}</span>}
-      {(session || task.externalUrl || task.assigneeSessionId || goneOf(task)) && (
+      {(session || task.assigneeSessionId || goneOf(task)) && (
         <div className="card-foot">
           {!session && <AgentGone task={task} ctx={ctx} />}
           {session && (chipStates(task) ? <AgentBadge task={task} session={session} ctx={ctx} /> : <CardLive task={task} session={session} />)}
-          <span className="grow" />
-          {task.externalUrl && (
-            <a className="icon-btn icon-btn-sm" href={task.externalUrl} target="_blank" rel="noreferrer noopener" aria-label="Открыть в трекере" data-tip="Открыть в трекере" onClick={stop} onKeyDown={stop} onPointerDown={stop}>
-              <ExternalLink />
-            </a>
-          )}
         </div>
       )}
     </>
@@ -241,11 +240,11 @@ export function AgentBadge({ task, session, ctx }: { task: Task; session: Sessio
         {c.text}
       </button>
       {task.agentState === 'review_stopped' && (
-        <button type="button" className="btn btn-ghost btn-xs" onClick={go(() => openSession(session.id))}><MessageSquare />Чат исполнителя</button>
+        <button type="button" className="btn btn-ghost btn-xs" onClick={go(() => openSession(session.id))}><MessageSquare />Чат агента</button>
       )}
       {c.retry && retryOn && (
         <button type="button" className="btn btn-ghost btn-xs" disabled={busy} onClick={go(() => void retry())}
-          data-tip="Запустить ревью силами harness ещё раз для исполнителя этой задачи"><RotateCcw className={busy ? 'spinner' : undefined} />Повторить ревью</button>
+          data-tip="Запустить ревью силами harness ещё раз"><RotateCcw className={busy ? 'spinner' : undefined} />Повторить ревью</button>
       )}
     </span>
   )

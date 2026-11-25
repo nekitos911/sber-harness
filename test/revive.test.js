@@ -139,3 +139,34 @@ test('cold starts of one agent wait for a slot (maxStarting): the second chat sa
   await waitFor(async () => { const x = await session(b.id); return x.status === 'idle' && !x.startWait; }, { timeout: 15000, what: 'second ran after the first' });
   assert.ok((await messages(b.id)).some((m) => m.kind === 'assistant'));
 });
+
+test('«Переподключить MCP» while the turn still waits for its start slot: no extra «continue» turn', async () => {
+  const a = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mockone', cwd: root, prompt: '#silent 2500' })).body;
+  await waitFor(async () => (await session(a.id)).pid, { what: 'first started' });
+  const b = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mockone', cwd: root, prompt: 'привет' })).body;
+  await waitFor(async () => (await session(b.id)).startWait === 1, { what: 'second waits' });
+  assert.equal((await h.api('POST', `/api/sessions/${b.id}/restart`, { keepContext: true })).status, 200);
+  await waitFor(async () => { const x = await session(b.id); return x.status === 'idle' && !x.pid && (x.queue || []).length === 0; }, { timeout: 15000, what: 'second ran' });
+  await new Promise((r) => setTimeout(r, 1000));
+  const ms = await messages(b.id);
+  assert.ok(!ms.some((m) => m.kind === 'user' && /Предыдущий ход оборвался/.test(m.text)), JSON.stringify(ms.map((m) => m.text)));
+  assert.ok(!ms.some((m) => m.kind === 'assistant' && /turn 2/.test(m.text)), 'one turn');
+});
+
+test('a chat that keeps failing to start stops retrying after 4 failed starts in a row, whatever the retry kind', async () => {
+  const h2 = await startTestServer({ session: { revive: { attempts: 10, delaysSec: [0.2] } } });
+  try {
+    const st = async (id) => (await h2.api('GET', '/api/state')).body.sessions.find((s) => s.id === id);
+    const s = (await h2.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', cwd: root, prompt: 'привет' })).body;
+    await waitFor(async () => (await st(s.id)).status === 'idle', { what: 'first turn' });
+    await h2.api('POST', `/api/sessions/${s.id}/messages`, { text: 'сделай #crashalways' });
+    const said = await waitFor(async () => (await h2.api('GET', `/api/sessions/${s.id}/messages`)).body.find((m) => m.kind === 'system' && /не стартует 4 раза подряд/.test(m.text)), { timeout: 30000, what: 'gave up' });
+    assert.ok(said);
+    await new Promise((r) => setTimeout(r, 1500)); // no more revive after that
+    const x = await st(s.id);
+    assert.deepEqual([x.status, x.startFailStreak], ['error', 4]);
+    assert.ok((await h2.api('GET', '/api/state')).body.notifications.some((n) => n.sessionId === s.id && /не стартует 4 раза подряд/.test(n.text)));
+  } finally {
+    await h2.close();
+  }
+});

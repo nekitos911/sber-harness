@@ -142,24 +142,53 @@
   border-radius: var(--r-2); background: var(--fail-soft); color: var(--lamp-fail); font-size: 12.5px;
 }
 
-/* ---------- workers panel ---------- */
-
-.workers { border: 1px solid var(--rule); border-radius: var(--r-3); background: var(--deck); overflow: hidden; font-size: 12.5px; }
-.workers-busy { color: var(--lamp-run); }
-.worker-meta { display: inline-flex; gap: 8px; color: var(--ink-3); font-size: 11.5px; flex-shrink: 0; }
-.worker-row[data-enter] { animation: slide-in 200ms var(--ease-out); }
-.workers-head {
-  display: flex; align-items: center; gap: 6px; width: 100%; height: 32px; padding: 0 12px;
+/* ---------- running sub-agents dock (above the composer) ---------- */
+/* One quiet card: a header that counts, then a row per live sub-agent with its shell commands under it; columns line
+   up across rows (meta right, a fixed slot for «Остановить») so a glance down the right edge reads the clocks. */
+.dock { container-type: inline-size; border: 1px solid var(--rule); border-radius: var(--r-3); background: var(--deck); overflow: hidden; font-size: 12.5px; }
+.dock-head {
+  display: flex; align-items: center; gap: 8px; width: 100%; height: 32px; padding: 0 10px;
   border: 0; background: none; color: var(--ink-2); text-align: left;
 }
-.workers-head:hover { color: var(--ink); }
-.workers-head .chev { width: 14px; height: 14px; color: var(--ink-3); transition: transform var(--t-fast) var(--ease-out); }
-.workers-head[aria-expanded="false"] .chev { transform: rotate(-90deg); }
-.worker-row { display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 12px; border-top: 1px solid var(--rule-soft); }
-.worker-row .st { width: 13px; height: 13px; }
-.worker-bot { width: 14px; height: 14px; color: var(--ink-3); flex-shrink: 0; }
-.worker-title { flex: 1; padding: 0; border: 0; background: none; color: var(--ink); text-align: left; }
-.worker-title:hover { text-decoration: underline; }
+.dock-head:hover { background: var(--deck-2); color: var(--ink); }
+.dock-head:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.dock-head strong { color: var(--ink); font-weight: 600; }
+.dock-head .chev { width: 14px; height: 14px; flex: none; color: var(--ink-3); transition: transform var(--t-fast) var(--ease-out); }
+.dock-head[aria-expanded="false"] .chev { transform: rotate(-90deg); }
+.dock-busy, .dock-wait { font-variant-numeric: tabular-nums; }
+.dock-busy { color: var(--lamp-run); }
+.dock-wait { color: var(--lamp-ask); }
+.dock-busy::before, .dock-wait::before { content: "·"; margin-right: 8px; color: var(--ink-4); }
+.dock-history { color: var(--ink-3); border-top: 1px solid var(--rule-soft); }
+.dock-list { max-height: min(40vh, 320px); overflow-y: auto; overscroll-behavior: contain; padding: 2px 0 4px; border-top: 1px solid var(--rule-soft); }
+.dock-row { display: flex; align-items: center; gap: 8px; min-width: 0; height: 28px; padding: 0 10px 0 calc(10px + var(--indent, 0) * 18px); }
+.dock-row:hover { background: var(--deck-2); }
+.dock-row > .st { width: 14px; height: 14px; flex: none; }
+.dock-row[data-archived] { opacity: 0.7; }
+.dock-row[data-state="unverifiable"] { opacity: 0.7; }
+.dock-title { display: flex; align-items: baseline; gap: 6px; flex: 1; min-width: 0; padding: 0; border: 0; background: none; color: var(--ink); font: inherit; text-align: left; }
+.dock-title > .ellipsis:first-of-type { flex: 0 1 auto; }
+button.dock-title:hover > .ellipsis:first-of-type { text-decoration: underline; }
+button.dock-title:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: var(--r-1); }
+.dock-doing { flex: 0 10 auto; min-width: 0; color: var(--ink-3); }
+.dock-doing::before { content: "·"; margin-right: 6px; color: var(--ink-4); }
+.dock-place { flex: 0 1 auto; max-width: 120px; color: var(--ink-3); font-size: 11px; }
+.dock-meta { display: inline-flex; gap: 10px; flex: none; color: var(--ink-3); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.dock-stop, .dock-stop-slot { flex: none; width: 76px; }
+.dock-stop { padding: 0; border: 0; background: none; color: var(--ink-3); font-size: 12px; text-align: right; }
+.dock-stop:hover { color: var(--lamp-fail); }
+.dock-stop:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: var(--r-1); color: var(--ink); }
+/* a shell command under its agent: informational, a step lighter */
+.dock-shell { height: 24px; }
+.dock-shell-icon { width: 13px; height: 13px; flex: none; color: var(--ink-3); }
+.dock-cmd { display: block; color: var(--ink-2); font-size: 11.5px; }
+.dock-bg { flex: none; color: var(--ink-3); font-size: 11px; }
+.dock-sub { padding: 8px 10px 2px; color: var(--ink-3); font-size: 11px; }
+@container (max-width: 520px) {
+  .dock-place, .dock-meta > :not(:last-child) { display: none; }
+  .dock-stop, .dock-stop-slot { width: auto; }
+}
+@media (prefers-reduced-motion: reduce) { .dock-head .chev { transition: none; } }
 .link-btn { padding: 0; border: 0; background: none; color: var(--ink-3); font-size: 12px; }
 .link-btn:hover { color: var(--lamp-fail); text-decoration: underline; }
 
@@ -223,10 +252,6 @@
 .md hr { border: 0; border-top: 1px solid var(--rule); margin: 1em 0; }
 .md img { max-width: 100%; }
 
-.workers-sub { padding: 4px 12px; border-top: 1px solid var(--rule-soft); color: var(--ink-4); font-size: 11px; }
-.worker-internal .worker-title { color: var(--ink-2); cursor: default; }
-.worker-internal .worker-title:hover { text-decoration: none; }
-.worker-internal[data-state="unverifiable"] { opacity: 0.7; }
 
 
 /* Approval mode in the composer bar: a pill select; full access is the yellow chip. */
@@ -271,7 +296,6 @@
 .error-card { display: grid; gap: 8px; font-family: var(--font-ui); font-size: 13px; }
 .link-btn-out { justify-self: start; margin-top: 4px; text-decoration: none; }
 .msg-wrap > .link-btn-out { align-self: center; }
-.worker-row[data-nested] { padding-left: 32px; }
 
 /* @mentions: the textarea is transparent over a mirror that draws @path tokens as chips. */
 .composer-field { position: relative; overflow: hidden; }
@@ -478,3 +502,11 @@ svg.step-icon.spinner { color: var(--lamp-run); }
 .chat-find-count { min-width: 52px; padding: 0 6px; font-size: 11.5px; text-align: right; white-space: nowrap; }
 ::highlight(chat-find) { background-color: color-mix(in srgb, var(--lamp-run) 30%, transparent); color: inherit; }
 ::highlight(chat-find-cur) { background-color: var(--lamp-run); color: var(--deck); }
+
+/* An alert under the transcript: its words take the line, the actions wrap as one group (four buttons once squeezed
+   the text into a column three lines tall). */
+.chat-alert { flex-wrap: wrap; row-gap: 6px; padding: 8px 8px 8px 12px; line-height: 1.45; }
+.chat-alert-text { flex: 1 1 260px; min-width: 0; overflow-wrap: anywhere; }
+.chat-alert-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-left: auto; }
+/* the find bar floats over the top of the transcript: room for it, so the first match is never under it */
+.chat[data-find] .chat-scroll > .chat-col { padding-top: 56px; }

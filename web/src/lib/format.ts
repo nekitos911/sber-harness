@@ -29,7 +29,9 @@ export function relTime(at: number, now = Date.now()) {
   return new Date(at).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })
 }
 
-export const fullTime = (at: number) => new Date(at).toLocaleString('ru-RU')
+// one formatter: toLocaleString builds a new one per call (~0.1 ms each, a long chat calls it per message)
+const FULL_TIME = new Intl.DateTimeFormat('ru-RU', { dateStyle: 'short', timeStyle: 'medium' })
+export const fullTime = (at: number) => FULL_TIME.format(at)
 
 export const basename = (p: string) => p.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || p
 
@@ -47,7 +49,16 @@ export function folderCrumbs(path: string) {
 }
 
 /** Path identity for matching sessions to worktrees (Windows paths are case-insensitive). */
-export const normPath = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
+// cached: sidebar rows and the tree call it for every session on every store change (0.6 s of a 20-chat switch run)
+const normed = new Map<string, string>()
+export const normPath = (p: string) => {
+  let n = normed.get(p)
+  if (n === undefined) {
+    if (normed.size > 5000) normed.clear()
+    normed.set(p, (n = p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()))
+  }
+  return n
+}
 
 export const isAbsolutePath = (p: string) => /^([a-zA-Z]:[\\/]|\\\\|\/)/.test(p.trim())
 

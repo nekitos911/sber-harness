@@ -266,7 +266,7 @@ export function ActivityLine({ session, list, starting }: { session: Session; li
     return (
       <div className="chat-working chat-waiting" role="status">
         <button type="button" className="working-toggle" onClick={jump}>
-          <Icon aria-hidden />{session.waitingFor === 'answer' ? 'Ждёт вашего ответа — показать вопрос' : 'Ждёт вашего разрешения — показать запрос'}
+          <Icon aria-hidden />{session.waitingFor === 'answer' ? 'Ждёт вашего ответа: показать вопрос' : 'Ждёт вашего разрешения: показать запрос'}
         </button>
       </div>
     )

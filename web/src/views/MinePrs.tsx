@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
-import { ArrowRight, Bot, Ellipsis, ExternalLink, FolderGit2, GitMerge, GitPullRequest, ListFilter, MessageSquare, PanelRight, RefreshCw, Search, TriangleAlert, XCircle } from 'lucide-react'
+import { Bot, Ellipsis, ExternalLink, FolderGit2, GitMerge, GitPullRequest, ListFilter, MessageSquare, PanelRight, RefreshCw, Search, TriangleAlert, XCircle } from 'lucide-react'
 import { openPr, openTask, useFeature, useStore } from '../store'
 import { PrPage, prAction, prStanding, REVIEW_ICON, REVIEW_TIP, usePrWork } from './PrPage'
 import { ErrorBoundary } from '../components/ErrorBoundary'
@@ -91,7 +91,7 @@ export function MinePrs() {
       <header className="view-head">
         <h1>Пулл-реквесты</h1>
         {list && <span className="count">{narrowed ? `${rows.length} из ${all.length}` : all.length}</span>}
-        {(scope === 'mine' || scope === 'review') && list?.me && <span className="muted">как <span className="mono">{list.me}</span>{list.meSource === 'os' && <> — по имени пользователя ОС, <button type="button" className="link" onClick={openPrSettings}>уточнить</button></>}</span>}
+        {(scope === 'mine' || scope === 'review') && list?.me && <span className="muted">как <span className="mono">{list.me}</span>{list.meSource === 'os' && <> (имя пользователя ОС, <button type="button" className="link" onClick={openPrSettings}>уточнить</button>)</>}</span>}
         <span className="grow" />
         {list && <span className="muted num">обновлено {ago(list.at, now)}</span>}
         {data !== 'off' && <Button size="sm" variant="ghost" icon={<RefreshCw className={refreshing ? 'spinner' : undefined} />} disabled={refreshing} onClick={refresh}>Обновить</Button>}
@@ -116,7 +116,7 @@ export function MinePrs() {
         <div className="empty">
           <GitPullRequest className="empty-icon" aria-hidden />
           <h2>PR-интеграция не настроена</h2>
-          <p>Нужен MCP-сервер sourcecontrol: тогда здесь видны ваши открытые PR во всех репозиториях — статус, ревьюеры, конфликты.</p>
+          <p>Подключите MCP-сервер sourcecontrol, и здесь появятся ваши PR во всех репозиториях: статус, ревьюеры, конфликты.</p>
           <Button variant="primary" onClick={openPrSettings}>Настроить</Button>
         </div>
       ) : 'error' in data ? (
@@ -132,7 +132,7 @@ export function MinePrs() {
             <div className="empty">
               <TriangleAlert className="empty-icon" aria-hidden />
               <h2>Репозитории не ответили</h2>
-              <p>Список пуст, потому что ни один репозиторий не отдал данные — причина ниже.</p>
+              <p>Ни один репозиторий не отдал данные. Причина ниже.</p>
             </div>
           )}
           {all.length === 0 && repoErrors.length === 0 && (
@@ -156,7 +156,7 @@ export function MinePrs() {
                 <span role="columnheader">ID</span>
                 <span role="columnheader">Название / контекст</span>
                 <span role="columnheader">Рецензенты</span>
-                <span role="columnheader">Влить</span>
+                <span role="columnheader">Состояние</span>
                 <span role="columnheader">Обновлено</span>
                 <span role="columnheader" aria-label="Действие" />
               </div>
@@ -184,9 +184,6 @@ function PrRow({ it, now }: { it: PrItem; now: number }) {
   // newer servers: the row opens the PR here (its diff, comments); the menu opens it in the browser
   const detail = useFeature('pr-detail') && !!it.workspaceId
   const pick = () => (detail ? openPr(it) : browse())
-  // the primary step: back to the work behind the PR (its agent's chat, its worktree), else the PR itself
-  const primary = work ? { ...work, label: work.kind === 'chat' ? 'К чату' : 'К дереву' }
-    : { label: 'Открыть', tip: detail ? 'Открыть PR: изменения и комментарии' : 'Открыть PR в браузере', run: pick }
   const menu: MenuItem[] = [
     ...(detail ? [{ label: 'Открыть PR здесь', icon: <PanelRight />, onSelect: () => openPr(it) }] : []),
     { label: 'Открыть в браузере', icon: <ExternalLink />, onSelect: browse },
@@ -194,7 +191,7 @@ function PrRow({ it, now }: { it: PrItem; now: number }) {
     ...(actionsOn ? [
       {
         label: `Влить в ${it.base}`, icon: <GitMerge />, divider: true, disabled: it.mergeable === false, onSelect: () => prAction(it, 'merge'),
-        tip: it.mergeable === false ? 'Конфликт с базовой веткой: сначала разрешите его' : st.k === 'approved' ? undefined : 'Ревью ещё не завершено — сервис может не дать',
+        tip: it.mergeable === false ? 'Конфликт с базовой веткой: сначала разрешите его' : st.k === 'approved' ? undefined : 'Ревью ещё не завершено: сервис может не дать влить',
       },
       { label: 'Закрыть без вливания…', icon: <XCircle />, danger: true, onSelect: () => prAction(it, 'decline') },
     ] : []),
@@ -210,7 +207,7 @@ function PrRow({ it, now }: { it: PrItem; now: number }) {
           <span>{it.repo}</span>
           <span className="mono">{it.head} → {it.base}</span>
           {it.taskId && <button type="button" className="chip chip-mono" onClick={(e) => { stop(e); openTask(it.taskId!) }} data-tip="Открыть задачу">{it.taskKey ?? it.taskId}</button>}
-          {it.sessionId && <span className="chip pr-agent" data-tip="За PR стоит агент harness"><Bot aria-hidden />агент</span>}
+          {it.sessionId && <span className="chip pr-agent" data-tip="PR создал агент в harness"><Bot aria-hidden />агент</span>}
         </span>
       </span>
       <span role="cell" className="pr-reviewers">
@@ -218,12 +215,13 @@ function PrRow({ it, now }: { it: PrItem; now: number }) {
           const k = reviewKind(r.status)
           const Icon = REVIEW_ICON[k]
           return <span key={r.name} className="chip pr-reviewer" data-k={k} data-tip={`${r.name}: ${REVIEW_TIP[k]} (${r.status})`}><Icon aria-hidden />{r.name}</span>
-        }) : <span className="muted">—</span>}
+        }) : <span className="muted">нет</span>}
       </span>
       <span role="cell"><span className="pr-standing" data-k={st.k}>{st.label}</span></span>
       <span role="cell" className="muted" data-tip={new Date(it.updatedAt).toLocaleString('ru-RU')}>{ago(it.updatedAt, now)}</span>
       <span role="cell" className="pr-actions" onClick={stop} onKeyDown={(e) => e.stopPropagation()}>
-        <Button size="sm" tip={primary.tip} icon={work?.kind === 'chat' ? <MessageSquare /> : undefined} onClick={primary.run}>{primary.label}<ArrowRight /></Button>
+        {/* only the way back to the work behind the PR: opening the PR itself is the row's own click */}
+        {work && <Button size="sm" tip={work.tip} icon={work.kind === 'chat' ? <MessageSquare /> : <FolderGit2 />} onClick={work.run}>{work.kind === 'chat' ? 'К чату' : 'К дереву'}</Button>}
         <MenuButton label={`Действия с PR #${it.index}`} icon={<Ellipsis />} align="right" className="icon-btn-sm" items={menu} />
       </span>
     </div>
