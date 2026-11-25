@@ -920,7 +920,7 @@ button.timeline-by:hover { text-decoration: underline; }
 .dp-tab svg { width: 14px; height: 14px; }
 .dp-tab .count { margin-left: 2px; }
 .dp-cols { display: grid; grid-template-columns: minmax(0, 1fr) 320px; align-items: start; gap: 24px; padding: 20px 28px 40px; }
-.dp-main { display: grid; align-content: start; gap: 10px; min-width: 0; }
+.dp-main { display: grid; grid-template-columns: minmax(0, 1fr); align-content: start; gap: 10px; min-width: 0; }
 .dp-side { position: sticky; top: 16px; display: grid; align-content: start; gap: 18px; }
 .dp-side .dp-card-head { flex-wrap: wrap; row-gap: 6px; }
 .dp-side .dp-card-head .pr-standing { min-width: 0; }
@@ -937,7 +937,7 @@ button.timeline-by:hover { text-decoration: underline; }
 .dp-file { display: flex; align-items: center; gap: 10px; width: 100%; height: 26px; padding: 0 6px; border: 0; border-radius: var(--r-1); background: none; color: var(--ink-2); font: inherit; text-align: left; }
 .dp-file:hover { background: var(--deck-2); color: var(--ink); }
 .dp-file .ellipsis { flex: 1; min-width: 0; }
-.dp-file-diff { scroll-margin-top: 12px; }
+.dp-file-diff { scroll-margin-top: 12px; min-width: 0; max-width: 100%; overflow-x: auto; } /* a long diff line scrolls inside its file, never under the side column */
 @container detail (max-width: 1000px) { .dp-meta { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @container detail (max-width: 880px) {
   .dp-head { grid-template-columns: minmax(0, 1fr); }

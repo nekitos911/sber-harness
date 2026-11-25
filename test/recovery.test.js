@@ -61,7 +61,7 @@ test('interrupted turns: reason, recovery notification, GET lists them, resume c
     assert.match(item.lastActivity, /^read_file README\.md$|slow/);
     assert.match(list.message, /Был перезапуск/);
     const st = await h.state();
-    assert.ok(st.notifications.some((n) => n.kind === 'recovery' && n.text === 'Прервано сессий: 2'));
+    assert.ok(st.notifications.some((n) => n.kind === 'recovery' && n.text === 'Прервано агентов: 2'));
     assert.equal(st.sessions.find((s) => s.id === a).status, 'idle');
 
     const r = (await h.api('POST', '/api/recovery/resume', { sessionIds: [a], message: 'Продолжай' })).body;

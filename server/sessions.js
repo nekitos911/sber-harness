@@ -2623,7 +2623,10 @@ ${note.trim()}` : text });
       await Promise.all(drains.filter((d, i) => d && !ours[i])); // not adopted: only the file is read, at once
       const cut = db.sessions.filter((s) => s.interrupted && s.interrupted.at >= startupAt);
       if (cut.length) {
-        hooks.notify?.({ kind: 'recovery', text: `Прервано сессий: ${cut.length}` });
+        // counted as the recovery dialog lists them: one per lead agent, its cut sub-agents with it
+        const groups = recoveryGroups(cut.filter((s) => !s.virtual));
+        const subs = groups.reduce((n, g) => n + g.subs.length, 0);
+        hooks.notify?.({ kind: 'recovery', text: `Прервано агентов: ${groups.length}${subs ? ` (и их субагентов: ${subs})` : ''}` });
         if (config.recovery?.autoResume) api.recoveryResume(cut.map((s) => s.id));
       }
       for (const s of db.sessions) if (s.kind === 'chat' && !s.virtual && s.queue?.length && !runtime(s.id).running) startTurn(s);

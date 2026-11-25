@@ -595,14 +595,15 @@ const gigacodeLauncher = () => {
     quickArgs: ['--safe-mode'], compressCommand: '/compress', contextCommand: '/context', command: 'gigacode', settingsEnv: 'GIGACODE_SYSTEM_SETTINGS_PATH', firstEventTimeoutMs: 120000,
     continueArgs: ['-c'], approvalModeMap: { auto: 'auto-edit' }, allowedToolsFlag: '--allowed-tools', allowedTools: DEFAULT_ALLOWED_TOOLS, autoSandbox: null,
     partialMessagesFlag: null /* opt-in: on the target 2 of 3 tool calls then came without arguments (VERIFY) */, stripModelSuffix: true,
-    // process env after the settings file: an agent gets its own data folder (extension store, secrets) under the run
-    // folder. Two GigaCode processes on one ~/.gigacode lock each other out («store is busy», «protected storage is
-    // unavailable») — the second one used to start anyway and lost its MCP servers. QWEN_HOME is the one the CLI reads.
+    // The agent runs on the person's own ~/.gigacode: its protected storage holds the sign-in, and a data folder per run
+    // (QWEN_HOME under the run folder) started every chat, sub-agent and model discovery signed out — each one opened a
+    // browser login. Collisions of parallel starts on that store («store is busy») are kept off by the start slots
+    // (agents.<id>.maxStarting) and retried. agents.<id>.isolatedHome: true brings the folder per run back.
     env: (ctx) => ({
       ...(ctx.agentCfg.settingsEnv || 'GIGACODE_SYSTEM_SETTINGS_PATH' ? { [ctx.agentCfg.settingsEnv || 'GIGACODE_SYSTEM_SETTINGS_PATH']: ctx.settingsPath } : {}),
-      QWEN_HOME: path.join(path.dirname(ctx.settingsPath), 'home'),
+      ...(ctx.agentCfg.isolatedHome === true ? { QWEN_HOME: path.join(path.dirname(ctx.settingsPath), 'home') } : {}),
     }),
-    envKeys: () => ['GIGACODE_SYSTEM_SETTINGS_PATH', 'QWEN_HOME'],
+    envKeys: (ctx) => ['GIGACODE_SYSTEM_SETTINGS_PATH', ...(ctx?.agentCfg?.isolatedHome === true ? ['QWEN_HOME'] : [])],
     // an outside env may carry the agent's store of the harness itself (a test run, an agent terminal): the launcher's
     // own choice has to win over that leftover
     // its MCP tools are deferred: a call by a guessed name («harness_worker_done») is refused until tool_search registers them

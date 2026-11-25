@@ -324,3 +324,14 @@ test('model grades stay in the harness configuration and do not go into the Giga
   launchers.gigacode.prepare({ settingsPath: file, agentCfg: { settings: { agents: { modelGrades: { review: 'GLM-5.3-Flash-262k', strong: 'GigaChat-3.5-Ultra-Preview' }, allowedGrades: ['review'] } } }, harnessMcp: { command: 'node', args: [] }, agentMcpServers: {} });
   assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).agents, undefined);
 });
+
+test('GigaCode runs on the person\'s own home (its sign-in lives there); a folder per run only with isolatedHome', () => {
+  const ctx = (agentCfg) => ({ agentCfg: { settingsEnv: 'GIGACODE_SYSTEM_SETTINGS_PATH', ...agentCfg }, settingsPath: path.join(os.tmpdir(), 'runs', 's_x', 'settings.json') });
+  const plain = launchers.gigacode.env(ctx({}));
+  assert.equal(plain.QWEN_HOME, undefined, 'no folder per run: every run would start signed out and open a browser login');
+  assert.ok(plain.GIGACODE_SYSTEM_SETTINGS_PATH.endsWith('settings.json'));
+  assert.deepEqual(launchers.gigacode.envKeys(ctx({})), ['GIGACODE_SYSTEM_SETTINGS_PATH']);
+  const isolated = launchers.gigacode.env(ctx({ isolatedHome: true }));
+  assert.equal(isolated.QWEN_HOME, path.join(os.tmpdir(), 'runs', 's_x', 'home'));
+  assert.ok(launchers.gigacode.envKeys(ctx({ isolatedHome: true })).includes('QWEN_HOME'));
+});

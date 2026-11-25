@@ -1,11 +1,12 @@
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react'
-import { ArrowUp, ChevronDown, ChevronUp, Clock, FileText, LoaderCircle, Pencil, Plus, Square, X, Zap } from 'lucide-react'
+import { ArrowUp, ChevronDown, ChevronUp, Clock, FileText, LoaderCircle, Pencil, Plus, Square, X } from 'lucide-react'
 import { tryApi } from '../../api'
 import { getState, setDraft, setState, useFeature, useStore, upsertSession } from '../../store'
 import { openFile } from '../WorktreeMenu'
 import type { Session } from '../../types'
 import { IconButton, Select } from '../ui'
 import { MentionMirror, useComposerSuggest } from './Suggest'
+import { isMac } from '../../lib/keys'
 import { ModelPicker } from '../pickers/ModelPicker'
 import { ContextRing } from './ContextRing'
 import { FULL_ACCESS, modeShort, useSettings } from '../../lib/agents'
@@ -213,18 +214,16 @@ export function Composer({ session, active, force = false }: { session: Session;
           onChange={(model) => void patch({ model })}
         />
         <ContextRing session={session} running={running} />
-        {running && (
-          <button type="button" className="icon-btn composer-stop" onClick={stop} aria-label="Остановить агента" data-tip="Остановить">
+        {/* one button, as in Orca: stop while the agent works and nothing is typed, else send (queued while it works;
+            Ctrl+Enter or «Отправить сейчас» in the queue sends at once) */}
+        {running && !text.trim() && !atts.length && !sending ? (
+          <button type="button" className="composer-send composer-stop" onClick={stop} aria-label="Остановить агента" data-tip="Остановить">
             <Square />
           </button>
-        )}
-        <button type="button" className="composer-send" onClick={() => void send()} disabled={(!text.trim() && !atts.length) || sending} aria-label={sending ? 'Отправляется' : running ? 'Поставить в очередь' : 'Отправить'} aria-busy={sending || undefined} data-tip={running ? 'В очередь (Enter)' : 'Отправить (Enter)'}>
-          {sending ? <LoaderCircle className="spinner" aria-hidden /> : <ArrowUp />}
-        </button>
-        {running && (
-          <button type="button" className="icon-btn composer-now" onClick={() => void send({ cut: true })} disabled={(!text.trim() && !atts.length) || sending}
-            aria-label="Сразу агенту: прервать шаг" data-tip={`Сразу агенту (Ctrl+Enter): шаг${session.turnClosing ? ' (результат уже пришёл)' : ' сейчас прервётся'}; контекст сохраняется`}>
-            <Zap />
+        ) : (
+          <button type="button" className="composer-send" onClick={() => void send()} disabled={(!text.trim() && !atts.length) || sending} aria-label={sending ? 'Отправляется' : running ? 'Поставить в очередь' : 'Отправить'} aria-busy={sending || undefined}
+            data-tip={running ? `В очередь (Enter) · сразу агенту, прервав шаг: ${isMac ? "⌘" : "Ctrl"}+Enter` : 'Отправить (Enter)'}>
+            {sending ? <LoaderCircle className="spinner" aria-hidden /> : <ArrowUp />}
           </button>
         )}
       </div>

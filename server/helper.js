@@ -24,7 +24,9 @@ export function runHelper({ config, store, getUrl, agent, kind, prompt, extraArg
   const mode = approvalMode || launcher.defaults.approvalModeMap?.auto || 'auto-edit';
   const dir = path.join(store.dataDir, 'chats', 'helper', kind, agent);
   fs.mkdirSync(dir, { recursive: true });
-  const env = { HARNESS_URL: getUrl(), HARNESS_TOKEN: store.token, HARNESS_SESSION_ID: '' };
+  // a run nobody watches (model list, commit message) never opens a browser login: it fails with «нужен вход» instead
+  // (NO_BROWSER: the Gemini/Qwen family prints the sign-in link rather than opening it)
+  const env = { HARNESS_URL: getUrl(), HARNESS_TOKEN: store.token, HARNESS_SESSION_ID: '', NO_BROWSER: 'true' };
   const ctx = {
     prompt,
     session: { id: `${kind}-${agent}`, externalSessionId: null, approvalMode: mode, model },

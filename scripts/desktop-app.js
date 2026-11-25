@@ -184,6 +184,9 @@ export async function serve({ root, flag = '--harness-desktop', argv = [], elect
   const api = electron || (await import('electron'));
   const { app, BrowserWindow, shell } = typeof api === 'string' || typeof api?.app !== 'object' ? (await import('electron')).default : api;
   app.setName('sber-harness');
+  // Windows groups taskbar buttons by this id and shows the icon of its app: without an id of its own the window was
+  // «electron.exe» there, with Electron's atom
+  if (process.platform === 'win32') try { app.setAppUserModelId('sber-harness'); } catch {}
   // a window's own copy of the profile: the second instance does not fight the first over the one Chromium locks, and the
   // renderer stays inspectable (a debugging port next to the window opens no server the harness would not have)
   const profile = env.HARNESS_ELECTRON_PROFILE || path.join(app.getPath('userData'), 'window');
@@ -223,8 +226,11 @@ export async function serve({ root, flag = '--harness-desktop', argv = [], elect
  */
 async function appIcon(root) {
   const png = path.resolve(root, 'build', 'app-icon.png');
+  // Windows draws the taskbar and Alt+Tab icons at several sizes: the .ico carries them all
+  const ico = path.resolve(root, 'build', 'app-icon.ico');
   try {
     if (!existsSync(png)) await (await import('./icon.js')).ensureIcons({ root });
+    if (process.platform === 'win32' && existsSync(ico)) return ico;
     return existsSync(png) ? png : undefined;
   } catch {
     return undefined; // an icon is a nicety: never a reason not to open
