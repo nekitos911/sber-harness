@@ -932,6 +932,8 @@ function SessionRowView({ s, nested, level = 0, caret, via, from, showLocation }
     // «В архив» from the sidebar: the row slides out first, then goes.
     it.label === 'В архив' ? { ...it, onSelect: () => { setLeaving(true); window.setTimeout(() => void archiveSession(s).then((ok) => { if (!ok) setLeaving(false) }), 160) } } : it)
   const current = useStore((st) => st.view.kind === 'wt' && st.wt[normPath(st.view.cwd)]?.active === `s:${s.id}`)
+  // its sub-agents at work (a number: the row redraws only when it changes)
+  const kidsWorking = useStore((st) => { let n = 0; for (const x of st.sessions) if (x.parentId === s.id && !x.archived && x.status === 'running') n++; return n })
   const now = useNow()
   const tool = useCurrentTool(s)
   const v = sessionVisualState(s)
@@ -991,7 +993,7 @@ function SessionRowView({ s, nested, level = 0, caret, via, from, showLocation }
           <ChevronDown />
         </button>
       ) : level > 0 && <span className="caret-space" aria-hidden />}
-      <StatusIcon session={s} />
+      <StatusIcon session={s} kidsWorking={kidsWorking} />
       {!nested && mixed && <AgentGlyph agent={s.agent} primary={s.agent === defaultAgent} />}
       {editing ? (
         <input className="input tree-rename" autoFocus defaultValue={s.title} aria-label="Название чата"

@@ -1,4 +1,4 @@
-import { Circle, CircleCheck, CircleDashed, CircleDot, CircleHelp, CircleSlash, CircleX, Clock, GitBranch, KeyRound, Lock, LoaderCircle, RotateCw, ShieldAlert, Square, SquareTerminal, TriangleAlert, type LucideIcon } from 'lucide-react'
+import { Activity, Circle, CircleCheck, CircleDashed, CircleDot, CircleHelp, CircleSlash, CircleX, Clock, GitBranch, KeyRound, Lock, LoaderCircle, RotateCw, ShieldAlert, Square, SquareTerminal, TriangleAlert, type LucideIcon } from 'lucide-react'
 import { sessionVisualState, STATE_LABEL, type VisualState } from '../lib/sessionState'
 import type { Session, SubAgentState } from '../types'
 
@@ -27,8 +27,13 @@ const ICONS: Record<VisualState, LucideIcon> = {
 }
 
 /** The session's state as an icon whose colour and shape differ per state; the words are in aria-label. */
-export function StatusIcon({ session }: { session: StatusLike }) {
+export function StatusIcon({ session, kidsWorking = 0 }: { session: StatusLike; kidsWorking?: number }) {
   const v = sessionVisualState(session)
+  // the agent itself is done or waits, its sub-agents work (as Orca's pulse): not an empty «ответил» circle
+  if (kidsWorking > 0 && (v === 'idle' || v === 'done' || v === 'stopped')) {
+    const label = `Работают субагенты: ${kidsWorking}`
+    return <Activity className="st" data-s="kids" role="img" aria-label={label} data-tip={label} />
+  }
   const Icon = ICONS[v]
   const label = statusText(session)
   return <Icon className="st" data-s={v} role="img" aria-label={label} data-tip={label} />
