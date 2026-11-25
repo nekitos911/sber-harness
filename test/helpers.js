@@ -9,6 +9,9 @@ import { CODE_ROOT, deepMerge } from '../server/config.js';
 // no test starts the real agent CLI by itself (model discovery in the background): with GigaCode installed every test
 // server opened a browser login. Servers the tests spawn inherit it.
 process.env.HARNESS_TEST_NO_REAL_CLI = '1';
+// the machine's own GigaCode settings (GIGACODE_PACKAGED_LAUNCH, GIGACODE_TOOL_SECRET_ENV_NAMES…) are not the test's:
+// the harness passes its environment on to the agent, and the tests check exactly what it adds
+for (const k of Object.keys(process.env)) if (/^GIGACODE_/i.test(k)) delete process.env[k];
 
 export const tmpDir = (prefix = 'харнесс тест ') => fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
 
