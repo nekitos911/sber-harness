@@ -118,18 +118,23 @@ test('recovery lists leads only: cut sub-agents go under their orchestrator, whi
     chat('s_worker', { role: 'worker', parentId: 's_coord', interrupted: cut }),
     chat('s_lead', {}), // not cut itself: its cut helper is still its call
     chat('s_helper', { role: 'worker', parentId: 's_lead', ephemeral: true, interrupted: cut }),
+    // a built-in background sub-agent left running by the crash: the lead's row says it was cut too
+    chat('s_lead~call_bg', { virtual: true, background: true, parentId: 's_lead', status: 'running' }),
   ];
   fs.writeFileSync(path.join(dataDir, 'db.json'), JSON.stringify({ seq: { task: 0 }, tasks: [], workspaces: [], notifications: [], sessions }));
   const h = await harness(dataDir);
   try {
     const list = (await h.api('GET', '/api/recovery')).body.sessions;
-    assert.deepEqual(list.map((x) => [x.id, x.interrupted, x.subagents.map((y) => y.id)]).sort(), [['s_coord', true, ['s_worker']], ['s_lead', false, ['s_helper']]]);
+    assert.deepEqual(list.map((x) => [x.id, x.interrupted, x.subagents.map((y) => y.id)]).sort(), [['s_coord', true, ['s_worker']], ['s_lead', false, ['s_helper', 's_lead~call_bg']]]);
     // naming the sub-agent means its lead
     const r = (await h.api('POST', '/api/recovery/resume', { sessionIds: ['s_worker', 's_helper'], message: 'продолжай' })).body;
     assert.deepEqual(r.resumed.sort(), ['s_coord', 's_lead']);
     const told = await waitFor(async () => (await h.messages('s_coord')).find((m) => m.kind === 'user'), { what: 'coordinator told' });
     assert.match(told.text, /^продолжай\n\n\[harness\] .*s_worker «s_worker».*send_message.*worker_stop/s);
-    assert.match((await waitFor(async () => (await h.messages('s_lead')).find((m) => m.kind === 'user'))).text, /^\[harness\] .*s_helper/, 'a lead that was not cut gets only the list');
+    const leadNote = (await waitFor(async () => (await h.messages('s_lead')).find((m) => m.kind === 'user'))).text;
+    assert.match(leadNote, /^\[harness\] .*s_helper/, 'a lead that was not cut gets only the list');
+    assert.match(leadNote, /Встроенные субагенты оборвались.*«s_lead~call_bg».*запусти заново/s, 'a built-in one is not offered send_message');
+    assert.equal((await h.state()).sessions.find((s) => s.id === 's_lead~call_bg').status, 'failed', 'its chat is not «running» forever');
     const st = await h.state();
     assert.ok(['s_worker', 's_helper'].every((id) => !st.sessions.find((s) => s.id === id).interrupted), 'no longer listed');
     assert.equal((await h.messages('s_worker')).length, 0, 'the sub-agent is not started by the harness');

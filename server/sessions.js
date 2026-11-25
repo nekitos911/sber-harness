@@ -467,9 +467,13 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
       }
     }
   }
-  // a built-in sub-agent chat whose parent turn did not survive the restart will never get its result
+  // a built-in sub-agent chat whose parent turn did not survive the restart will never get its result: cut with it, so
+  // the recovery row of its lead says «+N прерванных субагентов» (and the lead decides about each one)
   for (const v of db.sessions.filter((x) => x.virtual && x.status === 'running')) {
-    if (!toReattach.some((p) => p.id === v.parentId)) v.status = 'failed';
+    if (!toReattach.some((p) => p.id === v.parentId)) {
+      v.status = 'failed';
+      v.interrupted = { at: Date.now(), reason: 'crash', lastActivity: null };
+    }
   }
   store.save();
 
@@ -2750,15 +2754,18 @@ ${note.trim()}` : text });
     // ---- recovery after a restart ----
     /**
      * The chats to bring back after an interruption, one row per LEAD: an interrupted sub-agent is not a row of its own —
-     * it goes under its top-most live ancestor (the orchestrator), which decides whether it is still needed.
+     * it goes under its top-most live ancestor (the orchestrator), which decides whether it is still needed. Cut with the
+     * lead: its own interrupted descendants and the running background sub-agents they started.
      */
     recoveryList() {
-      const groups = recoveryGroups(db.sessions.filter((s) => s.interrupted && !s.virtual));
+      const leadIds = new Set(recoveryGroups(db.sessions.filter((s) => s.interrupted && !s.virtual)).map((g) => g.lead.id));
+      const groups = recoveryGroups(db.sessions.filter((s) => s.interrupted || (s.background && s.status === 'running' && leadIds.has(leadOf(s).id))));
       return {
         sessions: groups.map(({ lead, subs }) => ({
           id: lead.id, title: lead.title, cwd: lead.cwd, taskId: lead.taskId, role: lead.role,
           interrupted: !!lead.interrupted,
-          reason: (lead.interrupted || subs[0].interrupted).reason, at: Math.max(...[lead, ...subs].filter((x) => x.interrupted).map((x) => x.interrupted.at)),
+          reason: (lead.interrupted || subs.find((x) => x.interrupted))?.reason ?? 'crash',
+          at: Math.max(...[lead, ...subs].filter((x) => x.interrupted).map((x) => x.interrupted.at), 0),
           lastActivity: lead.interrupted?.lastActivity ?? null,
           subagents: subs.map((x) => ({ id: x.id, title: x.title, role: x.role })),
         })),
@@ -2774,15 +2781,22 @@ ${note.trim()}` : text });
       const text = (typeof message === 'string' && message.trim()) || config.recovery?.message;
       if (!text) fail(400, 'нужен текст сообщения (recovery.message пуст)');
       const wanted = new Set(ids.map(get).map(leadOf).map((x) => x.id));
-      const groups = recoveryGroups(db.sessions.filter((s) => s.interrupted && !s.virtual)).filter((g) => wanted.has(g.lead.id));
+      // the lead's cut descendants, and a background sub-agent the crash left running (it has no result to wait for now)
+      const cut = () => db.sessions.filter((s) => s.interrupted || (s.background && s.status === 'running'));
+      const groups = recoveryGroups(cut()).filter((g) => wanted.has(g.lead.id));
       for (const { lead, subs } of groups) {
         for (const x of subs) {
           x.interrupted = null; // its lead decides now; the chat stays as it was
+          if (x.background && x.status === 'running') x.status = 'failed';
           emit(x);
         }
-        const note = subs.length
-          ? `[harness] Работа прервалась, и эти твои субагенты остановились посреди хода: ${subs.map((x) => `${x.id} «${x.title}»`).join(', ')}. Сами они не продолжены. Нужен — send_message(to: <id>, body: "продолжай"); больше не нужен — worker_stop(session_id: <id>). Их чаты и рабочие деревья сохранены.`
-          : '';
+        const workers = subs.filter((x) => !x.virtual);
+        const builtin = subs.filter((x) => x.virtual);
+        const note = [
+          workers.length ? `[harness] Работа прервалась, и эти твои субагенты остановились посреди хода: ${workers.map((x) => `${x.id} «${x.title}»`).join(', ')}. Сами они не продолжены. Нужен — send_message(to: <id>, body: "продолжай"); больше не нужен — worker_stop(session_id: <id>). Их чаты и рабочие деревья сохранены.` : '',
+          // a built-in sub-agent lived inside the CLI process that is gone: it cannot be continued, only run again
+          builtin.length ? `[harness] Встроенные субагенты оборвались вместе с процессом и ответа не дали: ${builtin.map((x) => `«${x.title}»`).join(', ')}. Продолжить их нельзя — если результат ещё нужен, запусти заново.` : '',
+        ].filter(Boolean).join('\n\n');
         api.deliver(lead.id, { from: 'user', text: [lead.interrupted ? text : '', note].filter(Boolean).join('\n\n') });
       }
       return { resumed: groups.map((g) => g.lead.id) };

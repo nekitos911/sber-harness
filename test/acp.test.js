@@ -112,6 +112,18 @@ test('a prompt streams text, thought and plan; the next message reuses the same 
   assert.equal(records().length, 1, 'one process, one session/new');
 });
 
+test('a real GigaCode plan: todo_write without ids fails as a tool error, plan updates carry the entries (target, 2026-11-25)', () => {
+  const evs = fixture('gigacode.acp-plan.ndjson').flatMap(acpEvents);
+  const result = evs.find((e) => e.type === 'tool_result' && e.id === 'call_todo1');
+  assert.equal(result.isError, true);
+  assert.match(result.output, /non-empty "id"/);
+  const plans = evs.filter((e) => e.type === 'plan');
+  assert.equal(plans.length, 4);
+  assert.equal(plans[0].text, 'План:\n… Сказать «раз»\n· Сказать «два»\n· Сказать «три»');
+  assert.ok(plans[1].entries.every((x) => x.status === 'completed'));
+  assert.deepEqual(plans[3].entries.map((x) => [x.content, x.status]), [['первый шаг', 'completed'], ['второй шаг', 'completed']]);
+});
+
 test('tool cards carry the real tool and its arguments: «2 searches» announced as `Glob`/`Поиск` with {}, the ToolCall wrapper as the harness tool', () => {
   const evs = fixture('gigacode.acp-toolcall.ndjson').flatMap(acpEvents);
   assert.deepEqual(tools(evs).slice(0, 3), [
