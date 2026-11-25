@@ -80,6 +80,13 @@
   ПОДТВЕРЖДЕНО ещё раз (чат ACP, 2026-11-18): `--model DeepSeek-V4.1-Flash-1017-262k` убивает CLI при старте («not present in
   the current backend catalogue»). Лаунчер gigacode (`stripModelSuffix`) передаёт `--model` и `modelGrades` из настроек запуска
   без суффикса, какой бы идентификатор ни держали выбор модели или грейд.
+- ПОДТВЕРЖДЕНО (2026-11-25, CLI на целевой машине, одноразовые прогоны): исключение MCP-серверов на запуск работает ТОЛЬКО как
+  `{"mcp": {"excluded": [имена]}}`. Прогон с `excludeMCPServers: ["a-both"]` и `mcp: {excluded: ["b-mcp"]}` стартовал `a-both`
+  и не стартовал `b-mcp`; старый top-level `excludeMCPServers` CLI **мигрирует** в `mcp.excluded` (и переписывает файл:
+  `mcpServers` → массив имён, `$version: 4`), но учитывает только `mcp.excluded`. Подробности — в разделе «Подтверждено на
+  целевой машине (вживую)».
+- `disableAllHooks` (подтверждено 2026-11-25): при `agents.<id>.userHooks: false` в файл запуска идёт `disableAllHooks: true`,
+  CLI его принимает — SessionStart-хук срабатывал при хуках и не срабатывал при `disableAllHooks`.
 
 ## 4. Пользовательские команды и встроенные субагенты
 
@@ -222,6 +229,33 @@
 - `auto-edit` НЕ разрешает `run_shell_command` в headless → для shell-команд нужен явный список разрешённых
   (`--allowed-tools`, ПРОВЕРИТЬ точный флаг и синтаксис шаблона, например `run_shell_command(git)`), песочница или ACP.
 - `Warning: MCP server(s) failed to start: java-lsp. …` печатается в stderr при КАЖДОМ headless-запуске (каждый запуск перезапускает MCP).
+- **Исключение MCP-серверов (2026-11-25) — ПОДТВЕРЖДЕНО прогоном CLI.** Учитывается только ключ `mcp.excluded` (список имён):
+  сервер из него не стартует, в stderr — `failed to start`. Top-level `excludeMCPServers` CLI не читает и переписывает файл
+  настроек (`$version: 4`), перенося список в `mcp.excluded`; `mcpServers` CLI сохраняет массивом имён + `mcp.servers`, а рабочая
+  форма — `mcpServers` объектом (объектом сервер стартует, массивом — нет). Поэтому харнес пишет `mcp.excluded`, а «человек
+  выключил сервер» — в `mcp.disabled` (определение остаётся, `mcp_enable` субагента работает).
+- **Проверка на коде после слияния (2026-11-25, вечер)**, экземпляр `--port 4790 --data-dir data-check`, ожидание → факт:
+  - а) `GET /api/settings` → `agents.gigacode.mcpExcludeKey` = `"mcp.excluded"`: совпало.
+  - б) настройки запуска нового чата (`data-check/runs/<id>/settings.json`) → `{"mcp":{"excluded":["java-lsp","sbertrack"]}}`,
+    top-level `excludeMCPServers` нет: совпало; исключённые сервера не стартуют.
+  - в) ход gigacode-агента в ACP с моделью `DeepSeek-V4.1-Flash-1017-262k` → ответ: совпало.
+  - г) план: ACP-событие `plan` → системное сообщение «План: ✓/…/·»; `todo_write` принимает `{ todos: [{ content, id, status }] }`,
+    **`id` обязателен** («Each todo must have a non-empty "id" string…»), вид без `id` CLI отклоняет. Образец —
+    `test/fixtures/gigacode.acp-plan.ndjson`.
+  - д) фоновый встроенный субагент (`agent` + `run_in_background: true`): его output_file содержит только строки `user` /
+    `assistant` (`message.parts` с `{text}` / `{functionCall}`), строки `{"type":"result"}` НЕТ — итог это последний `assistant`
+    с текстом. Сначала харнес закрывал такой чат через 60 с как «Оборвался»; с `49f45e2` итог — последний текстовый `assistant`
+    после 15 с тишины файла, «Оборвался» — только когда процесс CLI действительно ушёл. Перепроверено: ответ через 18,2 с после
+    последней записи, «тихий» субагент — ~26 с, «Оборвался» нет.
+  - е) `restart` с `keepContext` перезапускает CLI и MCP, агент помнит прошлый ход: совпало.
+  - ж) восстановление после обрыва: `/api/recovery` отдаёт только ведущего агента и «+N прерванных субагентов»: совпало.
+  - з) каталог моделей без окна входа: `POST /api/agents/gigacode/models/refresh` → 200 за ~82 с, 5 моделей; `auth: "unknown"`:
+    совпало.
+  - Встроенный `agent` на этой машине запускается в песочнице и падает на любом доступе к файлам (`GigaCode sandbox:
+    acl-object-hardlink (Win32 50)`), `run_shell_command` в нём отказан (`background agents cannot prompt for confirmation`) —
+    работает только чистая «мысль»; агент харнеса вместо встроенного инструмента сам уходит в `mcp__harness__agent`.
+- «MCP-серверы субагентов» в настройках: список для переключателей — `GET /mcp/config` + уже выключенные
+  (`orchestration.subagentMcpExclude`), а не `seen.mcpServers` агента — так после смены агента чипы не путаются.
 
 ## Открытые вопросы (проверить на целевой машине; каждый меняет реализацию)
 
@@ -293,9 +327,8 @@
     всё остальное показывается как сырое.
 13. Флаг и синтаксис шаблона списка разрешённых в headless: это `--allowed-tools`, повторяемый или через запятую, и совпадает ли
     `run_shell_command(git)` с `git status`? (→ `allowedToolsFlag`, `allowedToolsJoin`, шаблоны разрешений)
-14. Ключ, исключающий MCP-серверы на один запуск (в настройках на запуск): ПОДТВЕРЖДЕНО на целевой машине (2026-11-25) —
-    только `mcp.excluded`; верхнеуровневый `excludeMCPServers` в файле запуска игнорируется (в пользовательском
-    settings.json CLI сам переносит его миграцией в `mcp.excluded`, `$version: 4`). Харнес пишет `mcp.excluded` по умолчанию.
+14. Ключ, исключающий MCP-серверы на один запуск: ЗАКРЫТО (2026-11-25) — только `mcp.excluded`, см. раздел «Подтверждено на
+    целевой машине (вживую)»; харнес пишет его по умолчанию (`agents.<id>.mcpExcludeKey`).
 11. Режим `--acp`: работает ли он с identity env + настройками на сессию; возможности `initialize` (loadSession?),
     `session/request_permission` для подтверждений инструментов, MCP-серверы, передаваемые в `session/new`, поведение авторизации
     (→ `transport: "acp"` для настоящих интерактивных разрешений).
