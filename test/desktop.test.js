@@ -10,6 +10,7 @@ import { CODE_ROOT } from '../server/config.js';
 import { DESKTOP_FLAG, desktopArgv, electronArgs, electronBinary, isElectron, nodeCommand, npmArgs, runDesktop, sandboxSwitches } from '../scripts/desktop.js';
 import { desktopDataDir, pickPort, startHarness, stopHarness } from '../scripts/desktop-app.js';
 import { bundleScript, desktopEntry, infoPlist, makeShortcuts } from '../scripts/shortcut.js';
+process.env.HARNESS_TEST_NO_REAL_CLI = '1'; // the harness these tests start never runs the real agent CLI by itself
 
 const tmp = (p) => fs.mkdtempSync(path.join(os.tmpdir(), p));
 const scripts = { desktop: 'node scripts/ensure-bin.js && node scripts/desktop.js --ui', start: 'node server/index.js', demo: 'node server/index.js --demo' };

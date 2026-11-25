@@ -225,6 +225,9 @@ export function createModelCatalog({ config, store, getUrl }) {
   function ensureFresh(agent) {
     const a = config.agents[agent];
     if (!a || a.enabled === false || !a.modelsDiscovery?.prompt || inflight.has(agent)) return;
+    // tests (test/helpers.js): never start a real CLI in the background — on a machine with GigaCode installed every
+    // test server opened a browser login for it
+    if (process.env.HARNESS_TEST_NO_REAL_CLI && a.launcher !== 'mock') return;
     const c = meta(agent).catalog;
     const last = Math.max(c?.at || 0, c?.errorAt || 0);
     const wait = c?.error ? Math.min(maxAgeMs(agent), RETRY_MS) : maxAgeMs(agent); // «повторю позже»

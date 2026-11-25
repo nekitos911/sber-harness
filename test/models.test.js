@@ -3,6 +3,7 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { parseModelIds, profileGrade, resolveSubagentModel } from '../server/models.js';
 import { startTestServer, tmpDir, rmrf, waitFor } from './helpers.js';
@@ -219,5 +220,22 @@ test('discovery that times out: its own timeout, no second full run after it, a 
   } finally {
     for (const k of ['MOCK_AGENT_ARGV_FILE', 'MOCK_AGENT_MODELS_SILENT']) delete process.env[k];
     await h.close();
+  }
+});
+
+test('tests never start a real CLI in the background: model discovery of a non-mock agent waits for an explicit refresh', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'real-cli-'));
+  const marker = path.join(dir, 'started');
+  const script = path.join(dir, 'fake-cli.js');
+  fs.writeFileSync(script, `require('fs').writeFileSync(${JSON.stringify(marker)}, '1');\n`);
+  const h = await startTestServer({ agents: { real: { launcher: 'claude', label: 'Real CLI', command: [process.execPath, script], approvalMode: 'acceptEdits', approvalModes: ['acceptEdits'], modelsDiscovery: { prompt: '/models', maxAgeHours: 24 } } } });
+  try {
+    assert.equal(process.env.HARNESS_TEST_NO_REAL_CLI, '1');
+    await h.api('GET', '/api/state');
+    await new Promise((r) => setTimeout(r, 1500));
+    assert.ok(!fs.existsSync(marker), 'no background run of the real CLI');
+  } finally {
+    await h.close();
+    fs.rmSync(dir, { recursive: true, force: true });
   }
 });
