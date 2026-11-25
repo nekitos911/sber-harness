@@ -142,6 +142,9 @@ async function prompt({ sessionId, prompt: parts }) {
     }
   }
   say(sessionId, ' Done.');
+  // the plan is done with the turn, unless #planopen: a step stays open (the harness's plan check asks about it once)
+  const open = /#planopen\b/.test(text.split('\n\n').at(-1)) && !/В твоём плане не закрыты пункты/.test(text);
+  update(sessionId, { sessionUpdate: 'plan', entries: [{ content: 'ответить', status: 'completed', priority: 'high' }, ...(open ? [{ content: 'прогнать тесты', status: 'pending', priority: 'medium' }] : [])] });
   return { stopReason: /#maxtokens\b/.test(text) ? 'max_tokens' : 'end_turn' };
 }
 

@@ -457,6 +457,7 @@ export async function startServer(opts = {}) {
         reviewMode: config.orchestration.reviewMode, subagents: config.orchestration.subagents, workerMayCommit: !!config.orchestration.workerMayCommit, review: config.orchestration.review,
         subagentRetention: config.orchestration.subagentRetention, maxSubagentDepth: config.orchestration.maxSubagentDepth,
         subagentMcpExclude: config.orchestration.subagentMcpExclude || [],
+        planCheck: config.orchestration.planCheck !== false,
       },
       integrations: {
         tasks: { enabled: !!t.enabled, space: t.space ?? null, urlTemplate: t.urlTemplate ?? '', statusMap: t.statusMap || {}, closedStatuses: t.closedStatuses || [], onStartTransition: t.onStartTransition ?? null },
@@ -720,6 +721,10 @@ export async function startServer(opts = {}) {
     if ('subagentRetention' in o) {
       if (!['archive', 'keep'].includes(o.subagentRetention)) fail(400, 'orchestration.subagentRetention: "archive" или "keep"');
       p.subagentRetention = o.subagentRetention;
+    }
+    if ('planCheck' in o) {
+      if (typeof o.planCheck !== 'boolean') fail(400, 'orchestration.planCheck: нужно true или false');
+      p.planCheck = o.planCheck;
     }
     if ('subagentMcpExclude' in o) {
       if (!isStrList(o.subagentMcpExclude)) fail(400, 'orchestration.subagentMcpExclude: список имён MCP-серверов');
@@ -2240,7 +2245,7 @@ export async function startServer(opts = {}) {
   port ??= config.port ?? 4777;
   await new Promise((resolve, reject) => {
     server.once('error', (e) => {
-      sessions.close();
+      void sessions.close();
       store.close();
       if (e.code !== 'EADDRINUSE') return reject(e);
       const hint = process.platform === 'win32' ? `netstat -ano | findstr :${port}` : `lsof -i :${port}`;
@@ -2279,13 +2284,18 @@ export async function startServer(opts = {}) {
       clearInterval(adoptTimer);
       clearInterval(linkTimer);
       await catalog.close();
-      sessions.close();
+      await sessions.close(); // terminals really gone: exiting while Windows still closes one hangs the process
       mcp.close();
       for (const c of wss.clients) c.terminate();
       wss.close();
       await vite?.close();
-      server.closeAllConnections?.();
-      await new Promise((r) => server.close(() => r()));
+      // stop accepting first, then drop what is open: a request that came in between (an agent's MCP bridge still
+      // polling) kept server.close waiting for good — and a last guard never waits more than 5 s
+      await new Promise((r) => {
+        const t = setTimeout(r, 5000);
+        server.close(() => { clearTimeout(t); r(); });
+        server.closeAllConnections?.();
+      });
       store.close();
       try {
         if (JSON.parse(fs.readFileSync(serverJson, 'utf8')).pid === process.pid) fs.rmSync(serverJson, { force: true });

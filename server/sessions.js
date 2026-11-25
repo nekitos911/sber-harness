@@ -728,6 +728,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
         addMessage(s, { kind: 'system', text: ev.text });
         break;
       case 'plan': // ACP plan updates: one message per turn, kept current
+        notePlan(s, ev.entries);
         if (c.plan) {
           c.plan.text = ev.text;
           updateMessage(s, c.plan);
@@ -816,6 +817,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
           setWaiting(s, 'answer');
           break;
         }
+        if (TODO_TOOL.test(ev.name)) notePlan(s, ev.input?.todos);
         const sub = SUBAGENT_TOOLS.test(ev.name) ? openVirtual(s, ev, c) : null;
         c.tools.set(ev.id, addMessage(s, { kind: 'tool', text: ev.name, tool: { id: ev.id, name: ev.name, input: ev.input, output: null, status: 'running', ...(sub ? { subSessionId: sub } : {}) } }));
         break;
@@ -841,6 +843,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
           break;
         }
         const name = ev.name || m.tool.name;
+        if (TODO_TOOL.test(name)) notePlan(s, ev.input?.todos);
         const sub = m.tool.subSessionId ?? (SUBAGENT_TOOLS.test(name) ? openVirtual(s, { ...ev, name }, c) : null);
         m.text = m.text === m.tool.name ? name : m.text; // the card shows the tool it really was (not the wrapper)
         m.tool = { ...m.tool, input: ev.input, name, ...(sub && !m.tool.subSessionId ? { subSessionId: sub } : {}) };
@@ -1054,6 +1057,8 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     Object.assign(s, { status, phase: null, lastActivityAt: Date.now(), finishedAt: Date.now(), stalled: false, turnClosing: true });
     if (s.revive) s.revive = null; // a turn that reached its result went well: the automatic attempts start over
     if (s.waitingFor === 'auth') s.waitingFor = null;
+    // its own plan left open: asked once (the queued message starts when the lingering process is gone)
+    planCheck(s, { res: { sawResult: true }, status, stopped: false, reviving: false });
     settleVirtuals(s);
     mcpCheck(s, r);
     emit(s);
@@ -1134,7 +1139,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
         r.slotWake = () => { startWaiters.set(agent, (startWaiters.get(agent) || []).filter((x) => x !== res)); res(); };
       });
       r.slotWake = null;
-      if (r.stopRequested) return;
+      if (r.stopRequested || closed) return;
     }
     if (s?.startWait) {
       s.startWait = 0;
@@ -1159,12 +1164,39 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     if (at > Date.now()) await new Promise((res) => { const t = setTimeout(res, at - Date.now()); r.slotWake = () => { clearTimeout(t); res(); }; });
     r.slotWake = null;
   }
+  let closed = false; // api.close() was called: the harness is shutting down
   const startingNow = new Map(); // agent -> processes cold-starting now
   const startWaiters = new Map(); // agent -> wake-ups of turns waiting for a start slot, in order
   const START_SLOT_MAX_MS = 180000; // a start that never speaks gives its slot away after this
   // «Unable to update lock within the stale threshold»: GigaCode's file lock lost to another process starting at the same
   // time (seen 2026-11-21, ACP, exit 1 before any event). «protected storage is unavailable»: its secret store lost the
   // same race — the second process cannot write there, so waiting and starting again is the whole fix.
+  // the agent's own plan: ACP `plan` updates and the CLI's todo tool (Qwen/GigaCode todo_write { todos: [{ content, status }] })
+  const TODO_TOOL = /(^|__|\.)todo_?write$/i;
+  const OPEN_STEP = (e) => e && typeof e.content === 'string' && e.content.trim() && !['completed', 'cancelled', 'done'].includes(String(e.status ?? '').toLowerCase());
+  /** session.planOpen: the plan steps the agent has not closed yet (its latest plan wins). */
+  function notePlan(s, entries) {
+    if (!Array.isArray(entries)) return;
+    s.planOpen = entries.filter(OPEN_STEP).map((e) => e.content.trim().slice(0, 200));
+  }
+  /**
+   * orchestration.planCheck (default on): a top-level agent that ended its turn normally while steps of its own plan
+   * are still open is asked once — finish them or say why it stopped. Once per set of open steps: an answer that leaves
+   * the same steps open is taken as the explanation, so this never loops.
+   */
+  function planCheck(s, { res, status, stopped, reviving }) {
+    if (config.orchestration?.planCheck === false || s.parentId || s.virtual || s.kind !== 'chat') return false;
+    if (stopped || reviving || status === 'error' || !res.sawResult || s.waitingFor || s.queue.length) return false;
+    const open = s.planOpen || [];
+    const sig = open.join('\n');
+    if (!open.length || s.planNudged === sig) return false;
+    s.planNudged = sig;
+    const list = open.slice(0, 10).map((x) => `«${x}»`).join(', ') + (open.length > 10 ? ` и ещё ${open.length - 10}` : '');
+    s.queue.push({ id: newId('q'), from: 'harness', at: Date.now(), text: `[harness] В твоём плане не закрыты пункты: ${list}. Доделай их или коротко объясни, почему остановился (решение человека — спроси через mcp__harness__ask). Если пункт уже сделан, отметь его в плане выполненным.` });
+    s.queued = s.queue.length;
+    return true;
+  }
+
   const HOOK_TIMEOUT = /hook-execution-response/i;
   const hookTimedOut = (res) => HOOK_TIMEOUT.test(`${res.error || ''}\n${res.stderrTail || ''}`);
   /** «Хук … не ответил»: the stderr line that names the hook (event or command) when there is one. */
@@ -1210,7 +1242,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
 
   async function startTurn(s) {
     const r = runtime(s.id);
-    if (r.running || !(s.queue?.length || r.retryItems)) return;
+    if (closed || r.running || !(s.queue?.length || r.retryItems)) return;
     if (r.closedEarly) {
       // the previous process is still closing: follow it to its end, the queue starts after (finishLingered)
       if (!r.lingerFollow) {
@@ -1316,7 +1348,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
       fs.mkdirSync(runDir(s.id), { recursive: true });
       trimRunDir(s.id, r.turn);
       if (!(agentCfg.transport === 'acp' && s.warm)) await spawnSlot(s.agent, r, s); // a warm ACP process starts nothing
-      if (r.stopRequested) throw Object.assign(new Error('stopped before start'), { beforeStart: true }); // stopped while waiting for its slot
+      if (r.stopRequested || closed) throw Object.assign(new Error('stopped before start'), { beforeStart: true }); // stopped while waiting for its slot
       launcher.prepare(ctx);
       r.registryTimer = setInterval(() => pollRegistry(s), REGISTRY_POLL_MS);
       const env = sessionEnv({ ...ctx, config, exe }, launcher);
@@ -1359,6 +1391,14 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     }
     r.releaseSlot?.();
     clearInterval(r.peek);
+    if (closed && !handle) {
+      // the harness shut down while this turn waited for its slot: its messages go back to the queue (on disk) and
+      // the next start of the harness takes them — not «Остановлено пользователем», nothing lost
+      s.queue.unshift(...items.map((it) => ({ ...it, recorded: true })));
+      Object.assign(r, { running: false, handle: null });
+      Object.assign(s, { status: 'idle', phase: null, startWait: 0, queued: s.queue.length });
+      return;
+    }
     if (s.startWait) s.startWait = 0;
     if (s.startNote) s.startNote = null;
     // every way a start fails counts toward one streak: past START_STREAK_MAX nothing retries by itself any more
@@ -1702,6 +1742,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
       hooks.notify?.({ kind: 'escalation', sessionId: s.id, taskId: s.taskId ?? null, text: `${s.title}: агент не стартует ${times(s.startFailStreak)} подряд — ${reason}`, actions: ['retry', 'open'] });
     }
     if (!reason && status !== 'error' && s.revive) s.revive = null; // a turn that went well: the count starts over
+    planCheck(s, { res, status, stopped, reviving }); // queued: the start below takes it
     emit(s);
     hooks.turnClosed?.(s); // a call of this turn that is no longer polled stops being marked as waited for
     runTurnEnded(s, r, stopped, reviving);
@@ -2696,17 +2737,33 @@ ${note.trim()}` : text });
     },
 
     /** Harness shutdown: agent turns keep running (re-attached on the next start); terminals are closed. */
-    close() {
+    /**
+     * Resolves once every killed terminal has really exited (at most 3 s): a process that exits while Windows is still
+     * closing a pseudo console hangs in its exit for good (ConPTY waits for its output to be read by nobody).
+     */
+    async close() {
+      closed = true; // nothing starts after this: a woken slot waiter or a retry timer would spawn an agent nobody follows
       clearInterval(stallTimer);
       clearInterval(archiveTimer);
       acp.close();
+      const gone = [];
       for (const r of rt.values()) {
         clearInterval(r.registryTimer);
+        clearInterval(r.peek);
+        r.slotWake?.();
         r.handle?.detach();
         const p = r.pty;
         r.pty = null;
+        if (p) {
+          gone.push(new Promise((done) => {
+            const t = setTimeout(done, 3000);
+            t.unref?.();
+            try { p.onExit(() => { clearTimeout(t); done(); }); } catch { done(); }
+          }));
+        }
         killPty(p);
       }
+      await Promise.all(gone);
     },
   };
   return api;

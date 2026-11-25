@@ -392,7 +392,7 @@ export interface Settings {
     via?: 'agent' | 'harness' // commit / push / PR through the agent (its hooks and skills run) or git from the harness
   }
   tasks: { refreshSec: number }
-  orchestration?: { reviewMode?: 'builtin' | 'harness'; subagents?: 'harness' | 'builtin'; workerMayCommit?: boolean; review?: ReviewSettings; subagentRetention?: 'archive' | 'keep'; maxSubagentDepth?: number; subagentMcpExclude?: string[] }
+  orchestration?: { reviewMode?: 'builtin' | 'harness'; subagents?: 'harness' | 'builtin'; workerMayCommit?: boolean; review?: ReviewSettings; subagentRetention?: 'archive' | 'keep'; maxSubagentDepth?: number; subagentMcpExclude?: string[]; planCheck?: boolean }
   board?: BoardSettings
   integrations?: {
     tasks?: { enabled?: boolean; space?: string | string[]; urlTemplate?: string; statusMap?: Record<string, string>; closedStatuses?: string[]; includeClosed?: boolean; onStartTransition?: string | null }

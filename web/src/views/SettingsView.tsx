@@ -918,6 +918,11 @@ function OrchestrationSection({ form, update }: Omit<SectionProps, 'fieldError'>
             <InstallFile id={agentId} kind="skills" name="harness-orchestration" target="~/.gigacode/skills/harness-orchestration/SKILL.md" title="Навык для субагентов" action="Установить навык" />
           )}
         </Row>
+        {o.planCheck !== undefined && (
+          <Row label="Проверять, доделан ли план" hint="Агент закончил ход, а в его плане остались незакрытые пункты: harness один раз просит доделать их или объяснить, почему он остановился.">
+            <Switch label="Проверять, доделан ли план" checked={o.planCheck !== false} onChange={(v) => update({ ...form, orchestration: { ...o, planCheck: v } })} />
+          </Row>
+        )}
         {o.subagentMcpExclude !== undefined && <SubagentMcpRow off={o.subagentMcpExclude} onChange={(list) => update({ ...form, orchestration: { ...o, subagentMcpExclude: list } })} />}
         {o.subagentRetention !== undefined && (
           <Row label="Оставлять закончивших субагентов в боковой панели" hint="Иначе закончивший субагент уходит в архив; его чат открывается по ссылке в чате агента.">

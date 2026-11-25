@@ -98,7 +98,8 @@ test('a prompt streams text, thought and plan; the next message reuses the same 
   assert.ok(s.externalSessionId);
   const msgs = await messages(chat.id);
   assert.ok(msgs.some((m) => m.kind === 'thought' && m.text === 'думаю'));
-  assert.ok(msgs.some((m) => m.kind === 'system' && /^План:\n… ответить$/.test(m.text)));
+  // the plan message is kept current: the step was in progress, the turn's end closed it
+  assert.ok(msgs.some((m) => m.kind === 'system' && /^План:\n✓ ответить$/.test(m.text)));
   assert.deepEqual(await said(chat.id), ['ACP mock, turn 1. Done.']);
   const [rec] = records();
   assert.deepEqual(rec.argv, ['--acp', '--approval-mode', 'auto']);
@@ -474,4 +475,29 @@ test('a sub-agent whose start is retried later by itself is not reported «faile
   assert.equal(child.report ?? null, null, `the caller was told ${JSON.stringify(child.report)} before the retry`);
   assert.equal(child.queue.length, 1);
   await h.api('POST', `/api/sessions/${id}/stop`);
+});
+
+test('plan check: a top-level agent that ends with open plan steps is asked once; the same open steps are not asked again', async () => {
+  const s = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'acpmock', cwd, prompt: 'сделай #planopen' })).body;
+  const nudge = await waitFor(async () => (await messages(s.id)).find((m) => m.kind === 'user' && /В твоём плане не закрыты пункты: «прогнать тесты»/.test(m.text)), { timeout: 30000, what: 'asked about the open step' });
+  assert.equal(nudge.from, 'harness');
+  await idle(s.id);
+  // its answer closed the plan: nothing more; and the open step never brings a second reminder
+  assert.equal((await messages(s.id)).filter((m) => /В твоём плане не закрыты пункты/.test(m.text)).length, 1);
+  await send(s.id, 'ещё раз #planopen');
+  await idle(s.id);
+  await new Promise((r) => setTimeout(r, 500));
+  assert.equal((await messages(s.id)).filter((m) => /В твоём плане не закрыты пункты/.test(m.text)).length, 1, 'the same open steps: no second reminder');
+});
+
+test('plan check off (orchestration.planCheck: false): nothing is asked', async () => {
+  assert.equal((await h.api('PUT', '/api/settings', { orchestration: { planCheck: false } })).body.orchestration.planCheck, false);
+  try {
+    const s = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'acpmock', cwd, prompt: 'сделай #planopen' })).body;
+    await idle(s.id);
+    await new Promise((r) => setTimeout(r, 500));
+    assert.ok(!(await messages(s.id)).some((m) => /В твоём плане не закрыты пункты/.test(m.text)));
+  } finally {
+    await h.api('PUT', '/api/settings', { orchestration: { planCheck: true } });
+  }
 });

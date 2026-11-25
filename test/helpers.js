@@ -73,6 +73,8 @@ export async function startTestServer(configOverrides = {}, serverOpts = {}) {
       method,
       headers: { 'x-harness-token': srv.token, 'content-type': 'application/json', ...headers },
       body: body === undefined ? undefined : JSON.stringify(body),
+      // a request that never answers fails the test with its route instead of hanging the whole run
+      signal: AbortSignal.timeout(90000),
     });
     return { status: res.status, body: await res.json().catch(() => null) };
   }

@@ -241,7 +241,7 @@ export function acpEvents(update) {
       return out;
     }
     case 'plan':
-      return [{ type: 'plan', text: `План:\n${(update.entries || []).map((e) => `${e.status === 'completed' ? '✓' : e.status === 'in_progress' ? '…' : '·'} ${e.content}`).join('\n')}` }];
+      return [{ type: 'plan', entries: update.entries || [], text: `План:\n${(update.entries || []).map((e) => `${e.status === 'completed' ? '✓' : e.status === 'in_progress' ? '…' : '·'} ${e.content}`).join('\n')}` }];
     default:
       return []; // user_message_chunk, available_commands_update, current_mode_update, ...
   }
