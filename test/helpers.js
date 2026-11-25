@@ -12,6 +12,14 @@ process.env.HARNESS_TEST_NO_REAL_CLI = '1';
 // the machine's own GigaCode settings (GIGACODE_PACKAGED_LAUNCH, GIGACODE_TOOL_SECRET_ENV_NAMES…) are not the test's:
 // the harness passes its environment on to the agent, and the tests check exactly what it adds
 for (const k of Object.keys(process.env)) if (/^GIGACODE_/i.test(k)) delete process.env[k];
+// git of the tests (and of every server and agent they start) without the machine's system and global settings: a work
+// machine's commit signing, hooks or credential helper waited for input nobody gives, and git tests hung for 180 s
+{
+  const gitHome = fs.mkdtempSync(path.join(os.tmpdir(), 'harness-git-'));
+  const cfg = path.join(gitHome, 'gitconfig');
+  fs.writeFileSync(cfg, '[user]\n\tname = Harness Test\n\temail = test@example.com\n[commit]\n\tgpgsign = false\n[tag]\n\tgpgsign = false\n[core]\n\tautocrlf = false\n');
+  Object.assign(process.env, { GIT_CONFIG_GLOBAL: cfg, GIT_CONFIG_NOSYSTEM: '1', GIT_TERMINAL_PROMPT: '0' });
+}
 
 export const tmpDir = (prefix = 'харнесс тест ') => fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
 
