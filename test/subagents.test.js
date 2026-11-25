@@ -369,3 +369,28 @@ test('a sub-agent asks for an MCP server off for sub-agents: mcp_enable, then a 
     await h.api('PUT', '/api/settings', { orchestration: { subagentMcpExclude: [] } });
   }
 });
+
+test('a background sub-agent of the CLI: its steps show as they are written; its process gone without a result — «оборвался», not «думает» forever', async () => {
+  const caller = await chat('#subagentbgsteps');
+  const kid = async () => (await state()).sessions.find((s) => s.parentId === caller.id && s.background);
+  await waitFor(async () => (await kid())?.background, { what: 'the background chat' });
+  // the step from its file reaches its chat: the text and the tool call
+  await waitFor(async () => { const ms = await messages((await kid()).id); return ms.some((m) => m.kind === 'assistant' && m.text === 'Читаю маршруты miszh') && ms.some((m) => m.kind === 'tool' && m.tool?.name === 'read_file'); }, { timeout: 20000, what: 'its steps' });
+  // the process it lived in ended with the turn and no result came: settled as broken, the card says so
+  const v = await waitFor(async () => { const x = await kid(); return x.status === 'failed' && x; }, { timeout: 30000, what: 'settled as broken' });
+  assert.ok((await messages(v.id)).some((m) => /Оборвался: процесс CLI/.test(m.text)));
+  const card = (await messages(caller.id)).find((m) => m.kind === 'tool' && m.tool?.subSessionId === v.id);
+  assert.equal(card?.tool.stillRunning, false);
+});
+
+test('«Остановить» on a chat whose background sub-agents still look busy: they leave «в работе»', async () => {
+  const caller = await chat('#subagentbgsteps #linger');
+  const kid = async () => (await state()).sessions.find((s) => s.parentId === caller.id && s.background);
+  // the process lingers after its result (the sub-agent lives inside it): the harness keeps it, the chat is «running»
+  await waitFor(async () => (await kid())?.status === 'running', { what: 'background running' });
+  await new Promise((r) => setTimeout(r, 9000)); // past exitGraceMs (8 s): still kept for its background sub-agent
+  assert.equal((await kid()).status, 'running', 'the lingering process was not ended under its sub-agent');
+  assert.equal((await h.api('POST', `/api/sessions/${caller.id}/stop`)).status, 200);
+  const v = await waitFor(async () => { const x = await kid(); return x.status === 'stopped' && x; }, { what: 'stopped' });
+  assert.ok((await messages(v.id)).some((m) => m.text === 'Остановлено пользователем'));
+});

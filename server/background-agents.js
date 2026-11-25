@@ -62,3 +62,44 @@ export function backgroundResult(file) {
   }
   return null;
 }
+
+/**
+ * The sub-agent's steps written since `offset` (bytes): its texts and tool calls, as stream-json lines carry them
+ * ({ type: 'assistant', message: { content: [{ type: 'text' | 'tool_use', … }] } }). Only whole lines are taken: a line
+ * still being written is read on the next look. → { offset, items: [{ kind: 'text', text } | { kind: 'tool', id, name, input }] }
+ */
+export function backgroundSteps(file, offset = 0) {
+  let chunk = '';
+  try {
+    const size = fs.statSync(file).size;
+    if (size <= offset) return { offset, items: [] };
+    const len = Math.min(size - offset, TAIL_BYTES);
+    const fd = fs.openSync(file, 'r');
+    try {
+      const buf = Buffer.alloc(len);
+      fs.readSync(fd, buf, 0, len, offset);
+      chunk = buf.toString('utf8');
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch {
+    return { offset, items: [] };
+  }
+  const end = chunk.lastIndexOf('\n');
+  if (end < 0) return { offset, items: [] };
+  const items = [];
+  for (const line of chunk.slice(0, end).split(/\r?\n/)) {
+    let ev;
+    try {
+      ev = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (ev?.type !== 'assistant' || !Array.isArray(ev.message?.content)) continue;
+    for (const c of ev.message.content) {
+      if (c?.type === 'text' && c.text?.trim()) items.push({ kind: 'text', text: c.text });
+      else if (c?.type === 'tool_use' && c.name) items.push({ kind: 'tool', id: c.id ?? null, name: c.name, input: c.input ?? null });
+    }
+  }
+  return { offset: offset + Buffer.byteLength(chunk.slice(0, end + 1)), items };
+}

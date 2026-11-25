@@ -15,7 +15,7 @@ import { createAcp } from './acp.js';
 import { parseContextUsage, contextBreakdown } from './context-usage.js';
 import { steerNotice } from './steer.js';
 import * as git from './git.js';
-import { backgroundLaunch, backgroundResult, outputFileIn } from './background-agents.js';
+import { backgroundLaunch, backgroundResult, backgroundSteps, outputFileIn } from './background-agents.js';
 
 const fail = (status, message) => { throw Object.assign(new Error(message), { status }); };
 // Windows caps a whole command line at 32767 UTF-16 units (Linux one argument at 128 KiB): a longer prompt goes in a file
@@ -953,8 +953,25 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     // the file comes with the call's answer: a chat stored before this was known takes it from the card
     const file = v.backgroundFile || outputFileIn(m?.tool?.output);
     if (!file) return false;
+    // its steps as they are written (the CLI puts them only in this file): the chat shows the work, not only the end
+    const steps = backgroundSteps(file, v.bgOffset || 0);
+    if (steps.offset !== (v.bgOffset || 0)) {
+      v.bgOffset = steps.offset;
+      for (const st of steps.items) {
+        if (st.kind === 'text') addMessage(v, { kind: 'assistant', text: st.text });
+        else addMessage(v, { kind: 'tool', text: st.name, tool: { id: st.id, name: st.name, input: st.input, output: null, status: 'ok' } });
+      }
+      if (steps.items.length) Object.assign(v, { lastActivityAt: Date.now(), preview: steps.items.at(-1).text?.slice(-200) ?? `${steps.items.at(-1).name}` });
+      emit(v);
+    }
     const res = backgroundResult(file);
-    if (!res) return false;
+    if (!res) {
+      // no result, and the process it lived in is gone (no turn, no lingering or warm process): it will never come
+      if (!runtime(s.id).running && !acp.warm(s.id) && Date.now() - (v.lastActivityAt || 0) > 60000) {
+        endBackgrounds(s, 'Оборвался: процесс CLI, внутри которого работал этот фоновый субагент, завершился, а результата в его файле нет.', 'failed');
+      }
+      return false;
+    }
     // its chat keeps the launch note (a system line) and gets the result: the chat is the report
     addMessage(v, { kind: res.isError ? 'error' : 'assistant', text: res.output });
     Object.assign(v, { backgroundFile: file, status: res.isError ? 'failed' : 'done', preview: res.output.slice(-200), lastActivityAt: Date.now() });
@@ -1112,7 +1129,35 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     const r = runtime(s.id);
     if (!r.closedEarly || r.lingerTimer) return;
     const grace = config.agents[s.agent]?.exitGraceMs ?? 8000;
-    r.lingerTimer = setTimeout(() => r.handle?.terminate?.('post_result_linger'), Math.max(0, grace - (Date.now() - r.resultAt)));
+    const end = () => {
+      r.lingerTimer = null;
+      if (!r.closedEarly) return;
+      // a background sub-agent of the CLI lives inside this very process: ending it killed the sub-agent, whose result
+      // then never came. It goes on (looked at again every 30 s) until they settle, at most BG_KEEP_MS after the result.
+      if (liveBackgrounds(s.id).length && Date.now() - r.resultAt < BG_KEEP_MS) {
+        r.lingerTimer = setTimeout(end, 30000);
+        r.lingerTimer.unref?.();
+        return;
+      }
+      r.handle?.terminate?.('post_result_linger');
+    };
+    r.lingerTimer = setTimeout(end, Math.max(0, grace - (Date.now() - r.resultAt)));
+  }
+  const BG_KEEP_MS = 2 * 3600000;
+  const liveBackgrounds = (sid) => db.sessions.filter((v) => v.virtual && v.parentId === sid && v.background && v.status === 'running' && !v.archived);
+  /** Background sub-agents of the CLI that will not come back (stopped, or their process is gone): said so, settled. */
+  function endBackgrounds(s, why, status) {
+    for (const v of liveBackgrounds(s.id)) {
+      addMessage(v, { kind: status === 'failed' ? 'error' : 'system', text: why });
+      Object.assign(v, { status, lastActivityAt: Date.now() });
+      emit(v);
+      const m = [...(runtime(s.id).cur?.tools?.values() ?? []), ...store.messages(s.id)].find((x) => x.tool?.subSessionId === v.id);
+      if (m) {
+        m.tool = { ...m.tool, stillRunning: false, ...(status === 'failed' ? { status: 'error', output: why } : {}) };
+        updateMessage(s, m);
+      }
+      if (!runtime(s.id).running) retireVirtual(v);
+    }
   }
 
   const spawnAt = new Map(); // agent -> when its next process may start
@@ -1244,6 +1289,12 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     const r = runtime(s.id);
     if (closed || r.running || !(s.queue?.length || r.retryItems)) return;
     if (r.closedEarly) {
+      // a new turn needs the process to end: its background sub-agents end with it — said so, not «думает» forever
+      if (liveBackgrounds(s.id).length) {
+        endBackgrounds(s, 'Прерван: в чат пришло новое сообщение, и процесс CLI, внутри которого работал этот фоновый субагент, перезапускается для нового хода. Результата не будет — при необходимости агент запустит его снова.', 'failed');
+        addMessage(s, { kind: 'system', text: '⚠ Фоновые субагенты GigaCode этого хода прерваны: для нового сообщения процесс CLI перезапускается. Субагенты через harness (mcp__harness__agent) от этого не зависят.' });
+        r.handle?.terminate?.('post_result_linger');
+      }
       // the previous process is still closing: follow it to its end, the queue starts after (finishLingered)
       if (!r.lingerFollow) {
         r.lingerFollow = true; // once: a process that cannot be followed is killed, not followed again in a loop
@@ -1356,7 +1407,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
       if (agentCfg.transport === 'acp') {
         if (!launcher.acpArgs) throw new Error(`у лаунчера «${launcher.id}» нет режима ACP; укажите agents.${s.agent}.transport = "headless"`);
         handle = acp.turn({
-          sid: s.id, agent: s.agent, launcher, ctx, command: exe, cwd: s.cwd, env, logFile: turnFiles(s, r.turn).logFile, roots: [s.cwd, ...(s.includeDirs || []), attachmentsDir(s.id)],
+          sid: s.id, agent: s.agent, keepAlive: () => liveBackgrounds(s.id).length > 0, launcher, ctx, command: exe, cwd: s.cwd, env, logFile: turnFiles(s, r.turn).logFile, roots: [s.cwd, ...(s.includeDirs || []), attachmentsDir(s.id)],
           idleMs: (agentCfg.acpIdleMin ?? agentCfg.acpIdleTimeoutMin ?? 30) * 60000, fullAccess: fullAccess(turnSession), clientFs: !!agentCfg.acpClientFs,
           externalSessionId: s.externalSessionId, prompt, initTimeoutMs: firstEventTimeoutMs, onEvent: (ev) => applyEvent(s, ev),
           // its CLI session would not load: the new one gets the harness's rules and what this chat was about
@@ -1768,6 +1819,9 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     r.steerTimer = null; // its turn ended by itself: no cut, and its message reads normally
     r.cutAt = null;
     if (!find(s.id)) return;
+    // the process its background sub-agents lived in has exited: a last look at their files, the rest broke with it
+    for (const v of liveBackgrounds(s.id)) pollBackground(s, v.id);
+    if (!acp.warm(s.id)) endBackgrounds(s, 'Оборвался: процесс CLI, внутри которого работал этот фоновый субагент, завершился, а результата в его файле нет.', 'failed');
     const killed = res.killReason === 'post_result_linger';
     try {
       fs.appendFileSync(turnFiles(s, r.turn).logFile, `[harness] process exited ${Date.now() - r.resultAt} ms after result${killed ? ' (killed after exitGraceMs)' : ''}\n`);
@@ -2385,6 +2439,11 @@ ${note.trim()}` : text });
       s.queue = [];
       s.queued = 0;
       s.startRetryAt = null; // nothing left to start: no «повтор через …» countdown either
+      // its background sub-agents of the CLI stop with it: their rows leave «в работе» (the process goes, if still there)
+      if (liveBackgrounds(sid).length) {
+        endBackgrounds(s, 'Остановлено пользователем', 'stopped');
+        if (r.closedEarly) r.handle?.terminate?.('post_result_linger');
+      }
       if (r.running && r.closedEarly) {
         r.handle?.terminate?.('post_result_linger');
         return emit(s);

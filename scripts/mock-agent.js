@@ -272,14 +272,17 @@ if (has(/#subagent\b/)) {
     if (ev.type !== 'result') emit(ev);
   }
 }
-if (has(/#subagentbg\b/)) {
+if (has(/#subagentbg(steps)?\b/)) {
   // a built-in sub-agent started with run_in_background: the call answers at once, its result lands in its own file
   const capture = new URL('../test/fixtures/gigacode.subagent-background.ndjson', import.meta.url);
   const file = path.join(process.cwd(), 'subagent-bg.jsonl');
   const [call, result] = fs.readFileSync(capture, 'utf8').split('\n').filter((l) => l.trim() && !l.trim().startsWith('//')).map((l) => JSON.parse(l));
   const line = { ...result, message: { ...result.message, content: [{ ...result.message.content[0], content: result.message.content[0].content.replace(/output_file: .*/, `output_file: ${file}`) }] } };
   for (const { session_id, uuid, ...ev } of [call, line]) emit(ev);
-  fs.writeFileSync(file, `${JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: 'Контракт miszh сверён: 2 маршрута, 3 схемы.' })}\n`);
+  // #subagentbgsteps: it writes a step but never its result (its process went away with the parent's)
+  const step = { type: 'assistant', message: { content: [{ type: 'text', text: 'Читаю маршруты miszh' }, { type: 'tool_use', id: 'bg_t1', name: 'read_file', input: { path: 'routes.ts' } }] } };
+  const final = { type: 'result', subtype: 'success', is_error: false, result: 'Контракт miszh сверён: 2 маршрута, 3 схемы.' };
+  fs.writeFileSync(file, has(/#subagentbgsteps\b/) ? `${JSON.stringify(step)}\n` : `${JSON.stringify(final)}\n`);
 }
 
 if (delivered) {

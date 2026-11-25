@@ -277,7 +277,8 @@ export function createAcp({ onWarm = () => {} } = {}) {
     clearTimeout(idleTimers.get(c.sid));
     if (!(idleMs > 0)) return;
     const t = setTimeout(() => {
-      if (!c.turn && !c.held.size && !c.helpers?.size) drop(c.sid); // still idle: unload, the next message reloads
+      // still idle: unload, the next message reloads — not while a background sub-agent of the CLI works inside it
+      if (!c.turn && !c.held.size && !c.helpers?.size && !c.keepAlive?.()) drop(c.sid);
       else if (!c.dead && conns.get(c.sid) === c) armIdle(c, idleMs); // busy (e.g. a helper prompt): looked at again later
     }, idleMs);
     t.unref?.();
@@ -316,7 +317,7 @@ export function createAcp({ onWarm = () => {} } = {}) {
     } finally {
       fs.closeSync(err);
     }
-    const c = { sid: o.sid, agent: o.agent ?? null, cwd: o.cwd, mcp: acpMcpServers(o.ctx.harnessMcp, { timeoutMs: o.ctx.mcpTimeoutMs }), child, held: new Map(), helpers: new Map(), loading: false, turn: null, dead: false, errFile, sessionId: null };
+    const c = { sid: o.sid, agent: o.agent ?? null, keepAlive: o.keepAlive ?? null, cwd: o.cwd, mcp: acpMcpServers(o.ctx.harnessMcp, { timeoutMs: o.ctx.mcpTimeoutMs }), child, held: new Map(), helpers: new Map(), loading: false, turn: null, dead: false, errFile, sessionId: null };
     conns.set(o.sid, c);
     const exited = new Promise((resolve) => child.on('exit', (code, signal) => resolve({ code, signal })));
     child.on('error', (e) => log(`[acp] ${e.message}\n`));
