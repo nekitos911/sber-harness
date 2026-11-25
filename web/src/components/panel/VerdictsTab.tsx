@@ -26,6 +26,11 @@ export function VerdictsTab({ cwd, plans, scope }: { cwd: string; plans: SddPlan
         return (
           <section key={p.dir} className="wpanel-section">
             <h3>{p.name} <span className="muted num">{done === null ? `${n} ${plural(n, 'пункт', 'пункта', 'пунктов')}` : `${done}/${n}`}</span></h3>
+            {p.requirements && (
+              <Disclosure className="verdict" defaultOpen={!p.verdicts.length} summary={<span>Требования: СА ↔ SDD ↔ код</span>}>
+                <div className="verdict-body"><Markdown text={p.requirements} /></div>
+              </Disclosure>
+            )}
             {n > 0 && (done === null ? (
               <ul className="sdd-items">{p.progress.items.map((it, i) => <li key={i}>{it.title}</li>)}</ul>
             ) : (
@@ -34,7 +39,7 @@ export function VerdictsTab({ cwd, plans, scope }: { cwd: string; plans: SddPlan
               </ul>
             ))}
             {p.verdicts.map((v) => <VerdictCard key={v.file} v={v} cwd={cwd} />)}
-            {!p.verdicts.length && !p.progress.items.length && <Markdown text={p.progress.raw} />}
+            {!p.verdicts.length && !p.progress.items.length && p.progress.raw && <Markdown text={p.progress.raw} />}
           </section>
         )
       })}

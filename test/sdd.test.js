@@ -63,6 +63,13 @@ test('parser: ledger items, PASS verdict with models, FAIL verdict in bold/arrow
   assert.equal(v2.openQuestions, 'нужен ли батч-запрос для архивных лимитов?');
   const odd = parseVerdict('Вердикт: всё хорошо\nstatus: maybe\n');
   assert.deepEqual([odd.status, odd.filesChanged, odd.raw], [null, [], 'Вердикт: всё хорошо\nstatus: maybe\n']);
+  assert.equal(p.requirements, null);
+  // the «СА ↔ SDD ↔ код» table: a plan of its own even before a ledger exists
+  const reqDir = path.join(dir, '.superpowers', 'sdd', 'PROJ-7');
+  fs.mkdirSync(reqDir, { recursive: true });
+  fs.writeFileSync(path.join(reqDir, 'requirements.md'), '| # | СА | SDD |\n|---|---|---|\n| 1 | лимит 10 | лимит 5 |\n');
+  const withReq = (await readSdd(dir)).plans.find((x) => x.name === 'PROJ-7');
+  assert.deepEqual([withReq.progress, withReq.verdicts, withReq.requirements.includes('лимит 10')], [null, [], true]);
   assert.deepEqual(await readSdd(path.join(root, 'нет')), { plans: [] });
 });
 

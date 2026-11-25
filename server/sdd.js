@@ -1,4 +1,5 @@
-// Read-only viewer of /full-task SDD artifacts: <cwd>/.superpowers/sdd/<plan>/progress.md and verdicts/task-<N>.md.
+// Read-only viewer of /full-task SDD artifacts: <cwd>/.superpowers/sdd/<plan>/progress.md, verdicts/task-<N>.md and
+// requirements.md (the «СА ↔ SDD ↔ код» table the agent writes before its first edit).
 // Tolerant: a `key: value` block (bold keys, list markers allowed) plus list items under a key; anything not
 // understood is still available as `raw`.
 import fs from 'node:fs';
@@ -86,13 +87,15 @@ export async function readSdd(cwd, forSession = null) {
     const dir = path.join(root, name);
     const progressFile = path.join(dir, 'progress.md');
     const progressRaw = await read(progressFile);
+    const requirementsFile = path.join(dir, 'requirements.md');
+    const requirements = await read(requirementsFile);
     const files = (await list(path.join(dir, 'verdicts'))).map((d) => d.name).filter((f) => /^task-\d+\.md$/i.test(f));
     const verdicts = await Promise.all(files
       .map((file) => ({ n: Number(file.match(/\d+/)[0]), file: path.join(dir, 'verdicts', file) }))
       .sort((a, b) => a.n - b.n)
       .map(async ({ n, file }) => ({ n, file, ...parseVerdict((await read(file)) ?? '') })));
-    const modifiedAt = Math.max(await mtime(progressFile), ...(await Promise.all(verdicts.map((v) => mtime(v.file))))) || null;
-    return { name, dir, modifiedAt, progress: progressRaw === null ? null : parseProgress(progressRaw), verdicts };
+    const modifiedAt = Math.max(await mtime(progressFile), await mtime(requirementsFile), ...(await Promise.all(verdicts.map((v) => mtime(v.file))))) || null;
+    return { name, dir, modifiedAt, progress: progressRaw === null ? null : parseProgress(progressRaw), requirements, verdicts };
   }));
   if (!forSession) return { plans };
   const key = forSession.key?.toLowerCase();

@@ -78,6 +78,7 @@ export interface SddPlan {
   name: string; dir: string; verdicts: SddVerdict[]
   // done: how many items are done; null = the ledger says nothing about progress (a plain list, no «0/N»)
   progress: { raw: string; items: { title: string; status: string | null }[]; done?: number | null }
+  requirements?: string | null // requirements.md: the «СА ↔ SDD ↔ код» table, markdown
 }
 
 export interface TaskPr { index: number; state: 'open' | 'merged' | 'declined'; url: string; updatedAt: number }
