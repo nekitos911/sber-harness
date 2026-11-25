@@ -305,8 +305,11 @@ test('mcpExclude goes into the run settings under the configured key only', () =
   // the key GigaCode really reads (seen on the target 2026-11-25): a top-level excludeMCPServers was ignored
   const defaults = settings({ mcpExclude: ['java-lsp', 'harness'] });
   assert.deepEqual([defaults.excludeMCPServers, defaults.mcp], [undefined, { excluded: ['java-lsp'] }], 'never the harness server');
-  const custom = settings({ mcpExclude: ['java-lsp'], mcpExcludeKey: 'excludeMCPServers' });
-  assert.deepEqual([custom.excludeMCPServers, custom.mcp], [['java-lsp'], undefined]);
+  // an old config naming the ignored key explicitly still excludes: under mcp.excluded
+  const old = settings({ mcpExclude: ['java-lsp'], mcpExcludeKey: 'excludeMCPServers' });
+  assert.deepEqual([old.excludeMCPServers, old.mcp], [undefined, { excluded: ['java-lsp'] }]);
+  const custom = settings({ mcpExclude: ['java-lsp'], mcpExcludeKey: 'tools.excluded' });
+  assert.deepEqual([custom.mcp, custom.tools], [undefined, { excluded: ['java-lsp'] }]);
   assert.equal(settings({}).mcp, undefined);
   // the user's own mcp block in agents.<id>.settings stays, the list joins it
   assert.deepEqual(sessionSettings({ agentCfg: { settings: { mcp: { allowed: ['a'] } }, mcpExclude: ['b'] }, harnessMcp, agentMcpServers: {} }).mcp, { allowed: ['a'], excluded: ['b'] });

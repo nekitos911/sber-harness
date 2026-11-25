@@ -238,7 +238,9 @@ function userMcpServers(file = USER_SETTINGS) {
 function mcpExclusion(agentCfg, rest) {
   const list = (agentCfg.mcpExclude || []).filter((x) => x !== 'harness');
   if (!list.length) return {};
-  const [head, ...tail] = (agentCfg.mcpExcludeKey || 'mcp.excluded').split('.');
+  // an old config's explicit "excludeMCPServers" is the key GigaCode ignores: it keeps meaning «exclude», under mcp.excluded
+  const key = !agentCfg.mcpExcludeKey || agentCfg.mcpExcludeKey === 'excludeMCPServers' ? 'mcp.excluded' : agentCfg.mcpExcludeKey;
+  const [head, ...tail] = key.split('.');
   if (!tail.length) return { [head]: list };
   const obj = { ...(rest[head] || {}) };
   let cur = obj;
