@@ -234,6 +234,11 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
         s.warm = warm;
         emit(s);
       }
+      // the ACP process is gone (unloaded, restarted, crashed): the background sub-agents inside it went with it
+      if (s && !warm) {
+        for (const v of liveBackgrounds(sid)) pollBackground(s, v.id);
+        endBackgrounds(s, 'Оборвался: процесс CLI, внутри которого работал этот фоновый субагент, завершился, а его ответа в файле нет.', 'failed');
+      }
     },
   });
   const hooks = { preamble: () => '', turnEnded: () => {}, turnClosed: () => {}, midTurn: () => {} };
@@ -965,13 +970,8 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
       emit(v);
     }
     const res = backgroundResult(file);
-    if (!res) {
-      // no result, and the process it lived in is gone (no turn, no lingering or warm process): it will never come
-      if (!runtime(s.id).running && !acp.warm(s.id) && Date.now() - (v.lastActivityAt || 0) > 60000) {
-        endBackgrounds(s, 'Оборвался: процесс CLI, внутри которого работал этот фоновый субагент, завершился, а результата в его файле нет.', 'failed');
-      }
-      return false;
-    }
+    // no answer yet: it works on (a process that really ended settles it in finishLingered / when ACP unloads)
+    if (!res) return false;
     // its chat keeps the launch note (a system line) and gets the result: the chat is the report
     addMessage(v, { kind: res.isError ? 'error' : 'assistant', text: res.output });
     Object.assign(v, { backgroundFile: file, status: res.isError ? 'failed' : 'done', preview: res.output.slice(-200), lastActivityAt: Date.now() });

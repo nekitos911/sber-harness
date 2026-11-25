@@ -173,3 +173,23 @@ test('a background sub-agent\'s steps from its file: GigaCode\'s parts (text, fu
   fs.appendFileSync(file, `age":{"parts":[{"text":"Готово"}]}}\n`);
   assert.deepEqual(backgroundSteps(file, first.offset).items, [{ kind: 'text', text: 'Готово' }]);
 });
+
+test('a background sub-agent\'s answer without a result line: its last text-only assistant message, once the file is quiet', () => {
+  const file = path.join(dir, 'bg-final.jsonl');
+  const call = { type: 'assistant', message: { parts: [{ text: 'Смотрю' }, { functionCall: { id: 'c1', name: 'read_file', args: {} } }] } };
+  const reply = { type: 'user', message: { parts: [{ functionResponse: { id: 'c1', name: 'read_file', response: {} } }] } };
+  const answer = { type: 'assistant', message: { parts: [{ text: 'Контракт сверён: ' }, { text: '2 маршрута.' }] } };
+  const later = Date.now() + 60000;
+  fs.writeFileSync(file, `${JSON.stringify(call)}\n${JSON.stringify(reply)}\n`);
+  assert.equal(backgroundResult(file, { now: later }), null, 'the last step is a tool answer: still at work');
+  fs.writeFileSync(file, `${JSON.stringify(call)}\n`);
+  assert.equal(backgroundResult(file, { now: later }), null, 'a call in flight: still at work');
+  fs.writeFileSync(file, `${JSON.stringify(call)}\n${JSON.stringify(reply)}\n${JSON.stringify(answer)}\n`);
+  assert.equal(backgroundResult(file, { now: Date.now() }), null, 'just written: another step may follow');
+  assert.deepEqual(backgroundResult(file, { now: later }), { output: 'Контракт сверён: 2 маршрута.', isError: false });
+  fs.appendFileSync(file, `${JSON.stringify({ type: 'assistant', message: { parts: [] }, usageMetadata: {} })}\n`);
+  assert.deepEqual(backgroundResult(file, { now: later }), { output: 'Контракт сверён: 2 маршрута.', isError: false }, 'an empty message after the answer');
+  // a result line, where a CLI writes one, still wins at once
+  fs.appendFileSync(file, `${JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: 'итог' })}\n`);
+  assert.deepEqual(backgroundResult(file), { output: 'итог', isError: false });
+});

@@ -124,6 +124,11 @@
   If asked, you can check progress … tail on the output file.» Сам ход субагента идёт вне потока родителя: харнес его не видит
   (карточка помечается «в фоне», `backgroundRun` в `web/src/lib/toolRun.ts`). Харнес просит агентов так не запускать. Открыто:
   формат `agent-<id>.jsonl` и чем приходит «notified when it completes» (событием потока или сообщением следующего хода).
+- Формат `agent-<id>.jsonl` (целевая машина, 2026-11-25, GigaCode 26.10.109): по строке на шаг — `type: "user" | "assistant" |
+  "tool_result"`, у `assistant` поле `message.parts` в духе Gemini (`{ text }`, `{ functionCall: { id, name, args } }`); бывают
+  `assistant` с пустыми `parts` (только `usageMetadata`). Строки `{"type":"result"}` **нет**: итог — последний `assistant`
+  с текстом и без `functionCall`. Харнес считает его ответом, когда файл не меняется 15 с (`backgroundResult`); «Оборвался»
+  ставится только когда процесс CLI действительно ушёл (задержавшийся процесс завершился или ACP-процесс выгружен).
 - Реестр, который пишет оркестрирующий агент: `<registryDir>/<agentId>/agent.json` с временными метками ISO-8601
   (`startedAt`, `lastActivity`, `settledAt`, `activity.since`), например
   `{"id":"java-reviewer-1","name":"java-reviewer","role":"review","model":"…","parentId":null,"worktree":"…","state":"working","startedAt":"2026-11-17T16:02:11.000Z","lastActivity":"2026-11-17T16:07:43.000Z","settledAt":null,"activity":{"tool":"grep_search","since":"…"},"tokensIn":184320,"tokensOut":2411}`;

@@ -2,9 +2,8 @@
 // file, and when its chat may be settled.
 //
 // What is known for sure: the call answers at once («Background agent launched successfully … output_file: <path>.jsonl»),
-// the sub-agent's own steps go to that file instead of the parent's stdout, and the CLI process that started it writes
-// its final result THERE. So a chat stops being «running» when such a result is in the file — nothing of the work itself
-// reaches the harness while it runs.
+// the sub-agent's own steps go to that file instead of the parent's stdout. A chat stops being «running» when its answer
+// is in the file: a result line, or (GigaCode writes none) the last text-only assistant message once the file is quiet.
 import fs from 'node:fs';
 import { readTail } from './runner.js';
 
@@ -31,10 +30,13 @@ export function outputFileIn(text) {
 }
 
 /** The sub-agent's final answer, from the tail of its output file (null while it has not said one). */
-export function backgroundResult(file) {
+export function backgroundResult(file, { quietMs = QUIET_MS, now = Date.now() } = {}) {
   let text = '';
+  let mtime = now;
   try {
-    const size = fs.statSync(file).size;
+    const st = fs.statSync(file);
+    const size = st.size;
+    mtime = st.mtimeMs;
     const len = Math.min(size, TAIL_BYTES);
     const fd = fs.openSync(file, 'r');
     try {
@@ -60,8 +62,26 @@ export function backgroundResult(file) {
     const out = typeof ev.result === 'string' ? ev.result : typeof ev.response === 'string' ? ev.response : '';
     return { output: out || (isError ? readTail(file, 2000).trim() || 'фоновый субагент завершился с ошибкой' : '(no output)'), isError: !!isError };
   }
+  // GigaCode writes no result line (seen on the target 2026-11-25): its answer is the last assistant message — text
+  // only, no functionCall (the model ended its turn) — once the file has been quiet a while (no step follows)
+  if (now - mtime < quietMs) return null;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    let ev;
+    try {
+      ev = JSON.parse(lines[i]);
+    } catch {
+      continue;
+    }
+    if (ev?.type !== 'assistant') return null; // the last step is a tool's answer or the person's: still at work
+    const parts = Array.isArray(ev.message?.parts) ? ev.message.parts : Array.isArray(ev.message?.content) ? ev.message.content : [];
+    if (parts.some((c) => c?.functionCall || c?.type === 'tool_use')) return null;
+    const out = parts.map((c) => (typeof c?.text === 'string' && (c.type === undefined || c.type === 'text') ? c.text : '')).join('').trim();
+    if (out) return { output: out, isError: false };
+    // an empty one (parts: [], only usageMetadata — seen on the target) says nothing: the answer is before it
+  }
   return null;
 }
+const QUIET_MS = 15000;
 
 /**
  * The sub-agent's steps written since `offset` (bytes): its texts and tool calls, as stream-json lines carry them
