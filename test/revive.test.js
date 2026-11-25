@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { startTestServer, tmpDir, rmrf, waitFor } from './helpers.js';
+import { CODE_ROOT } from '../server/config.js';
 
 const root = tmpDir();
 let h;
@@ -168,5 +169,24 @@ test('a chat that keeps failing to start stops retrying after 4 failed starts in
     assert.ok((await h2.api('GET', '/api/state')).body.notifications.some((n) => n.sessionId === s.id && /не стартует 4 раза подряд/.test(n.text)));
   } finally {
     await h2.close();
+  }
+});
+
+test('a turn that keeps breaking mid-work: retried 5 times by default, the person hears of it after the 3rd and the tries go on', async () => {
+  const acp = { launcher: 'mock', label: 'ACP mock', transport: 'acp', command: [process.execPath, path.join(CODE_ROOT, 'scripts', 'mock-acp-agent.js')], approvalMode: 'auto', approvalModes: ['default', 'auto'] };
+  const h3 = await startTestServer({ session: { revive: { delaysSec: [0.2] } }, agents: { acpmock: acp } });
+  try {
+    const st = async (id) => (await h3.api('GET', '/api/state')).body.sessions.find((s) => s.id === id);
+    const s = (await h3.api('POST', '/api/sessions', { kind: 'chat', agent: 'acpmock', cwd: root, prompt: 'привет' })).body;
+    await waitFor(async () => (await st(s.id)).status === 'idle', { what: 'first turn' });
+    await h3.api('POST', `/api/sessions/${s.id}/messages`, { text: 'сделай #diealways' });
+    await waitFor(async () => (await st(s.id)).revive?.gaveUp, { timeout: 60000, what: 'gave up after the default attempts' });
+    const ms = (await h3.api('GET', `/api/sessions/${s.id}/messages`)).body;
+    assert.ok(ms.some((m) => m.kind === 'system' && /попытка 5 из 5/.test(m.text)), 'five tries by default');
+    const notes = (await h3.api('GET', '/api/state')).body.notifications.filter((n) => n.sessionId === s.id && n.kind === 'escalation');
+    assert.ok(notes.some((n) => /обрывается уже 3 раза .*Продолжаю пробовать/.test(n.text)), JSON.stringify(notes.map((n) => n.text)));
+    assert.ok(notes.some((n) => /после 5 повторов/.test(n.text)), 'and once more when they ran out');
+  } finally {
+    await h3.close();
   }
 });

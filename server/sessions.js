@@ -1849,7 +1849,9 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
   // ---- revive: a turn that broke (an error, a dropped connection) or went silent is continued, not dropped ----
   // A few attempts with growing pauses (--resume keeps the context, the worktree keeps the files), then a notification
   // with «Повторить». session.revive = { count, reason, due } | { …, gaveUp } until a turn goes well.
-  const reviveCfg = () => ({ attempts: 3, delaysSec: [30, 120, 300], stallWakeMin: 15, ...config.session?.revive });
+  // a person away for the night: the pauses grow to half an hour; after NOTIFY_AFTER they hear of it, the tries go on
+  const reviveCfg = () => ({ attempts: 5, delaysSec: [30, 120, 300, 900, 1800], stallWakeMin: 15, ...config.session?.revive });
+  const REVIVE_NOTIFY_AFTER = 3;
   const CONTINUE = (reason) => `[harness] Предыдущий ход оборвался (${reason}). Продолжи с того места, где остановился: проверь, что уже сделано в рабочем дереве, и доведи задачу до конца.`;
   const isContinue = (q) => q.from === 'harness' && q.text.startsWith('[harness] Предыдущий ход оборвался');
   /** «Продолжи» once: a turn that did not even start puts its messages back, and a second «Повторить» must not add another. */
@@ -1875,6 +1877,9 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     const due = Date.now() + sec * 1000;
     s.revive = { count: n + 1, reason, due };
     addMessage(s, { kind: 'system', text: `${reason} — продолжу сам через ${delayText(sec)} (попытка ${n + 1} из ${cfg.attempts})` });
+    if (n === REVIVE_NOTIFY_AFTER && n < cfg.attempts) {
+      hooks.notify?.({ kind: 'escalation', sessionId: s.id, taskId: s.taskId ?? null, text: `${s.title}: агент обрывается уже ${n} раза — ${reason}. Продолжаю пробовать (попытка ${n + 1} из ${cfg.attempts}).`, actions: ['open'] });
+    }
     const t = setTimeout(() => {
       const x = find(s.id);
       // the person (or the agent) moved on meanwhile: a new message, a stop, an archive — nothing to continue

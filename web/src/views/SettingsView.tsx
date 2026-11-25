@@ -1125,9 +1125,9 @@ function ChatsSection({ form, update }: Omit<SectionProps, 'fieldError'>) {
         )}
         {form.session?.revive && (
           <>
-            <Row label="Если агент оборвался" hint="Ошибка или обрыв связи посреди работы: harness продолжает ту же сессию с того же места после пауз 30 с, 2 мин и 5 мин. Не помогло: придёт уведомление с кнопкой «Повторить».">
+            <Row label="Если агент оборвался" hint="Ошибка или обрыв связи посреди работы: harness продолжает ту же сессию с того же места после пауз 30 с, 2, 5, 15 и 30 мин. После третьей неудачи придёт уведомление, попытки продолжатся; кончились — уведомление с кнопкой «Повторить».">
               <Select label="Если агент оборвался" value={String(form.session.revive.attempts)} onChange={(v) => update({ ...form, session: { ...form.session, revive: { ...form.session!.revive!, attempts: Number(v) } } })}
-                options={[{ value: '0', label: 'не продолжать, сразу уведомить' }, { value: '1', label: 'продолжить 1 раз' }, { value: '3', label: 'продолжить до 3 раз' }, { value: '5', label: 'продолжить до 5 раз' }]} />
+                options={[...new Set([0, 1, 3, 5, 10, form.session.revive.attempts])].map((n) => ({ value: String(n), label: n === 0 ? 'не продолжать, сразу уведомить' : n === 1 ? 'продолжить 1 раз' : `продолжить до ${n} раз` }))} />
             </Row>
             <Row label="Будить молчащего агента через" hint="Агент ничего не пишет и не выполняет команду. Долгая сборка или тесты считаются нормальной тишиной. Процесс останавливается, сессия продолжается с того же места.">
               <Select label="Будить молчащего агента через" value={String(form.session.revive.stallWakeMin)} onChange={(v) => update({ ...form, session: { ...form.session, revive: { ...form.session!.revive!, stallWakeMin: Number(v) } } })}

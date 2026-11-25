@@ -437,7 +437,7 @@ export async function startServer(opts = {}) {
         rootResolved: db.workspaces.find((w) => w.kind === 'root')?.path ?? null, // «Авто: <path>» when rootAuto
         rootAuto: !config.workspaces?.root,
       },
-      session: { stallSec: config.session.stallSec, revive: { attempts: config.session.revive?.attempts ?? 3, stallWakeMin: config.session.revive?.stallWakeMin ?? 15 } },
+      session: { stallSec: config.session.stallSec, revive: { attempts: config.session.revive?.attempts ?? 5, stallWakeMin: config.session.revive?.stallWakeMin ?? 15 } },
       // how long an agent may spend on one MCP server: its start in ACP, and the harness server's own (a whole sub-agent run)
       mcp: { acpStartTimeoutMs: config.mcp?.acpStartTimeoutMs ?? 30000, harnessTimeoutMs: config.mcp?.harnessTimeoutMs ?? 3600000 },
       sessions: { autoArchiveDays: config.sessions.autoArchiveDays, purgeArchivedDays: config.sessions.purgeArchivedDays ?? 30 },

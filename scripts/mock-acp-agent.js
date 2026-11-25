@@ -2,7 +2,8 @@
 // Fake ACP agent (Agent Client Protocol over ndjson stdio) for tests: `mock-acp-agent.js --acp [...]`.
 // Prompt directives: #perm (tool call that asks for permission, then writes out.txt via fs/write_text_file),
 // #mcp (a harness MCP tool behind GigaCode's ToolCall wrapper asking for permission), #late (the fixture's tool-call
-// stream), #read <path> (fs/read_text_file), #slow (streams ~4 s, honours session/cancel), #die (exits mid-turn),
+// stream), #read <path> (fs/read_text_file), #slow (streams ~4 s, honours session/cancel), #die (exits mid-turn), #diealways
+// (this and every later turn of the session exit mid-turn),
 // #maxtokens (ends with stopReason max_tokens), #hooktimeout (fails like GigaCode whose hooks never answer, unless the
 // run settings say disableAllHooks). Env MOCK_ACP_NEW_HOOKTIMEOUT=<file>: the first session/new fails that way once.
 // loadSession: true; sessions live in MOCK_AGENT_STATE_DIR (acp-<id>.json), a load replays the history.
@@ -59,6 +60,7 @@ async function prompt({ sessionId, prompt: parts }) {
   const st = JSON.parse(fs.readFileSync(stateFile(sessionId), 'utf8'));
   st.turns += 1;
   st.history.push(text);
+  if (/#diealways\b/.test(text.split('\n\n').at(-1))) st.dieAlways = true; // this and every later turn die mid-turn
   fs.writeFileSync(stateFile(sessionId), JSON.stringify(st));
   cancelled.delete(sessionId);
   update(sessionId, { sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'думаю' } });
@@ -66,7 +68,7 @@ async function prompt({ sessionId, prompt: parts }) {
   say(sessionId, `${loadedHere.has(sessionId) ? 'loaded, ' : ''}ACP mock, turn ${st.turns}.${on}`);
   update(sessionId, { sessionUpdate: 'plan', entries: [{ content: 'ответить', status: 'in_progress', priority: 'high' }] });
   // the message itself, not the harness's record of the chat before it (that one repeats old directives)
-  if (/#die\b/.test(text.split('\n\n').at(-1))) process.exit(3);
+  if (/#die\b/.test(text.split('\n\n').at(-1)) || st.dieAlways) process.exit(3);
   if (/#slow\b/.test(text)) {
     for (let i = 0; i < 20; i++) {
       if (cancelled.has(sessionId)) return { stopReason: 'cancelled' };
