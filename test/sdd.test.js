@@ -61,6 +61,8 @@ test('parser: ledger items, PASS verdict with models, FAIL verdict in bold/arrow
   assert.deepEqual([v2.n, v2.status, v2.filesChanged, v2.secondReviewModel], [2, 'FAIL', ['src/main/java/demo/limits/LimitService.java'], null]);
   assert.deepEqual(v2.commands, [{ cmd: 'mvn -q test -Dtest=LimitServiceTest', result: '1 failure (expected 3 queries, got 4)' }]);
   assert.equal(v2.openQuestions, 'нужен ли батч-запрос для архивных лимитов?');
+  assert.equal(parseVerdict('status: PASS\nfindings: ревьюер: подтверждено 2, отклонено 1\n').findings, 'ревьюер: подтверждено 2, отклонено 1');
+  assert.equal(v1.findings, null);
   const odd = parseVerdict('Вердикт: всё хорошо\nstatus: maybe\n');
   assert.deepEqual([odd.status, odd.filesChanged, odd.raw], [null, [], 'Вердикт: всё хорошо\nstatus: maybe\n']);
   assert.equal(p.requirements, null);

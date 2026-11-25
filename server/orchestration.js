@@ -562,9 +562,9 @@ export function createOrchestration({ config, store, bus, tasks, sessions, addWo
    * the role grade, else `fallback` — the session's own model, i.e. the orchestrator's.
    * `known` empty = no fresh catalogue: nothing is checked, grades resolve by their config.
    */
-  function pickModel(agent, { wanted = null, grade = null, fallback = null } = {}) {
+  function pickModel(agent, { wanted = null, grade = null, fallback = null, profileModel = null } = {}) {
     const cfg = config.agents[agent] || {};
-    return resolveSubagentModel({ agentCfg: cfg, wanted, grade, known: knownCache.get(agent) ?? new Set(), fallback });
+    return resolveSubagentModel({ agentCfg: cfg, wanted, grade, known: knownCache.get(agent) ?? new Set(), fallback, profileModel });
   }
   /** worker_run / worker_start talk to the server synchronously: the freshest catalogue a previous run already fetched. */
   const knownCache = new Map();
@@ -589,7 +589,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions, addWo
     await loadKnown(agent);
     // a caller's model wins; the profile's own model is a grade too (a reviewer profile says `model: review`), otherwise
     // the profile's role decides; a plain helper runs on the orchestrator's own model
-    const pick = pickModel(agent, { wanted: a.model ?? profile?.meta?.model ?? null, grade: profileRoleGrade(profile), fallback: caller.model || null });
+    const pick = pickModel(agent, { wanted: a.model ?? null, profileModel: profile?.meta?.model ?? null, grade: profileRoleGrade(profile), fallback: caller.model || null });
     const model = pick.model;
     // «Полный доступ» of the caller wins: its helpers never ask the person (a plan profile keeps its read-only run);
     // otherwise a mode of its own (argument, profile), else the caller's

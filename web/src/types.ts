@@ -72,7 +72,7 @@ export interface SddVerdict {
   n: number; file: string
   status: 'PASS' | 'FAIL' | 'ESCALATION_REQUIRED' | 'INDEPENDENT_VERIFICATION_REQUIRED' | null
   filesChanged?: string[]; commands?: { cmd: string; result: string }[]; openQuestions?: string | string[] | null
-  implementerModel?: string | null; reviewerModel?: string | null; secondReviewModel?: string | null; notes?: string | null; raw: string
+  implementerModel?: string | null; reviewerModel?: string | null; secondReviewModel?: string | null; findings?: string | null; notes?: string | null; raw: string
 }
 export interface SddPlan {
   name: string; dir: string; verdicts: SddVerdict[]

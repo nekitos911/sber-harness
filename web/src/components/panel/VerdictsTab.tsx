@@ -60,6 +60,7 @@ function VerdictCard({ v, cwd }: { v: SddVerdict; cwd: string }) {
       summary={<><span className="num muted">Шаг {v.n}</span><VerdictChip status={v.status} /></>}>
       <div className="verdict-body">
         {models && <p className="verdict-models mono">{models}</p>}
+        {v.findings && <p className="verdict-models">Находки ревью: {v.findings}</p>}
         {!!v.filesChanged?.length && (
           <div className="verdict-files">
             {v.filesChanged.map((f) => <button key={f} type="button" className="link-file mono" onClick={() => openTab({ kind: 'diff', cwd, path: f })} data-tip="Открыть diff">{f}</button>)}

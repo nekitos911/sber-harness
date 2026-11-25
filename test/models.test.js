@@ -66,6 +66,15 @@ test('sub-agent model by grade: role grade, an explicit grade or id, a gone mode
   // no discovery at all: nothing is called missing, grades resolve by their config
   assert.deepEqual(pick({ wanted: 'review', known: new Set() }), { model: 'GLM-5.3-Flash-262k', grade: 'review', note: null });
 
+  // the agent file's own `model:`: used while the catalogue has it; renamed away — the role grade and a note, not a dead id
+  assert.deepEqual(pick({ profileModel: 'glm-5.3-flash', grade: 'review' }), { model: 'GLM-5.3-Flash-262k', grade: null, note: null });
+  assert.deepEqual(pick({ profileModel: 'review' }), { model: 'GLM-5.3-Flash-262k', grade: 'review', note: null });
+  const renamed = pick({ profileModel: 'Old-Model-1', grade: 'review' });
+  assert.deepEqual([renamed.model, renamed.grade, renamed.note], ['GLM-5.3-Flash-262k', 'review', 'Модели «Old-Model-1» из файла агента нет в каталоге — запуск на GLM-5.3-Flash-262k']);
+  // the caller's explicit choice still wins over the file; no catalogue — the file's id is trusted
+  assert.equal(pick({ wanted: 'fast', profileModel: 'Old-Model-1' }).model, 'DeepSeek-V4.1-Flash-1017-262k');
+  assert.equal(pick({ profileModel: 'Old-Model-1', known: new Set() }).model, 'Old-Model-1');
+
   // profiles by role: reviewers review, searchers fast, a read-only explorer explore, file workers fast, a plain one no role
   assert.equal(profileGrade({ name: 'java-reviewer' }), 'review');
   assert.equal(profileGrade({ name: 'helper', description: 'Independent review of the diff' }), 'review');

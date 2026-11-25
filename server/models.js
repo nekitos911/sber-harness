@@ -93,8 +93,16 @@ export function profileGrade(meta = {}) {
  *     orchestrator's; then a grade that is there, else the CLI default — a sub-agent always starts.
  * Without a discovered catalogue (`known` empty) nothing is checked and grades resolve by their config alone.
  */
-export function resolveSubagentModel({ agentCfg = {}, wanted = null, grade = null, known = new Set(), fallback = null }) {
+export function resolveSubagentModel({ agentCfg = {}, wanted = null, grade = null, known = new Set(), fallback = null, profileModel = null }) {
   const grades = agentCfg.settings?.agents?.modelGrades || {};
+  // the agent file's own `model:` (a grade or an id) when the caller named none; an id the fresh catalogue no longer
+  // lists would kill the CLI — then the role grade / the caller's model, with a note: renamed models need no file edits
+  const own = String(profileModel ?? '').trim();
+  if (!String(wanted ?? '').trim() && own && own.toLowerCase() !== 'inherit') {
+    if (Object.hasOwn(grades, own) || !known.size || catalogueHit(known, own)) return resolveSubagentModel({ agentCfg, wanted: own, grade, known, fallback });
+    const r = resolveSubagentModel({ agentCfg, grade, known, fallback });
+    return { ...r, note: `Модели «${own}» из файла агента нет в каталоге — ${r.model ? `запуск на ${r.model}` : 'запуск с моделью по умолчанию'}` };
+  }
   const model = (g) => catalogueHit(known, grades[g] ?? null);
   const name = String(wanted ?? '').trim();
   // «inherit» is not a model id but «take mine»: GigaCode kills the process on a foreign id ("not present in the current

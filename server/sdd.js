@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const VERDICTS = ['PASS', 'FAIL', 'ESCALATION_REQUIRED', 'INDEPENDENT_VERIFICATION_REQUIRED'];
-const KEYS = ['status', 'files_changed', 'commands', 'open_questions', 'implementer_model', 'reviewer_model', 'second_review_model', 'notes'];
+const KEYS = ['status', 'files_changed', 'commands', 'open_questions', 'implementer_model', 'reviewer_model', 'second_review_model', 'findings', 'notes'];
 
 /** Only explicit markers count: a checkbox, ✅/❌/⏳, or `status: DONE|PASS|FAIL|…`; a word in the text is no status. */
 function itemStatus(line) {
@@ -66,6 +66,7 @@ export function parseVerdict(raw) {
     implementerModel: text(fields.implementer_model),
     reviewerModel: text(fields.reviewer_model),
     secondReviewModel: text(fields.second_review_model),
+    findings: text(fields.findings), // «ревьюер: подтверждено N, отклонено M; …» — which reviewer finds real defects
     notes: text(fields.notes),
     raw,
   };
