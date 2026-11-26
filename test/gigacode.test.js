@@ -301,7 +301,8 @@ test('agent info: identity found + its source shim, never the value; effectiveAp
 
 test('mcpExclude goes into the run settings under the configured key only', () => {
   const harnessMcp = { command: 'node', args: [], env: {} };
-  const settings = (agentCfg) => sessionSettings({ agentCfg: { settings: {}, ...agentCfg }, harnessMcp, agentMcpServers: {} });
+  const noUserFile = path.join(os.tmpdir(), 'нет-такого-settings.json');
+  const settings = (agentCfg) => sessionSettings({ agentCfg: { settings: {}, userSettingsPath: noUserFile, ...agentCfg }, harnessMcp, agentMcpServers: {} });
   // the key GigaCode really reads (seen on the target 2026-11-25): a top-level excludeMCPServers was ignored
   const defaults = settings({ mcpExclude: ['java-lsp', 'harness'] });
   assert.deepEqual([defaults.excludeMCPServers, defaults.mcp], [undefined, { excluded: ['java-lsp'] }], 'never the harness server');
@@ -312,7 +313,12 @@ test('mcpExclude goes into the run settings under the configured key only', () =
   assert.deepEqual([custom.mcp, custom.tools], [undefined, { excluded: ['java-lsp'] }]);
   assert.equal(settings({}).mcp, undefined);
   // the user's own mcp block in agents.<id>.settings stays, the list joins it
-  assert.deepEqual(sessionSettings({ agentCfg: { settings: { mcp: { allowed: ['a'] } }, mcpExclude: ['b'] }, harnessMcp, agentMcpServers: {} }).mcp, { allowed: ['a'], excluded: ['b'] });
+  assert.deepEqual(sessionSettings({ agentCfg: { settings: { mcp: { allowed: ['a'] } }, mcpExclude: ['b'], userSettingsPath: noUserFile }, harnessMcp, agentMcpServers: {} }).mcp, { allowed: ['a'], excluded: ['b'] });
+  // the run file's list REPLACES the person's mcp.excluded: what they switched off globally stays off in harness runs
+  const userFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'user-settings-')), 'settings.json');
+  fs.writeFileSync(userFile, JSON.stringify({ mcp: { excluded: ['java-lsp', 'harness'] }, excludeMCPServers: ['old'] }));
+  assert.deepEqual(settings({ mcpExclude: ['sbertrack'], userSettingsPath: userFile }).mcp, { excluded: ['sbertrack', 'java-lsp', 'old'] });
+  assert.equal(settings({ userSettingsPath: userFile }).mcp, undefined, 'nothing of its own: the user file applies as it is');
 });
 
 test('--model goes without the /models context suffix (GigaCode rejects «X-262k» at start), headless and ACP', () => {

@@ -44,6 +44,7 @@ npm run typecheck    # UI types
 | Протокол оркестрации для агентов | `skills/harness-orchestration/SKILL.md` |
 | Моки для GigaCode и MCP | `scripts/mock-agent.js`, `scripts/mock-mcp.js` |
 | Ручной вызов MCP-сервера (инструменты, сырые ответы) | `node scripts/mcp-call.js <server> --list` / `<tool> '<json>'` |
+| Проверка запуска GigaCode в ACP без харнеса (время initialize / session/new / хода) | `node scripts/acp-probe.js [--cwd <dir>] [--settings data/runs/<id>/settings.json] [--prompt "…"]` |
 | Факты о GigaCode/onework/sourcecontrol на целевой машине | `docs/GIGACODE-FACTS.md`, фикстуры `test/fixtures/` |
 
 ## Правила

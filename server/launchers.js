@@ -228,6 +228,16 @@ function userMcpServers(file = USER_SETTINGS) {
   }
 }
 
+/** The person's own mcp.excluded (and the legacy top-level excludeMCPServers the CLI migrates into it). */
+function userMcpExcluded(file = USER_SETTINGS) {
+  try {
+    const s = JSON.parse(fs.readFileSync(file, 'utf8').replace(/^﻿/, ''));
+    return [...(s.mcp?.excluded || []), ...(s.excludeMCPServers || [])].filter((x) => typeof x === 'string');
+  } catch {
+    return [];
+  }
+}
+
 /** Per-session settings.json for the Gemini-CLI family. Never contains the CLI's `permissions` block. */
 /**
  * agents.<id>.mcpExclude under agents.<id>.mcpExcludeKey (default "mcp.excluded": on the target, 2026-11-25, GigaCode
@@ -236,10 +246,13 @@ function userMcpServers(file = USER_SETTINGS) {
  * file still starts without it.
  */
 function mcpExclusion(agentCfg, rest) {
-  const list = (agentCfg.mcpExclude || []).filter((x) => x !== 'harness');
-  if (!list.length) return {};
+  const own = (agentCfg.mcpExclude || []).filter((x) => x !== 'harness');
+  if (!own.length) return {};
   // an old config's explicit "excludeMCPServers" is the key GigaCode ignores: it keeps meaning «exclude», under mcp.excluded
   const key = !agentCfg.mcpExcludeKey || agentCfg.mcpExcludeKey === 'excludeMCPServers' ? 'mcp.excluded' : agentCfg.mcpExcludeKey;
+  // the run file's list replaces the user's mcp.excluded instead of adding to it: a server the person switched off in
+  // ~/.gigacode/settings.json (java-lsp, 120 s to start) came back in every harness run and held session/new for 120 s
+  const list = key === 'mcp.excluded' ? [...new Set([...own, ...userMcpExcluded(agentCfg.userSettingsPath)])].filter((x) => x !== 'harness') : own;
   const [head, ...tail] = key.split('.');
   if (!tail.length) return { [head]: list };
   const obj = { ...(rest[head] || {}) };
