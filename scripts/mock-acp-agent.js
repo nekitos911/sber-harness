@@ -80,6 +80,13 @@ async function prompt({ sessionId, prompt: parts }) {
       await sleep(200);
     }
   }
+  // #selfturn: like GigaCode after a background task ends — a turn of its own, after this prompt is answered
+  if (/#selfturn\b/.test(text.split('\n\n').at(-1))) {
+    setTimeout(() => {
+      say(sessionId, 'Фоновая задача закончилась, продолжаю сам.');
+      update(sessionId, { sessionUpdate: 'tool_call', toolCallId: 'self_t1', title: 'read_file', kind: 'read', status: 'completed', rawInput: { path: 'x.txt' }, _meta: { toolName: 'read_file' } });
+    }, 400);
+  }
   const read = text.match(/#read\s+(\S+)/);
   if (read) {
     try {

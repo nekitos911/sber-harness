@@ -227,6 +227,8 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
   store.keepLoaded = (sid) => !!rt.get(sid)?.running; // a streaming turn keeps its transcript in memory
   // agents.<id>.transport "acp": long-lived agent processes; session.warm = its process is loaded
   const acp = createAcp({
+    onIdleEvents: (sid, evs) => selfTurn(sid, evs),
+    idleFullAccess: (sid) => { const s = find(sid); return !!s && [...FULL_ACCESS_MODES].includes(s.approvalMode || config.agents[s.agent]?.approvalMode); },
     onWarm(sid, warm) {
       if (warm && rt.has(sid) && !find(sid)?.warm) rt.get(sid).procAt = Date.now(); // a new process: its MCP servers start anew
       const s = find(sid);
@@ -1052,6 +1054,76 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     addMessage(s, { kind: 'system', text: `Фоновый субагент ${liveBackgrounds(s.id).map((v) => `«${v.title}»`).join(', ')} продолжает работу в прежнем процессе агента; новое сообщение идёт сразу, его ответ придёт агенту сообщением.` });
   }
 
+  /**
+   * A turn the agent takes by itself (ACP: GigaCode wakes it when its background sub-agent or command ends): shown in the
+   * chat like any turn — its text, tools, sub-agents — while it runs; a message from the person waits for its end (it is
+   * the running turn). It ends after SELF_IDLE_MS without output.
+   */
+  const SELF_IDLE_MS = 20000;
+  function selfTurn(sid, evs) {
+    const s = find(sid);
+    if (!s || !evs.length) return;
+    const r = runtime(sid);
+    if (r.running && !r.selfTurn) return; // a turn of ours is running: its own handler takes the output
+    if (!r.selfTurn) {
+      Object.assign(r, { selfTurn: true, running: true, closedEarly: false, lastSelfAt: Date.now() });
+      r.cur = { assistant: null, thought: null, raw: null, tools: new Map(), subTools: new Map(), gotText: false };
+      addMessage(s, { kind: 'system', text: 'Агент продолжил сам: GigaCode разбудил его, когда закончилась его фоновая задача.' });
+      Object.assign(s, { status: 'running', phase: 'streaming' });
+      emit(s);
+    }
+    r.lastSelfAt = Date.now();
+    for (const ev of evs) applyEvent(s, ev);
+    clearTimeout(r.selfTimer);
+    r.selfTimer = setTimeout(() => endSelfTurn(sid), SELF_IDLE_MS);
+    r.selfTimer.unref?.();
+  }
+  function endSelfTurn(sid) {
+    const s = find(sid);
+    const r = runtime(sid);
+    if (!r.selfTurn) return;
+    clearTimeout(r.selfTimer);
+    Object.assign(r, { selfTurn: false, running: false, selfTimer: null });
+    if (!s) return;
+    settleVirtuals(s);
+    Object.assign(s, { status: s.status === 'stopped' ? 'stopped' : 'idle', phase: null, finishedAt: Date.now(), lastActivityAt: Date.now() });
+    emit(s);
+    store.flush();
+    flushWakes(s);
+    armWaitNudge(s);
+    if (s.queue?.length && s.status !== 'stopped') startTurn(s);
+  }
+
+  /**
+   * The safety net under everything that works outside the harness's sight (a background command, a built-in sub-agent
+   * the CLI did not report): a turn that ended «жду …» with nothing of its own at work in the harness gets a nudge after
+   * chat.waitNudgeMin (default 10; 0 = off), at most WAIT_NUDGES times in a row — an agent never sits forever on a promise.
+   */
+  const WAIT_RE = /(жду|подожду|ожидаю|дождусь|ждём|ждем|в фоне|придёт|придет|по готовности|когда закончит|waiting for|will wait)/i;
+  const WAIT_NUDGES = 3;
+  function armWaitNudge(s) {
+    const r = runtime(s.id);
+    clearTimeout(r.waitNudge);
+    r.waitNudge = null;
+    const min = config.chat?.waitNudgeMin ?? 10;
+    if (!(min > 0) || s.virtual || s.kind !== 'chat') return;
+    const last = store.messages(s.id).findLast((m) => m.kind === 'assistant');
+    if (!last || !WAIT_RE.test(last.text.slice(-600))) { r.waitNudges = 0; return; }
+    if ((r.waitNudges || 0) >= WAIT_NUDGES) return;
+    const at = s.lastActivityAt;
+    r.waitNudge = setTimeout(() => {
+      r.waitNudge = null;
+      const x = find(s.id);
+      if (!x || x.archived || x.status === 'stopped' || runtime(s.id).running || x.queue?.length || x.waitingFor) return;
+      if (x.lastActivityAt !== at) return; // something happened since: not the same wait
+      // its own harness work (sub-agents, workers) still running: that wait is real, the harness wakes it itself
+      if (db.sessions.some((k) => k.parentId === s.id && !k.archived && k.status === 'running')) return;
+      r.waitNudges = (r.waitNudges || 0) + 1;
+      api.deliver(s.id, { from: 'harness', text: `[harness] Ты закончил ход тем, что ждёшь (${min} мин назад), но у тебя в харнессе сейчас ничего не работает. Если ждёшь фоновую команду — прочитай её status-файл (running / completed / failed) и вывод; встроенного субагента GigaCode — проверь list_agents. Готово — продолжай задачу; ещё работает — коротко скажи, что ждёшь и сколько. Нужен человек — спроси через mcp__harness__ask.` });
+    }, min * 60000);
+    r.waitNudge.unref?.();
+  }
+
   /** The last background sub-agent of a lingering process settled: the messages that waited for it start their turn. */
   function releaseHeld(s) {
     const r = runtime(s.id);
@@ -1067,6 +1139,18 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
    */
   function wakeParent(s, v, output, isError) {
     v.wakeParent = { output, isError };
+    // ACP: the same process gets GigaCode's own «done» and the agent goes on by itself (selfTurn); the harness's message
+    // comes only if that did not happen within a while — not a second turn about the same answer
+    if ((config.agents[s.agent]?.transport || 'headless') === 'acp' && acp.warm(s.id) && !v.wakeWaited) {
+      v.wakeWaited = true;
+      const at = Date.now();
+      const t = setTimeout(() => {
+        if ((runtime(s.id).lastSelfAt || 0) >= at) { v.wakeParent = null; return; }
+        wakeParent(s, v, output, isError);
+      }, 30000);
+      t.unref?.();
+      return;
+    }
     const parent = find(s.id);
     const r = runtime(s.id);
     // still in its turn: the turn's end delivers it (closeAtResult / finishTurn); a turn closed at its result is over
@@ -1189,6 +1273,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     mcpCheck(s, r);
     emit(s);
     flushWakes(s); // background sub-agents that finished during this turn
+    armWaitNudge(s);
     runTurnEnded(s, r, false);
     store.flush();
     armLinger(s);
@@ -1837,6 +1922,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     r.unadopted = false;
     if (!find(s.id)) return; // deleted while running
     flushWakes(s); // background sub-agents that finished during this turn
+    setTimeout(() => { const x = find(s.id); if (x && !runtime(s.id).running) armWaitNudge(x); }, 0);
     pollRegistry(s);
     let status = r.flags.reported && (s.status === 'done' || s.status === 'failed') ? s.status : 'idle';
     if (stopped) {
@@ -2579,6 +2665,7 @@ ${note.trim()}` : text });
         endBackgrounds(s, 'Остановлено пользователем', 'stopped');
         if (r.closedEarly) r.handle?.terminate?.('post_result_linger');
       }
+      if (r.selfTurn) { acp.cancelIdle(sid); endSelfTurn(sid); } // a turn it took by itself: cancelled too
       for (const h of r.bgHosts || []) h.terminate?.('post_result_linger'); // the processes kept for them go too
       if (r.running && r.closedEarly) {
         r.handle?.terminate?.('post_result_linger');

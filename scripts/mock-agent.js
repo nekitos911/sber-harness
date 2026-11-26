@@ -324,6 +324,8 @@ if (ownWork) await sleep(Number(ownWork[1]));
 // GigaCode reports usage per model step on its assistant events (input includes the cached part)
 if (has(/#usage\b/)) emit({ type: 'assistant', message: { role: 'assistant', content: [], usage: { input_tokens: 120000, output_tokens: 500, cache_read_input_tokens: 100000, total_tokens: 120500 } } });
 if (has(/#raw\b/)) process.stdout.write('plain line 1\nplain line 2\n');
+// #say <text>: that text as the answer (e.g. «тесты идут в фоне, жду результат»)
+{ const m = prompt.match(/#say (.+)$/m); if (m) await say(` ${m[1].trim()}`); }
 if (has(/#slow\b/)) await say('slow '.repeat(20), 250);
 
 async function runSubagent(profile, spec, extra = {}) {

@@ -276,7 +276,7 @@ export function autoApprove({ toolCall, options } = {}) {
  * An idle process (no prompt, no held permission) is unloaded after `idleMs` and reloaded with session/load on the next
  * message.
  */
-export function createAcp({ onWarm = () => {} } = {}) {
+export function createAcp({ onWarm = () => {}, onIdleEvents = () => {}, idleFullAccess = () => false } = {}) {
   const conns = new Map(); // sid -> connection state
   const idleTimers = new Map(); // sid -> timer
 
@@ -369,13 +369,23 @@ export function createAcp({ onWarm = () => {} } = {}) {
           if (params.update?.sessionUpdate === 'agent_message_chunk' && params.update.content?.type === 'text') helper.text += params.update.content.text;
           return;
         }
-        if (!c.turn) return;
+        if (!c.turn) {
+          // the agent works between our prompts: GigaCode wakes it by itself when its background sub-agent or command
+          // finishes («you will be notified»). Dropped, that work was invisible (a second reviewer started there never
+          // showed); it goes to the chat as a turn of its own
+          if (c.sessionId && params.sessionId === c.sessionId) onIdleEvents(o.sid, acpEvents(params.update));
+          return;
+        }
         if (c.turn.usage) c.turn.usage.push(...usageFrom(params.update));
         for (const ev of acpEvents(params.update)) c.turn.emit(ev);
       },
       async onRequest(method, params) {
         if (method === 'session/request_permission') {
-          if (!c.turn) return { outcome: { outcome: 'cancelled' } };
+          if (!c.turn) {
+            // its own turn (woken by the CLI): «Полный доступ» answers as in any turn; otherwise nobody can answer it now
+            const yes = idleFullAccess(o.sid) && autoApprove({ ...params, toolCall: { ...params.toolCall, fullAccess: true } });
+            return yes ? { outcome: { outcome: 'selected', optionId: yes.optionId } } : { outcome: { outcome: 'cancelled' } };
+          }
           const call = acpToolCall(params.toolCall);
           // the card's own title: the person decides on «Запись out.txt», while the event line keeps the tool's name
           const labelled = acpToolCall(params.toolCall, { label: true });
@@ -590,6 +600,13 @@ export function createAcp({ onWarm = () => {} } = {}) {
       if (!resolve) return false;
       c.held.delete(permissionId);
       resolve({ outcome: { outcome: 'selected', optionId } });
+      return true;
+    },
+    /** Stop a turn the agent took by itself (no prompt of ours is running): session/cancel on its session. */
+    cancelIdle(sid) {
+      const c = conns.get(sid);
+      if (!c || c.dead || c.turn || !c.sessionId) return false;
+      c.rpc.notify('session/cancel', { sessionId: c.sessionId });
       return true;
     },
     pid: (sid) => conns.get(sid)?.child.pid ?? null,

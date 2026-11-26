@@ -421,6 +421,13 @@ test('a CLI that refuses --experimental-acp («Unknown argument») is started on
   assert.equal(argv.at(-1)[0], '--acp');
 });
 
+test('a turn the agent takes by itself (GigaCode woke it after a background task) shows in the chat', async () => {
+  const chat = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'acpmock', cwd, prompt: 'сделай #selfturn' })).body;
+  await waitFor(async () => (await messages(chat.id)).some((m) => m.kind === 'system' && /Агент продолжил сам/.test(m.text)), { timeout: 20000, what: 'the self turn' });
+  await waitFor(async () => (await messages(chat.id)).some((m) => m.kind === 'assistant' && /продолжаю сам/.test(m.text)), { what: 'its text' });
+  assert.ok((await messages(chat.id)).some((m) => m.kind === 'tool' && m.tool?.id === 'self_t1'), 'its tool step too');
+});
+
 test('GigaCode asking for Desktop credentials (session/requestCredentialsRefresh): said at once, no 120 s wait, no retries', async () => {
   const started = Date.now();
   const s = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'acpmanaged', cwd, prompt: 'привет' })).body;
