@@ -376,7 +376,8 @@ svg.step-icon.spinner { color: var(--lamp-run); }
 .perm-from { margin-right: 4px; color: var(--ink-2); font-weight: 600; }
 .warn-count { margin-left: 4px; color: var(--ink-3); }
 .mcp-chip[data-bad] { color: var(--lamp-fail); }
-.mcp-pop { padding: 8px 10px; min-width: 220px; }
+.popover.mcp-pop { padding: 10px 12px; min-width: 220px; max-width: 300px; }
+.popover.mcp-pop > .field-hint { margin: 0 0 8px; }
 .mcp-pop-list { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; font-size: 12.5px; }
 .mcp-pop-list li { display: flex; align-items: center; gap: 6px; }
 .mcp-pop-list svg { width: 13px; height: 13px; color: var(--lamp-done); flex-shrink: 0; }

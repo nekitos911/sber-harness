@@ -539,11 +539,16 @@ function ChatHeader({ session, cliLive, onLog, onReset, onReconnect, onDelete }:
   )
 }
 
-/** «MCP 4/5»: the CLI's MCP servers from the latest status line; the list with ✗ reasons on click. */
+/**
+ * «MCP 4/5»: the MCP servers the agent of this chat has (as its CLI reported them at the turn's start), the list on click.
+ * A built-in sub-agent of GigaCode runs in its parent's process: its chat shows the parent's servers.
+ */
 function McpChip({ sessionId }: { sessionId: string }) {
-  const status = useStore((s) => s.sessions.find((x) => x.id === sessionId)?.mcpStatus)
+  const parentId = useStore((s) => { const x = s.sessions.find((y) => y.id === sessionId); return x?.virtual ? x.parentId ?? null : null })
+  const ownId = parentId ?? sessionId
+  const status = useStore((s) => s.sessions.find((x) => x.id === ownId)?.mcpStatus)
   const line = useStore((s) => {
-    const list = s.messages[sessionId] ?? []
+    const list = s.messages[ownId] ?? []
     for (let i = list.length - 1; i >= 0; i--) if (list[i].kind === 'system' && isMcpStatus(list[i].text)) return list[i].text
     return null
   })
@@ -552,14 +557,16 @@ function McpChip({ sessionId }: { sessionId: string }) {
   // session.mcpStatus from newer servers; older ones only wrote the «MCP: …» line into the chat
   const servers = status?.map((m) => ({ name: m.name, ok: /^connected$/i.test(m.status), reason: m.status })) ?? (line ? mcpServers(line) : [])
   const ok = servers.filter((x) => x.ok).length
-  if (!servers.length || ok === servers.length) return null // all running: nothing to say (the status bar has the list)
+  if (!servers.length) return null // the CLI has not said yet (before the first turn)
+  const whose = parentId ? 'MCP-серверы процесса родительского чата: встроенный субагент работает в нём' : 'MCP-серверы этого агента'
   return (
     <>
       <button ref={anchor} type="button" className="btn btn-sm mcp-chip" data-bad={ok < servers.length || undefined} aria-expanded={open} onClick={() => setOpen(!open)}
-        data-tip={ok < servers.length ? 'Не все MCP-серверы запустились' : 'MCP-серверы запущены'}>
+        data-tip={ok < servers.length ? `Не все MCP-серверы запустились. ${whose}` : whose}>
         MCP {ok}/{servers.length}
       </button>
       <Popover anchor={anchor} open={open} onClose={() => setOpen(false)} placement="bottom-end" label="MCP-серверы" className="mcp-pop">
+        <p className="field-hint">{parentId ? 'Как у родительского чата: встроенный субагент работает в его процессе.' : 'Как их сообщил CLI в начале последнего хода.'}</p>
         <ul className="mcp-pop-list">
           {servers.map((x) => (
             <li key={x.name} data-bad={!x.ok || undefined}>
