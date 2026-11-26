@@ -29,19 +29,23 @@ export function networkReason(e) {
 
 /**
  * The machine's own trust, for a root that is not in Node's bundle: `mcpCa` / `mcpCaFile` (PEM text or a file, one per
- * server or for all) and `rejectUnauthorized` on a server definition (the explicit opt-out). Returns undefined when nothing
- * is configured: plain fetch follows Node's own bundle, which is what a Windows-store root needs — passing an explicit `ca`
- * array REPLACES that bundle in undici, so hosts that verify fine without one fail with UNABLE_TO_VERIFY_LEAF_SIGNATURE.
- * A configured root therefore comes with the store as well: SberCA Root Ext is not in Node's bundle, and a bank host
- * verified through it fails once the added root replaces the store.
+ * server or for all) and `rejectUnauthorized` on a server definition (the explicit opt-out). The OS store is trusted by
+ * default when it has roots Node's bundle lacks (a corporate root installed by policy — SberCA Root Ext): no PEM file to
+ * configure. Returns undefined only when nothing adds to the bundle: plain fetch follows it — passing an explicit `ca`
+ * array REPLACES that bundle in undici, so the bundle always comes along with whatever is added.
  */
-export function tlsDispatcher(cfg = {}, config = {}) {
+export function tlsDispatcher(cfg = {}, config = {}, { store = systemRootCertificates() } = {}) {
   const files = [config.mcpCaFile, cfg.caFile].filter(Boolean).map((f) => path.resolve(config.root || process.cwd(), expandHome(f)));
   const pems = [config.mcpCa, cfg.ca].flat().filter((p) => typeof p === 'string' && p.trim());
   const rejectUnauthorized = cfg.rejectUnauthorized !== false;
-  if (rejectUnauthorized && !files.length && !pems.length) return undefined;
-  // an explicit ca list replaces the store: the store and the bundle are only added to reach a host next to a bank root
-  const ca = [...new Set([...systemRootCertificates(), ...tlsRootCertificates()])];
+  const bundle = tlsRootCertificates();
+  // the OS store trusts more than Node's bundle (a corporate root installed by policy, like a bank's): trust it by
+  // default, as a browser does — no PEM file to hand out to every new user
+  const own = new Set(bundle);
+  const wider = store.some((c) => !own.has(c));
+  if (rejectUnauthorized && !files.length && !pems.length && !wider) return undefined;
+  // an explicit ca list replaces undici's trust: the bundle always comes along with the store
+  const ca = [...new Set([...store, ...bundle])];
   for (const f of files) {
     const pem = fs.readFileSync(f, 'utf8').replace(/^\uFEFF/, '');
     if (!pem.includes('-----BEGIN CERTIFICATE-----')) fail(500, `MCP TLS: в ${f} нет PEM-сертификата`);

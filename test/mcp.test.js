@@ -58,13 +58,18 @@ test('toolResultValue prefers structuredContent, then JSON text, then text', () 
   assert.equal(toolResultValue({ content: [{ type: 'text', text: 'plain' }] }), 'plain');
 });
 
-test('https server without configured roots keeps undici\'s own trust', async () => {
-  // an explicit ca array replaces Node's bundle in undici: no dispatcher is what a host verified by Node itself needs
-  assert.equal(tlsDispatcher({}, {}), undefined);
-  assert.equal(tlsDispatcher({ rejectUnauthorized: true }, { mcpCa: [] }), undefined);
-  const optOut = tlsDispatcher({ rejectUnauthorized: false }, {});
+test('https server without configured roots: undici\'s own trust, or the OS store when it trusts more', async () => {
+  // an explicit ca array replaces Node's bundle in undici: no dispatcher while the OS store adds nothing to it
+  const sameAsBundle = { store: [tls.rootCertificates[0]] };
+  assert.equal(tlsDispatcher({}, {}, sameAsBundle), undefined);
+  assert.equal(tlsDispatcher({ rejectUnauthorized: true }, { mcpCa: [] }, { store: [] }), undefined);
+  const optOut = tlsDispatcher({ rejectUnauthorized: false }, {}, { store: [] });
   assert.ok(optOut instanceof Agent, 'the opt-out needs a dispatcher');
   await optOut.close();
+  // a corporate root installed into the OS store (a bank's): trusted with no PEM file configured
+  const corporate = tlsDispatcher({}, {}, { store: [tls.rootCertificates[0], `${tls.rootCertificates[5]}\n`] });
+  assert.ok(corporate instanceof Agent, 'a root only the OS store has needs a dispatcher');
+  await corporate.close();
 });
 
 test('a configured root comes with the OS store and Node\'s bundle, never alone', async () => {
