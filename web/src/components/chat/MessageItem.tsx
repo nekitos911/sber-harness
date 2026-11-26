@@ -96,7 +96,10 @@ function UserMessage({ m }: { m: Message }) {
   const sender = useStore((s) => (m.from && m.from !== 'user' ? s.sessions.find((x) => x.id === m.from) : undefined))
   const fromOther = m.from && m.from !== 'user'
   const cwd = useStore((s) => s.sessions.find((x) => x.id === m.sessionId)?.cwd ?? '')
-  const { text, paths } = splitAttachments(m.text)
+  const { text: raw, paths } = splitAttachments(m.text)
+  // the «[harness]» tag is for the agent (its rules look for it); the person sees «от харнесса» above instead
+  const fromHarness = m.from === 'harness'
+  const text = fromHarness ? raw.replace(/^\s*\[harness\]\s*/, '').replace(/(\r?\n)\s*\[harness\]\s*/g, '$1') : raw
   return (
     <div className="msg msg-user" data-tip={fullTime(m.at)}>
       {fromOther && (
@@ -104,7 +107,7 @@ function UserMessage({ m }: { m: Message }) {
           от{' '}
           {sender
             ? <button type="button" className="chip" onClick={() => openSession(sender.id)}>{sender.title}</button>
-            : <span className="chip chip-mono">{m.from}</span>}
+            : fromHarness ? <span className="chip">харнесса</span> : <span className="chip chip-mono">{m.from}</span>}
         </div>
       )}
       {paths.length > 0 && (

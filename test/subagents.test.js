@@ -243,6 +243,19 @@ test('read-only sub-agents get a read-only allow-list; the harness marks its non
   assert.deepEqual(['worker_done', 'ask', 'send_message', 'worker_inspect', 'agent', 'worker_start'].map(hint), [true, true, true, true, false, false]);
 });
 
+test('an expanded slash command (/full-task) carries the harness rules: the «[harness]» block with the sub-agent rule', async () => {
+  fs.mkdirSync(commandsDir, { recursive: true });
+  fs.writeFileSync(path.join(commandsDir, 'probe-task.md'), ['---', 'description: probe', '---', 'Выполни задачу: {{args}}', ''].join('\n'));
+  const before = fs.existsSync(argvFile) ? fs.readFileSync(argvFile, 'utf8').length : 0;
+  const c = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', cwd: root, prompt: '/probe-task PROJ-1' })).body;
+  await waitFor(async () => (await state()).sessions.find((s) => s.id === c.id)?.status !== 'running' && fs.existsSync(argvFile) && fs.readFileSync(argvFile, 'utf8').length > before, { what: 'the turn' });
+  const sent = fs.readFileSync(argvFile, 'utf8').slice(before).trim().split('\n').map((l) => JSON.parse(l)).find((r) => (r.env?.HARNESS_SESSION_ID ?? r.sessionId) === c.id || r.argv?.some((a) => /PROJ-1/.test(a)));
+  const prompt = sent.argv[sent.argv.indexOf('-p') + 1];
+  assert.match(prompt, /^\[harness\] Ты работаешь внутри harness/, 'the harness block first, as before any first message');
+  assert.ok(prompt.endsWith('Выполни задачу: PROJ-1'), 'then the command text');
+  fs.rmSync(path.join(commandsDir, 'probe-task.md')); // the person's own commands are listed by another test
+});
+
 test('a built-in sub-agent started with run_in_background: its chat stays past the turn and settles on the result in its output file', async () => {
   const caller = await chat('#subagentbg');
   const kid = async () => (await state()).sessions.find((s) => s.parentId === caller.id);

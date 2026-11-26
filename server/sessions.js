@@ -1409,7 +1409,10 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
       // to skip, no same-named skill in its place.
       let cmd = agentCfg.expandCommands !== false ? launcher.expandCommand?.(prompt, { cwd: s.cwd, agentCfg }) ?? null : null;
       if (cmd) {
-        prompt = cmd.text;
+        // the harness's rules go with it, after the command's own text: an expanded /full-task got none, so the agent
+        // never saw the «[harness]» block and took the console's road (built-in sub-agents in the background)
+        const pre = !s.externalSessionId ? hooks.preamble(s) : '';
+        prompt = pre ? `${pre}\n\n${cmd.text}` : cmd.text; // before it, as before any first message
         // the person's message stays as typed; the text the agent got is under it (folded in the chat)
         const said = userMsgs.find((m) => m.text.trimStart().startsWith(`/${cmd.name}`)) || store.messages(s.id).findLast((m) => m.kind === 'user' && m.text.trimStart().startsWith(`/${cmd.name}`));
         if (said) updateMessage(s, Object.assign(said, { command: { name: cmd.name, file: cmd.file, text: cmd.text } }));
