@@ -5,6 +5,7 @@
 //   --settings   the file the harness wrote for a chat (data/runs/<id>/settings.json): passed as GIGACODE_SYSTEM_SETTINGS_PATH
 //   --command    the CLI to run (default: gigacode from PATH, the bundled node + lib/cli-entry.js when it is a .cmd shim)
 //   --grep <s>   instead of a run: print where <s> appears in the CLI's own lib/*.js (±400 characters), e.g. a method name
+//   --no-auth    do not answer session/requestCredentialsRefresh with `authenticate` (to see the hang as it is)
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -74,6 +75,8 @@ const child = spawn(cmd, [...pre, '--acp'], { cwd, env, stdio: ['pipe', 'pipe', 
 
 let buf = '';
 let seq = 0;
+let authMethods = [];
+let authTried = false;
 const pending = new Map();
 child.stdout.setEncoding('utf8');
 child.stdout.on('data', (chunk) => {
@@ -96,7 +99,15 @@ child.stdout.on('data', (chunk) => {
       const u = msg.params?.update;
       if (u?.sessionUpdate === 'agent_message_chunk') process.stdout.write(u.content?.text ?? '');
       else log(`update: ${u?.sessionUpdate}`);
-    } else if (msg.method) log(`уведомление: ${msg.method} ${mask(msg.params).slice(0, 1500)}`);
+    } else if (msg.method) {
+      log(`уведомление: ${msg.method} ${mask(msg.params).slice(0, 1500)}`);
+      // GigaCode 26.11.141 asks for a credentials refresh after session/new and waits: the ACP way is `authenticate`
+      if (msg.method === 'session/requestCredentialsRefresh' && !authTried && !process.argv.includes('--no-auth')) {
+        authTried = true;
+        const methodId = authMethods[0]?.id ?? 'gigacode';
+        request('authenticate', { methodId }).then((r) => log(`authenticate → ${mask(r ?? null).slice(0, 1500)}`), (e) => log(`authenticate не удался: ${e.message}`));
+      }
+    }
   }
 });
 child.stderr.setEncoding('utf8');
@@ -121,6 +132,7 @@ function request(method, params) {
 try {
   const init = await request('initialize', { protocolVersion: 1, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false } });
   log(`initialize → ${mask(init).slice(0, 3000)}`);
+  authMethods = Array.isArray(init?.authMethods) ? init.authMethods : [];
   const { sessionId } = await request('session/new', { cwd, mcpServers: [] });
   log(`сессия: ${sessionId}`);
   if (prompt) {
