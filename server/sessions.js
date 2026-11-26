@@ -507,20 +507,34 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
 
   /** Level 1: a built-in sub-agent call (agent/fork tool) becomes a read-only chat nested under its parent. */
   /** Title, model and first message of a sub-agent chat, from the agent/fork call's input. */
-  function virtualInfo(name, raw) {
+  function virtualInfo(name, raw, agent) {
     const input = raw && typeof raw === 'object' ? raw : {};
     const kind = input.subagent_type || (name.toLowerCase() === 'fork' ? 'fork' : 'agent');
     return {
       title: subagentTitle(kind, input.description || input.prompt),
-      model: typeof input.model === 'string' ? input.model : null,
+      // the call names no model: the agent file's own `model:` is what the CLI runs it with (the card shows it)
+      model: typeof input.model === 'string' ? input.model : profileModel(agent, input.subagent_type),
       prompt: typeof input.prompt === 'string' ? input.prompt : JSON.stringify(input),
     };
+  }
+
+  /** `model:` of ~/.gigacode/agents/<type>.md (agents.<id>.agentsDir); null for a built-in type or `inherit`. */
+  function profileModel(agent, type) {
+    if (typeof type !== 'string' || !/^[\w.-]+$/.test(type)) return null;
+    const dir = (config.agents[agent]?.agentsDir || '~/.gigacode/agents').replace(/^~(?=$|[\\/])/, os.homedir());
+    try {
+      const head = /^\uFEFF?---\r?\n([\s\S]*?)\r?\n---/.exec(fs.readFileSync(path.join(dir, `${type}.md`), 'utf8'))?.[1] ?? '';
+      const m = /^model:\s*["']?([^"'\r\n]+?)["']?\s*$/m.exec(head)?.[1] ?? null;
+      return m && m.toLowerCase() !== 'inherit' ? m : null;
+    } catch {
+      return null;
+    }
   }
 
   function openVirtual(s, ev, c) {
     const id = virtualId(s.id, ev.id);
     const now = Date.now();
-    const info = virtualInfo(ev.name, ev.input);
+    const info = virtualInfo(ev.name, ev.input, s.agent);
     const real = takeAdopted(s.id, info.prompt);
     if (real) return real;
     const v = find(id) || {
@@ -541,7 +555,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
   function fillVirtual(c, id, name, input) {
     const v = find(id);
     if (!v?.virtual) return;
-    const info = virtualInfo(name, input);
+    const info = virtualInfo(name, input, v.agent);
     const real = takeAdopted(v.parentId, info.prompt);
     if (real) return replaceCopy(v, real);
     Object.assign(v, { title: info.title, model: info.model ?? v.model });
@@ -987,7 +1001,43 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     // done with it, and the parent's turn is over: the chat goes to the archive as any settled one — the parent's card
     // keeps the answer and still opens it
     if (!runtime(s.id).running) retireVirtual(v);
+    wakeParent(s, v, res.output, res.isError);
     return true;
+  }
+
+  /**
+   * A background sub-agent finished: its parent hears it. GigaCode promises «notified automatically when it completes»,
+   * but that note reaches only a CLI process that is still in a turn — a parent whose turn ended («жду вердикт ревьюера»)
+   * sat idle forever. An idle parent gets the answer as a message (a new turn); a busy one gets it when its turn ends.
+   */
+  function wakeParent(s, v, output, isError) {
+    v.wakeParent = { output, isError };
+    const parent = find(s.id);
+    const r = runtime(s.id);
+    // still in its turn: the turn's end delivers it (closeAtResult / finishTurn); a turn closed at its result is over
+    if (!parent || parent.archived || parent.status === 'stopped' || (r.running && !r.closedEarly)) return;
+    deliverWake(parent, v);
+  }
+  /** The parent's turn is over: the answers of background sub-agents that finished during it, as its next message. */
+  function flushWakes(s) {
+    if (!db.sessions.some((v) => v.parentId === s.id && v.wakeParent)) return;
+    setTimeout(() => {
+      const p = find(s.id);
+      if (!p || p.archived || p.status === 'stopped') return;
+      for (const v of db.sessions.filter((x) => x.parentId === s.id && x.wakeParent)) deliverWake(p, v);
+    }, 0);
+  }
+  function deliverWake(parent, v) {
+    const w = v.wakeParent;
+    if (!w) return;
+    v.wakeParent = null;
+    const body = String(w.output || '').trim();
+    const cut = body.length > 6000 ? `${body.slice(0, 6000)}\n…(полностью — в чате субагента)` : body;
+    try {
+      api.deliver(parent.id, { from: 'harness', text: `[harness] Фоновый субагент «${v.title}» ${w.isError ? 'завершился с ошибкой' : 'закончил'}. Его ответ:\n\n${cut}\n\nПродолжай задачу с этим результатом.` });
+    } catch (e) {
+      console.error('[sessions] background result delivery failed:', e);
+    }
   }
 
   /**
@@ -1083,6 +1133,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     settleVirtuals(s);
     mcpCheck(s, r);
     emit(s);
+    flushWakes(s); // background sub-agents that finished during this turn
     runTurnEnded(s, r, false);
     store.flush();
     armLinger(s);
@@ -1161,6 +1212,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
         updateMessage(s, m);
       }
       if (!runtime(s.id).running) retireVirtual(v);
+      if (status === 'failed') wakeParent(s, v, why, true); // stopped by the person: nothing to tell
     }
   }
 
@@ -1715,6 +1767,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     r.stopRequested = false;
     r.unadopted = false;
     if (!find(s.id)) return; // deleted while running
+    flushWakes(s); // background sub-agents that finished during this turn
     pollRegistry(s);
     let status = r.flags.reported && (s.status === 'done' || s.status === 'failed') ? s.status : 'idle';
     if (stopped) {

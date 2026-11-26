@@ -9,6 +9,7 @@ import { emptyInput, fileEdit, summarizeInput, type FileEdit } from '../../lib/t
 import { parseDiff, type DiffFile, type DiffLine } from '../../lib/diff'
 import type { Message, ToolCall } from '../../types'
 import { Markdown } from '../Markdown'
+import { toPerson } from '../../lib/toolcall'
 import { DiffLines } from '../DiffLines'
 import { Disclosure, IconButton, PointMenu } from '../ui'
 import { fileMenuItems } from './Turn'
@@ -176,6 +177,9 @@ const editLines = (e: FileEdit): DiffLine[] =>
 function ToolCard({ tool, sessionId, m }: { tool: ToolCall; sessionId: string; m?: Message }) {
   if (isSubagentTool(tool)) return <SubagentCard tool={tool} sessionId={sessionId} at={m?.at} />
   if (isAskCard(tool) && m) return <AskToolCard m={m} />
+  // the agent writing to the person (send_message to: user): a message in the chat, not a tool step to unfold
+  const sent = toPerson(tool)
+  if (sent) return <div className="msg agent-to-you"><div className="tool-label">Агент пишет вам</div><Markdown text={sent} /></div>
   const edit = fileEdit(tool.input)
   if (edit) return <EditBlock tool={tool} sessionId={sessionId} file={edit.file} created={edit.created} added={edit.added} removed={edit.removed} lines={editLines(edit)} />
   const out = outputDiff(tool)

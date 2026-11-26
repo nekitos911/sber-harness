@@ -20,6 +20,8 @@ let h;
 before(async () => {
   fs.mkdirSync(agentsDir, { recursive: true });
   fs.writeFileSync(path.join(agentsDir, 'java-reviewer.md'), PROFILE);
+  // the background fixture calls general-purpose: its agent file names the model the CLI runs it with
+  fs.writeFileSync(path.join(agentsDir, 'general-purpose.md'), ['---', 'name: general-purpose', 'model: GLM-5.3-Flash', '---', 'Общий.', ''].join('\n'));
   process.env.MOCK_AGENT_ARGV_FILE = argvFile;
   h = await startTestServer({ agents: { mock: { agentsDir, commandsDir, skillsDir } } });
 });
@@ -247,11 +249,16 @@ test('a built-in sub-agent started with run_in_background: its chat stays past t
   // the call answered «launched» at once: the chat is not archived with the turn and says it works in the background
   await waitFor(async () => (await kid())?.background, { what: 'the background chat' });
   assert.equal((await kid()).virtual, true);
+  assert.equal((await kid()).model, 'GLM-5.3-Flash', 'the call named no model: the agent file own model is shown');
   // its result lands in the output file after the turn: the chat gets it as the answer, the parent's card shows it
   await waitFor(async () => (await messages((await kid()).id)).some((m) => m.kind === 'assistant' && m.text.includes('Контракт miszh сверён')), { timeout: 30000, what: 'the answer in the sub-agent chat' });
   const card = await waitFor(async () => (await messages(caller.id)).find((m) => m.kind === 'tool' && m.tool?.name === 'agent' && m.tool.output?.includes('Контракт miszh')), { timeout: 30000, what: 'the card' });
   assert.deepEqual([card.tool.status, card.tool.stillRunning], ['ok', false]);
   assert.equal((await kid()).status, 'done');
+  // the parent's turn was over («жду вердикт»): it hears the answer as a message and goes on
+  const woke = await waitFor(async () => (await messages(caller.id)).find((m) => m.kind === 'user' && /Фоновый субагент .* закончил.*Контракт miszh сверён/s.test(m.text)), { timeout: 30000, what: 'the parent woken with the answer' });
+  assert.ok(woke);
+  assert.equal((await messages(caller.id)).filter((m) => m.kind === 'user' && /Фоновый субагент/.test(m.text)).length, 1, 'told once');
 });
 
 test('a sub-agent of a «Полный доступ» caller never asks: its own mode gives way, a plan profile stays read-only', async () => {

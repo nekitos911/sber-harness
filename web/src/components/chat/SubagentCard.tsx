@@ -8,6 +8,7 @@ import { Markdown } from '../Markdown'
 import { Disclosure } from '../ui'
 import { backgroundRun } from '../../lib/toolRun'
 import { relTime } from '../../lib/format'
+import { summarizeInput } from '../../lib/toolcall'
 
 type Obj = Record<string, unknown>
 const str = (v: unknown) => (typeof v === 'string' ? v : '')
@@ -37,7 +38,7 @@ export function SubagentCard({ tool, sessionId, at }: { tool: ToolCall; sessionI
   useEffect(() => { for (const id of unread.split(' ').filter(Boolean)) ensureMessages(id) }, [unread])
   const subId = tool.subSessionId ?? found
   const type = str(input.subagent_type) || str(input.profile) || str(input.description)
-  const model = str(input.model) || str(input.grade)
+  const modelAsked = str(input.model) || str(input.grade)
   const ask = str(input.prompt) || str(input.spec) || str(input.description)
   // run_in_background: the call answers at once while the sub-agent works outside this stream — its own output file
   // settles it, and the chat of the sub-agent gets that answer (sessions.js, watchBackground)
@@ -46,10 +47,18 @@ export function SubagentCard({ tool, sessionId, at }: { tool: ToolCall; sessionI
   // the chat of this sub-agent says whether the work goes on: running past the parent's turn means it is still at work
   const chat = useStore((s) => (subId ? s.sessions.find((x) => x.id === subId) : undefined))
   const stillRunning = chat ? chat.status === 'running' : !!tool.stillRunning
+  // not named in the call: the sub-agent chat knows it (its agent file's model)
+  const model = modelAsked || chat?.model || null
   const running = tool.status === 'running' || (background && stillRunning)
   const [open, setOpen] = useState(running)
   const feed = useRef<HTMLPreElement>(null)
-  const progress = tool.progress ?? []
+  // the sub-agent's own chat, read here: its latest steps under this card — the parent's chat shows the work without
+  // opening the other one (its whole history stays a click away)
+  useEffect(() => { if (open && subId) ensureMessages(subId) }, [open, subId])
+  const childSteps = useStore((s) => (subId ? (s.messages[subId] ?? []).filter((x) => x.kind === 'tool' || x.kind === 'assistant').slice(-8)
+    .map((x) => (x.kind === 'tool' ? `› ${x.tool?.name ?? x.text} ${summarizeInput(x.tool?.input)}`.trim() : x.text.split('\n').find((l) => l.trim()) ?? ''))
+    .map((l) => (l.length > 160 ? `${l.slice(0, 159)}…` : l)).join('\n') : ''))
+  const progress = tool.progress?.length ? tool.progress : childSteps ? childSteps.split('\n') : []
 
   useEffect(() => { setOpen(running) }, [running]) // expands for a live run, folds when it ends
   useLayoutEffect(() => {
@@ -83,15 +92,14 @@ export function SubagentCard({ tool, sessionId, at }: { tool: ToolCall; sessionI
       </>}
     >
       <div className="agent-body">
-        {background && /harness/.test(tool.name) && <p className="muted agent-bg-note">Работает в фоне отдельным чатом («Открыть чат субагента»). Его результат придёт главному агенту сообщением, а пока главному агенту можно писать.</p>}
-        {background && !/harness/.test(tool.name) && <p className="muted agent-bg-note">Запущен в фоне встроенным инструментом GigaCode: ход субагента идёт вне этого потока, его шаги CLI пишет только в свой файл{chat ? '; ответ появится в чате субагента' : ''}. Харнес прочитает результат, когда субагент закончит.{bg?.outputFile && <> Его вывод пишется в <span className="mono">{bg.outputFile}</span>.</>}</p>}
+        {background && running && <p className="muted agent-bg-note">Работает в фоне. Последние шаги — ниже; когда закончит, его ответ придёт главному агенту сообщением, и тот продолжит.</p>}
         {progress.length > 0 && (
           <pre ref={feed} className="agent-feed" aria-live={running ? 'polite' : undefined}>{progress.join('\n')}</pre>
         )}
-        {running && !progress.length && <p className="muted agent-wait">{/harness/.test(tool.name) ? 'Работает отдельным чатом: его шаги видны в «Открыть чат субагента».' : background ? 'Работает в фоне: его шаги видны в «Открыть чат субагента», в этот поток CLI о них не пишет.' : 'Субагент запущен, ждём первых шагов…'}</p>}
-        {tool.output && (
+        {running && !progress.length && <p className="muted agent-wait">Субагент запущен, ждём первых шагов…</p>}
+        {tool.output && !bg && (
           <div className="agent-result" data-error={tool.status === 'error' && !chat || undefined}>
-            <div className="tool-label">{bg ? 'Ответ субагента' : 'Результат'}</div>
+            <div className="tool-label">Ответ субагента</div>
             <Markdown text={tool.output} />
           </div>
         )}

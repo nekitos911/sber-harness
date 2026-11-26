@@ -515,3 +515,6 @@ svg.step-icon.spinner { color: var(--lamp-run); }
 .chat-alert-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-left: auto; }
 /* the find bar floats over the top of the transcript: room for it, so the first match is never under it */
 .chat[data-find] .chat-scroll > .chat-col { padding-top: 56px; }
+/* the agent writing to the person: a message, set off from the steps around it */
+.agent-to-you { padding: 10px 14px; border: 1px solid var(--rule-strong); border-left: 3px solid var(--lamp-run); border-radius: var(--r-2); background: var(--deck-2); }
+.agent-to-you .tool-label { margin-bottom: 4px; }

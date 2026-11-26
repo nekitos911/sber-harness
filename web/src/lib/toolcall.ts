@@ -65,3 +65,10 @@ export function fileEdit(input: unknown): FileEdit | null {
     removed: lines.filter((l) => l.kind === '-').length,
   }
 }
+
+/** The body of an agent's send_message to the person (to: «user»), else null. */
+export function toPerson(tool: { name: string; input?: unknown; status?: string }): string | null {
+  if (!/(^|__|\.)send_message$/.test(tool.name) || tool.status === 'error') return null
+  const input = (tool.input && typeof tool.input === 'object' ? tool.input : {}) as Record<string, unknown>
+  return input.to === 'user' && typeof input.body === 'string' && input.body.trim() ? input.body : null
+}

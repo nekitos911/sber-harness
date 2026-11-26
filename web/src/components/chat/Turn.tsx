@@ -5,7 +5,7 @@ import { openChatFile, openChatFileDiff } from '../../lib/git'
 import { toast, useFeature } from '../../store'
 import { openFile, REVEAL } from '../WorktreeMenu'
 import { basename, normPath, plural } from '../../lib/format'
-import { fileEdit, summarizeInput } from '../../lib/toolcall'
+import { fileEdit, summarizeInput, toPerson } from '../../lib/toolcall'
 import { useElapsed } from '../../lib/live'
 import { dur } from '../../lib/sessionState'
 import type { DiffLine } from '../../lib/diff'
@@ -25,7 +25,7 @@ export type Item =
   | { kind: 'files'; key: string; msgs: Message[] }
   | { kind: 'new'; key: string }
 
-const isGroupable = (m: Message) => m.kind === 'tool' && !!m.tool && !isSubagentTool(m.tool) && !isAskCard(m.tool)
+const isGroupable = (m: Message) => m.kind === 'tool' && !!m.tool && !isSubagentTool(m.tool) && !isAskCard(m.tool) && !toPerson(m.tool)
 
 /**
  * Turns a page of the transcript into items. `runningTurn` is the turn still in progress (or null);
