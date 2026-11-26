@@ -535,7 +535,7 @@ test('settings: model catalogue objects, labels, presets, timeouts, flags and tr
   assert.ok(giga.models.every((m) => typeof m.id === 'string'), 'catalogue entries are objects');
   assert.equal(typeof giga.approvalModeLabels.auto, 'string');
   assert.deepEqual(giga.taskPromptPresets, [], "no one's own commands in the shared defaults");
-  assert.deepEqual([giga.firstEventTimeoutMs, giga.inheritUserMcp, giga.enabled], [120000, false, true]);
+  assert.deepEqual([giga.firstEventTimeoutMs, giga.enabled], [120000, true]);
   assert.deepEqual(Object.keys(s.integrations.tasks).sort(), ['closedStatuses', 'enabled', 'onStartTransition', 'space', 'statusMap', 'urlTemplate']);
   // default "auto": off here (no console MCP server named sourcecontrol)
   assert.deepEqual(s.integrations.pr, { enabled: 'auto', active: false, me: null, limits: { titleBytes: 100, bodyBytes: 512 } });
@@ -555,17 +555,17 @@ test('settings: model catalogue objects, labels, presets, timeouts, flags and tr
   assert.equal(await bad({ integrations: { pr: { enabled: 1 } } }), 400);
 
   const saved = (await h.api('PUT', '/api/settings', {
-    agents: { mock: { model: 'not-in-the-catalogue', modelGrades: { fast: 'm-x' }, approvalModeLabels: { auto: 'Всё сам' }, taskPromptPresets: ['/full-task {taskUrl}{notes}'], firstEventTimeoutMs: 60000, inheritUserMcp: true, maxStarting: 0, userHooks: false } },
+    agents: { mock: { model: 'not-in-the-catalogue', modelGrades: { fast: 'm-x' }, approvalModeLabels: { auto: 'Всё сам' }, taskPromptPresets: ['/full-task {taskUrl}{notes}'], firstEventTimeoutMs: 60000, maxStarting: 0, userHooks: false } },
     integrations: { tasks: { space: 'ABC', urlTemplate: 'https://t.example/{key}', statusMap: { qa: 'review' }, closedStatuses: ['done', 'won_t_do'] }, pr: { enabled: true } },
   })).body;
   assert.deepEqual([saved.agents.mock.model, saved.agents.mock.modelGrades.fast, saved.agents.mock.approvalModeLabels.auto], ['not-in-the-catalogue', 'm-x', 'Всё сам']);
-  assert.deepEqual([saved.agents.mock.firstEventTimeoutMs, saved.agents.mock.inheritUserMcp, saved.agents.mock.maxStarting, saved.agents.mock.userHooks], [60000, true, 0, false]);
+  assert.deepEqual([saved.agents.mock.firstEventTimeoutMs, saved.agents.mock.maxStarting, saved.agents.mock.userHooks], [60000, 0, false]);
   assert.deepEqual([saved.integrations.tasks.space, saved.integrations.tasks.statusMap.qa, saved.integrations.pr.enabled], ['ABC', 'review', true]);
   assert.equal((await state()).integrations.pr, true);
   const local = JSON.parse(fs.readFileSync(h.configFile.replace(/\.json$/, '.local.json'), 'utf8'));
   assert.deepEqual(local.integrations.tasks.closedStatuses, ['done', 'won_t_do']);
   assert.equal(local.agents.mock.firstEventTimeoutMs, 60000);
-  await h.api('PUT', '/api/settings', { agents: { mock: { inheritUserMcp: false, model: null, maxStarting: 4, userHooks: true } }, integrations: { pr: { enabled: false } } });
+  await h.api('PUT', '/api/settings', { agents: { mock: { model: null, maxStarting: 4, userHooks: true } }, integrations: { pr: { enabled: false } } });
 });
 
 test('settings round trip: PUT with exactly what GET returned is accepted (read-only fields ignored)', async () => {

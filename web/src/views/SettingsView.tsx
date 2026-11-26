@@ -335,11 +335,6 @@ function McpPage({ form, update, main }: Omit<SectionProps, 'fieldError'> & { ma
       subagents={o?.subagentMcpExclude !== undefined ? { off: o.subagentMcpExclude, set: async (list) => update({ ...form, orchestration: { ...o, subagentMcpExclude: list } }) } : undefined} />
     <section className="settings-section" id="set-mcp-wait">
       <h2>Запуск MCP-серверов</h2>
-      {a?.inheritUserMcp !== undefined && <div className="set-rows">
-        <Row label="Серверы из настроек GigaCode" hint="Подключать к каждому запуску агента и MCP-серверы из ~/.gigacode/settings.json, а не только те, что в таблице выше.">
-          <Switch label="Серверы из настроек GigaCode" checked={!!a.inheritUserMcp} onChange={(v) => setAgent({ inheritUserMcp: v })} />
-        </Row>
-      </div>}
       <McpTimeoutsRows form={form} update={update} />
     </section>
   </>

@@ -20,6 +20,7 @@ import { TaskPage } from '../components/board/TaskPage'
 import { Button, IconButton, Popover, Segmented, Select } from '../components/ui'
 import { TaskList } from '../components/board/TaskList'
 import { ErrorBoundary } from '../components/ErrorBoundary'
+import { IntegrationBanner } from '../components/IntegrationStatus'
 import { useSettings } from '../lib/agents'
 
 type Cols = Record<TaskStatus, string[]>
@@ -269,6 +270,7 @@ export function BoardView() {
           <IconButton label={syncing ? 'Синхронизация с трекером…' : 'Синхронизировать с трекером'} icon={<RefreshCw className={syncing ? 'spinner' : undefined} />} onClick={sync} disabled={syncing} />
         )}
       </header>
+      {importOn && <IntegrationBanner kind="tasks" />}
       {trackerProblem && (
         <div className="banner" role="status">
           <CloudOff aria-hidden />

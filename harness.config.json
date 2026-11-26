@@ -76,7 +76,6 @@
       "modelsDiscovery": { "prompt": "/models", "approvalMode": "plan", "maxAgeHours": 24 },
       "modelRefsScan": ["~/.gigacode/agents/*.md", "~/.gigacode/commands/*.md"],
       "history": { "dirs": ["~/.gigacode/projects/*/chats"], "command": null },
-      "inheritUserMcp": false,
       "agentToolHook": null,
       "firstEventTimeoutMs": 120000,
       "authTimeoutMs": 600000,

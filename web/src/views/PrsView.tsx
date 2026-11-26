@@ -3,6 +3,7 @@ import { Ellipsis, ExternalLink, GitPullRequest, GitPullRequestClosed, RefreshCw
 import { tryApi } from '../api'
 import { openTask, toast, useFeature, useStore, wtKey } from '../store'
 import { loadPr, openPrSettings, PR_STATE, reviewText } from '../lib/pr'
+import { IntegrationBanner } from '../components/IntegrationStatus'
 import { ago } from '../lib/format'
 import { useNow } from '../lib/useNow'
 import { loadWorktrees } from '../ws'
@@ -76,11 +77,13 @@ function WorktreePrs() {
         <span className="grow" />
         {enabled && <Button icon={<RefreshCw />} onClick={refresh}>Обновить</Button>}
       </header>
+      {enabled && <IntegrationBanner kind="pr" />}
       {!enabled ? (
         <div className="empty">
           <GitPullRequest className="empty-icon" aria-hidden />
           <h2>PR-интеграция не настроена</h2>
           <p>Когда она включена, здесь видны PR веток задач и рабочих деревьев: статус, ревьюеры, конфликты.</p>
+          <p>Для неё самому харнессу нужен MCP-сервер хостинга кода (по умолчанию sourcecontrol из ~/.gigacode/settings.json): «Настроить» покажет, найден ли он, и позволит выбрать другой.</p>
           <Button variant="primary" onClick={openPrSettings}>Настроить</Button>
         </div>
       ) : rows.length === 0 ? (

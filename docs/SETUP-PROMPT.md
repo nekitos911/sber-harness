@@ -32,7 +32,7 @@
    allowedGrades (как в старой консоли), integrations.tasks (enabled, space, urlTemplate), integrations.pr.enabled.
    harness.config.json не редактируй.
 3. GigaCode (раздел 2): npm start → http://127.0.0.1:4777, чат с GigaCode, инструменты harness видны, --resume
-   работает. Проверь слияние mcpServers; при необходимости включи agents.gigacode.inheritUserMcp. Реши, что использовать:
+   работает. Агент видит те же MCP-серверы, что GigaCode в терминале (плюс harness). Реши, что использовать:
    /full-task или /full-task-ui (taskPromptTemplate).
 4. Задачи (раздел 3): mcp-call onework, "Sync" на доске, описание и переходы в панели задачи.
 5. PR (раздел 4): в тестовой ветке <REPOSITORY> создай PR, проверь, что повтор не создаёт дубликат.

@@ -6,7 +6,7 @@ import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { CODE_ROOT } from './config.js';
-import { agentMcpServersFor, FULL_ACCESS_MODES, launchers } from './launchers.js';
+import { agentMcpServersFor, cliReadsMcpFile, FULL_ACCESS_MODES, launchers } from './launchers.js';
 import { runTurn, isAlive, sameProcess, spawnOptions, endChild, readTail } from './runner.js';
 import { baseId, catalogueHit } from './models.js';
 import { secretEnv } from './mcp-client.js';
@@ -394,7 +394,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
       // one field that keeps a slow start from eating the whole init timeout
       mcpTimeoutMs: config.mcp?.acpStartTimeoutMs,
       harnessTimeoutMs: config.mcp?.harnessTimeoutMs,
-      agentMcpServers: agentMcpServersFor(config),
+      agentMcpServers: agentMcpServersFor(config, { cliReadsFile: cliReadsMcpFile(config, cfg) }),
       // sub-agents through the harness: the CLI's own `agent` tool is off in its runs (launchers.js sessionSettings)
       noBuiltinAgent: (config.orchestration?.subagents ?? 'harness') === 'harness' && config.orchestration?.blockBuiltinAgent === true,
     };

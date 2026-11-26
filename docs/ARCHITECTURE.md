@@ -74,7 +74,6 @@ data/                          runtime state (gitignored)
       "models": [],                                      // model catalogue for the UI dropdown (filled locally)
       "settingsEnv": "GIGACODE_SYSTEM_SETTINGS_PATH",
       "settings": { "agents": { "modelGrades": {}, "allowedGrades": [] }, "chatRecording": true },
-      "inheritUserMcp": false,                           // copy ~/.gigacode/settings.json mcpServers into the run file
       "taskPromptTemplate": "/full-task {taskUrl}{notes}",
       "firstEventTimeoutMs": 120000,                     // cold start with ~9 MCP servers takes 30-60 s
       "env": {}
@@ -526,7 +525,7 @@ POST   /api/mcp/check           { name, transport?, url?, command?, args?, timeo
 
 GET    /api/settings            -> { agents: { <id>: { approvalMode, approvalModes, approvalModeLabels, model, models,
                                      modelGrades: { default?, fast?, review?, explore? }, allowedGrades, taskPromptTemplate,
-                                     taskPromptPresets, freePromptTemplate, firstEventTimeoutMs, inheritUserMcp, enabled } },
+                                     taskPromptPresets, freePromptTemplate, firstEventTimeoutMs, enabled } },
                                      defaultAgent, git: {...}, tasks: { refreshSec }, user: { setupDone: boolean },
                                      mcpDisabled: string[], mcpServers: [{ name, enabled, transport, url, command, args,
                                                      headers, env, fromFile? }], mcpSecretNames: string[],
@@ -646,8 +645,13 @@ POST   /api/notifications/read-all
   сюда никогда не попадают — CLI сверяет эти id с собственным каталогом и падает с кодом 1 при расхождении; уровни —
   собственная таблица harness, `server/models.js`). ACP: модель ставится через `session/set_model` из каталога, который
   возвращает `session/new`, а не через argv `--model`.
-  Никогда `permissions`. `inheritUserMcp: true` дополнительно копирует mcpServers из пользовательского `~/.gigacode/settings.json` (слияние или
-  замена — не подтверждено). Ошибка записи → error, и рабочее дерево, созданное для этого запуска, удаляется.
+  Никогда `permissions`. Серверы пользователя из `~/.gigacode/settings.json` в файл запуска **не копируются**: CLI сливает их
+  сам (подтверждено), а файл запуска — системные настройки, они выше `.gigacode/settings.json` рабочей папки, и копия
+  перебила бы настройки проекта. В файл идут только `harness` и серверы, которые харнес добавил или изменил
+  (`config.mcpServers`; `agentMcpServersFor(config, { cliReadsFile })`). Списки `mcp.excluded` и `tools.exclude`, которые
+  пишет харнес, включают списки пользователя и рабочей папки, а не заменяют их. Итог: запуск из харнесса видит те же
+  серверы, хуки и исключения, что CLI в терминале в той же папке. Ошибка записи → error, и рабочее дерево, созданное для
+  этого запуска, удаляется.
 - Режимы подтверждения `plan | default | auto-edit | auto` (проверяются). Для возобновления нужны `chatRecording`, тот же cwd, путь к
   настройкам и лаунчер (смена лаунчера отвергается).
 - Поток: стиль Qwen-Code / Claude; холодный старт (`system/init`) может занимать 30–60 с → `firstEventTimeoutMs` 120000 и

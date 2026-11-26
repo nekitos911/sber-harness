@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { CODE_ROOT } from '../server/config.js';
-import { shimIdentity, resolveGigacode, parseShim, parseShShim, gigacodeCommand, launchers, runMcpNames, sessionSettings } from '../server/launchers.js';
+import { shimIdentity, resolveGigacode, parseShim, parseShShim, agentMcpServersFor, cliReadsMcpFile, gigacodeCommand, launchers, runMcpNames, sessionSettings } from '../server/launchers.js';
 import { resolveShell } from '../server/config.js';
 import { SUBAGENT_CONTEXT, DELEGATION, TEMP_FILES, WORKTREE_RULE } from '../server/orchestration.js';
 import { startTestServer, makeRepo, tmpDir, rmrf, gitIn, waitFor, waitPidGone } from './helpers.js';
@@ -368,5 +368,18 @@ test('the MCP servers of a run: the person, the workspace and the run file merge
   w(path.join(dir, 'run.json'), { mcpServers: { harness: {} }, mcp: { excluded: ['java-lsp', 'harness'] } });
   const names = runMcpNames({ settingsPath: path.join(dir, 'run.json'), cwd: path.join(dir, 'ws'), userSettingsPath: path.join(dir, 'user.json') });
   assert.deepEqual(names.sort(), ['harness', 'onework', 'sourcecontrol'], 'the run file excludes java-lsp; its list replaces the person one');
+  rmrf(dir);
+});
+
+test('the user servers reach a GigaCode run through the CLI itself: only those the harness changed go into the run file', () => {
+  const dir = tmpDir();
+  const from = path.join(dir, 'settings.json');
+  fs.writeFileSync(from, JSON.stringify({ mcpServers: { onework: { httpUrl: 'http://o' }, sberci: { command: 'sberci' } } }));
+  const config = { root: dir, mcpServersFrom: from, mcpServers: { sberci: { args: ['--fast'] } } };
+  assert.deepEqual(Object.keys(agentMcpServersFor(config)).sort(), ['onework', 'sberci'], 'another CLI gets them all');
+  assert.deepEqual(Object.keys(agentMcpServersFor(config, { cliReadsFile: true })), ['sberci'], 'changed in the harness: it goes');
+  assert.equal(cliReadsMcpFile(config, { launcher: 'gigacode', userSettingsPath: from }), true);
+  assert.equal(cliReadsMcpFile(config, { launcher: 'claude', userSettingsPath: from }), false);
+  assert.equal(cliReadsMcpFile(config, { launcher: 'gigacode', userSettingsPath: path.join(dir, 'other.json') }), false);
   rmrf(dir);
 });

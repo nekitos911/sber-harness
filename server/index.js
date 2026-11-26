@@ -409,7 +409,6 @@ export async function startServer(opts = {}) {
         taskPromptPresets: a.taskPromptPresets || [],
         firstEventTimeoutMs: a.firstEventTimeoutMs ?? launchers[a.launcher]?.defaults.firstEventTimeoutMs ?? null,
         authTimeoutMs: a.authTimeoutMs ?? 600000,
-        inheritUserMcp: !!a.inheritUserMcp,
         enabled: a.enabled !== false,
         maxStarting: a.maxStarting ?? 4, // cold starts at once (0 = no limit), not agents at work
         userHooks: a.userHooks !== false,
@@ -588,7 +587,7 @@ export async function startServer(opts = {}) {
       if (!Number.isInteger(a.maxStarting) || a.maxStarting < 0 || a.maxStarting > 50) fail(400, `${where('maxStarting')}: целое число от 0 (без предела) до 50`);
       p.maxStarting = a.maxStarting;
     }
-    for (const k of ['inheritUserMcp', 'enabled', 'userHooks']) {
+    for (const k of ['enabled', 'userHooks']) {
       if (!(k in a)) continue;
       if (typeof a[k] !== 'boolean') fail(400, `${where(k)}: нужно true или false`);
       p[k] = a[k];

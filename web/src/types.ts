@@ -346,7 +346,6 @@ export interface AgentSettings {
   freePromptTemplate?: string | null // «Главная», a sentence instead of a task: {text} {notes}
   reworkPromptPresets?: string[]
   firstEventTimeoutMs?: number
-  inheritUserMcp?: boolean
   maxStarting?: number // processes of this agent cold-starting at once (0 = no limit); not a limit on agents at work
   userHooks?: boolean // false: the harness runs go with disableAllHooks
   launcher?: string // gigacode, mock…: rows that only one CLI understands show for it alone

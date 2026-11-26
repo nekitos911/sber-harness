@@ -63,9 +63,9 @@
   не могут выбирать модель). `chatRecording` обязателен для `--resume`. Никогда не записывать `permissions`.
 - Идентификаторы моделей берутся из `/models` на машине (5 моделей, контекст 128k–262k); `modelGrades` может использовать идентификаторы с суффиксом
   `-262k` и без него. Запасные модели существуют (`--fallback-model`).
-- СЛИВАЮТСЯ ли `mcpServers` из этого файла с `~/.gigacode/settings.json` или ЗАМЕНЯЮТ его — **не подтверждено**. Без файла
-  загружаются все серверы пользователя. Не полагаться на слияние: флаг конфига `agents.gigacode.inheritUserMcp` копирует
-  `mcpServers` пользователя в файл запуска рядом с `harness` (включите, если тест слияния покажет замену).
+- `mcpServers` из этого файла **сливаются** с `~/.gigacode/settings.json` (подтверждено: сервер пользователя java-lsp
+  стартовал в каждом запуске харнесса, пока его не исключили через `mcp.excluded`). Поэтому серверы пользователя в файл
+  запуска не копируются: файл запуска выше `.gigacode/settings.json` рабочей папки, и копия перебивала бы проект.
 - ПОДТВЕРЖДЕНО на целевой машине: headless `--approval-mode auto` падает с "Error: Auto approval is allowed only under an
   active action sandbox; enable it via settings.tools.sandbox = 'workspace' or 'workspace-offline'." (exit 1,
   `Config.assertAutoApprovalAvailable`). Харнес отображает `auto` → `auto-edit` (`agents.<id>.approvalModeMap`), если не задан
@@ -314,7 +314,7 @@
    (`clientCapabilities.fs`), и чтения шли через него — гейт GigaCode их, по всей видимости, не видел. Теперь по умолчанию
    не объявляет (`agents.<id>.acpClientFs: true` возвращает). ПРОВЕРИТЬ: в ACP-чате прочитать файл и сразу `edit` — проходит.
 
-1. `mcpServers` в файле настроек запуска: сливаются с `~/.gigacode/settings.json` или заменяют его? (→ `inheritUserMcp`)
+1. `mcpServers` в файле настроек запуска: сливаются с `~/.gigacode/settings.json` (ответ: сливаются, см. раздел 3).
     ВИДЕЛИ на целевой машине (чат ACP, 2026-11-18): агент искал `mcp__harness__agent` и нашёл только встроенные
     (`create_sub_session`, `send_message`, `task_stop`, `cron_create`, `loop_wakeup`) — сервера harness не было в его
     реестре. Проверьте то же в headless-чате; если там он тоже отсутствует, файл настроек запуска не читается или ничего

@@ -37,7 +37,8 @@
  *     when one is missing; grades are the harness's own lookup (server/models.js).
  *     No `permissions` key: the allow-list travels as --allowed-tools. The CLI merges mcpServers from the run file
  *     with the user's ~/.gigacode/settings.json (verified live), same-name keys win; a `servers` key is ignored.
- *     agents.gigacode.inheritUserMcp additionally copies the user's servers into the run file (not needed for merging).
+ *     The user's own servers are never copied there (the run file is above the workspace's settings): only those the
+ *     harness adds or changes (config.mcpServers), see agentMcpServersFor.
  *   - stream-json is Qwen-Code / Claude style (test/fixtures/gigacode.*.ndjson): system/init, assistant, user
  *     (tool results), stream_event (goal_state, ignored), result (usage = run total). Events with a non-null
  *     parent_tool_use_id belong to a built-in sub-agent and are tagged parentToolId (kept out of the main chat).
@@ -47,7 +48,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { CODE_ROOT } from './config.js';
-import { serverDefs } from './mcp-client.js';
+import { serverDefs, serversFromFile } from './mcp-client.js';
 import { writeAtomic } from './store.js';
 import { locate, resolveCommand } from './runner.js';
 
@@ -221,12 +222,27 @@ const exists = (p) => !!p && fs.existsSync(p);
 // HARNESS_USER_SETTINGS: another file (tests: never the machine's own ~/.gigacode, whose mcp.excluded would leak in)
 const userSettingsFile = () => process.env.HARNESS_USER_SETTINGS || path.join(os.homedir(), '.gigacode', 'settings.json');
 
-function userMcpServers(file = userSettingsFile()) {
+/** A GigaCode settings file as an object ({} when it is missing or broken: the CLI goes on without it too). */
+function readSettings(file) {
   try {
-    return JSON.parse(fs.readFileSync(file, 'utf8').replace(/^﻿/, '')).mcpServers || {};
+    return JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, ''));
   } catch {
     return {};
   }
+}
+const workspaceSettings = (cwd) => (cwd ? readSettings(path.join(cwd, '.gigacode', 'settings.json')) : {});
+/** The value at a dotted key («tools.exclude») of a settings object, as a list ([] when it is not one). */
+const listAt = (obj, key) => {
+  const v = key.split('.').reduce((o, k) => o?.[k], obj);
+  return Array.isArray(v) ? v.filter((x) => typeof x === 'string') : [];
+};
+
+/** The CLI of this agent reads mcpServersFrom itself (GigaCode and ~/.gigacode/settings.json): no copy is needed. */
+export function cliReadsMcpFile(config, agentCfg) {
+  const from = process.env.CONSOLE_MCP_SETTINGS || config.mcpServersFrom;
+  if ((agentCfg?.launcher || 'gigacode') !== 'gigacode' || !from) return false;
+  const norm = (f) => path.resolve(f.replace(/^~(?=$|[\\/])/, os.homedir())).toLowerCase();
+  return norm(String(from)) === norm(agentCfg.userSettingsPath || userSettingsFile());
 }
 
 /**
@@ -235,16 +251,9 @@ function userMcpServers(file = userSettingsFile()) {
  * what a chat can list (its status comes from what the harness sees the agent use).
  */
 export function runMcpNames({ settingsPath, cwd, userSettingsPath } = {}) {
-  const read = (f) => {
-    try {
-      return JSON.parse(fs.readFileSync(f, 'utf8').replace(/^\uFEFF/, ''));
-    } catch {
-      return {};
-    }
-  };
-  const run = settingsPath ? read(settingsPath) : {};
-  const user = read(userSettingsPath || userSettingsFile());
-  const ws = cwd ? read(path.join(cwd, '.gigacode', 'settings.json')) : {};
+  const run = settingsPath ? readSettings(settingsPath) : {};
+  const user = readSettings(userSettingsPath || userSettingsFile());
+  const ws = workspaceSettings(cwd);
   // the run file's list replaces the person's (mcpExclusion); a workspace adds its own
   const excluded = new Set([...(run.mcp?.excluded ?? [...(user.mcp?.excluded || []), ...(user.excludeMCPServers || [])]), ...(ws.mcp?.excluded || [])]);
   return [...new Set([...Object.keys(user.mcpServers || {}), ...Object.keys(ws.mcpServers || {}), ...Object.keys(run.mcpServers || {})])]
@@ -268,14 +277,15 @@ function userMcpExcluded(file = userSettingsFile()) {
  * servers the harness runs do not start — GigaCode merges the user's settings.json, so a server missing from the run
  * file still starts without it.
  */
-function mcpExclusion(agentCfg, rest) {
+function mcpExclusion(agentCfg, rest, cwd) {
   const own = (agentCfg.mcpExclude || []).filter((x) => x !== 'harness');
   if (!own.length) return {};
   // an old config's explicit "excludeMCPServers" is the key GigaCode ignores: it keeps meaning «exclude», under mcp.excluded
   const key = !agentCfg.mcpExcludeKey || agentCfg.mcpExcludeKey === 'excludeMCPServers' ? 'mcp.excluded' : agentCfg.mcpExcludeKey;
   // the run file's list replaces the user's mcp.excluded instead of adding to it: a server the person switched off in
   // ~/.gigacode/settings.json (java-lsp, 120 s to start) came back in every harness run and held session/new for 120 s
-  const list = key === 'mcp.excluded' ? [...new Set([...own, ...userMcpExcluded(agentCfg.userSettingsPath)])].filter((x) => x !== 'harness') : own;
+  // …and a workspace's own .gigacode/settings.json list (the run file is above it too)
+  const list = key === 'mcp.excluded' ? [...new Set([...own, ...userMcpExcluded(agentCfg.userSettingsPath), ...listAt(workspaceSettings(cwd), key)])].filter((x) => x !== 'harness') : own;
   const [head, ...tail] = key.split('.');
   if (!tail.length) return { [head]: list };
   const obj = { ...(rest[head] || {}) };
@@ -290,11 +300,15 @@ function mcpExclusion(agentCfg, rest) {
  * (~/.gigacode/settings.json), the way the CLI sees them; config.mcpDisabled (or the server's own enabled: false) removes
  * one. The names travel along as `name`: the run settings override the user's definition by name, and its arguments win.
  */
-export function agentMcpServersFor(config) {
+export function agentMcpServersFor(config, { cliReadsFile = false } = {}) {
   const skip = new Set(config.mcpDisabled || []);
+  const fromFile = cliReadsFile ? serversFromFile(config).servers : {};
   const out = {};
   for (const [name, d] of Object.entries(serverDefs(config))) {
     if (name === 'harness' || skip.has(name) || !d.enabled) continue;
+    // the CLI reads that file itself and merges it as in a terminal (a workspace's .gigacode/settings.json over it): a
+    // copy in the run file (system settings, above both) would only override the workspace — the run is not the CLI then
+    if (fromFile[name] && !config.mcpServers?.[name]) continue;
     const { name: _name, transport, url, enabled: _enabled, ...rest } = d;
     out[name] = { ...rest, name, ...(transport === 'http' ? { url } : {}) };
   }
@@ -304,9 +318,13 @@ export function agentMcpServersFor(config) {
 /** chatRecording false: the harness's own helper runs (model discovery, commit messages) leave no CLI chat record.
  * `harnessTimeoutMs` (mcp.harnessTimeoutMs) is how long the CLI waits for the harness server: `worker_run` waits for a
  * whole sub-agent run. */
-/** `names` added to the CLI's tool exclusion (agents.<id>.toolsExcludeKey, default «tools.exclude»), keeping its own. */
-function toolExclusion(agentCfg, rest, names) {
+/**
+ * `names` added to the CLI's tool exclusion (agents.<id>.toolsExcludeKey, default «tools.exclude»), keeping its own: the
+ * run file is above the person's and the workspace's settings, so their lists are carried over, not replaced.
+ */
+function toolExclusion(agentCfg, rest, names, cwd) {
   const key = agentCfg.toolsExcludeKey || 'tools.exclude';
+  names = [...listAt(readSettings(agentCfg.userSettingsPath || userSettingsFile()), key), ...listAt(workspaceSettings(cwd), key), ...names];
   const [head, ...tail] = key.split('.');
   if (!tail.length) return { [head]: [...new Set([...(rest[head] || []), ...names])] };
   const obj = { ...(rest[head] || {}) };
@@ -316,7 +334,7 @@ function toolExclusion(agentCfg, rest, names) {
   return { [head]: obj };
 }
 
-export function sessionSettings({ agentCfg, harnessMcp, agentMcpServers, chatRecording = true, harnessTimeoutMs = 3600000, noBuiltinAgent = false }) {
+export function sessionSettings({ agentCfg, harnessMcp, agentMcpServers, chatRecording = true, harnessTimeoutMs = 3600000, noBuiltinAgent = false, session = null }) {
   // `agents` (modelGrades/allowedGrades) is the HARNESS's own grade table: the CLI would validate every id against
   // its account catalogue and refuse to start on a mismatch. The harness picks the sub-agent model itself.
   const { permissions: _own, agents: _grades, mcpServers, ...rest } = agentCfg.settings || {};
@@ -325,10 +343,10 @@ export function sessionSettings({ agentCfg, harnessMcp, agentMcpServers, chatRec
   // and `trust: true` on a stdio server denies every tool call headlessly.
   const harness = { ...harnessMcp };
   delete harness.trust;
-  const exclusion = mcpExclusion(agentCfg, rest);
+  const exclusion = mcpExclusion(agentCfg, rest, session?.cwd);
   // sub-agents through the harness (orchestration.subagents «harness»): the CLI's own `agent` tool is switched off, so
   // the agent cannot slip past the rule into an invisible, sandboxed built-in sub-agent (agents.<id>.toolsExcludeKey)
-  const blocked = noBuiltinAgent ? toolExclusion(agentCfg, rest, ['agent']) : {};
+  const blocked = noBuiltinAgent ? toolExclusion(agentCfg, rest, ['agent'], session?.cwd) : {};
   return {
     ...rest,
     ...blocked,
@@ -336,7 +354,6 @@ export function sessionSettings({ agentCfg, harnessMcp, agentMcpServers, chatRec
     ...(agentCfg.autoSandbox ? { tools: { ...rest.tools, ...blocked.tools, sandbox: agentCfg.autoSandbox } } : {}),
     chatRecording,
     mcpServers: {
-      ...(agentCfg.inheritUserMcp ? userMcpServers(agentCfg.userSettingsPath) : {}),
       ...agentMcpServers,
       harness: { ...harness, timeout: harnessTimeoutMs }, // worker_run waits for a whole sub-agent run
     },

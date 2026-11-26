@@ -211,14 +211,18 @@ test('MCP servers from gemini/qwen settings; server/Name secrets go to that serv
   assert.deepEqual(v, { SC_TOKEN: 'sc-123', exported: 'sc-123', other: null });
 });
 
-test('inheritUserMcp copies the user mcpServers next to harness in the run settings', () => {
+test('the run settings never copy the user servers (the CLI merges them itself, a workspace over them); exclusions keep theirs', () => {
   const user = path.join(dir, 'gigacode settings.json');
-  fs.writeFileSync(user, JSON.stringify({ mcpServers: { onework: { httpUrl: 'http://x' } }, permissions: { allow: ['x'] } }));
-  const base = { harnessMcp: { command: 'node', args: ['h.js'], env: {} }, agentMcpServers: {} };
-  assert.deepEqual(Object.keys(sessionSettings({ ...base, agentCfg: { settings: {} } }).mcpServers), ['harness']);
-  const s = sessionSettings({ ...base, agentCfg: { settings: {}, inheritUserMcp: true, userSettingsPath: user } });
-  assert.deepEqual(Object.keys(s.mcpServers), ['onework', 'harness']);
+  fs.writeFileSync(user, JSON.stringify({ mcpServers: { onework: { httpUrl: 'http://x' } }, permissions: { allow: ['x'] }, mcp: { excluded: ['java-lsp'] }, tools: { exclude: ['web_fetch'] } }));
+  const ws = path.join(dir, 'ws');
+  fs.mkdirSync(path.join(ws, '.gigacode'), { recursive: true });
+  fs.writeFileSync(path.join(ws, '.gigacode', 'settings.json'), JSON.stringify({ mcp: { excluded: ['slow'] }, tools: { exclude: ['run_shell_command'] } }));
+  const base = { harnessMcp: { command: 'node', args: ['h.js'], env: {} }, agentMcpServers: {}, session: { cwd: ws } };
+  const s = sessionSettings({ ...base, agentCfg: { settings: {}, userSettingsPath: user, mcpExclude: ['sberci'] }, noBuiltinAgent: true });
+  assert.deepEqual(Object.keys(s.mcpServers), ['harness']);
   assert.ok(!('permissions' in s));
+  assert.deepEqual(s.mcp.excluded.sort(), ['java-lsp', 'sberci', 'slow']);
+  assert.deepEqual(s.tools.exclude.sort(), ['agent', 'run_shell_command', 'web_fetch']);
 });
 
 test('PR status: open first, else the newest merged/declined for the branch; task.pr refreshed only on change', async () => {
