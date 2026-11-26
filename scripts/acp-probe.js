@@ -4,6 +4,7 @@
 //   node scripts/acp-probe.js [--cwd <dir>] [--settings <run settings.json>] [--prompt "<text>"] [--timeout <s>]
 //   --settings   the file the harness wrote for a chat (data/runs/<id>/settings.json): passed as GIGACODE_SYSTEM_SETTINGS_PATH
 //   --command    the CLI to run (default: gigacode from PATH, the bundled node + lib/cli-entry.js when it is a .cmd shim)
+//   --grep <s>   instead of a run: print where <s> appears in the CLI's own lib/*.js (±400 characters), e.g. a method name
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -36,7 +37,35 @@ function command() {
   throw new Error('gigacode не найден в PATH — укажите --command <путь>');
 }
 
+/** Values that look like secrets (tokens, keys, long hex/base64) are cut, the shape stays. */
+const mask = (v) => JSON.stringify(v, (k, x) => (typeof x === 'string' && (/token|secret|password|authorization|key/i.test(k) || /^[A-Za-z0-9_\-.=+/]{32,}$/.test(x)) ? `<${x.length} симв.>` : x));
+
 const [cmd, pre] = command();
+const grep = arg('--grep');
+if (grep) {
+  const js = pre.find((x) => /\.[cm]?js$/.test(x));
+  const root = js ? path.dirname(path.resolve(js)) : path.dirname(cmd);
+  const files = [];
+  const walk = (d, depth = 0) => {
+    for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+      const f = path.join(d, e.name);
+      if (e.isDirectory() && depth < 2 && e.name !== 'node_modules') walk(f, depth + 1);
+      else if (e.isFile() && /\.(c|m)?js$/.test(e.name)) files.push(f);
+    }
+  };
+  walk(root);
+  let hits = 0;
+  for (const f of files) {
+    const text = fs.readFileSync(f, 'utf8');
+    for (let i = text.indexOf(grep); i >= 0 && hits < 12; i = text.indexOf(grep, i + grep.length)) {
+      hits++;
+      console.log(`\n=== ${path.relative(root, f)} @${i}\n${text.slice(Math.max(0, i - 400), i + 400 + grep.length)}`);
+    }
+  }
+  console.log(`\n${hits ? `совпадений показано: ${hits}` : 'не найдено'} (искал в ${files.length} файлах под ${root})`);
+  process.exit(0);
+}
+
 const env = { ...process.env, NO_BROWSER: 'true' };
 if (settings) env.GIGACODE_SYSTEM_SETTINGS_PATH = path.resolve(settings);
 log(`запуск: ${cmd} ${[...pre, '--acp'].join(' ')}`);
@@ -61,13 +90,13 @@ child.stdout.on('data', (chunk) => {
       pending.delete(msg.id);
       resolve(msg);
     } else if (msg.method && msg.id !== undefined) {
-      log(`агент спрашивает: ${msg.method} — отвечаю «не поддерживается»`);
+      log(`агент спрашивает: ${msg.method} ${mask(msg.params).slice(0, 1500)} — отвечаю «не поддерживается»`);
       child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: msg.id, error: { code: -32601, message: 'probe: not supported' } })}\n`);
     } else if (msg.method === 'session/update') {
       const u = msg.params?.update;
       if (u?.sessionUpdate === 'agent_message_chunk') process.stdout.write(u.content?.text ?? '');
       else log(`update: ${u?.sessionUpdate}`);
-    } else if (msg.method) log(`уведомление: ${msg.method}`);
+    } else if (msg.method) log(`уведомление: ${msg.method} ${mask(msg.params).slice(0, 1500)}`);
   }
 });
 child.stderr.setEncoding('utf8');
@@ -90,7 +119,8 @@ function request(method, params) {
 }
 
 try {
-  await request('initialize', { protocolVersion: 1, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false } });
+  const init = await request('initialize', { protocolVersion: 1, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false } });
+  log(`initialize → ${mask(init).slice(0, 3000)}`);
   const { sessionId } = await request('session/new', { cwd, mcpServers: [] });
   log(`сессия: ${sessionId}`);
   if (prompt) {
