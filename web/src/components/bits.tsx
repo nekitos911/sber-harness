@@ -2,7 +2,7 @@ import { Activity, Circle, CircleCheck, CircleDashed, CircleDot, CircleHelp, Cir
 import { sessionVisualState, STATE_LABEL, type VisualState } from '../lib/sessionState'
 import type { Session, SubAgentState } from '../types'
 
-type StatusLike = Pick<Session, 'status' | 'kind'> & Partial<Pick<Session, 'phase' | 'waitingFor' | 'stalled' | 'interrupted' | 'finishedAt' | 'preview' | 'externalSessionId'>>
+type StatusLike = Pick<Session, 'status' | 'kind'> & Partial<Pick<Session, 'phase' | 'waitingFor' | 'stalled' | 'interrupted' | 'finishedAt' | 'preview' | 'externalSessionId' | 'bgShells'>>
 
 export function statusText(s: StatusLike) {
   const state = sessionVisualState(s)
@@ -29,9 +29,11 @@ const ICONS: Record<VisualState, LucideIcon> = {
 /** The session's state as an icon whose colour and shape differ per state; the words are in aria-label. */
 export function StatusIcon({ session, kidsWorking = 0 }: { session: StatusLike; kidsWorking?: number }) {
   const v = sessionVisualState(session)
-  // the agent itself is done or waits, its sub-agents work (as Orca's pulse): not an empty «ответил» circle
-  if (kidsWorking > 0 && (v === 'idle' || v === 'done' || v === 'stopped')) {
-    const label = `Работают субагенты: ${kidsWorking}`
+  // the agent itself is done or waits, its sub-agents or background commands work (as Orca's pulse): not an empty
+  // «ответил» circle
+  const shells = session.bgShells?.length ?? 0
+  if ((kidsWorking > 0 || shells > 0) && (v === 'idle' || v === 'done' || v === 'stopped')) {
+    const label = [kidsWorking && `Работают субагенты: ${kidsWorking}`, shells && `Работают фоновые команды: ${shells}`].filter(Boolean).join(' · ')
     return <Activity className="st" data-s="kids" role="img" aria-label={label} data-tip={label} />
   }
   const Icon = ICONS[v]

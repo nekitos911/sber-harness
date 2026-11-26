@@ -151,6 +151,7 @@ export interface Session {
   cliModel?: string | null // the model the CLI reported at the turn start (when the chat uses the default)
   cliImportedAt?: number | null // an adopted CLI chat the harness continued (null: untouched history)
   mcpStatus?: { name: string; status: string }[] // MCP servers as the CLI reported them at the turn's start
+  bgShells?: string[] // ids of its messages whose background shell command still runs (the harness watches them)
   effectiveApprovalMode?: string | null // what the CLI really runs with (e.g. auto → auto-edit)
   system?: boolean // harness-internal (login terminal, discovery…): shown only under «Служебное»
   persistent?: boolean // a child that is a full participant (e.g. an orchestrator in another worktree): never folded or auto-archived

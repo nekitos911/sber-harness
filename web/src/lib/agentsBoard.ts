@@ -21,7 +21,7 @@ export const CAT_LABEL: Record<Cat, string> = { you: 'Ждут вас', fail: '�
 export interface Row {
   s: Session
   kids: Session[] // every helper started from it (theirs too), archived ones included
-  cat: Cat // its own; «you» when one of its live helpers waits for the person; «run» when its turn is over but a helper works
+  cat: Cat // its own; «you» when one of its live helpers waits for the person; «run» when its turn is over but a helper or a background command works
   who: Session // the chat that sets `cat`: itself or that helper
   finished: number // helpers whose work is over
 }
@@ -43,7 +43,9 @@ export function agentRows(sessions: Session[], state: State, kidsOf: (id: string
     // its own turn is over but a helper still works (it waits for that sub-agent's answer): the row works, not «готово»
     const working = asking || own === 'run' || own === 'fail' ? undefined : kids.find((k) => !k.archived && catOf(state(k)) === 'run')
     const who = asking ?? working ?? s
-    return { s, kids, cat: asking ? 'you' : working ? 'run' : own, who, finished: kids.filter((k) => catOf(state(k)) === 'done').length }
+    // a background command of its own still runs (mvn test…): it works, and its end wakes it
+    const shell = own === 'done' && !!s.bgShells?.length
+    return { s, kids, cat: asking ? 'you' : working || shell ? 'run' : own, who, finished: kids.filter((k) => catOf(state(k)) === 'done').length }
   })
 }
 
@@ -85,5 +87,5 @@ export function countCats(rows: Row[]): Record<Cat, number> {
 }
 
 /** Safe to archive in bulk: its work is over, nothing waits (queue, question) and none of its helpers still works. */
-export const archivable = (r: Row, state: State) => !r.s.archived && r.cat === 'done' && !r.s.turnClosing && !r.s.queued && !r.s.waitingFor &&
+export const archivable = (r: Row, state: State) => !r.s.archived && r.cat === 'done' && !r.s.turnClosing && !r.s.queued && !r.s.waitingFor && !r.s.bgShells?.length &&
   !r.kids.some((k) => !k.archived && catOf(state(k)) === 'run')

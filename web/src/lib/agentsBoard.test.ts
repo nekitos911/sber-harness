@@ -30,6 +30,13 @@ test('a chat whose turn is over while a helper (built-in or worker) still works 
   assert.equal(rows([s('a'), s('v', { parentId: 'a', virtual: true, status: 'running', archived: true })])[0].cat, 'done', 'an archived helper does not count')
 })
 
+test('a chat whose turn is over while its background command runs counts as working, and is not archived in bulk', () => {
+  const r = rows([s('a', { bgShells: ['m1'] })])
+  assert.deepEqual([r[0].cat, r[0].who.id], ['run', 'a'])
+  assert.equal(archivable(r[0], sessionVisualState), false)
+  assert.equal(rows([s('a', { bgShells: [] })])[0].cat, 'done', 'the command ended: done again')
+})
+
 test('a worker whose parent is archived is a row of its own', () => {
   const r = rows([s('p', { archived: true }), s('w', { parentId: 'p' })])
   assert.deepEqual(r.map((x) => x.s.id), ['w'])

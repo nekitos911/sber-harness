@@ -449,7 +449,8 @@ function WorkingSection({ tree, sessions }: { tree: Tree; sessions: Session[] })
   const [open, setOpen] = useState(false)
   // a chat whose own turn is over but whose sub-agent still works is at work too (it waits for that answer)
   const parentsOfWorking = new Set(sessions.filter((x) => x.parentId && !x.archived && x.status === 'running').map((x) => x.parentId!))
-  const list = tree.all.filter((s) => listedChat(s) && (BUSY.has(sessionVisualState(s)) || parentsOfWorking.has(s.id)))
+  // …and so is one whose background command (mvn test…) still runs: its end wakes the agent
+  const list = tree.all.filter((s) => listedChat(s) && (BUSY.has(sessionVisualState(s)) || parentsOfWorking.has(s.id) || !!s.bgShells?.length))
   if (!list.length) return null
   const families = new Map<string, { parent: Session; children: Session[] }>()
   if (open) {
