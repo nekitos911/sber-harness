@@ -87,7 +87,7 @@ export function McpServers({ agentId, onSaved, agents, subagents }: {
               <strong className="mono">{n}</strong>
               <small>
                 {s ? `${s.transport === 'http' ? 'HTTP' : 'команда'} · ${s.local ? 'добавлен здесь' : 'из GigaCode'}` : 'из GigaCode'}
-                {agentOn && ok !== null && <> · <span className="mcp-state" data-ok={ok || undefined} data-tip={st}>{ok ? 'подключается' : 'ошибка'}</span></>}
+                {agentOn && ok !== null && <> · <span className="mcp-state" data-ok={ok || undefined} data-tip={`При последнем запуске агента: ${st}`}>{ok ? 'работал у агента' : 'не запустился у агента'}</span></>}
               </small>
             </span>
           </span>
