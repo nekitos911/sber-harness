@@ -638,7 +638,10 @@ POST   /api/notifications/read-all
 - argv: `[--max-old-space-size=6144, cli-entry.js, (--resume <id>)?, -p, <prompt>, --approval-mode, <mode>, --output-format, stream-json, (--model <m>)?]`.
 - Окружение (задаётся только runner): `GIGACODE_SYSTEM_SETTINGS_PATH`, `GIGACODE_PACKAGE_IDENTITY` (64 hex из
   `set "GIGACODE_PACKAGE_IDENTITY=…"` шима; нет → сразу ошибка), `GIGACODE_PACKAGE_LAUNCHER` (путь к шиму),
-  `MCP_SECRET_<NAME>` для каждого секрета, `HARNESS_URL`, `HARNESS_TOKEN`, `HARNESS_SESSION_ID`. Без окружения identity
+  `MCP_SECRET_<NAME>` для каждого секрета, `HARNESS_URL`, `HARNESS_TOKEN`, `HARNESS_SESSION_ID`; у субагента харнесса ещё
+  `HARNESS_AGENT_TYPE` (его профиль — то же, что `agent_type` встроенного субагента), `HARNESS_PARENT_SESSION_ID` и
+  `HARNESS_PARENT_CLI_SESSION_ID` (`session_id` родителя в его хуках): `SubagentStart`/`SubagentStop` GigaCode шлёт только
+  для своего встроенного `agent`, а субагент харнесса — отдельный процесс CLI, и его хуки (метрики) узнают себя по ним. Без окружения identity
   CLI пишет только в stderr и завершается с кодом 0 → сообщается как «exited without any output».
 - Настройки сессии `<dataDir>/runs/<sid>/settings.json` (UTF-8, один и тот же путь на каждом ходе, удаляется вместе с сессией):
   `{ "chatRecording": true, "mcpServers": { harness, ...agentMcpServers } }` (форк: `agents.modelGrades`/`allowedGrades`

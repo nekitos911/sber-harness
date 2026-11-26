@@ -55,7 +55,7 @@ const emit = (o) => process.stdout.write(`${JSON.stringify({ ...o, timestamp: ne
 
 // tests: record exactly what the harness passed (argv, settings/identity env), like a real GigaCode run would see it
 if (process.env.MOCK_AGENT_ARGV_FILE) {
-  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => /^(GIGACODE_|MOCK_AGENT_SETTINGS|MCP_SECRET_|HARNESS_SESSION_ID)/.test(k)));
+  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => /^(GIGACODE_|MOCK_AGENT_SETTINGS|MCP_SECRET_|HARNESS_SESSION_ID|HARNESS_AGENT_TYPE|HARNESS_PARENT_)/.test(k)));
   fs.appendFileSync(process.env.MOCK_AGENT_ARGV_FILE, `${JSON.stringify({ argv: [...process.execArgv, ...process.argv.slice(1)], env })}\n`);
 }
 // MOCK_AGENT_MODELS_SILENT: a cold start that says nothing for a long time (a loaded machine, many MCP servers)

@@ -293,7 +293,24 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
   }
 
   // HARNESS_SERVER_JSON: harness-mcp finds a restarted harness there (its URL may change) and retries meanwhile
-  const harnessEnv = (s) => ({ HARNESS_URL: getUrl(), HARNESS_TOKEN: store.token, HARNESS_SESSION_ID: s.id, HARNESS_SERVER_JSON: path.join(store.dataDir, 'server.json') });
+  const harnessEnv = (s) => ({
+    HARNESS_URL: getUrl(), HARNESS_TOKEN: store.token, HARNESS_SESSION_ID: s.id, HARNESS_SERVER_JSON: path.join(store.dataDir, 'server.json'),
+    ...subagentEnv(s),
+  });
+  /**
+   * A harness sub-agent is a CLI process of its own: GigaCode fires no SubagentStart/SubagentStop for it (those are for its
+   * built-in `agent`). Its hooks (metrics…) tell it by these: its type (the profile, like the built-in's agent_type), the
+   * parent chat and the parent's CLI session id (the session_id the parent's own hooks report).
+   */
+  const subagentEnv = (s) => {
+    if (!s.parentId) return {};
+    const p = find(s.parentId);
+    return {
+      HARNESS_AGENT_TYPE: s.profile || 'agent',
+      HARNESS_PARENT_SESSION_ID: s.parentId,
+      ...(p?.externalSessionId ? { HARNESS_PARENT_CLI_SESSION_ID: p.externalSessionId } : {}),
+    };
+  };
 
   /** Agent config + launcher + executable for an agent id; throws 400 with a clear message (fail fast). */
   function resolveAgent(agent, launcherId) {
@@ -2523,6 +2540,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
         branch: o.branch ?? null,
         role,
         parentId: o.parentId ?? null,
+        ...(typeof o.profile === 'string' && o.profile ? { profile: o.profile } : {}), // its agent type (~/.gigacode/agents/<profile>.md)
         taskId: o.taskId ?? null,
         status: 'idle',
         externalSessionId: null,

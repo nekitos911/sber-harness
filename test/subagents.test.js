@@ -86,6 +86,17 @@ test('worker_run: a nested ephemeral chat with the profile, the caller gets the 
   // the profile's own words first, then what the run is restricted to, then the task
   assert.match(first.text, /^Ты ревьюер Java-кода\.\n\nРаботай только на чтение[^\n]*\n\n## Задание\nПроверь diff #done всё чисто$/);
   assert.ok(!(await state()).tasks.some((t) => /Проверь diff/.test(t.title)), 'no board task for a sub-agent');
+  // its hooks (metrics) tell it is a sub-agent: GigaCode fires no SubagentStart/Stop for a harness one
+  const runs = fs.readFileSync(argvFile, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  const env = runs.find((x) => x.env.HARNESS_SESSION_ID === child.id).env;
+  assert.deepEqual([env.HARNESS_AGENT_TYPE, env.HARNESS_PARENT_SESSION_ID], ['java-reviewer', caller.id]);
+  // the parent's CLI session id (known once its CLI said it: the mock calls before that on its first turn)
+  await h.api('POST', `/api/sessions/${caller.id}/messages`, { text: '#run java-reviewer ещё раз #done ок' });
+  const second = await waitFor(async () => (await state()).sessions.find((s) => s.parentId === caller.id && s.ephemeral && s.id !== child.id), { timeout: 20000, what: 'second sub-agent' });
+  const parentCli = (await state()).sessions.find((s) => s.id === caller.id).externalSessionId;
+  const env2 = await waitFor(() => fs.readFileSync(argvFile, 'utf8').trim().split('\n').map((l) => JSON.parse(l)).find((x) => x.env.HARNESS_SESSION_ID === second.id)?.env, { what: 'its run' });
+  assert.equal(env2.HARNESS_PARENT_CLI_SESSION_ID, parentCli);
+  assert.equal(runs.find((x) => x.env.HARNESS_SESSION_ID === caller.id).env.HARNESS_AGENT_TYPE, undefined, 'the caller is no sub-agent');
 
   const quiet = await chat('#run java-reviewer просто посмотри');
   await waitFor(async () => (await messages(quiet.id)).some((m) => m.kind === 'assistant' && m.text.includes('worker_run result:')), { timeout: 20000 });

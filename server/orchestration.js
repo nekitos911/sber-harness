@@ -644,7 +644,7 @@ export function createOrchestration({ config, store, bus, tasks, sessions, addWo
     let s = null;
     try {
       s = await sessions.create({
-        kind: 'chat', agent, cwd, role: 'worker', parentId: caller.id, model, approvalMode: mode, branch, ephemeral: true, autoReport: false, persistent,
+        kind: 'chat', agent, cwd, role: 'worker', parentId: caller.id, profile: a.profile || null, model, approvalMode: mode, branch, ephemeral: true, autoReport: false, persistent,
         title: a.title || subagentTitle(a.profile || 'agent', a.description || a.spec),
       });
       if (!persistent && (s.worktreePath ?? s.cwd) !== (caller.worktreePath ?? caller.cwd)) sessions.update(s.id, { persistent: true });
