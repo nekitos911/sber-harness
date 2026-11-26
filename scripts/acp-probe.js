@@ -6,6 +6,8 @@
 //   --command    the CLI to run (default: gigacode from PATH, the bundled node + lib/cli-entry.js when it is a .cmd shim)
 //   --grep <s>   instead of a run: print where <s> appears in the CLI's own lib/*.js (±400 characters), e.g. a method name
 //   --flag <f>   the ACP switch to pass (default --acp; try --experimental-acp: 26.11 treats only --acp as «managed»)
+//   --home <dir> run with QWEN_HOME=<dir> (a home of its own, as the harness did before 2026-11-25 12:46: a fresh one signs in in the browser)
+//   --no-browser set NO_BROWSER (the CLI prints the sign-in link instead of opening it)
 //   --no-auth    do not answer session/requestCredentialsRefresh with `authenticate` (to see the hang as it is)
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
@@ -72,10 +74,13 @@ if (grep) {
   process.exit(0);
 }
 
-const env = { ...process.env, ...shimEnv, NO_BROWSER: 'true' };
+const env = { ...process.env, ...shimEnv };
+if (process.argv.includes('--no-browser')) env.NO_BROWSER = 'true';
+const home = arg('--home');
+if (home) { fs.mkdirSync(path.resolve(home), { recursive: true }); env.QWEN_HOME = path.resolve(home); }
 if (settings) env.GIGACODE_SYSTEM_SETTINGS_PATH = path.resolve(settings);
 log(`запуск: ${cmd} ${[...pre, acpFlag].join(' ')}`);
-log(`cwd: ${cwd}${settings ? `; настройки запуска: ${env.GIGACODE_SYSTEM_SETTINGS_PATH}` : '; без настроек харнеса'}`);
+log(`cwd: ${cwd}${settings ? `; настройки запуска: ${env.GIGACODE_SYSTEM_SETTINGS_PATH}` : '; без настроек харнеса'}${home ? `; QWEN_HOME: ${env.QWEN_HOME}` : ''}${env.NO_BROWSER ? '; NO_BROWSER' : ''}`);
 const child = spawn(cmd, [...pre, acpFlag], { cwd, env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
 
 let buf = '';
