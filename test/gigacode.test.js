@@ -271,6 +271,8 @@ test('approval modes: auto -> auto-edit for headless GigaCode; autoSandbox keeps
   assert.equal(gl.effectiveMode({ session: { approvalMode: 'auto' }, agentCfg: { autoSandbox: null } }), 'auto-edit');
   const acp = gl.acpArgs({ session: { approvalMode: 'auto', includeDirs: [] }, agentCfg: { autoSandbox: null } });
   assert.equal(acp[acp.indexOf('--approval-mode') + 1], 'auto-edit');
+  assert.equal(acp[0], '--acp', 'the ACP switch by default');
+  assert.equal(gl.acpArgs({ session: { includeDirs: [] }, agentCfg: { acpFlag: '--experimental-acp' } })[0], '--experimental-acp', 'agents.<id>.acpFlag picks another one');
   // the default allow-list: auto-edit/default turns, not plan (and not auto under the sandbox); grants are merged
   const allowed = (agentCfg, approvalMode, session = {}) => {
     const args = gl.buildArgs({ prompt: 'x', session: { approvalMode, includeDirs: [], ...session }, agentCfg });

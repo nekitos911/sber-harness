@@ -524,7 +524,9 @@ function geminiFamily(id, defaults, resolve) {
     /** transport "acp": one long-lived process per session; the prompt goes over JSON-RPC, not argv. VERIFY GigaCode --acp. */
     acpArgs(ctx) {
       const { session, agentCfg } = ctx;
-      const args = ['--acp'];
+      // GigaCode 26.11 treats --acp as a Desktop launch (it waits for the client's credentials); --experimental-acp is a
+      // plain ACP launch that signs in by itself (deprecated there, so not the default): agents.<id>.acpFlag picks it
+      const args = [agentCfg.acpFlag || '--acp'];
       const mode = acpApprovalMode(defaults, agentCfg, session.approvalMode || agentCfg.approvalMode);
       if (mode) args.push('--approval-mode', mode);
       // the session's own catalogue decides, not the argv (sessions.js fittingModel); when a checked id does go in, it
