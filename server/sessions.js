@@ -1004,7 +1004,17 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     // keeps the answer and still opens it
     if (!runtime(s.id).running) retireVirtual(v);
     wakeParent(s, v, res.output, res.isError);
+    releaseHeld(s);
     return true;
+  }
+
+  /** The last background sub-agent of a lingering process settled: the messages that waited for it start their turn. */
+  function releaseHeld(s) {
+    const r = runtime(s.id);
+    if (!r.closedEarly || liveBackgrounds(s.id).length || !s.queue?.length) return;
+    r.bgHoldNoted = false;
+    if (r.running) r.handle?.terminate?.('post_result_linger'); // its result is in: the process ends, the queue starts
+    else setTimeout(() => { const x = find(s.id); if (x && !x.archived && x.status !== 'stopped') startTurn(x); }, 0);
   }
 
   /**
@@ -1172,6 +1182,12 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     const r = runtime(sid);
     const found = s?.queue?.find((q) => q.from === 'user');
     if (!s || !r.running || !found) return false;
+    // a per-message process (not ACP) dies with the cut, and the CLI's background sub-agents with it: the message waits
+    if ((config.agents[s.agent]?.transport || 'headless') !== 'acp' && liveBackgrounds(sid).length) {
+      addMessage(s, { kind: 'system', text: 'Шаг не прерван: внутри процесса агента работает фоновый субагент, прерывание оборвало бы его. Сообщение уйдёт после шага.' });
+      emit(s);
+      return false;
+    }
     r.cutAt = r.turn; // the step's closing marks the message (finishTurn): its turn is told why it was cut
     r.stopRequested = true;
     r.handle?.stop();
@@ -1216,6 +1232,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
       if (!runtime(s.id).running) retireVirtual(v);
       if (status === 'failed') wakeParent(s, v, why, true); // stopped by the person: nothing to tell
     }
+    releaseHeld(s);
   }
 
   const spawnAt = new Map(); // agent -> when its next process may start
@@ -1347,12 +1364,19 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     const r = runtime(s.id);
     if (closed || r.running || !(s.queue?.length || r.retryItems)) return;
     if (r.closedEarly) {
-      // a new turn needs the process to end: its background sub-agents end with it — said so, not «думает» forever
-      if (liveBackgrounds(s.id).length) {
-        endBackgrounds(s, 'Прерван: в чат пришло новое сообщение, и процесс CLI, внутри которого работал этот фоновый субагент, перезапускается для нового хода. Результата не будет — при необходимости агент запустит его снова.', 'failed');
-        addMessage(s, { kind: 'system', text: '⚠ Фоновые субагенты GigaCode этого хода прерваны: для нового сообщения процесс CLI перезапускается. Субагенты через harness (mcp__harness__agent) от этого не зависят.' });
-        r.handle?.terminate?.('post_result_linger');
+      // a new turn needs the process to end, and the CLI's background sub-agents live inside it: ending it lost their
+      // work. The message waits for them instead (their answers come first), and goes as soon as they are done —
+      // «Остановить» on the sub-agent sends it at once.
+      const live = liveBackgrounds(s.id);
+      if (live.length) {
+        if (!r.bgHoldNoted) {
+          r.bgHoldNoted = true;
+          addMessage(s, { kind: 'system', text: `Сообщение уйдёт агенту, когда закончит фоновый субагент ${live.map((v) => `«${v.title}»`).join(', ')}: он работает внутри процесса агента (режим «На каждое сообщение»), и новый ход оборвал бы его. Не ждать — «Остановить» в этом чате (субагент остановится тоже). В режиме «Процесс на чат (ACP)» и с субагентами харнесса писать можно сразу.` });
+          emit(s);
+        }
+        return;
       }
+      r.bgHoldNoted = false;
       // the previous process is still closing: follow it to its end, the queue starts after (finishLingered)
       if (!r.lingerFollow) {
         r.lingerFollow = true; // once: a process that cannot be followed is killed, not followed again in a loop
@@ -2449,7 +2473,14 @@ ${note.trim()}` : text });
         return { queued: !idle };
       }
       s.queued = s.queue.length;
-      if (r.closedEarly) armLinger(s);
+      if (r.closedEarly) {
+        armLinger(s); // kept while its background sub-agents work (they live inside it); the message goes after them
+        const live = liveBackgrounds(sid);
+        if (live.length && !r.bgHoldNoted) {
+          r.bgHoldNoted = true;
+          addMessage(s, { kind: 'system', text: `Сообщение уйдёт агенту, когда закончит фоновый субагент ${live.map((v) => `«${v.title}»`).join(', ')}: он работает внутри процесса агента (режим «На каждое сообщение»), и новый ход оборвал бы его. Не ждать — «Остановить» в этом чате (субагент остановится тоже). В режиме «Процесс на чат (ACP)» и с субагентами харнесса писать можно сразу.` });
+        }
+      }
       // a message to an agent that only waits for its sub-agents is not left behind that wait (the sub-agents go on);
       // one that does not (midTurn of a session whose call waited for this one already ended it) keeps the deadline
       else if (!asked) { if (hooks.personWrote?.(s) === false) armSteer(s); }
