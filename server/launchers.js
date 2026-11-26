@@ -218,9 +218,10 @@ export function normalize(o, state = {}) {
 const argPrompt = (p) => (p.startsWith('-') ? ` ${p}` : p);
 const fail = (message) => { throw Object.assign(new Error(message), { status: 400 }); };
 const exists = (p) => !!p && fs.existsSync(p);
-const USER_SETTINGS = path.join(os.homedir(), '.gigacode', 'settings.json');
+// HARNESS_USER_SETTINGS: another file (tests: never the machine's own ~/.gigacode, whose mcp.excluded would leak in)
+const userSettingsFile = () => process.env.HARNESS_USER_SETTINGS || path.join(os.homedir(), '.gigacode', 'settings.json');
 
-function userMcpServers(file = USER_SETTINGS) {
+function userMcpServers(file = userSettingsFile()) {
   try {
     return JSON.parse(fs.readFileSync(file, 'utf8').replace(/^﻿/, '')).mcpServers || {};
   } catch {
@@ -229,7 +230,7 @@ function userMcpServers(file = USER_SETTINGS) {
 }
 
 /** The person's own mcp.excluded (and the legacy top-level excludeMCPServers the CLI migrates into it). */
-function userMcpExcluded(file = USER_SETTINGS) {
+function userMcpExcluded(file = userSettingsFile()) {
   try {
     const s = JSON.parse(fs.readFileSync(file, 'utf8').replace(/^﻿/, ''));
     return [...(s.mcp?.excluded || []), ...(s.excludeMCPServers || [])].filter((x) => typeof x === 'string');
