@@ -81,9 +81,12 @@ export function QuestionCard({ id, text, options, multiSelect, answered, closed,
 }
 
 /**
- * Several questions in one call: each with its options (or its own words), one «Ответить на все» — the agent gets the
- * answers together, numbered, in the next message.
+ * Several questions in one call: each with its options (or its own words), one button — the agent gets the answers
+ * together, numbered, in the next message. A question may be left blank: it goes as SKIPPED (the agent decides itself),
+ * never blocking the others.
  */
+const SKIPPED = 'пропущен: ответа нет, реши сам (или спроси ещё раз, если без ответа нельзя)'
+
 function QuestionsCard({ id, parts, answered, closed, send }: {
   id: string
   parts: { text: string; header?: string; options: { label: string; description?: string }[]; multiSelect?: boolean }[]
@@ -96,7 +99,8 @@ function QuestionsCard({ id, parts, answered, closed, send }: {
   const [free, setFree] = useState<string[]>(() => parts.map(() => ''))
   const [busy, setBusy] = useState(false)
   const value = (i: number) => free[i].trim() || picked[i].join(', ')
-  const ready = parts.every((_, i) => !!value(i))
+  const left = parts.filter((_, i) => !value(i)).length
+  const ready = left < parts.length // at least one answer: the rest may be skipped
   const pick = (i: number, label: string, multi?: boolean) => setPicked((all) => all.map((p, j) => (j !== i ? p : multi ? (p.includes(label) ? p.filter((x) => x !== label) : [...p, label]) : [label])))
   if (answer || closed) {
     return <div className="ask-card ask-done ask-done-many" role="note"><CircleHelp aria-hidden /><span>{answer ? <>Вы ответили:<br /><span className="ask-answers">{answer}</span></> : 'Вопросы закрыты'}</span></div>
@@ -104,7 +108,7 @@ function QuestionsCard({ id, parts, answered, closed, send }: {
   const submit = async () => {
     if (!ready || busy) return
     setBusy(true)
-    const answers = parts.map((_, i) => value(i))
+    const answers = parts.map((_, i) => value(i) || SKIPPED)
     const ok = await send(answers)
     setBusy(false)
     if (ok) setAnswer(answers.map((a, i) => `${i + 1}. ${a}`).join('\n'))
@@ -133,8 +137,8 @@ function QuestionsCard({ id, parts, answered, closed, send }: {
         ))}
       </ol>
       <div className="ask-submit">
-        <span className="muted">{ready ? 'Все ответы на месте' : `Осталось ответить: ${parts.filter((_, i) => !value(i)).length}`}</span>
-        <Button size="sm" variant="primary" busy={busy} disabled={!ready || busy} onClick={() => void submit()}>Ответить на все</Button>
+        <span className="muted">{!left ? 'Все ответы на месте' : ready ? `Без ответа: ${left} — агент решит сам` : 'Ответьте хотя бы на один вопрос, остальные можно пропустить'}</span>
+        <Button size="sm" variant="primary" busy={busy} disabled={!ready || busy} onClick={() => void submit()}>{left && ready ? `Отправить, пропустив ${left}` : 'Ответить на все'}</Button>
       </div>
     </section>
   )
