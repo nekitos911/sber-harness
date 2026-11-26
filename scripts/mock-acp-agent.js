@@ -17,6 +17,10 @@ import { randomUUID } from 'node:crypto';
 const stateDir = process.env.MOCK_AGENT_STATE_DIR || path.join(os.tmpdir(), 'harness-mock-agent');
 fs.mkdirSync(stateDir, { recursive: true });
 const stateFile = (id) => path.join(stateDir, `acp-${id.replace(/[^\w-]/g, '_')}.json`);
+if (process.env.MOCK_ACP_REFUSE && process.argv.includes(process.env.MOCK_ACP_REFUSE)) {
+  process.stderr.write(`Unknown argument: ${process.env.MOCK_ACP_REFUSE.replace(/^--/, '')}\n`);
+  process.exit(1);
+}
 const send = (msg) => process.stdout.write(`${JSON.stringify({ jsonrpc: '2.0', ...msg })}\n`);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let seq = 0;
@@ -159,7 +163,7 @@ const handlers = {
     }
     // MOCK_ACP_MANAGED=1: like GigaCode 26.11 — every --acp launch is «managed», session/new parks until the client
     // publishes credentials (it asks with a notification and never answers)
-    if (process.env.MOCK_ACP_MANAGED === '1') {
+    if (process.env.MOCK_ACP_MANAGED === 'all' || (process.env.MOCK_ACP_MANAGED === '1' && process.argv.includes('--acp'))) {
       send({ method: 'session/requestCredentialsRefresh', params: {} });
       return new Promise(() => {});
     }

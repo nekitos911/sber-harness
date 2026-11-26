@@ -524,9 +524,10 @@ function geminiFamily(id, defaults, resolve) {
     /** transport "acp": one long-lived process per session; the prompt goes over JSON-RPC, not argv. VERIFY GigaCode --acp. */
     acpArgs(ctx) {
       const { session, agentCfg } = ctx;
-      // GigaCode 26.11 treats --acp as a Desktop launch (it waits for the client's credentials); --experimental-acp is a
-      // plain ACP launch that signs in by itself (deprecated there, so not the default): agents.<id>.acpFlag picks it
-      const args = [agentCfg.acpFlag || '--acp'];
+      // GigaCode 26.11 treats a literal --acp as a Desktop launch (it waits for the client's credentials, which the
+      // harness has none of); --experimental-acp is a plain ACP launch that signs in by itself, as in the console.
+      // agents.<id>.acpFlag overrides; a CLI that no longer knows the default gets --acp once (acp.js)
+      const args = [agentCfg.acpFlag || defaults.acpFlag || '--acp'];
       const mode = acpApprovalMode(defaults, agentCfg, session.approvalMode || agentCfg.approvalMode);
       if (mode) args.push('--approval-mode', mode);
       // the session's own catalogue decides, not the argv (sessions.js fittingModel); when a checked id does go in, it
@@ -610,7 +611,7 @@ const commandHint = (name) => `[harness] Это сообщение — кома�
 
 const gigacodeLauncher = () => {
   const base = geminiFamily('gigacode', {
-    quickArgs: ['--safe-mode'], compressCommand: '/compress', contextCommand: '/context', command: 'gigacode', settingsEnv: 'GIGACODE_SYSTEM_SETTINGS_PATH', firstEventTimeoutMs: 120000,
+    acpFlag: '--experimental-acp', quickArgs: ['--safe-mode'], compressCommand: '/compress', contextCommand: '/context', command: 'gigacode', settingsEnv: 'GIGACODE_SYSTEM_SETTINGS_PATH', firstEventTimeoutMs: 120000,
     continueArgs: ['-c'], approvalModeMap: { auto: 'auto-edit' }, allowedToolsFlag: '--allowed-tools', allowedTools: DEFAULT_ALLOWED_TOOLS, autoSandbox: null,
     partialMessagesFlag: null /* opt-in: on the target 2 of 3 tool calls then came without arguments (VERIFY) */, stripModelSuffix: true,
     // The agent runs on the person's own ~/.gigacode: its protected storage holds the sign-in, and a data folder per run

@@ -11,8 +11,11 @@ import { resolveInside } from './fs.js';
 const PROTOCOL_VERSION = 1;
 /** The managed-launch dead end, in the words the chat shows (START_FATAL in sessions.js: no retries). */
 export const CREDENTIALS_WANTED = 'GigaCode в режиме ACP ждёт вход от GigaCode Desktop (session/requestCredentialsRefresh): '
-  + 'с версии 26.11 любой запуск с --acp считается запуском из Desktop, а такой вход харнесу недоступен. '
-  + 'Настройки → Агенты → «Запуск»: «На каждое сообщение» — так GigaCode входит сам, как в консоли.';
+  + 'запуск с --acp он считает запуском из Desktop, а такой вход харнесу недоступен. Обычный ACP со своим входом — флаг '
+  + '--experimental-acp (agents.<id>.acpFlag); если эта версия GigaCode его уже не знает — Настройки → Агенты → «Запуск»: '
+  + '«На каждое сообщение»: так GigaCode входит сам, как в консоли.';
+/** The default plain-ACP switch refused by a CLI («Unknown argument»): it is gone, --acp is all that is left. */
+const FLAG_REFUSED = /unknown (argument|arguments|option)|experimental-acp.*(not|unknown|invalid)/i;
 const ACP_INIT_TIMEOUT_MS = 120000;
 const MCP_START_TIMEOUT_MS = 30000; // how long the agent may start one MCP server (mcpServers.<name>.timeoutMs)
 const LOAD_ATTEMPTS = 3; // session/load: tries before a new session
@@ -302,10 +305,14 @@ export function createAcp({ onWarm = () => {} } = {}) {
     endChild(c.child);
   }
 
+  /** agent -> the ACP switch that worked when its default was refused (for this harness run) */
+  const flagFallback = new Map();
+
   /** Starts (or reuses) the agent process + ACP session. `externalSessionId` -> session/load when supported. */
   async function ensure(o) {
     const cur = conns.get(o.sid);
     if (cur && !cur.dead) return cur;
+    if (flagFallback.has(o.agent)) o = { ...o, ctx: { ...o.ctx, agentCfg: { ...o.ctx.agentCfg, acpFlag: flagFallback.get(o.agent) } } };
     const log = (t) => {
       try {
         fs.appendFileSync(o.logFile, t);
@@ -448,7 +455,14 @@ export function createAcp({ onWarm = () => {} } = {}) {
       onWarm(o.sid, true);
     } catch (e) {
       drop(o.sid);
-      throw Object.assign(e, { stderrTail: readTail(errFile) });
+      const tail = readTail(errFile);
+      // the default plain-ACP switch is gone in this CLI: once more with --acp (remembered for the agent)
+      if (!o.flagRetried && args.includes('--experimental-acp') && FLAG_REFUSED.test(tail)) {
+        flagFallback.set(o.agent, '--acp');
+        log('[acp] --experimental-acp не принят — запуск с --acp\n');
+        return ensure({ ...o, flagRetried: true });
+      }
+      throw Object.assign(e, { stderrTail: tail });
     }
     return c;
   }

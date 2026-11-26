@@ -43,6 +43,8 @@ async function harness() {
         // the first session/new times out on a SessionStart hook, the next one works
         acpnewhook: { launcher: 'mock', label: 'ACP new hook', transport: 'acp', env: { MOCK_ACP_NEW_HOOKTIMEOUT: path.join(root, 'newhook.flag') }, command: [process.execPath, path.join(CODE_ROOT, 'scripts', 'mock-acp-agent.js')], approvalMode: 'auto', approvalModes: ['default', 'auto'] },
         // GigaCode 26.11: every --acp launch is «managed» — session/new waits for credentials the harness does not have
+        // a CLI that no longer knows --experimental-acp: the harness starts it once more with --acp
+        acprefuse: { launcher: 'mock', label: 'ACP refuse', transport: 'acp', acpFlag: '--experimental-acp', env: { MOCK_ACP_REFUSE: '--experimental-acp', MOCK_AGENT_ARGV_FILE: path.join(root, 'refuse-argv.jsonl') }, command: [process.execPath, path.join(CODE_ROOT, 'scripts', 'mock-acp-agent.js')], approvalMode: 'auto', approvalModes: ['default', 'auto'] },
         acpmanaged: { launcher: 'mock', label: 'ACP managed', transport: 'acp', env: { MOCK_ACP_MANAGED: '1' }, command: [process.execPath, path.join(CODE_ROOT, 'scripts', 'mock-acp-agent.js')], approvalMode: 'auto', approvalModes: ['default', 'auto'] },
         acpchatty: { launcher: 'mock', label: 'ACP chatty', transport: 'acp', firstEventTimeoutMs: 1500, command: [process.execPath, chattyAgent], approvalMode: 'auto', approvalModes: ['default', 'auto'] },
         acpidle: { launcher: 'mock', label: 'ACP idle', transport: 'acp', acpIdleMin: 0.4 / 60, command: [process.execPath, path.join(CODE_ROOT, 'scripts', 'mock-acp-agent.js')], approvalMode: 'auto', approvalModes: ['default', 'auto'] },
@@ -410,6 +412,13 @@ test('«Переподключить MCP»: a new agent process on the same CLI 
   assert.notEqual(records().filter((r) => r.env.HARNESS_SESSION_ID === s.id).at(-1).pid, pid, 'a new process');
   assert.ok((await messages(s.id)).some((m) => m.kind === 'system' && /Агент перезапущен: MCP-серверы подключаются заново/.test(m.text)));
   await idle(s.id);
+});
+
+test('a CLI that refuses --experimental-acp («Unknown argument») is started once more with --acp, and the chat works', async () => {
+  const s = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'acprefuse', cwd, prompt: 'привет' })).body;
+  await waitFor(async () => (await said(s.id)).some((t) => /ACP mock/.test(t)), { timeout: 30000, what: 'the answer after the fallback' });
+  const argv = fs.readFileSync(path.join(root, 'refuse-argv.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l).argv);
+  assert.equal(argv.at(-1)[0], '--acp');
 });
 
 test('GigaCode asking for Desktop credentials (session/requestCredentialsRefresh): said at once, no 120 s wait, no retries', async () => {
