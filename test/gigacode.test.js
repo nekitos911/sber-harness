@@ -124,7 +124,7 @@ test('exact argv on new and resumed turns; settings.json without permissions; id
 
   const settings = JSON.parse(fs.readFileSync(s.settingsPath, 'utf8'));
   assert.deepEqual(settings, {
-    tools: { sandbox: 'workspace' },
+    tools: { sandbox: 'workspace' }, // the CLI's own agent tool stays unless orchestration.blockBuiltinAgent
     chatRecording: true,
     mcpServers: {
       harness: {
@@ -299,6 +299,16 @@ test('agent info: identity found + its source shim, never the value; effectiveAp
   assert.deepEqual([s.approvalMode, s.effectiveApprovalMode], ['auto', 'auto'], 'auto under the workspace sandbox');
   const user = (await h.api('GET', `/api/sessions/${created.id}/messages`)).body.find((m) => m.kind === 'user');
   assert.deepEqual([user.runInfo.cliMode, user.runInfo.sandbox, user.runInfo.transport, user.runInfo.allowedTools], ['auto', 'workspace', 'headless', []]);
+});
+
+test('sub-agents through the harness: the CLI own agent tool is excluded in the run settings, its own exclusions kept', () => {
+  const harnessMcp = { command: 'node', args: [], env: {} };
+  const run = (agentCfg, noBuiltinAgent) => sessionSettings({ agentCfg: { settings: {}, ...agentCfg }, harnessMcp, agentMcpServers: {}, noBuiltinAgent });
+  assert.deepEqual(run({}, true).tools, { exclude: ['agent'] });
+  assert.equal(run({}, false).tools, undefined, 'built-in sub-agents allowed: nothing excluded');
+  assert.deepEqual(run({ settings: { tools: { exclude: ['web_fetch'], approvalMode: 'x' } } }, true).tools, { exclude: ['web_fetch', 'agent'], approvalMode: 'x' });
+  assert.deepEqual(run({ autoSandbox: 'workspace' }, true).tools, { exclude: ['agent'], sandbox: 'workspace' }, 'the sandbox keeps the exclusion');
+  assert.deepEqual(run({ toolsExcludeKey: 'excludeTools' }, true).excludeTools, ['agent']);
 });
 
 test('mcpExclude goes into the run settings under the configured key only', () => {

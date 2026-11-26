@@ -906,6 +906,11 @@ function OrchestrationSection({ form, update }: Omit<SectionProps, 'fieldError'>
             <InstallFile id={agentId} kind="skills" name="harness-orchestration" target="~/.gigacode/skills/harness-orchestration/SKILL.md" title="Навык для субагентов" action="Установить навык" />
           )}
         </Row>
+        {o.blockBuiltinAgent !== undefined && (o.subagents ?? 'harness') === 'harness' && (
+          <Row label="Только субагенты харнесса" hint="Отключает встроенный инструмент agent GigaCode в чатах харнесса: агент сможет запускать субагентов только отдельными чатами. Выключено — агент обычно идёт через харнесс, но может запустить и встроенного (он виден только для чтения, а в песочнице GigaCode может не работать).">
+            <Switch label="Только субагенты харнесса" checked={!!o.blockBuiltinAgent} onChange={(v) => update({ ...form, orchestration: { ...o, blockBuiltinAgent: v } })} />
+          </Row>
+        )}
         {o.planCheck !== undefined && (
           <Row label="Проверять, доделан ли план" hint="Агент закончил ход, а в его плане остались незакрытые пункты: harness один раз просит доделать их или объяснить, почему он остановился.">
             <Switch label="Проверять, доделан ли план" checked={o.planCheck !== false} onChange={(v) => update({ ...form, orchestration: { ...o, planCheck: v } })} />

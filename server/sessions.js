@@ -393,6 +393,8 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
       mcpTimeoutMs: config.mcp?.acpStartTimeoutMs,
       harnessTimeoutMs: config.mcp?.harnessTimeoutMs,
       agentMcpServers: agentMcpServersFor(config),
+      // sub-agents through the harness: the CLI's own `agent` tool is off in its runs (launchers.js sessionSettings)
+      noBuiltinAgent: (config.orchestration?.subagents ?? 'harness') === 'harness' && config.orchestration?.blockBuiltinAgent === true,
     };
   }
 
@@ -507,13 +509,13 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
 
   /** Level 1: a built-in sub-agent call (agent/fork tool) becomes a read-only chat nested under its parent. */
   /** Title, model and first message of a sub-agent chat, from the agent/fork call's input. */
-  function virtualInfo(name, raw, agent) {
+  function virtualInfo(name, raw, agent, parentModel = null) {
     const input = raw && typeof raw === 'object' ? raw : {};
     const kind = input.subagent_type || (name.toLowerCase() === 'fork' ? 'fork' : 'agent');
     return {
       title: subagentTitle(kind, input.description || input.prompt),
       // the call names no model: the agent file's own `model:` is what the CLI runs it with (the card shows it)
-      model: typeof input.model === 'string' ? input.model : profileModel(agent, input.subagent_type),
+      model: typeof input.model === 'string' ? input.model : profileModel(agent, input.subagent_type) ?? parentModel,
       prompt: typeof input.prompt === 'string' ? input.prompt : JSON.stringify(input),
     };
   }
@@ -534,7 +536,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
   function openVirtual(s, ev, c) {
     const id = virtualId(s.id, ev.id);
     const now = Date.now();
-    const info = virtualInfo(ev.name, ev.input, s.agent);
+    const info = virtualInfo(ev.name, ev.input, s.agent, s.model || config.agents[s.agent]?.model || null);
     const real = takeAdopted(s.id, info.prompt);
     if (real) return real;
     const v = find(id) || {
@@ -555,7 +557,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
   function fillVirtual(c, id, name, input) {
     const v = find(id);
     if (!v?.virtual) return;
-    const info = virtualInfo(name, input, v.agent);
+    const info = virtualInfo(name, input, v.agent, v.model);
     const real = takeAdopted(v.parentId, info.prompt);
     if (real) return replaceCopy(v, real);
     Object.assign(v, { title: info.title, model: info.model ?? v.model });

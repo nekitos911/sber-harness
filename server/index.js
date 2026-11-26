@@ -459,6 +459,7 @@ export async function startServer(opts = {}) {
         subagentRetention: config.orchestration.subagentRetention, maxSubagentDepth: config.orchestration.maxSubagentDepth,
         subagentMcpExclude: config.orchestration.subagentMcpExclude || [],
         planCheck: config.orchestration.planCheck !== false,
+        blockBuiltinAgent: config.orchestration.blockBuiltinAgent === true,
       },
       integrations: {
         tasks: { enabled: !!t.enabled, space: t.space ?? null, urlTemplate: t.urlTemplate ?? '', statusMap: t.statusMap || {}, closedStatuses: t.closedStatuses || [], onStartTransition: t.onStartTransition ?? null },
@@ -722,6 +723,10 @@ export async function startServer(opts = {}) {
     if ('subagentRetention' in o) {
       if (!['archive', 'keep'].includes(o.subagentRetention)) fail(400, 'orchestration.subagentRetention: "archive" или "keep"');
       p.subagentRetention = o.subagentRetention;
+    }
+    if ('blockBuiltinAgent' in o) {
+      if (typeof o.blockBuiltinAgent !== 'boolean') fail(400, 'orchestration.blockBuiltinAgent: нужно true или false');
+      p.blockBuiltinAgent = o.blockBuiltinAgent;
     }
     if ('planCheck' in o) {
       if (typeof o.planCheck !== 'boolean') fail(400, 'orchestration.planCheck: нужно true или false');

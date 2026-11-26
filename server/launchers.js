@@ -282,7 +282,19 @@ export function agentMcpServersFor(config) {
 /** chatRecording false: the harness's own helper runs (model discovery, commit messages) leave no CLI chat record.
  * `harnessTimeoutMs` (mcp.harnessTimeoutMs) is how long the CLI waits for the harness server: `worker_run` waits for a
  * whole sub-agent run. */
-export function sessionSettings({ agentCfg, harnessMcp, agentMcpServers, chatRecording = true, harnessTimeoutMs = 3600000 }) {
+/** `names` added to the CLI's tool exclusion (agents.<id>.toolsExcludeKey, default «tools.exclude»), keeping its own. */
+function toolExclusion(agentCfg, rest, names) {
+  const key = agentCfg.toolsExcludeKey || 'tools.exclude';
+  const [head, ...tail] = key.split('.');
+  if (!tail.length) return { [head]: [...new Set([...(rest[head] || []), ...names])] };
+  const obj = { ...(rest[head] || {}) };
+  let cur = obj;
+  for (const k of tail.slice(0, -1)) cur = cur[k] = { ...(cur[k] || {}) };
+  cur[tail.at(-1)] = [...new Set([...(cur[tail.at(-1)] || []), ...names])];
+  return { [head]: obj };
+}
+
+export function sessionSettings({ agentCfg, harnessMcp, agentMcpServers, chatRecording = true, harnessTimeoutMs = 3600000, noBuiltinAgent = false }) {
   // `agents` (modelGrades/allowedGrades) is the HARNESS's own grade table: the CLI would validate every id against
   // its account catalogue and refuse to start on a mismatch. The harness picks the sub-agent model itself.
   const { permissions: _own, agents: _grades, mcpServers, ...rest } = agentCfg.settings || {};
@@ -292,10 +304,14 @@ export function sessionSettings({ agentCfg, harnessMcp, agentMcpServers, chatRec
   const harness = { ...harnessMcp };
   delete harness.trust;
   const exclusion = mcpExclusion(agentCfg, rest);
+  // sub-agents through the harness (orchestration.subagents «harness»): the CLI's own `agent` tool is switched off, so
+  // the agent cannot slip past the rule into an invisible, sandboxed built-in sub-agent (agents.<id>.toolsExcludeKey)
+  const blocked = noBuiltinAgent ? toolExclusion(agentCfg, rest, ['agent']) : {};
   return {
     ...rest,
+    ...blocked,
     // opt-in: GigaCode allows a real `auto` only under an action sandbox (restricts tools to the workspace; VERIFY)
-    ...(agentCfg.autoSandbox ? { tools: { ...rest.tools, sandbox: agentCfg.autoSandbox } } : {}),
+    ...(agentCfg.autoSandbox ? { tools: { ...rest.tools, ...blocked.tools, sandbox: agentCfg.autoSandbox } } : {}),
     chatRecording,
     mcpServers: {
       ...(agentCfg.inheritUserMcp ? userMcpServers(agentCfg.userSettingsPath) : {}),
