@@ -32,7 +32,10 @@ function command() {
     const root = path.dirname(d);
     const node = path.join(root, 'runtime', 'node', 'node.exe');
     const entry = path.join(root, 'lib', 'cli-entry.js');
-    if (fs.existsSync(node) && fs.existsSync(entry)) return [node, ['--max-old-space-size=6144', entry]];
+    // the shim's own identity: without it cli-entry.js refuses any launch but --acp («identities do not match»)
+    const identity = /GIGACODE_PACKAGE_IDENTITY=["']?([0-9a-f]{64})/i.exec(fs.readFileSync(cmd, 'utf8'))?.[1];
+    const shimEnv = identity ? { GIGACODE_PACKAGE_IDENTITY: identity, GIGACODE_PACKAGE_LAUNCHER: cmd } : {};
+    if (fs.existsSync(node) && fs.existsSync(entry)) return [node, ['--max-old-space-size=6144', entry], shimEnv];
     return [cmd, []];
   }
   for (const d of dirs) if (fs.existsSync(path.join(d, 'gigacode.exe'))) return [path.join(d, 'gigacode.exe'), []];
@@ -42,7 +45,7 @@ function command() {
 /** Values that look like secrets (tokens, keys, long hex/base64) are cut, the shape stays. */
 const mask = (v) => JSON.stringify(v, (k, x) => (typeof x === 'string' && (/token|secret|password|authorization|key/i.test(k) || /^[A-Za-z0-9_\-.=+/]{32,}$/.test(x)) ? `<${x.length} симв.>` : x));
 
-const [cmd, pre] = command();
+const [cmd, pre, shimEnv = {}] = command();
 const acpFlag = arg('--flag', '--acp');
 const grep = arg('--grep');
 if (grep) {
@@ -69,7 +72,7 @@ if (grep) {
   process.exit(0);
 }
 
-const env = { ...process.env, NO_BROWSER: 'true' };
+const env = { ...process.env, ...shimEnv, NO_BROWSER: 'true' };
 if (settings) env.GIGACODE_SYSTEM_SETTINGS_PATH = path.resolve(settings);
 log(`запуск: ${cmd} ${[...pre, acpFlag].join(' ')}`);
 log(`cwd: ${cwd}${settings ? `; настройки запуска: ${env.GIGACODE_SYSTEM_SETTINGS_PATH}` : '; без настроек харнеса'}`);
