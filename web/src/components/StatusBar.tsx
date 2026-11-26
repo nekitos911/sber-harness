@@ -99,7 +99,7 @@ export function StatusBar() {
               </div>
             })}
             <button type="button" className="link-btn" onClick={() => {
-              setOpen(false); setState({ settingsCategory: 'Подключения' }); openScreen('settings')
+              setOpen(false); setState({ settingsCategory: 'MCP' }); openScreen('settings')
             }}>Настроить подключения</button>
           </Popover>
         </>

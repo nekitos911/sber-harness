@@ -951,3 +951,31 @@ button.timeline-by:hover { text-decoration: underline; }
 /* sub-agent MCP switches: a wrapping row of labelled switches */
 .set-chips { display: flex; flex-wrap: wrap; gap: var(--sp-2) var(--sp-5); }
 .set-switch { display: inline-flex; align-items: center; gap: var(--sp-2); cursor: pointer; font-size: var(--fs-md); }
+
+/* settings: what this page is about, the autosave state, one MCP table */
+.settings-page-note { margin-top: 0; margin-bottom: 12px; color: var(--ink-3); font-size: var(--fs-sm); }
+.settings-save-error { margin-top: 0; margin-bottom: 12px; }
+.settings-status { display: inline-flex; align-items: center; gap: 6px; margin-left: 12px; color: var(--ink-3); font-size: var(--fs-sm); }
+.settings-status svg { width: 14px; height: 14px; }
+.settings-status[data-s="ok"] svg { color: var(--lamp-done); }
+.settings-status[data-s="error"] { color: var(--lamp-fail); }
+.settings-status .spin { animation: spin 1s linear infinite; }
+@media (prefers-reduced-motion: reduce) { .settings-status .spin { animation: none; } }
+.mcp-table { display: grid; border: 1px solid var(--rule); border-radius: var(--r-3); background: var(--ground); overflow: hidden; }
+.mcp-tr { display: grid; grid-template-columns: minmax(0, 1fr) repeat(var(--mcp-cols, 3), 96px) 64px; align-items: center; gap: 8px; min-height: 52px; padding: 6px 14px; }
+.mcp-table:not(:has(.mcp-th > :nth-child(5))) { --mcp-cols: 2; }
+.mcp-tr + .mcp-tr { border-top: 1px solid var(--rule); }
+.mcp-th { min-height: 34px; color: var(--ink-3); font-size: var(--fs-xs); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; background: var(--surface-2, transparent); }
+.mcp-tr > [role="cell"]:not(.mcp-name), .mcp-th > :not(:first-child) { justify-self: center; }
+.mcp-name { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.mcp-name > svg { width: 16px; flex: none; color: var(--ink-3); }
+.mcp-name > span { display: grid; min-width: 0; }
+.mcp-name strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mcp-name small { color: var(--ink-3); font-size: var(--fs-xs); }
+.mcp-tr[data-off] .mcp-name strong { color: var(--ink-3); }
+.mcp-state { color: var(--lamp-fail); }
+.mcp-state[data-ok] { color: var(--lamp-done); }
+.mcp-actions { display: flex; gap: 2px; justify-self: end !important; }
+@media (max-width: 720px) {
+  .mcp-tr { grid-template-columns: minmax(0, 1fr) repeat(var(--mcp-cols, 3), 64px) 56px; padding-inline: 10px; }
+}

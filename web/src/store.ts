@@ -84,7 +84,7 @@ export interface State extends Prefs {
   worktrees: Record<string, Worktree[]>
   git: Record<string, GitInfo> // key = normPath(cwd)
   agentMeta: Record<string, AgentMeta | null> // null = this server has no /agents/:id/info
-  settingsCategory: 'Рабочее место' | 'Агенты' | 'Подключения' | 'Доска и Git'
+  settingsCategory: 'Рабочее место' | 'Агенты' | 'Субагенты' | 'MCP' | 'Задачи и Git'
   settings: Settings | null // loaded on demand (pickers need grades; the settings screen edits it)
   prs: Record<string, PrState | undefined> // key = normPath(cwd): PR of the branch checked out there
   prsMine: Partial<Record<PrKey, PrListState>> // GET /api/prs: «Мои» / «По задачам»

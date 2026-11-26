@@ -335,6 +335,7 @@ export interface AgentSettings {
   inheritUserMcp?: boolean
   maxStarting?: number // processes of this agent cold-starting at once (0 = no limit); not a limit on agents at work
   userHooks?: boolean // false: the harness runs go with disableAllHooks
+  launcher?: string // gigacode, mock…: rows that only one CLI understands show for it alone
   enabled?: boolean
   transport?: 'headless' | 'acp' // acp: one long-lived process with interactive permissions (feature acp)
   acpIdleMin?: number | null // ACP: unload an idle chat's process after N minutes (null = never)

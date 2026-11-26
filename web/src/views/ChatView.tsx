@@ -79,8 +79,9 @@ export function ChatView({ id, active }: { id: string; active: boolean }) {
       e.preventDefault()
       setFind((n) => n + 1)
     }
-    window.addEventListener('keydown', on)
-    return () => window.removeEventListener('keydown', on)
+    // on document: it runs before the window, where the page-wide find (App) takes what nobody claimed
+    document.addEventListener('keydown', on)
+    return () => document.removeEventListener('keydown', on)
   }, [active])
 
   const shownAt = useRef(0) // messages newer than the first render of the transcript fade in; history does not

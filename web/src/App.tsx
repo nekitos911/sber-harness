@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useState, type CSSProperties } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState, type CSSProperties } from 'react'
 import { HomeView } from './views/HomeView'
 import { useCompact, useRail } from './lib/useMedia'
 import { RotateCw, WifiOff } from 'lucide-react'
@@ -14,6 +14,7 @@ import { Loading } from './components/bits'
 import { CommandPalette } from './components/CommandPalette'
 import { TooltipLayer } from './components/ui'
 import { ErrorBoundary } from './components/ErrorBoundary'
+import { FindBar } from './components/chat/FindBar'
 import { AgentsView } from './views/AgentsView'
 import { InboxView } from './views/InboxView'
 import { PrsView } from './views/PrsView'
@@ -47,6 +48,8 @@ export function App() {
   const wt = useStore((s) => s.wt)
   const conn = useStore((s) => s.conn)
   const [palette, setPalette] = useState(false)
+  const [pageFind, setPageFind] = useState(0) // Ctrl/⌘+F outside a chat and the settings: each press refocuses
+  const mainRef = useRef<HTMLElement>(null)
 
   // No connection: actions that change something do nothing but say why (navigation and reading still work).
   useEffect(() => {
@@ -64,6 +67,11 @@ export function App() {
     const onKey = (e: KeyboardEvent) => {
       // e.code: Ctrl+K on the Russian layout is e.key «л»
       if (modKey(e) && e.code === 'KeyK') { e.preventDefault(); setPalette(true) }
+      // Ctrl/⌘+F that the chat or settings did not take: find on the visible screen (the desktop window has no find of its own)
+      if (modKey(e) && e.code === 'KeyF' && !e.shiftKey && !e.altKey && !e.defaultPrevented && !document.querySelector('dialog[open]')) {
+        e.preventDefault()
+        setPageFind((n) => n + 1)
+      }
       // Close the active tab: Ctrl/⌘+W where the browser lets it through, Alt+W always (e.code: any keyboard layout).
       if (e.code === 'KeyW' && !e.shiftKey && ((modKey(e) && !e.altKey) || (e.altKey && !e.ctrlKey && !e.metaKey))) {
         const st = getState()
@@ -90,6 +98,8 @@ export function App() {
     return () => window.removeEventListener('keydown', onKey)
   }, [sbOverlay, panelOverlay])
 
+  // the page-wide find belongs to the screen it was opened on
+  useEffect(() => setPageFind(0), [view])
   useUnreadTitle()
   // The worktree on screen keeps its git state fresh (tab badges, panel, sidebar counts).
   useGitWatch(view.kind === 'wt' ? view.cwd : null)
@@ -115,7 +125,8 @@ export function App() {
       style={{ '--sb-w': rail ? '48px' : sidebar ? `${width}px` : '0px' } as CSSProperties}>
       <ErrorBoundary area="верхнюю панель"><TopBar onCommand={() => setPalette(true)} /></ErrorBoundary>
       <ErrorBoundary area="боковую панель"><Sidebar /></ErrorBoundary>
-      <main className="main">
+      <main className="main" ref={mainRef}>
+        {pageFind > 0 && <FindBar root={mainRef} focusKey={pageFind} label="Найти на странице" mark="page-find" className="page-find-anchor" onClose={() => setPageFind(0)} />}
         <ConnectionBanner />
         <div className="panels">
           {view.kind === 'screen' && (

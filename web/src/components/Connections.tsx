@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Cable, KeyRound, Pencil, Plus, Terminal } from 'lucide-react'
 import { api, errorText } from '../api'
-import { loadSettings } from '../lib/agents'
+import { loadSettings, useAgentMeta } from '../lib/agents'
 import { useFeature } from '../store'
 import { Modal } from './ui/Dialog'
 import { Button, IconButton, Input, Segmented, Switch, Textarea } from './ui'
@@ -13,15 +13,24 @@ interface Credential { key: string; variable?: string; bearer?: boolean }
 interface Connection { name: string; enabled: boolean; transport: Transport; local: boolean; editable: boolean; credentials?: Credential[] }
 type Editor = { kind: 'add' } | { kind: 'address' | 'auth'; server: Connection }
 
-export function Connections({ onSaved }: { onSaved: () => void }) {
+/**
+ * «MCP-серверы»: one table — a row per server, a column per place it runs: the harness itself (tracker import, PR),
+ * agents' chats, sub-agents' chats. Every switch applies at once. `agents` / `subagents` are absent on an older server.
+ */
+export function McpServers({ agentId, onSaved, agents, subagents }: {
+  agentId: string | null
+  onSaved: () => void
+  agents?: { off: string[]; set: (list: string[]) => Promise<void> }
+  subagents?: { off: string[]; set: (list: string[]) => Promise<void> }
+}) {
   const supported = useFeature('mcp-connections')
+  const meta = useAgentMeta(agentId)
   const [servers, setServers] = useState<Connection[]>([])
   const [editor, setEditor] = useState<Editor | null>(null)
-  const [busy, setBusy] = useState(false)
+  const [busy, setBusy] = useState('')
   const [error, setError] = useState('')
   const reload = async () => setServers((await api<{ servers: Connection[] }>('GET', '/mcp/config')).servers)
   useEffect(() => { if (supported) void reload().catch((e) => setError(errorText(e))) }, [supported])
-  if (!supported) return null
 
   const refresh = async () => {
     window.dispatchEvent(new Event('mcp-changed'))
@@ -29,27 +38,78 @@ export function Connections({ onSaved }: { onSaved: () => void }) {
     try { await Promise.all([reload(), loadSettings(true)]); setError('') }
     catch (e) { setError(errorText(e)) }
   }
-  const toggle = async (server: Connection, enabled: boolean) => {
-    setBusy(true)
-    try {
-      await api('PUT', '/mcp/servers/' + encodeURIComponent(server.name), { enabled })
-      await refresh()
-    } catch (e) { setError(errorText(e)) } finally { setBusy(false) }
+  const run = async (key: string, fn: () => Promise<unknown>) => {
+    setBusy(key)
+    try { await fn(); setError('') } catch (e) { setError(errorText(e)) } finally { setBusy('') }
   }
-  return <section className="settings-section">
+  const toggleHarness = (server: Connection, enabled: boolean) => run(`h:${server.name}`, async () => {
+    await api('PUT', '/mcp/servers/' + encodeURIComponent(server.name), { enabled })
+    await refresh()
+  })
+  const flip = (list: string[], name: string, on: boolean) => (on ? list.filter((x) => x !== name) : [...new Set([...list, name])])
+
+  // every server any side knows: the harness's own list, what the CLI reported at its last start, switched-off leftovers
+  const seen = meta?.mcpServers ?? meta?.seen?.mcpServers ?? []
+  const status = new Map(seen.map((m) => [m.name, m.status]))
+  const disabled = new Set(meta?.mcpDisabled ?? [])
+  const byName = new Map(servers.map((s) => [s.name, s]))
+  const names = [...new Set([...servers.map((s) => s.name), ...seen.map((m) => m.name), ...(agents?.off ?? []), ...(subagents?.off ?? [])])]
+    .filter((n) => n && n !== 'harness').sort((a, b) => a.localeCompare(b))
+  if (!supported && !names.length) return null
+
+  return <section className="settings-section" id="set-mcp">
     <header className="connection-head">
-      <h2>Серверы MCP</h2>
-      <Button icon={<Plus />} onClick={() => setEditor({ kind: 'add' })}>Добавить сервер</Button>
+      <h2>MCP-серверы</h2>
+      {supported && <Button icon={<Plus />} onClick={() => setEditor({ kind: 'add' })}>Добавить сервер</Button>}
     </header>
-    <p className="set-note">Подключения из GigaCode появляются здесь автоматически.</p>
-    <div className="connection-list">
-      {servers.map((s) => <div key={s.name} className="connection-line">
-        {s.transport === 'http' ? <Cable aria-hidden /> : <Terminal aria-hidden />}
-        <span><strong>{s.name}</strong><small>{s.transport === 'http' ? 'HTTP' : 'Команда · stdio'} · {s.local ? 'Harness' : 'GigaCode'}</small></span>
-        {s.editable && <IconButton label={'Изменить подключение ' + s.name} icon={<Pencil />} onClick={() => setEditor({ kind: 'address', server: s })} />}
-        <IconButton label={'Настроить доступ для ' + s.name} icon={<KeyRound />} onClick={() => setEditor({ kind: 'auth', server: s })} />
-        <Switch label={'Включить ' + s.name + ' для Harness'} checked={s.enabled} disabled={busy} onChange={(enabled) => void toggle(s, enabled)} />
-      </div>)}
+    <p className="set-note">
+      Где сервер запускается: <b>Харнес</b> — сам харнес (импорт задач, PR, проверки); <b>Агенты</b> — в чатах агентов;
+      <b> Субагенты</b> — в чатах субагентов. Каждый лишний сервер добавляет секунды к старту агента. Свой сервер harness
+      агенты получают всегда. Переключатели применяются сразу.
+    </p>
+    <div className="mcp-table" role="table" aria-label="MCP-серверы">
+      <div className="mcp-tr mcp-th" role="row">
+        <span role="columnheader">Сервер</span>
+        <span role="columnheader">Харнес</span>
+        <span role="columnheader">Агенты</span>
+        {subagents && <span role="columnheader">Субагенты</span>}
+        <span role="columnheader"><span className="sr-only">Действия</span></span>
+      </div>
+      {names.map((n) => {
+        const s = byName.get(n)
+        const st = status.get(n)
+        const agentOn = !disabled.has(n) && !(agents?.off ?? []).includes(n)
+        const ok = st ? /connect|ok|ready|running/i.test(st) : null
+        return <div key={n} className="mcp-tr" role="row" data-off={(!agentOn && !(s?.enabled)) || undefined}>
+          <span className="mcp-name" role="cell">
+            {s?.transport === 'http' ? <Cable aria-hidden /> : <Terminal aria-hidden />}
+            <span>
+              <strong className="mono">{n}</strong>
+              <small>
+                {s ? `${s.transport === 'http' ? 'HTTP' : 'команда'} · ${s.local ? 'добавлен здесь' : 'из GigaCode'}` : 'из GigaCode'}
+                {agentOn && ok !== null && <> · <span className="mcp-state" data-ok={ok || undefined} data-tip={st}>{ok ? 'подключается' : 'ошибка'}</span></>}
+              </small>
+            </span>
+          </span>
+          <span role="cell">
+            {s ? <Switch label={`${n}: харнес`} checked={s.enabled} disabled={!!busy} onChange={(v) => void toggleHarness(s, v)} />
+              : <span className="muted" data-tip="Сервер только в настройках GigaCode: харнес к нему сам не подключается">—</span>}
+          </span>
+          <span role="cell">
+            {disabled.has(n) ? <span className="set-hint" data-tip="mcpDisabled в harness.config.local.json">выключен в конфиге</span>
+              : agents ? <Switch label={`${n}: агенты`} checked={agentOn} disabled={!!busy} onChange={(v) => void run(`a:${n}`, () => agents.set(flip(agents.off, n, v)))} />
+                : <span className="muted">—</span>}
+          </span>
+          {subagents && <span role="cell">
+            <Switch label={`${n}: субагенты`} checked={!subagents.off.includes(n)} disabled={!!busy} onChange={(v) => void run(`s:${n}`, () => subagents.set(flip(subagents.off, n, v)))} />
+          </span>}
+          <span className="mcp-actions" role="cell">
+            {s?.editable && <IconButton size="sm" label={'Изменить подключение ' + n} icon={<Pencil />} onClick={() => setEditor({ kind: 'address', server: s })} />}
+            {s && <IconButton size="sm" label={'Ключ доступа для ' + n} icon={<KeyRound />} onClick={() => setEditor({ kind: 'auth', server: s })} />}
+          </span>
+        </div>
+      })}
+      {!names.length && <p className="set-note">Серверов пока нет. Они появятся после первого запуска агента или добавьте свой.</p>}
     </div>
     {error && <p role="alert" className="field-error">{error}</p>}
     {editor && createPortal(<ConnectionEditor editor={editor} onClose={() => setEditor(null)} onSaved={refresh} />, document.body)}

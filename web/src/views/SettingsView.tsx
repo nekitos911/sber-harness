@@ -2,7 +2,7 @@ import { createContext, Fragment, useContext, useEffect, useLayoutEffect, useMem
 import { ChipsInput } from '../components/ChipsInput'
 import { DEFAULT_REWORK } from '../components/board/Rework'
 import { FolderPicker } from '../components/FolderPicker'
-import { ArrowDown, ArrowUp, Bot, Cable, Check, CircleCheck, Pencil, CircleX, LogIn, PanelsTopLeft, Plus, RefreshCw, Search, SquareKanban, TriangleAlert, X } from 'lucide-react'
+import { ArrowDown, ArrowUp, Bot, Cable, Check, CircleCheck, Pencil, CircleX, LoaderCircle, LogIn, PanelsTopLeft, Plus, RefreshCw, Search, SquareKanban, TriangleAlert, Workflow, X } from 'lucide-react'
 import { api, ApiError, errorText, qs, tryApi } from '../api'
 import { openScreen, setState, toast, useFeature, useStore } from '../store'
 import { adoptSession } from '../lib/actions'
@@ -15,15 +15,18 @@ import { isMac, modKey, shortcut } from '../lib/keys'
 import type { AgentSettings, BoardColumn, BoardSettings, GitBranches, Grade, Session, Settings, TaskStatus } from '../types'
 import { Skeleton } from '../components/bits'
 import { ModelPicker } from '../components/pickers/ModelPicker'
-import { Connections } from '../components/Connections'
+import { McpServers } from '../components/Connections'
 import { IntegrationStatus, useIntegrationsCheck } from '../components/IntegrationStatus'
 import { Button, Chip, Disclosure, IconButton, Input, Segmented, Select, SuggestInput, Switch, Textarea } from '../components/ui'
 
 const MAIN = 'gigacode'
 // `name` is the store id (StatusBar and lib/pr open «Подключения» by it); `label` is what the nav says
 const CATEGORIES = [
-  { name: 'Рабочее место', label: 'Основные', Icon: PanelsTopLeft }, { name: 'Агенты', label: 'Агенты', Icon: Bot },
-  { name: 'Подключения', label: 'Подключения', Icon: Cable }, { name: 'Доска и Git', label: 'Доска и Git', Icon: SquareKanban },
+  { name: 'Рабочее место', label: 'Основные', Icon: PanelsTopLeft, desc: 'Агент по умолчанию, папка проектов, чаты и вид.' },
+  { name: 'Агенты', label: 'Агенты', Icon: Bot, desc: 'Как запускается агент, какими моделями работает и что ему можно без вопроса.' },
+  { name: 'Субагенты', label: 'Субагенты', Icon: Workflow, desc: 'Субагенты, которых агент запускает сам: для ревью, разведки, частей задачи.' },
+  { name: 'MCP', label: 'MCP-серверы', Icon: Cable, desc: 'Внешние инструменты: где каждый сервер запускается и сколько его ждать.' },
+  { name: 'Задачи и Git', label: 'Задачи и Git', Icon: SquareKanban, desc: 'Трекер, доска, проверки проектов, ветки, коммиты и пулл-реквесты.' },
 ] as const
 const VARS = ['{taskUrl}', '{notes}', '{key}', '{title}', '{description}', '{targets}', '{branch}', '{repo}']
 const TIMEOUTS = [60, 120, 180, 300]
@@ -81,6 +84,7 @@ export function SettingsView() {
   const [loadError, setLoadError] = useState<string | null>(null)
   const [saveError, setSaveError] = useState<{ field: string | null; text: string } | null>(null)
   const [saving, setSaving] = useState(false)
+  const [savedAt, setSavedAt] = useState(0)
   const changes = useMemo(() => !!orig && !!form && JSON.stringify(orig) !== JSON.stringify(form), [orig, form])
   const [query, setQuery] = useState('')
   const q = query.trim().toLowerCase()
@@ -92,8 +96,9 @@ export function SettingsView() {
       searchRef.current?.focus()
       searchRef.current?.select()
     }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
+    // on document: before the window, where the page-wide find (App) takes what nobody claimed
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
   }, [])
   const found = useSettingsFilter(scroll, q)
   const nav = useSectionNav(scroll, `${category}|${q}|${!!form}`)
@@ -106,34 +111,46 @@ export function SettingsView() {
     )
   }, [conn])
 
+  // every change applies by itself (no «Сохранить» on some rows and not on others): a short pause lets typing finish
+  useEffect(() => {
+    if (!orig || !form || !changes || saving) return
+    const t = window.setTimeout(async () => {
+      setSaving(true)
+      const sent = form
+      try {
+        const saved = (await api<Settings>('PUT', '/settings', settingsPatch(orig, sent))) ?? sent
+        setOrig(saved)
+        // edits made while saving stay: only what was sent is taken as saved
+        setForm((cur) => (cur === sent ? structuredClone(saved) : cur))
+        setState({ settings: saved, defaultAgent: saved.defaultAgent })
+        setSaveError(null)
+        setSavedAt(Date.now())
+      } catch (e) {
+        const text = errorText(e)
+        setSaveError({ field: FIELD_HINTS.find(([re]) => re.test(text))?.[1] ?? null, text })
+      } finally {
+        setSaving(false)
+      }
+    }, 700)
+    return () => window.clearTimeout(t)
+  }, [form, orig, changes, saving])
+
   if (loadError) return <Shell><div className="empty"><h2>Настройки недоступны</h2><p>{loadError}</p></div></Shell>
   if (!form || !orig) return <Shell><div className="settings"><div className="settings-body"><Skeleton rows={10} label="Загрузка настроек…" /></div></div></Shell>
 
   const update = (next: Settings) => { setForm(next); setSaveError(null) }
-  const save = async () => {
-    setSaving(true)
-    try {
-      const saved = (await api<Settings>('PUT', '/settings', settingsPatch(orig, form))) ?? form
-      setOrig(saved)
-      setForm(structuredClone(saved))
-      setState({ settings: saved, defaultAgent: saved.defaultAgent })
-      setSaveError(null)
-      toast('Настройки сохранены', 'ok')
-    } catch (e) {
-      const text = errorText(e)
-      setSaveError({ field: FIELD_HINTS.find(([re]) => re.test(text))?.[1] ?? null, text })
-    } finally {
-      setSaving(false)
-    }
-  }
   const fieldError = (f: string) => (saveError?.field === f ? saveError.text : undefined)
 
   const main = mainAgent(form)
   const others = Object.keys(form.agents).filter((id) => id !== main && id !== 'claude')
 
+  const page = CATEGORIES.find((c) => c.name === category) ?? CATEGORIES[0]
+  const status = saveError ? <span className="settings-status" data-s="error"><CircleX aria-hidden />Не сохранено</span>
+    : saving || changes ? <span className="settings-status"><LoaderCircle aria-hidden className="spin" />Сохраняю…</span>
+      : savedAt ? <span className="settings-status" data-s="ok"><Check aria-hidden />Сохранено</span> : null
   return (
-    <Shell>
-      <form className="settings" onSubmit={(e) => { e.preventDefault(); if (changes) void save() }}>
+    <Shell status={status}>
+      <form className="settings" onSubmit={(e) => e.preventDefault()}>
         <div className="settings-layout">
           <nav className="settings-nav" aria-label="Разделы настроек">
             <div className="settings-search">
@@ -156,6 +173,8 @@ export function SettingsView() {
           <div ref={scroll} className="settings-body" id="settings-scroll">
             <Searching.Provider value={!!q}>
             {q && !found && <div className="empty settings-empty"><h2>Ничего не нашлось</h2><p>Нет настроек со словами «{query.trim()}». Попробуйте другое слово или очистите поиск клавишей Esc.</p></div>}
+            {!q && <p className="settings-page-note">{page.desc}</p>}
+            {saveError && !saveError.field && <p className="field-error settings-save-error" role="alert">{saveError.text}</p>}
             {(q || category === 'Рабочее место') && <>
               <BasicSettings form={form} update={update} fieldError={fieldError} main={main} />
               <ChatsSection form={form} update={update} />
@@ -169,28 +188,13 @@ export function SettingsView() {
                   <AgentSection id={id} form={form} update={update} fieldError={fieldError} />
                 </Disclosure>)}
               </section>}
-              <OrchestrationSection form={form} update={update} />
-              {form.checks && <ChecksCard form={form} update={update} />}
             </>}
-            {(q || category === 'Подключения') && <ConnectionsSection form={form} update={update} fieldError={fieldError} />}
-            {(q || category === 'Доска и Git') && <>
-              <BoardSection form={form} update={update} />
-              <GitSection form={form} update={update} fieldError={fieldError} />
-            </>}
+            {(q || category === 'Субагенты') && <OrchestrationSection form={form} update={update} />}
+            {(q || category === 'MCP') && <McpPage form={form} update={update} main={main} />}
+            {(q || category === 'Задачи и Git') && <TasksAndGit form={form} update={update} fieldError={fieldError} />}
             </Searching.Provider>
           </div>
         </div>
-        {(changes || saveError) && (
-          <div className="save-bar" role="region" aria-label="Несохранённые изменения">
-            <span className="save-bar-count">
-              {changes ? <>Есть несохранённые изменения</> : 'Не сохранено'}
-            </span>
-            {saveError && <span className="field-error" role="alert">{saveError.text}</span>}
-            <span className="grow" />
-            <Button onClick={() => { setForm(structuredClone(orig)); setSaveError(null) }} disabled={saving}>Отменить</Button>
-            <Button type="submit" variant="primary" disabled={saving || !changes}>{saving ? 'Сохраняем…' : 'Сохранить'}</Button>
-          </div>
-        )}
       </form>
     </Shell>
   )
@@ -269,11 +273,12 @@ function useSettingsFilter(body: RefObject<HTMLDivElement | null>, q: string): b
   return found
 }
 
-function Shell({ children }: { children: ReactNode }) {
+function Shell({ children, status }: { children: ReactNode; status?: ReactNode }) {
   return (
     <div className="settings-view">
       <header className="view-head">
         <h1>Настройки</h1>
+        <span aria-live="polite">{status}</span>
         <span className="grow" />
         <button type="button" className="link-btn" onClick={() => openScreen('setup')}>Мастер первого запуска</button>
       </header>
@@ -318,16 +323,36 @@ function BasicSettings({ form, update, fieldError, main }: SectionProps & { main
   )
 }
 
-function ConnectionsSection(props: SectionProps) {
+/** «MCP-серверы»: the table (harness, agents, sub-agents in one row per server), then how long to wait for them. */
+function McpPage({ form, update, main }: Omit<SectionProps, 'fieldError'> & { main: string }) {
+  const check = useIntegrationsCheck()
+  const a = main ? form.agents[main] : undefined
+  const o = form.orchestration
+  const setAgent = (patch: Partial<AgentSettings>) => update({ ...form, agents: { ...form.agents, [main]: { ...a!, ...patch } } })
+  return <>
+    <McpServers agentId={main || null} onSaved={check.recheck}
+      agents={a && a.mcpExclude !== undefined ? { off: a.mcpExclude, set: async (list) => setAgent({ mcpExclude: list }) } : undefined}
+      subagents={o?.subagentMcpExclude !== undefined ? { off: o.subagentMcpExclude, set: async (list) => update({ ...form, orchestration: { ...o, subagentMcpExclude: list } }) } : undefined} />
+    <section className="settings-section" id="set-mcp-wait">
+      <h2>Запуск MCP-серверов</h2>
+      {a?.inheritUserMcp !== undefined && <div className="set-rows">
+        <Row label="Серверы из настроек GigaCode" hint="Подключать к каждому запуску агента и MCP-серверы из ~/.gigacode/settings.json, а не только те, что в таблице выше.">
+          <Switch label="Серверы из настроек GigaCode" checked={!!a.inheritUserMcp} onChange={(v) => setAgent({ inheritUserMcp: v })} />
+        </Row>
+      </div>}
+      <McpTimeoutsRows form={form} update={update} />
+    </section>
+  </>
+}
+
+/** «Задачи и Git»: the tracker and PR hosting, the board, project checks, then git itself. */
+function TasksAndGit(props: SectionProps) {
   const check = useIntegrationsCheck()
   return <>
-    <Connections onSaved={check.recheck} />
-    {/* these two rows used to float between sections without a heading */}
-    {props.form.mcp !== undefined && <section className="settings-section" id="set-mcp-wait">
-      <h2>Ожидание MCP-серверов</h2>
-      <McpTimeoutsRows form={props.form} update={props.update} />
-    </section>}
     <TrackerSection {...props} check={check} />
+    <BoardSection form={props.form} update={props.update} />
+    {props.form.checks && <ChecksCard form={props.form} update={props.update} />}
+    <GitSection {...props} />
     <PrSection {...props} check={check} />
   </>
 }
@@ -468,7 +493,6 @@ function AgentSection({ id, form, update, fieldError, primary }: SectionProps & 
               options={[{ value: '15', label: '15 мин' }, { value: '30', label: '30 мин' }, { value: '60', label: '60 мин' }, { value: 'never', label: 'никогда' }]} />
           </Row>
         )}
-        {primary && <McpServersRow id={id} a={a} set={set} />}
         {primary && a.allowedTools !== undefined && <AllowedToolsRow a={a} set={set} />}
         {primary && a.autoSandbox !== undefined && (
           <Row label="Песочница для «Полного доступа»"
@@ -491,18 +515,13 @@ function AgentSection({ id, form, update, fieldError, primary }: SectionProps & 
               options={[...new Set([...TIMEOUTS, Math.round(a.firstEventTimeoutMs / 1000)])].sort((x, y) => x - y).map((s) => ({ value: String(s), label: `${s} с` }))} />
           </Row>
         )}
-        {a.inheritUserMcp !== undefined && (
-          <Row label="Наследовать MCP пользователя" hint="Подключать к каждому запуску MCP-серверы из ~/.gigacode/settings.json, а не только серверы harness.">
-            <Switch label="Наследовать MCP пользователя" checked={!!a.inheritUserMcp} onChange={(v) => set({ inheritUserMcp: v })} />
-          </Row>
-        )}
         {a.maxStarting !== undefined && (
           <Row label="Одновременных запусков" hint="Сколько процессов агента могут одновременно стартовать (загружать MCP). Работающих агентов это не ограничивает: следующий стартует, как только предыдущий ответил.">
             <Select label="Одновременных запусков" value={String(a.maxStarting)} onChange={(v) => set({ maxStarting: Number(v) })}
               options={[...new Set([1, 2, 3, 4, 6, 8, 12, 0, a.maxStarting])].map((n) => ({ value: String(n), label: n === 0 ? 'без предела' : String(n) }))} />
           </Row>
         )}
-        {a.userHooks !== undefined && (
+        {a.userHooks !== undefined && (a.launcher ?? 'gigacode') === 'gigacode' && (
           <Row label="Хуки GigaCode" hint="Хуки из ~/.gigacode/settings.json в запусках харнесса. Выключите, если какой-то хук зависает и мешает ходам.">
             <Switch label="Хуки GigaCode" checked={a.userHooks !== false} onChange={(v) => set({ userHooks: v })} />
           </Row>
@@ -704,40 +723,6 @@ function AllowedToolsRow({ a, set }: { a: AgentSettings; set: (p: Partial<AgentS
   )
 }
 
-/**
- * The MCP servers the CLI starts for every session (from its last init), each with a switch: excluded ones are not
- * started for harness sessions (agents.<id>.mcpExclude), which speeds up every start.
- */
-function McpServersRow({ id, a, set }: { id: string; a: AgentSettings; set: (p: Partial<AgentSettings>) => void }) {
-  const meta = useAgentMeta(id)
-  const servers = meta?.mcpServers ?? meta?.seen?.mcpServers ?? []
-  if (!servers.length) return null
-  const editable = a.mcpExclude !== undefined // a server that does not return the field would drop it on save
-  const off = new Set(a.mcpExclude ?? [])
-  const disabled = new Set(meta?.mcpDisabled ?? []) // switched off for every agent in the config file
-  return (
-    <Row label="MCP-серверы для агентов" hint="Отключите ненужные или сломанные (например java-lsp), чтобы ускорить запуск." wide>
-      <ul className="mcp-list">
-        {servers.map((m) => {
-          const ok = /connect|ok|ready|running/i.test(m.status)
-          const on = !off.has(m.name) && !disabled.has(m.name)
-          return (
-            <li key={m.name} data-off={!on || undefined}>
-              <span className="mcp-dot" data-ok={ok || undefined} aria-label={ok ? 'запускается' : `ошибка: ${m.status}`} />
-              <span className="mono ellipsis">{m.name}</span>
-              <span className="muted ellipsis">{on ? m.status : 'не запускается'}</span>
-              {!editable ? null : disabled.has(m.name)
-                ? <span className="set-hint">выключен в harness.config.local.json</span>
-                : <Switch label={`MCP ${m.name}`} checked={on}
-                    onChange={(v) => set({ mcpExclude: v ? [...off].filter((x) => x !== m.name) : [...off, m.name] })} />}
-            </li>
-          )
-        })}
-      </ul>
-      {!editable && <span className="set-hint">Отключать серверы из интерфейса можно в более новой версии сервера.</span>}
-    </Row>
-  )
-}
 
 const FULL_TASK_REWORK = '/full-task {taskUrl} Задача готова, но нужны правки: {notes}' // GigaCode's /full-task with the notes
 
@@ -926,7 +911,11 @@ function OrchestrationSection({ form, update }: Omit<SectionProps, 'fieldError'>
             <Switch label="Проверять, доделан ли план" checked={o.planCheck !== false} onChange={(v) => update({ ...form, orchestration: { ...o, planCheck: v } })} />
           </Row>
         )}
-        {o.subagentMcpExclude !== undefined && <SubagentMcpRow agentId={agentId} off={o.subagentMcpExclude} onChange={(list) => update({ ...form, orchestration: { ...o, subagentMcpExclude: list } })} />}
+        {o.subagentMcpExclude !== undefined && (
+          <Row label="MCP-серверы субагентов" hint="Какие серверы получают субагенты — столбец «Субагенты» в разделе «MCP-серверы».">
+            <Button size="sm" onClick={() => setState({ settingsCategory: 'MCP' })}>Открыть MCP-серверы</Button>
+          </Row>
+        )}
         {o.subagentRetention !== undefined && (
           <Row label="Оставлять закончивших субагентов в боковой панели" hint="Иначе закончивший субагент уходит в архив; его чат открывается по ссылке в чате агента.">
             <Switch label="Оставлять закончивших субагентов" checked={o.subagentRetention === 'keep'}
@@ -1323,36 +1312,3 @@ function AutoValue({ value, mono, open, onToggle }: { value: string; mono?: bool
   )
 }
 
-/** Which of the CLI's MCP servers a sub-agent or worker starts with: each one costs start time, harness always comes. */
-function SubagentMcpRow({ agentId, off, onChange }: { agentId: string; off: string[]; onChange: (list: string[]) => void }) {
-  const can = useFeature('mcp-connections')
-  const [names, setNames] = useState<string[] | null>(null)
-  const [seen, setSeen] = useState<string[]>([])
-  useEffect(() => {
-    if (!can) return
-    void tryApi<{ servers: { name: string; enabled: boolean }[] }>('GET', '/mcp/config')
-      .then((r) => setNames((r?.servers ?? []).filter((x) => x.enabled && x.name !== 'harness').map((x) => x.name)))
-  }, [can])
-  // the servers the CLI itself reported on its last start: without mcpServersFrom the harness's own list is empty
-  useEffect(() => {
-    if (!agentId) return
-    void tryApi<{ mcpServers?: { name: string }[]; seen?: { mcpServers?: { name: string }[] } | null }>('GET', `/agents/${encodeURIComponent(agentId)}/info`)
-      .then((r) => setSeen([...(r?.mcpServers ?? []), ...(r?.seen?.mcpServers ?? [])].map((x) => x.name).filter((n) => n && n !== 'harness')))
-  }, [agentId])
-  // a server switched off earlier but no longer configured stays listed: it can still be switched back on
-  const all = [...new Set([...(names ?? []), ...seen, ...off])].sort()
-  if (!all.length) return null
-  return (
-    <Row label="MCP-серверы субагентов" wide hint="Субагенты стартуют только с отмеченными серверами (harness подключается всегда). Каждый лишний сервер добавляет секунды к старту.">
-      <div className="set-chips">
-        {/* the server's name next to its switch: an aria-label alone left a row of unnamed toggles */}
-        {all.map((n) => (
-          <label key={n} className="set-switch">
-            <Switch label={`MCP-сервер ${n} для субагентов`} checked={!off.includes(n)} onChange={(v) => onChange(v ? off.filter((x) => x !== n) : [...off, n])} />
-            <span className="mono">{n}</span>
-          </label>
-        ))}
-      </div>
-    </Row>
-  )
-}

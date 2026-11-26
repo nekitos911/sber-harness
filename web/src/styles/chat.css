@@ -502,6 +502,11 @@ svg.step-icon.spinner { color: var(--lamp-run); }
 .chat-find-count { min-width: 52px; padding: 0 6px; font-size: 11.5px; text-align: right; white-space: nowrap; }
 ::highlight(chat-find) { background-color: color-mix(in srgb, var(--lamp-run) 30%, transparent); color: inherit; }
 ::highlight(chat-find-cur) { background-color: var(--lamp-run); color: var(--deck); }
+/* the page-wide find (App): the same bar over the visible screen, its own highlight names */
+.page-find-anchor { position: relative; height: 0; z-index: 20; }
+.page-find-anchor .chat-find { top: 52px; } /* under the screen's own header row (its search, filters) */
+::highlight(page-find) { background-color: color-mix(in srgb, var(--lamp-run) 30%, transparent); color: inherit; }
+::highlight(page-find-cur) { background-color: var(--lamp-run); color: var(--deck); }
 
 /* An alert under the transcript: its words take the line, the actions wrap as one group (four buttons once squeezed
    the text into a column three lines tall). */

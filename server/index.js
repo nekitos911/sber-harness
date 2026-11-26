@@ -413,6 +413,7 @@ export async function startServer(opts = {}) {
         enabled: a.enabled !== false,
         maxStarting: a.maxStarting ?? 4, // cold starts at once (0 = no limit), not agents at work
         userHooks: a.userHooks !== false,
+        launcher: a.launcher, // read-only: which CLI it is (GigaCode-only rows show for GigaCode)
         // paths, not secrets: null = auto per platform; `resolved` is what «Проверить» shows
         command: a.command ?? null,
         node: a.node ?? null,

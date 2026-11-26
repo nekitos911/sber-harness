@@ -41,6 +41,6 @@ export function reviewText(pr: Pick<PrInfo, 'reviewers' | 'state'>) {
 
 /** Settings → «Pull requests». */
 export function openPrSettings() {
-  setState({ settingsCategory: 'Подключения' })
+  setState({ settingsCategory: 'Задачи и Git' })
   openScreen('settings')
 }
