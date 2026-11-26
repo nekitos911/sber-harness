@@ -229,6 +229,28 @@ function userMcpServers(file = userSettingsFile()) {
   }
 }
 
+/**
+ * The MCP servers a run of the CLI gets, merged as the CLI merges its settings (the person's ~/.gigacode/settings.json,
+ * the workspace's .gigacode/settings.json, the run file), minus mcp.excluded. ACP reports no MCP status at all: this is
+ * what a chat can list (its status comes from what the harness sees the agent use).
+ */
+export function runMcpNames({ settingsPath, cwd, userSettingsPath } = {}) {
+  const read = (f) => {
+    try {
+      return JSON.parse(fs.readFileSync(f, 'utf8').replace(/^\uFEFF/, ''));
+    } catch {
+      return {};
+    }
+  };
+  const run = settingsPath ? read(settingsPath) : {};
+  const user = read(userSettingsPath || userSettingsFile());
+  const ws = cwd ? read(path.join(cwd, '.gigacode', 'settings.json')) : {};
+  // the run file's list replaces the person's (mcpExclusion); a workspace adds its own
+  const excluded = new Set([...(run.mcp?.excluded ?? [...(user.mcp?.excluded || []), ...(user.excludeMCPServers || [])]), ...(ws.mcp?.excluded || [])]);
+  return [...new Set([...Object.keys(user.mcpServers || {}), ...Object.keys(ws.mcpServers || {}), ...Object.keys(run.mcpServers || {})])]
+    .filter((n) => n === 'harness' || !excluded.has(n));
+}
+
 /** The person's own mcp.excluded (and the legacy top-level excludeMCPServers the CLI migrates into it). */
 function userMcpExcluded(file = userSettingsFile()) {
   try {
@@ -562,6 +584,7 @@ function geminiFamily(id, defaults, resolve) {
     prepare(ctx) {
       writeAtomic(ctx.settingsPath, JSON.stringify(sessionSettings(ctx), null, 2));
     },
+    mcpNames: (ctx) => runMcpNames({ settingsPath: ctx.settingsPath, cwd: ctx.session?.cwd, userSettingsPath: ctx.agentCfg.userSettingsPath }),
     parse: normalize,
   };
   return base;

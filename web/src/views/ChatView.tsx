@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { ArrowDown, Bot, Check, Copy, Ellipsis, ExternalLink, FolderOpen, FolderPlus, LayoutList, Search, KeyRound, Link2, LoaderCircle, ShieldCheck, Wrench, X, GitCompareArrows, MessageSquare, PlugZap, RotateCcw, ScrollText, Square, Trash2, TriangleAlert } from 'lucide-react'
+import { ArrowDown, Bot, Check, Copy, Ellipsis, ExternalLink, FolderOpen, FolderPlus, LayoutList, Search, KeyRound, Link2, LoaderCircle, Minus, ShieldCheck, Wrench, X, GitCompareArrows, MessageSquare, PlugZap, RotateCcw, ScrollText, Square, Trash2, TriangleAlert } from 'lucide-react'
 import { api, errorText, tryApi } from '../api'
 import { closeTab, getState, openDialog, openScreen, openSession, openTask, setState, showPanel, toast, useFeature, useStore, upsertSession } from '../store'
 import { loadMessages, loadSubagents } from '../ws'
@@ -555,24 +555,27 @@ function McpChip({ sessionId }: { sessionId: string }) {
   const [open, setOpen] = useState(false)
   const anchor = useRef<HTMLButtonElement>(null)
   // session.mcpStatus from newer servers; older ones only wrote the «MCP: …» line into the chat
-  const servers = status?.map((m) => ({ name: m.name, ok: /^connected$/i.test(m.status), reason: m.status })) ?? (line ? mcpServers(line) : [])
+  // «configured» (ACP: the CLI reports no status): given to the agent, not seen in use yet — neither ✓ nor ✗
+  const servers: { name: string; ok: boolean | null; reason?: string | null }[] = status?.map((m) => ({ name: m.name, ok: m.status === 'configured' ? null : /^connected$/i.test(m.status), reason: m.status })) ?? (line ? mcpServers(line) : [])
   const ok = servers.filter((x) => x.ok).length
+  const bad = servers.some((x) => x.ok === false)
+  const unknown = servers.some((x) => x.ok === null)
   if (!servers.length) return null // the CLI has not said yet (before the first turn)
   const whose = parentId ? 'MCP-серверы процесса родительского чата: встроенный субагент работает в нём' : 'MCP-серверы этого агента'
   return (
     <>
-      <button ref={anchor} type="button" className="btn btn-sm mcp-chip" data-bad={ok < servers.length || undefined} aria-expanded={open} onClick={() => setOpen(!open)}
-        data-tip={ok < servers.length ? `Не все MCP-серверы запустились. ${whose}` : whose}>
-        MCP {ok}/{servers.length}
+      <button ref={anchor} type="button" className="btn btn-sm mcp-chip" data-bad={bad || undefined} aria-expanded={open} onClick={() => setOpen(!open)}
+        data-tip={bad ? `Не все MCP-серверы запустились. ${whose}` : whose}>
+        MCP {unknown ? servers.length : `${ok}/${servers.length}`}
       </button>
       <Popover anchor={anchor} open={open} onClose={() => setOpen(false)} placement="bottom-end" label="MCP-серверы" className="mcp-pop">
-        <p className="field-hint">{parentId ? 'Как у родительского чата: встроенный субагент работает в его процессе.' : 'Как их сообщил CLI в начале последнего хода.'}</p>
+        <p className="field-hint">{parentId ? 'Как у родительского чата: встроенный субагент работает в его процессе.' : unknown ? 'Переданы агенту. В режиме ACP CLI не сообщает, какие подключились: ✓ — агент уже пользовался сервером.' : 'Как их сообщил CLI в начале последнего хода.'}</p>
         <ul className="mcp-pop-list">
           {servers.map((x) => (
             <li key={x.name} data-bad={!x.ok || undefined}>
-              {x.ok ? <Check aria-hidden /> : <X aria-hidden />}
+              {x.ok ? <Check aria-hidden /> : x.ok === null ? <Minus aria-hidden /> : <X aria-hidden />}
               <span className="mono">{x.name}</span>
-              {!x.ok && <span className="muted">{x.reason ?? 'не запустился'}</span>}
+              {x.ok === false && <span className="muted">{x.reason ?? 'не запустился'}</span>}
             </li>
           ))}
         </ul>

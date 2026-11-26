@@ -1357,7 +1357,7 @@ allowedToolsByWorkspace: { <workspaceId>: string[] } }` (неизвестные 
 ПРОВЕРИТЬ), повторяемый для каждой записи (`allowedToolsJoin: "comma"` соединяет их через запятую). Режим подтверждения повышается только для инструмента
 редактирования в режиме plan/default. Отказ субагента повторно выдаётся в РОДИТЕЛЬСКОМ чате (`from` = сессия субагента,
 `permission.fromSubSessionId`, текст «субагент <type>: <tool>»); разрешение применяется к следующему ходу родителя. Повторяющееся
-предупреждение stderr — одно сообщение ⚠ на сессию со `count`; статусы MCP из init сохраняются как `session.mcpStatus`.
+предупреждение stderr — одно сообщение ⚠ на сессию со `count`; статусы MCP из init сохраняются как `session.mcpStatus`. В ACP init со статусами нет: в начале хода `session.mcpStatus` — серверы, переданные запуску (`runMcpNames` в `server/launchers.js`: `~/.gigacode/settings.json`, `.gigacode/settings.json` рабочей папки и файл запуска, без `mcp.excluded`), со `status: "configured"`; сервер становится `"connected"`, когда его инструмент ответил без ошибки (для harness — и когда CLI запросил его инструменты). Тёплый процесс сохраняет увиденное, новый начинает заново.
 
 **Разрешения, транспорт ACP (`agents.<id>.transport: "acp"`, ПРОВЕРИТЬ для GigaCode `--acp`).** Один долгоживущий процесс на
 сессию (`<cli> --acp [--approval-mode m] [--model m] [--include-directories …]`), JSON-RPC 2.0 поверх stdio (ndjson):

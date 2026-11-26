@@ -891,6 +891,8 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
         // result must reach this agent as a message — the call that would have returned it is gone
         // (GigaCode reports the harness's agent tool under the bare name «agent», like its built-in one)
         if (ev.isError && /^(agent|worker_run)$|harness(\.|__)(agent|worker_run)$/.test(m?.tool?.name ?? '')) hooks.waitAbandoned?.(s);
+        // a tool of an MCP server answered: that server works (ACP lists them without a status, acpMcpList)
+        { const srv = !ev.isError && /^(?:mcp__)?([\w-]+?)(?:__|\.)/.exec(String(m?.tool?.name ?? '')); if (srv) mcpUsed(s, srv[1]); }
         const sh = !ev.isError && backgroundShell(ev.output);
         if (m) {
           m.tool = { ...m.tool, output: ev.output, status };
@@ -1716,6 +1718,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
       const firstEventTimeoutMs = agentCfg.firstEventTimeoutMs || launcher.defaults.firstEventTimeoutMs || 30000;
       if (agentCfg.transport === 'acp') {
         if (!launcher.acpArgs) throw new Error(`у лаунчера «${launcher.id}» нет режима ACP; укажите agents.${s.agent}.transport = "headless"`);
+        if (launcher.mcpNames) acpMcpList(s, launcher.mcpNames(ctx));
         handle = acp.turn({
           sid: s.id, agent: s.agent, keepAlive: () => liveBackgrounds(s.id).length > 0, launcher, ctx, command: exe, cwd: s.cwd, env, logFile: turnFiles(s, r.turn).logFile, roots: [s.cwd, ...(s.includeDirs || []), attachmentsDir(s.id)],
           idleMs: (agentCfg.acpIdleMin ?? agentCfg.acpIdleTimeoutMin ?? 30) * 60000, fullAccess: fullAccess(turnSession), clientFs: !!agentCfg.acpClientFs,
@@ -2324,6 +2327,22 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
    * for the tool list when GigaCode connects it: an ACP process that worked a minute without that has no MCP at all —
    * the agent searched for harness/onework tools in vain. Said once per process.
    */
+  /**
+   * ACP: the CLI says nothing about its MCP servers, so the chat lists the ones this run was given («configured»; a new
+   * process starts them anew, a warm one keeps what was seen) and marks a server «connected» once the agent uses it.
+   */
+  function acpMcpList(s, names) {
+    const seen = new Map((s.warm ? s.mcpStatus || [] : []).map((m) => [m.name, m.status]));
+    s.mcpStatus = names.map((name) => ({ name, status: seen.get(name) === 'connected' ? 'connected' : 'configured' }));
+    emit(s);
+  }
+  function mcpUsed(s, name) {
+    const m = s?.mcpStatus?.find((x) => x.name === name);
+    if (!m || m.status !== 'configured') return; // headless reports the real status itself; an unknown name is no server
+    m.status = 'connected';
+    emit(s);
+  }
+
   function mcpCheck(s, r) {
     if (s.virtual || config.agents[s.agent]?.transport !== 'acp' || !r.procAt || r.mcpWarnedFor === r.procAt) return;
     if ((r.mcpAt ?? 0) >= r.procAt || Date.now() - r.procAt < (Number(config.session?.mcpGraceSec) || MCP_GRACE_MS / 1000) * 1000) return;
@@ -2783,7 +2802,10 @@ ${note.trim()}` : text });
 
     /** harness-mcp of this session asked for its tools: GigaCode connected the harness's MCP server. */
     mcpSeen(sid) {
-      if (sid && find(sid)) runtime(sid).mcpAt = Date.now();
+      if (sid && find(sid)) {
+        runtime(sid).mcpAt = Date.now();
+        mcpUsed(find(sid), 'harness');
+      }
     },
 
     async restart(sid, { keepContext = false } = {}) {

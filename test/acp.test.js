@@ -223,6 +223,8 @@ test('a harness MCP tool is allowed without a card in the default mode too: the 
   assert.ok((await said(plain.id)).at(-1).includes('спросил harness'));
   const call = msgs.find((m) => m.tool?.id === 't2');
   assert.deepEqual([call.tool.name, call.tool.input], ['mcp__harness__ask', { question: 'Куда коммитить?' }], 'the card names the wrapped tool, not ToolCall');
+  // ACP reports no MCP status: the chat lists the servers the run was given, the one the agent used is «connected»
+  assert.equal((await session(plain.id)).mcpStatus.find((m) => m.name === 'harness')?.status, 'connected');
   assert.equal((await session(plain.id)).waitingFor ?? null, null);
 });
 

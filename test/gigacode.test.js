@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { CODE_ROOT } from '../server/config.js';
-import { shimIdentity, resolveGigacode, parseShim, parseShShim, gigacodeCommand, launchers, sessionSettings } from '../server/launchers.js';
+import { shimIdentity, resolveGigacode, parseShim, parseShShim, gigacodeCommand, launchers, runMcpNames, sessionSettings } from '../server/launchers.js';
 import { resolveShell } from '../server/config.js';
 import { SUBAGENT_CONTEXT, DELEGATION, TEMP_FILES, WORKTREE_RULE } from '../server/orchestration.js';
 import { startTestServer, makeRepo, tmpDir, rmrf, gitIn, waitFor, waitPidGone } from './helpers.js';
@@ -358,4 +358,15 @@ test('GigaCode runs on the person\'s own home (its sign-in lives there); a folde
   const isolated = launchers.gigacode.env(ctx({ isolatedHome: true }));
   assert.equal(isolated.QWEN_HOME, path.join(os.tmpdir(), 'runs', 's_x', 'home'));
   assert.ok(launchers.gigacode.envKeys(ctx({ isolatedHome: true })).includes('QWEN_HOME'));
+});
+
+test('the MCP servers of a run: the person, the workspace and the run file merged, mcp.excluded left out (harness never)', () => {
+  const dir = tmpDir();
+  const w = (f, o) => { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, JSON.stringify(o)); };
+  w(path.join(dir, 'user.json'), { mcpServers: { onework: {}, 'java-lsp': {} }, mcp: { excluded: ['onework'] } });
+  w(path.join(dir, 'ws', '.gigacode', 'settings.json'), { mcpServers: { sourcecontrol: {} } });
+  w(path.join(dir, 'run.json'), { mcpServers: { harness: {} }, mcp: { excluded: ['java-lsp', 'harness'] } });
+  const names = runMcpNames({ settingsPath: path.join(dir, 'run.json'), cwd: path.join(dir, 'ws'), userSettingsPath: path.join(dir, 'user.json') });
+  assert.deepEqual(names.sort(), ['harness', 'onework', 'sourcecontrol'], 'the run file excludes java-lsp; its list replaces the person one');
+  rmrf(dir);
 });
