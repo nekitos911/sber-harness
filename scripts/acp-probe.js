@@ -5,6 +5,7 @@
 //   --settings   the file the harness wrote for a chat (data/runs/<id>/settings.json): passed as GIGACODE_SYSTEM_SETTINGS_PATH
 //   --command    the CLI to run (default: gigacode from PATH, the bundled node + lib/cli-entry.js when it is a .cmd shim)
 //   --grep <s>   instead of a run: print where <s> appears in the CLI's own lib/*.js (±400 characters), e.g. a method name
+//   --flag <f>   the ACP switch to pass (default --acp; try --experimental-acp: 26.11 treats only --acp as «managed»)
 //   --no-auth    do not answer session/requestCredentialsRefresh with `authenticate` (to see the hang as it is)
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
@@ -42,6 +43,7 @@ function command() {
 const mask = (v) => JSON.stringify(v, (k, x) => (typeof x === 'string' && (/token|secret|password|authorization|key/i.test(k) || /^[A-Za-z0-9_\-.=+/]{32,}$/.test(x)) ? `<${x.length} симв.>` : x));
 
 const [cmd, pre] = command();
+const acpFlag = arg('--flag', '--acp');
 const grep = arg('--grep');
 if (grep) {
   const js = pre.find((x) => /\.[cm]?js$/.test(x));
@@ -69,9 +71,9 @@ if (grep) {
 
 const env = { ...process.env, NO_BROWSER: 'true' };
 if (settings) env.GIGACODE_SYSTEM_SETTINGS_PATH = path.resolve(settings);
-log(`запуск: ${cmd} ${[...pre, '--acp'].join(' ')}`);
+log(`запуск: ${cmd} ${[...pre, acpFlag].join(' ')}`);
 log(`cwd: ${cwd}${settings ? `; настройки запуска: ${env.GIGACODE_SYSTEM_SETTINGS_PATH}` : '; без настроек харнеса'}`);
-const child = spawn(cmd, [...pre, '--acp'], { cwd, env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+const child = spawn(cmd, [...pre, acpFlag], { cwd, env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
 
 let buf = '';
 let seq = 0;

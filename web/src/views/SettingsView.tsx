@@ -250,13 +250,14 @@ function useSettingsFilter(body: RefObject<HTMLDivElement | null>, q: string): b
       if (sec.parentElement?.closest('.settings-section')) continue // another agent's section: rows of the outer one
       const head = has(sec.querySelector(':scope > h2'))
       const rows = [...sec.querySelectorAll('.set-row')]
-      for (const r of rows) if (!head && !has(r.querySelector('.set-label'))) hide(r)
+      // the whole row: its label, hint and the choices on it («На каждое сообщение» is an option of «Запуск»)
+      for (const r of rows) if (!head && !has(r)) hide(r)
       const hit = rows.length ? head || rows.some((r) => !r.hasAttribute('data-unmatched')) : has(sec)
       if (hit) any = true; else hide(sec)
     }
     for (const r of el.querySelectorAll('.set-row')) {
       if (r.closest('.settings-section')) continue // rows between sections (MCP timeouts)
-      if (has(r.querySelector('.set-label'))) any = true; else hide(r)
+      if (has(r)) any = true; else hide(r)
     }
     // boxes left with nothing in them
     for (const box of el.querySelectorAll('.set-rows, .set-card, .settings-adv, .agent-options')) {
@@ -453,9 +454,11 @@ function AgentSection({ id, form, update, fieldError, primary }: SectionProps & 
         <CommandRow id={id} a={a} set={set} error={fieldError('command')} />
         {primary && reworkOn && <ReworkRow a={a} set={set} />}
         {primary && acpOn && (
-            <Row label="Запуск" hint={a.transport === 'acp' ? 'Один процесс на чат: быстрее, ждёт ваших разрешений. Экспериментально.' : 'Новый запуск на каждое сообщение, как gigacode -p.'}>
+            <Row label="Запуск" hint={a.transport === 'acp'
+              ? 'Один процесс GigaCode на чат (режим ACP): быстрее, но GigaCode 26.11+ ждёт в нём вход от GigaCode Desktop — тогда переключите на «На каждое сообщение». Экспериментально.'
+              : 'Новый запуск GigaCode на каждое сообщение, как gigacode -p: CLI входит сам, как в консоли. Рекомендуется.'} wide>
               <Segmented label="Как запускать агента" value={a.transport ?? 'headless'} onChange={(v) => set({ transport: v })}
-                options={[{ value: 'headless', label: 'На каждое сообщение' }, { value: 'acp', label: 'Процесс на чат' }]} />
+                options={[{ value: 'headless', label: 'На каждое сообщение' }, { value: 'acp', label: 'Процесс на чат (ACP)' }]} />
             </Row>
         )}
         {primary && acpOn && a.transport === 'acp' && (

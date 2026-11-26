@@ -9,6 +9,10 @@ import { endChild, readTail, spawnOptions } from './runner.js';
 import { resolveInside } from './fs.js';
 
 const PROTOCOL_VERSION = 1;
+/** The managed-launch dead end, in the words the chat shows (START_FATAL in sessions.js: no retries). */
+export const CREDENTIALS_WANTED = 'GigaCode в режиме ACP ждёт вход от GigaCode Desktop (session/requestCredentialsRefresh): '
+  + 'с версии 26.11 любой запуск с --acp считается запуском из Desktop, а такой вход харнесу недоступен. '
+  + 'Настройки → Агенты → «Запуск»: «На каждое сообщение» — так GigaCode входит сам, как в консоли.';
 const ACP_INIT_TIMEOUT_MS = 120000;
 const MCP_START_TIMEOUT_MS = 30000; // how long the agent may start one MCP server (mcpServers.<name>.timeoutMs)
 const LOAD_ATTEMPTS = 3; // session/load: tries before a new session
@@ -344,6 +348,14 @@ export function createAcp({ onWarm = () => {} } = {}) {
     c.rpc = connect(child, {
       log,
       onNotify(method, params) {
+        if (method === 'session/requestCredentialsRefresh') {
+          // GigaCode 26.11+ treats every --acp launch as «managed» (Desktop app, IDE plugin) and parks until the client
+          // publishes its credentials (session/updateCredentials) — the harness has none: say so now, not after 120 s
+          log('[acp] session/requestCredentialsRefresh: агент ждёт учётные данные от клиента\n');
+          c.rpc.failAll(Object.assign(new Error(CREDENTIALS_WANTED), { credentials: true }));
+          drop(o.sid);
+          return;
+        }
         if (method !== 'session/update' || c.loading) return; // load replays the transcript we already have
         const helper = c.helpers.get(params.sessionId);
         if (helper) { // a hidden helper session (e.g. /models) on this warm process

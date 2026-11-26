@@ -1255,7 +1255,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
   }
   const CLI_LIVE_MS = 3 * 60000; // the adopt pass runs every minute: a CLI chat written to within this is still in use
   // not worth starting again by itself: the executable, the launcher or the config is wrong (the person fixes it)
-  const START_FATAL = /Не удалось запустить агента|ENOENT|нет режима ACP|не найден|неизвестный лаунчер|не настроен|не существует|недоступн/i;
+  const START_FATAL = /Не удалось запустить агента|ENOENT|нет режима ACP|не найден|неизвестный лаунчер|не настроен|не существует|недоступн|ждёт вход от GigaCode Desktop/i;
   const START_RETRY_SEC = [20, 60, 180];
   const times = (n) => `${n} ${n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20) ? 'раза' : 'раз'}`; // «4 раза», «5 раз»
   const START_STREAK_MAX = 4; // failed starts in a row (all retry kinds together) before the harness stops retrying

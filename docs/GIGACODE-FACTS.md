@@ -254,6 +254,14 @@
   - Встроенный `agent` на этой машине запускается в песочнице и падает на любом доступе к файлам (`GigaCode sandbox:
     acl-object-hardlink (Win32 50)`), `run_shell_command` в нём отказан (`background agents cannot prompt for confirmation`) —
     работает только чистая «мысль»; агент харнеса вместо встроенного инструмента сам уходит в `mcp__harness__agent`.
+- **ACP в GigaCode 26.11.141 — «управляемый» запуск (целевая машина, 2026-11-26).** Любой запуск с `--acp` CLI считает
+  запуском из GigaCode Desktop или IDE-плагина (`get isDesktopLaunch(){return !!this.argv.acp}`, «launch detection:
+  acp-managed»). Такой процесс не входит сам: на `initialize` объявляет `authMethods: [{id: "gigacode"}]`, после
+  `session/new` шлёт уведомление `session/requestCredentialsRefresh` и ждёт, пока клиент передаст учётные данные
+  (`session/updateCredentials` / кадр в `_meta`); `authenticate` тоже ждёт их. Учётных данных Desktop у харнеса нет, поэтому
+  харнес на это уведомление сразу останавливает запуск с объяснением (без 120 с ожидания и без повторов), а работать
+  пока вход в ACP не решён, — в режиме «Запуск: На каждое сообщение» (headless): там CLI входит сам, как в консоли. ПРОВЕРИТЬ: запускает ли ACP флаг  (не «managed»), и в каком виде клиент передаёт учётные данные (). Проверка без харнеса —
+  `node scripts/acp-probe.js`.
 - «MCP-серверы субагентов» в настройках: список для переключателей — `GET /mcp/config` + уже выключенные
   (`orchestration.subagentMcpExclude`), а не `seen.mcpServers` агента — так после смены агента чипы не путаются.
 

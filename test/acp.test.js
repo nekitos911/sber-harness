@@ -42,6 +42,8 @@ async function harness() {
         // the same mock, unloaded after 0.4 s idle
         // the first session/new times out on a SessionStart hook, the next one works
         acpnewhook: { launcher: 'mock', label: 'ACP new hook', transport: 'acp', env: { MOCK_ACP_NEW_HOOKTIMEOUT: path.join(root, 'newhook.flag') }, command: [process.execPath, path.join(CODE_ROOT, 'scripts', 'mock-acp-agent.js')], approvalMode: 'auto', approvalModes: ['default', 'auto'] },
+        // GigaCode 26.11: every --acp launch is «managed» — session/new waits for credentials the harness does not have
+        acpmanaged: { launcher: 'mock', label: 'ACP managed', transport: 'acp', env: { MOCK_ACP_MANAGED: '1' }, command: [process.execPath, path.join(CODE_ROOT, 'scripts', 'mock-acp-agent.js')], approvalMode: 'auto', approvalModes: ['default', 'auto'] },
         acpchatty: { launcher: 'mock', label: 'ACP chatty', transport: 'acp', firstEventTimeoutMs: 1500, command: [process.execPath, chattyAgent], approvalMode: 'auto', approvalModes: ['default', 'auto'] },
         acpidle: { launcher: 'mock', label: 'ACP idle', transport: 'acp', acpIdleMin: 0.4 / 60, command: [process.execPath, path.join(CODE_ROOT, 'scripts', 'mock-acp-agent.js')], approvalMode: 'auto', approvalModes: ['default', 'auto'] },
       },
@@ -408,6 +410,16 @@ test('«Переподключить MCP»: a new agent process on the same CLI 
   assert.notEqual(records().filter((r) => r.env.HARNESS_SESSION_ID === s.id).at(-1).pid, pid, 'a new process');
   assert.ok((await messages(s.id)).some((m) => m.kind === 'system' && /Агент перезапущен: MCP-серверы подключаются заново/.test(m.text)));
   await idle(s.id);
+});
+
+test('GigaCode asking for Desktop credentials (session/requestCredentialsRefresh): said at once, no 120 s wait, no retries', async () => {
+  const started = Date.now();
+  const s = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'acpmanaged', cwd, prompt: 'привет' })).body;
+  const err = await waitFor(async () => (await messages(s.id)).find((m) => m.kind === 'error'), { timeout: 30000, what: 'the managed-launch error' });
+  assert.match(err.text, /ждёт вход от GigaCode Desktop.*«На каждое сообщение»/s);
+  assert.ok(Date.now() - started < 20000, 'failed fast, not after the start timeout');
+  await new Promise((r) => setTimeout(r, 1500));
+  { const ms = await messages(s.id); assert.ok(!ms.some((m) => /Повторю запуск сам/.test(m.text)), JSON.stringify(ms.map((m) => [m.kind, m.text]))); }
 });
 
 test('a hook timeout while the session starts (session/new): the messages wait in the queue once, never run twice', async () => {

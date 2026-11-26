@@ -157,6 +157,12 @@ const handlers = {
       fs.writeFileSync(once, '1');
       throw Object.assign(new Error('Internal error'), { code: -32603, data: { details: 'Request timed out waiting for hook-execution-response' } });
     }
+    // MOCK_ACP_MANAGED=1: like GigaCode 26.11 — every --acp launch is «managed», session/new parks until the client
+    // publishes credentials (it asks with a notification and never answers)
+    if (process.env.MOCK_ACP_MANAGED === '1') {
+      send({ method: 'session/requestCredentialsRefresh', params: {} });
+      return new Promise(() => {});
+    }
     record(params);
     const sessionId = randomUUID();
     fs.writeFileSync(stateFile(sessionId), JSON.stringify({ turns: 0, cwd: params.cwd, history: [] }));
