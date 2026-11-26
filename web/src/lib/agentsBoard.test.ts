@@ -23,6 +23,13 @@ test('one row per top-level chat; helpers fold in, virtual / system / untouched 
   assert.deepEqual(rows(all, true).map((x) => x.s.id), ['old'])
 })
 
+test('a chat whose turn is over while a helper (built-in or worker) still works counts as working, the helper named', () => {
+  const r = rows([s('a'), s('v', { parentId: 'a', virtual: true, status: 'running', title: 'java-reviewer' })])
+  assert.deepEqual([r[0].cat, r[0].who.id], ['run', 'v'])
+  assert.equal(countCats(r).run, 1)
+  assert.equal(rows([s('a'), s('v', { parentId: 'a', virtual: true, status: 'running', archived: true })])[0].cat, 'done', 'an archived helper does not count')
+})
+
 test('a worker whose parent is archived is a row of its own', () => {
   const r = rows([s('p', { archived: true }), s('w', { parentId: 'p' })])
   assert.deepEqual(r.map((x) => x.s.id), ['w'])
