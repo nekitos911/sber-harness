@@ -1008,11 +1008,54 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     return true;
   }
 
+  /**
+   * The lingering process of a finished turn hosts the CLI's background sub-agents: it is set apart (kept alive, no longer
+   * the chat's turn) so a new turn can start at once. It ends when they all settle; if it dies first, those still
+   * without an answer are marked broken — never silently.
+   */
+  function keepBackgroundHost(s, r) {
+    const host = r.handle;
+    if (!host || !r.closedEarly) return;
+    clearTimeout(r.lingerTimer);
+    clearTimeout(r.steerTimer);
+    Object.assign(r, { lingerTimer: null, steerTimer: null, closedEarly: false, running: false, handle: null, stopRequested: false, cutAt: null });
+    (r.bgHosts ||= new Set()).add(host);
+    Object.assign(s, { turnClosing: false });
+    const ids = liveBackgrounds(s.id).map((v) => v.id);
+    // looked at every 30 s: settled → the host ends; at most BG_KEEP_MS
+    const since = Date.now();
+    const tick = setInterval(() => {
+      const left = ids.filter((id) => find(id)?.status === 'running');
+      if (!left.length || Date.now() - since > BG_KEEP_MS) {
+        clearInterval(tick);
+        host.terminate?.('post_result_linger');
+      }
+    }, 30000);
+    tick.unref?.();
+    Promise.resolve(host.done).then(() => {
+      clearInterval(tick);
+      r.bgHosts?.delete(host);
+      const p = find(s.id);
+      if (!p) return;
+      for (const id of ids) {
+        const v = find(id);
+        if (v?.status !== 'running') continue;
+        pollBackground(p, id); // a last look at its file
+        if (find(id)?.status === 'running') {
+          addMessage(v, { kind: 'error', text: 'Оборвался: процесс CLI, внутри которого работал этот фоновый субагент, завершился, а результата в его файле нет.' });
+          Object.assign(v, { status: 'failed', lastActivityAt: Date.now() });
+          emit(v);
+          wakeParent(p, v, 'Оборвался: процесс CLI, внутри которого он работал, завершился без результата.', true);
+        }
+      }
+    }, () => {});
+    addMessage(s, { kind: 'system', text: `Фоновый субагент ${liveBackgrounds(s.id).map((v) => `«${v.title}»`).join(', ')} продолжает работу в прежнем процессе агента; новое сообщение идёт сразу, его ответ придёт агенту сообщением.` });
+  }
+
   /** The last background sub-agent of a lingering process settled: the messages that waited for it start their turn. */
   function releaseHeld(s) {
     const r = runtime(s.id);
     if (!r.closedEarly || liveBackgrounds(s.id).length || !s.queue?.length) return;
-    r.bgHoldNoted = false;
     if (r.running) r.handle?.terminate?.('post_result_linger'); // its result is in: the process ends, the queue starts
     else setTimeout(() => { const x = find(s.id); if (x && !x.archived && x.status !== 'stopped') startTurn(x); }, 0);
   }
@@ -1182,9 +1225,10 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     const r = runtime(sid);
     const found = s?.queue?.find((q) => q.from === 'user');
     if (!s || !r.running || !found) return false;
-    // a per-message process (not ACP) dies with the cut, and the CLI's background sub-agents with it: the message waits
+    // a per-message process (not ACP) dies with the cut, and the CLI's background sub-agents with it: the step is not
+    // cut (its own work goes on to its end, then the message comes; the sub-agent's answer comes too)
     if ((config.agents[s.agent]?.transport || 'headless') !== 'acp' && liveBackgrounds(sid).length) {
-      addMessage(s, { kind: 'system', text: 'Шаг не прерван: внутри процесса агента работает фоновый субагент, прерывание оборвало бы его. Сообщение уйдёт после шага.' });
+      addMessage(s, { kind: 'system', text: 'Шаг не прерван: внутри процесса агента работает фоновый субагент, прерывание оборвало бы его работу. Сообщение уйдёт, как только шаг закончится, — субагент продолжит работать.' });
       emit(s);
       return false;
     }
@@ -1367,16 +1411,12 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
       // a new turn needs the process to end, and the CLI's background sub-agents live inside it: ending it lost their
       // work. The message waits for them instead (their answers come first), and goes as soon as they are done —
       // «Остановить» on the sub-agent sends it at once.
-      const live = liveBackgrounds(s.id);
-      if (live.length) {
-        if (!r.bgHoldNoted) {
-          r.bgHoldNoted = true;
-          addMessage(s, { kind: 'system', text: `Сообщение уйдёт агенту, когда закончит фоновый субагент ${live.map((v) => `«${v.title}»`).join(', ')}: он работает внутри процесса агента (режим «На каждое сообщение»), и новый ход оборвал бы его. Не ждать — «Остановить» в этом чате (субагент остановится тоже). В режиме «Процесс на чат (ACP)» и с субагентами харнесса писать можно сразу.` });
-          emit(s);
-        }
-        return;
+      // the CLI's background sub-agents live inside the lingering process: ending it lost their work, waiting for them
+      // blocked the person. The process is kept apart as their host (it ends when they settle) and the new turn starts
+      // now on a process of its own; their answers come to the agent as messages (wakeParent).
+      if (liveBackgrounds(s.id).length) {
+        keepBackgroundHost(s, r);
       }
-      r.bgHoldNoted = false;
       // the previous process is still closing: follow it to its end, the queue starts after (finishLingered)
       if (!r.lingerFollow) {
         r.lingerFollow = true; // once: a process that cannot be followed is killed, not followed again in a loop
@@ -2474,12 +2514,14 @@ ${note.trim()}` : text });
       }
       s.queued = s.queue.length;
       if (r.closedEarly) {
-        armLinger(s); // kept while its background sub-agents work (they live inside it); the message goes after them
-        const live = liveBackgrounds(sid);
-        if (live.length && !r.bgHoldNoted) {
-          r.bgHoldNoted = true;
-          addMessage(s, { kind: 'system', text: `Сообщение уйдёт агенту, когда закончит фоновый субагент ${live.map((v) => `«${v.title}»`).join(', ')}: он работает внутри процесса агента (режим «На каждое сообщение»), и новый ход оборвал бы его. Не ждать — «Остановить» в этом чате (субагент остановится тоже). В режиме «Процесс на чат (ACP)» и с субагентами харнесса писать можно сразу.` });
+        // background sub-agents inside the lingering process: it is kept as their host and the message starts its turn
+        if (liveBackgrounds(sid).length) {
+          keepBackgroundHost(s, r);
+          startTurn(s);
+          emit(s);
+          return { queued: false };
         }
+        armLinger(s);
       }
       // a message to an agent that only waits for its sub-agents is not left behind that wait (the sub-agents go on);
       // one that does not (midTurn of a session whose call waited for this one already ended it) keeps the deadline
@@ -2537,6 +2579,7 @@ ${note.trim()}` : text });
         endBackgrounds(s, 'Остановлено пользователем', 'stopped');
         if (r.closedEarly) r.handle?.terminate?.('post_result_linger');
       }
+      for (const h of r.bgHosts || []) h.terminate?.('post_result_linger'); // the processes kept for them go too
       if (r.running && r.closedEarly) {
         r.handle?.terminate?.('post_result_linger');
         return emit(s);
@@ -2917,6 +2960,7 @@ ${note.trim()}` : text });
         clearInterval(r.peek);
         r.slotWake?.();
         r.handle?.detach();
+        for (const h of r.bgHosts || []) h.detach?.(); // kept for background sub-agents: left running, like the turn's
         const p = r.pty;
         r.pty = null;
         if (p) {

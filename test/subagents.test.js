@@ -403,16 +403,18 @@ test('a background sub-agent of the CLI: its steps show as they are written; its
   assert.equal(card?.tool.stillRunning, false);
 });
 
-test('a new message to a chat whose background sub-agent works waits for it, never cuts it', async () => {
+test('a new message to a chat whose background sub-agent works goes at once, and the sub-agent works on', async () => {
   const caller = await chat('#subagentbgsteps #linger');
   const kid = async () => (await state()).sessions.find((s) => s.parentId === caller.id && s.background);
   await waitFor(async () => (await kid())?.status === 'running' && (await state()).sessions.find((s) => s.id === caller.id).status !== 'running', { timeout: 20000, what: 'turn over, sub-agent at work' });
   await h.api('POST', `/api/sessions/${caller.id}/messages`, { text: 'следующий шаг' });
-  await waitFor(async () => (await messages(caller.id)).some((m) => m.kind === 'system' && /Сообщение уйдёт агенту, когда закончит фоновый субагент/.test(m.text)), { what: 'the hold note' });
-  await new Promise((r) => setTimeout(r, 2000));
+  // not held: the message starts its turn now; the sub-agent is said to go on in the kept process
+  await waitFor(async () => (await messages(caller.id)).some((m) => m.kind === 'system' && /продолжает работу в прежнем процессе агента/.test(m.text)), { what: 'the keep note' });
+  await waitFor(async () => (await messages(caller.id)).filter((m) => m.kind === 'assistant').length >= 2, { timeout: 30000, what: 'the new turn answered' });
   assert.equal((await kid()).status, 'running', 'the sub-agent was not cut by the message');
   assert.ok(!(await messages((await kid()).id)).some((m) => /Прерван/.test(m.text)));
   assert.equal((await h.api('POST', `/api/sessions/${caller.id}/stop`)).status, 200); // «Остановить»: both go
+  await waitFor(async () => (await kid()).status !== 'running', { what: 'the sub-agent stopped with the chat' });
 });
 
 test('«Остановить» on a chat whose background sub-agents still look busy: they leave «в работе»', async () => {
