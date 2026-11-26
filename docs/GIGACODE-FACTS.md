@@ -131,6 +131,12 @@
   If asked, you can check progress … tail on the output file.» Сам ход субагента идёт вне потока родителя: харнес его не видит
   (карточка помечается «в фоне», `backgroundRun` в `web/src/lib/toolRun.ts`). Харнес просит агентов так не запускать. Открыто:
   формат `agent-<id>.jsonl` и чем приходит «notified when it completes» (событием потока или сообщением следующего хода).
+- Фоновая команда оболочки (`run_shell_command` с `run_in_background`, целевая машина, 2026-11-26) отвечает сразу:
+  «Background shell started.\nid: bg_<hex>\npid: <pid>\noutput file: …\.gigacode\sandbox\output\shell-<uuid>.output\n
+  status file: …\shell-<uuid>.status\nTo check whether this process is still running, Read the status file (status:
+  running|completed|failed|cancelled)…» (фикстура `test/fixtures/gigacode.background-shell.txt`). Точная раскладка
+  status-файла не снята: харнес читает и строку `status: …`, и JSON, и одно слово; код выхода — `exit_code` / `exitCode`.
+  ПРОВЕРИТЬ: содержимое status-файла после конца команды и живёт ли команда после выхода headless-процесса CLI.
 - Формат `agent-<id>.jsonl` (целевая машина, 2026-11-25, GigaCode 26.10.109): по строке на шаг — `type: "user" | "assistant" |
   "tool_result"`, у `assistant` поле `message.parts` в духе Gemini (`{ text }`, `{ functionCall: { id, name, args } }`); бывают
   `assistant` с пустыми `parts` (только `usageMetadata`). Строки `{"type":"result"}` **нет**: итог — последний `assistant`

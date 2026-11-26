@@ -187,6 +187,7 @@ function ToolCard({ tool, sessionId, m }: { tool: ToolCall; sessionId: string; m
   // the agent writing to the person (send_message to: user): a message in the chat, not a tool step to unfold
   const sent = toPerson(tool)
   if (sent) return <div className="msg agent-to-you"><div className="tool-label">Агент пишет вам</div><Markdown text={sent} /></div>
+  if (tool.bgShell) return <ShellCard tool={tool} shell={tool.bgShell} />
   const edit = fileEdit(tool.input)
   if (edit) return <EditBlock tool={tool} sessionId={sessionId} file={edit.file} created={edit.created} added={edit.added} removed={edit.removed} lines={editLines(edit)} />
   const out = outputDiff(tool)
@@ -198,6 +199,33 @@ function ToolStatus({ status }: { status: ToolCall['status'] }) {
   if (status === 'running') return <LoaderCircle className="tool-st spinner" data-s="running" aria-label="выполняется" />
   if (status === 'error') return <X className="tool-st" data-s="error" aria-label="ошибка" />
   return <Check className="tool-st" data-s="ok" aria-label="готово" />
+}
+
+const SHELL_STATE: Record<string, string> = { running: 'работает в фоне', completed: 'закончилась', failed: 'ошибка', cancelled: 'отменена', canceled: 'отменена', killed: 'убита', lost: 'оборвалась' }
+
+/** A command started in the background: works on after its call answered; its end wakes the agent (the harness tells it). */
+function ShellCard({ tool, shell }: { tool: ToolCall; shell: NonNullable<ToolCall['bgShell']> }) {
+  const running = shell.state === 'running'
+  const bad = !running && (shell.state !== 'completed' || (shell.exitCode != null && shell.exitCode !== 0))
+  return (
+    <Disclosure
+      className="msg tool"
+      chevron="end"
+      defaultOpen={running}
+      summary={<>
+        <ToolStatus status={running ? 'running' : bad ? 'error' : 'ok'} />
+        <span className="tool-name">Фоновая команда</span>
+        <span className="tool-sum ellipsis">{shell.command ?? summarizeInput(tool.input)}</span>
+        <span className="muted">{SHELL_STATE[shell.state] ?? shell.state}{shell.exitCode != null ? ` · код ${shell.exitCode}` : ''}</span>
+      </>}
+    >
+      <div className="tool-body" data-s={running ? 'running' : bad ? 'error' : 'ok'}>
+        {running && <p className="muted">Харнесс следит за ней: когда закончится, агент получит итог сообщением.</p>}
+        {shell.tail && <><div className="tool-label">Последние строки вывода</div><pre>{shell.tail}</pre></>}
+        {shell.outputFile && <p className="muted ellipsis" data-tip={shell.outputFile}>Весь вывод: {shell.outputFile}</p>}
+      </div>
+    </Disclosure>
+  )
 }
 
 /** Any other tool: one muted line (name and what it was asked), details on demand. */

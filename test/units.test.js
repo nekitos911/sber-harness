@@ -7,7 +7,7 @@ import { render } from '../server/orchestration.js';
 import { readRegistry } from '../server/registry.js';
 import { findLiteralSecrets } from '../server/config.js';
 import { expandCommand } from '../server/launchers.js';
-import { backgroundLaunch, backgroundResult, backgroundSteps, outputFileIn } from '../server/background-agents.js';
+import { backgroundLaunch, backgroundResult, backgroundShell, backgroundSteps, outputFileIn, shellStatus } from '../server/background-agents.js';
 import { tmpDir, rmrf } from './helpers.js';
 
 const dir = tmpDir();
@@ -192,4 +192,18 @@ test('a background sub-agent\'s answer without a result line: its last text-only
   // a result line, where a CLI writes one, still wins at once
   fs.appendFileSync(file, `${JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: 'итог' })}\n`);
   assert.deepEqual(backgroundResult(file), { output: 'итог', isError: false });
+});
+
+test('a background shell launch: its id, pid and files; its status file in any layout', () => {
+  const out = fs.readFileSync(new URL('./fixtures/gigacode.background-shell.txt', import.meta.url), 'utf8');
+  const sh = backgroundShell(out);
+  assert.equal(sh.id, 'bg_08bdae24');
+  assert.equal(sh.pid, 30776);
+  assert.match(sh.outputFile, /shell-5b1e7c9a-.*\.output$/);
+  assert.match(sh.statusFile, /shell-5b1e7c9a-.*\.status$/);
+  assert.equal(backgroundShell('Background agent launched successfully'), null);
+  assert.deepEqual(shellStatus('status: completed\nexit_code: 0\n'), { status: 'completed', exitCode: 0 });
+  assert.deepEqual(shellStatus('{"status":"failed","exitCode":1}'), { status: 'failed', exitCode: 1 });
+  assert.deepEqual(shellStatus('running\n'), { status: 'running', exitCode: null });
+  assert.equal(shellStatus(''), null);
 });

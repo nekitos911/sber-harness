@@ -1,0 +1,6 @@
+Background shell started.
+id: bg_08bdae24
+pid: 30776
+output file: C:\Users\user\.gigacode\sandbox\output\shell-5b1e7c9a-0d3f-4a52-9f61-2c8e4b7d1a30.output
+status file: C:\Users\user\.gigacode\sandbox\output\shell-5b1e7c9a-0d3f-4a52-9f61-2c8e4b7d1a30.status
+To check whether this process is still running, Read the status file (status: running|completed|failed|cancelled).

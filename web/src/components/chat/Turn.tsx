@@ -25,7 +25,7 @@ export type Item =
   | { kind: 'files'; key: string; msgs: Message[] }
   | { kind: 'new'; key: string }
 
-const isGroupable = (m: Message) => m.kind === 'tool' && !!m.tool && !isSubagentTool(m.tool) && !isAskCard(m.tool) && !toPerson(m.tool)
+const isGroupable = (m: Message) => m.kind === 'tool' && !!m.tool && !m.tool.bgShell && !isSubagentTool(m.tool) && !isAskCard(m.tool) && !toPerson(m.tool)
 
 /**
  * Turns a page of the transcript into items. `runningTurn` is the turn still in progress (or null);

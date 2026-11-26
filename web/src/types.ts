@@ -197,6 +197,19 @@ export interface ToolCall {
   progress?: string[] // built-in sub-agent activity under this call (agent tool), last lines
   subSessionId?: string | null // the virtual chat of that sub-agent
   stillRunning?: boolean // a background sub-agent of this call is still at work after the parent's turn ended
+  bgShell?: BackgroundShell // a shell command this call started in the background (the harness watches its status file)
+}
+
+export interface BackgroundShell {
+  id: string | null
+  command: string | null
+  outputFile: string | null
+  statusFile: string
+  state: string // running | completed | failed | cancelled | lost (its process gone, no final status) | …
+  exitCode?: number | null
+  startedAt: number
+  endedAt?: number
+  tail: string // the last lines of its output
 }
 
 export interface Message {

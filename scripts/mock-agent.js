@@ -290,6 +290,21 @@ if (delivered) {
   await say(`Received: ${prompt.split('\n')[1]?.slice(0, 120) || ''}`);
   await directives((prompt.match(/^\s*#(?:waitagent|cutagent|agentmcp|spawn|runwt|run)\s+\S+\s+.+$/gm) || []).map((l) => l.trim()));
 }
+{
+  // #bgshell [dead]: a shell command started in the background (the launch answer as GigaCode words it); its status
+  // file says «running» and the test settles it. Its pid is the harness's (alive) — or one that is gone («dead»)
+  const m = prompt.match(/#bgshell(?: (dead))?/);
+  if (m) {
+    const out = path.join(process.cwd(), 'shell-mock.output');
+    const status = path.join(process.cwd(), 'shell-mock.status');
+    fs.writeFileSync(out, '[INFO] Scanning for projects...\n[INFO] Tests run: 42, Failures: 0\n');
+    fs.writeFileSync(status, 'status: running\n');
+    const launch = fs.readFileSync(new URL('../test/fixtures/gigacode.background-shell.txt', import.meta.url), 'utf8')
+      .replace(/^pid: .*/m, `pid: ${m[1] ? 999999 : process.ppid}`).replace(/^output file: .*/m, `output file: ${out}`).replace(/^status file: .*/m, `status file: ${status}`);
+    emit({ type: 'tool_use', tool_name: 'run_shell_command', tool_id: 'bgsh_1', parameters: { command: 'mvn test', run_in_background: true } });
+    emit({ type: 'tool_result', tool_id: 'bgsh_1', status: 'success', output: launch });
+  }
+}
 if (has(/#bigoutput\b/)) {
   emit({ type: 'tool_use', tool_name: 'run_shell_command', tool_id: 'big_1', parameters: { command: 'cat big.log' } });
   emit({ type: 'tool_result', tool_id: 'big_1', status: 'success', output: `${'строка лога\n'.repeat(10000)}КОНЕЦ` });

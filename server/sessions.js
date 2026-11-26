@@ -15,7 +15,7 @@ import { createAcp } from './acp.js';
 import { parseContextUsage, contextBreakdown } from './context-usage.js';
 import { steerNotice } from './steer.js';
 import * as git from './git.js';
-import { backgroundLaunch, backgroundResult, backgroundSteps, outputFileIn } from './background-agents.js';
+import { backgroundLaunch, backgroundResult, backgroundShell, backgroundSteps, outputFileIn, shellStatus } from './background-agents.js';
 
 const fail = (status, message) => { throw Object.assign(new Error(message), { status }); };
 // Windows caps a whole command line at 32767 UTF-16 units (Linux one argument at 128 KiB): a longer prompt goes in a file
@@ -891,12 +891,15 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
         // result must reach this agent as a message — the call that would have returned it is gone
         // (GigaCode reports the harness's agent tool under the bare name «agent», like its built-in one)
         if (ev.isError && /^(agent|worker_run)$|harness(\.|__)(agent|worker_run)$/.test(m?.tool?.name ?? '')) hooks.waitAbandoned?.(s);
+        const sh = !ev.isError && backgroundShell(ev.output);
         if (m) {
           m.tool = { ...m.tool, output: ev.output, status };
           updateMessage(s, m);
           if (m.tool.subSessionId) closeVirtual(s, ev);
+          if (sh) trackShell(s, m, sh);
         } else {
-          addMessage(s, { kind: 'tool', text: 'tool', tool: { id: ev.id, name: 'tool', input: null, output: ev.output, status } });
+          const added = addMessage(s, { kind: 'tool', text: 'tool', tool: { id: ev.id, name: 'tool', input: null, output: ev.output, status } });
+          if (sh) trackShell(s, added, sh);
         }
         break;
       }
@@ -1118,10 +1121,106 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
       if (x.lastActivityAt !== at) return; // something happened since: not the same wait
       // its own harness work (sub-agents, workers) still running: that wait is real, the harness wakes it itself
       if (db.sessions.some((k) => k.parentId === s.id && !k.archived && k.status === 'running')) return;
+      if (x.bgShells?.length) return; // a background command the harness watches: its end wakes the agent
       r.waitNudges = (r.waitNudges || 0) + 1;
       api.deliver(s.id, { from: 'harness', text: `[harness] Ты закончил ход тем, что ждёшь (${min} мин назад), но у тебя в харнессе сейчас ничего не работает. Если ждёшь фоновую команду — прочитай её status-файл (running / completed / failed) и вывод; встроенного субагента GigaCode — проверь list_agents. Готово — продолжай задачу; ещё работает — коротко скажи, что ждёшь и сколько. Нужен человек — спроси через mcp__harness__ask.` });
     }, min * 60000);
     r.waitNudge.unref?.();
+  }
+
+  /**
+   * A shell command the agent started in the background (mvn, tests…): its card says «работает» with the last lines of
+   * its output, and when its status file says it ended (or its process is gone) the agent hears it — the CLI's own
+   * «you will be notified» reached only a process still in its turn, so an agent that ended «жду тесты» sat idle.
+   * s.bgShells holds the ids of the cards still at work (it survives a restart).
+   */
+  function trackShell(s, m, sh) {
+    const cmd = m.tool.input && typeof m.tool.input === 'object' ? m.tool.input.command ?? m.tool.input.cmd : null;
+    m.tool = { ...m.tool, bgShell: { ...sh, command: typeof cmd === 'string' ? cmd : null, state: 'running', startedAt: Date.now(), tail: '' } };
+    updateMessage(s, m);
+    s.bgShells = [...(s.bgShells || []), m.id];
+    emit(s);
+    watchShells(s);
+  }
+  const SHELL_POLL_MS = 5000;
+  function watchShells(s) {
+    const r = runtime(s.id);
+    if (r.shellTimer) return;
+    r.shellTimer = setInterval(() => {
+      const x = find(s.id);
+      if (x) pollShells(x);
+      if (!x?.bgShells?.length) {
+        clearInterval(r.shellTimer);
+        r.shellTimer = null;
+      }
+    }, SHELL_POLL_MS);
+    r.shellTimer.unref?.();
+  }
+  const pidAlive = (pid) => !pid || isAlive(pid); // no pid: only its status file tells
+  function pollShells(s) {
+    const left = [];
+    for (const id of s.bgShells || []) {
+      const m = store.messages(s.id).find((x) => x.id === id);
+      const sh = m?.tool?.bgShell;
+      if (!sh || sh.state !== 'running') continue;
+      const st = shellStatus(readTail(sh.statusFile, 4096));
+      let state = st && st.status !== 'running' ? st.status : null;
+      // its process is gone and the status file still says «running»: one more look (the file may be written just after)
+      if (!state && !pidAlive(sh.pid)) state = sh.goneAt ? 'lost' : null;
+      const tail = sh.outputFile ? readTail(sh.outputFile, 4000).trimEnd().split(/\r?\n/).slice(-15).join('\n') : '';
+      const goneAt = sh.goneAt ?? (!pidAlive(sh.pid) ? Date.now() : null);
+      if (!state) {
+        if (tail !== sh.tail || goneAt !== sh.goneAt) {
+          m.tool = { ...m.tool, bgShell: { ...sh, tail, goneAt } };
+          updateMessage(s, m);
+        }
+        left.push(id);
+        continue;
+      }
+      m.tool = { ...m.tool, bgShell: { ...sh, state, exitCode: st?.exitCode ?? null, endedAt: Date.now(), tail } };
+      updateMessage(s, m);
+      shellDone(s, m.tool.bgShell);
+    }
+    if (left.length !== (s.bgShells || []).length) {
+      s.bgShells = left;
+      emit(s);
+    }
+  }
+  /**
+   * The command ended: the agent gets a message with how and the end of its output. Idle — at once (ACP: unless GigaCode
+   * woke it itself, see selfTurn); in its turn — at the turn's end, and only if that turn ended waiting («жду …»):
+   * a turn that went on has seen it already.
+   */
+  function shellDone(s, sh) {
+    const how = { completed: 'закончилась', failed: 'завершилась с ошибкой', cancelled: 'отменена', canceled: 'отменена', killed: 'убита', lost: 'оборвалась: её процесса больше нет, а status-файл так и не сказал, чем она кончилась' }[sh.state] ?? `завершилась (${sh.state})`;
+    const text = `[harness] Фоновая команда${sh.command ? ` \`${sh.command.slice(0, 200)}\`` : sh.id ? ` ${sh.id}` : ''} ${how}${sh.exitCode != null ? `, код выхода ${sh.exitCode}` : ''}.${sh.tail ? `\nПоследние строки вывода${sh.outputFile ? ` (весь вывод — ${sh.outputFile})` : ''}:\n\n\`\`\`\n${sh.tail}\n\`\`\`` : ''}\n\nПродолжай задачу с этим результатом.`;
+    const r = runtime(s.id);
+    const w = { text, during: !!(r.running && !r.closedEarly) };
+    const go = () => {
+      (s.shellWakes ||= []).push(w);
+      flushShellWakes(s);
+    };
+    if (!w.during && (config.agents[s.agent]?.transport || 'headless') === 'acp' && acp.warm(s.id)) {
+      const at = Date.now();
+      setTimeout(() => { if ((runtime(s.id).lastSelfAt || 0) < at) go(); }, 30000).unref?.();
+      return;
+    }
+    go();
+  }
+  function flushShellWakes(s) {
+    const p = find(s.id);
+    const r = runtime(s.id);
+    if (!p?.shellWakes?.length || (r.running && !r.closedEarly)) return;
+    const ws = p.shellWakes.splice(0);
+    if (p.archived || p.status === 'stopped') return;
+    const last = store.messages(p.id).findLast((x) => x.kind === 'assistant');
+    const send = ws.filter((w) => !w.during || (last && WAIT_RE.test(last.text.slice(-600))));
+    if (!send.length) return;
+    try {
+      api.deliver(p.id, { from: 'harness', text: send.map((w) => w.text).join('\n\n---\n\n') });
+    } catch (e) {
+      console.error('[sessions] background command result delivery failed:', e);
+    }
   }
 
   /** The last background sub-agent of a lingering process settled: the messages that waited for it start their turn. */
@@ -1159,6 +1258,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
   }
   /** The parent's turn is over: the answers of background sub-agents that finished during it, as its next message. */
   function flushWakes(s) {
+    if (s.shellWakes?.length) setTimeout(() => flushShellWakes(s), 0);
     if (!db.sessions.some((v) => v.parentId === s.id && v.wakeParent)) return;
     setTimeout(() => {
       const p = find(s.id);
@@ -2912,6 +3012,7 @@ ${note.trim()}` : text });
         if (config.recovery?.autoResume) api.recoveryResume(cut.map((s) => s.id));
       }
       for (const s of db.sessions) if (s.kind === 'chat' && !s.virtual && s.queue?.length && !runtime(s.id).running) startTurn(s);
+      for (const s of db.sessions) if (s.bgShells?.length && !s.archived) watchShells(s);
       await Promise.all(toRespawn.splice(0).filter((s) => find(s.id)).map(respawnTerminal));
     },
 

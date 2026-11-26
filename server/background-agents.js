@@ -127,3 +127,30 @@ export function backgroundSteps(file, offset = 0) {
   }
   return { offset: offset + Buffer.byteLength(chunk.slice(0, end + 1)), items };
 }
+
+/**
+ * A shell command GigaCode started in the background (run_in_background) answers at once:
+ * «Background shell started.\nid: bg_…\npid: …\noutput file: …shell-<uuid>.output\nstatus file: …shell-<uuid>.status»
+ * (seen on the target 2026-11-26). → { id, pid, outputFile, statusFile } or null.
+ */
+export function backgroundShell(output) {
+  const text = String(output ?? '');
+  if (!/^\s*\**Background shell started/im.test(text)) return null;
+  const field = (name) => new RegExp(String.raw`^\s*\**${name}\**\s*:\s*` + '`?([^\\r\\n`]+?)`?\\s*$', 'im').exec(text)?.[1] ?? null;
+  const statusFile = field('status file');
+  if (!statusFile) return null; // nothing to watch
+  const pid = Number(field('pid'));
+  return { id: field('id'), pid: Number.isInteger(pid) && pid > 0 ? pid : null, outputFile: field('output file'), statusFile };
+}
+
+/**
+ * The status file of a background shell: «status: running|completed|failed|cancelled» (its exact layout is not known:
+ * a key line, JSON, or the bare word are all read), with an exit code when there is one. → { status, exitCode } or null.
+ */
+export function shellStatus(text) {
+  const t = String(text ?? '');
+  const status = (/"?status"?\s*[:=]\s*"?([a-z_]+)/i.exec(t)?.[1] ?? /^\s*(running|completed|failed|cancelled|canceled|killed|exited)\s*$/i.exec(t)?.[1])?.toLowerCase();
+  if (!status) return null;
+  const code = /"?exit_?code"?\s*[:=]\s*"?(-?\d+)/i.exec(t)?.[1];
+  return { status, exitCode: code == null ? null : Number(code) };
+}
