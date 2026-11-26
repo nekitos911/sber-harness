@@ -7,7 +7,7 @@ import { randomBytes } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { CODE_ROOT } from './config.js';
 import { agentMcpServersFor, cliReadsMcpFile, FULL_ACCESS_MODES, launchers } from './launchers.js';
-import { runTurn, isAlive, sameProcess, spawnOptions, endChild, readTail } from './runner.js';
+import { runTurn, isAlive, sameProcess, spawnOptions, endChild, exitCodeText, readTail } from './runner.js';
 import { baseId, catalogueHit } from './models.js';
 import { secretEnv } from './mcp-client.js';
 import { readRegistry } from './registry.js';
@@ -2077,7 +2077,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
       const code = signedCode(res.code);
       const how = code == null ? 'Процесс агента завершился без результата'
         : code === -1 ? 'Процесс агента завершён принудительно (код -1)'
-          : `Агент завершился с ошибкой (код ${code}${res.signal ? `, ${res.signal}` : ''})`;
+          : `Агент завершился с ошибкой (код ${exitCodeText(code)}${res.signal ? `, ${res.signal}` : ''})`;
       const md = config.agents[s.agent]?.modelsDiscovery;
       const modelGone = /not present in the current backend catalogue/i.test(why) || (!!md?.missingPattern && new RegExp(md.missingPattern, 'i').test(why));
       addMessage(s, { kind: 'error', text: `${how}${why ? `:\n${why.slice(-2000)}` : '.'}`, ...(modelGone ? { action: 'pick-model' } : {}) });

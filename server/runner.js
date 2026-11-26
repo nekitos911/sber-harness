@@ -124,6 +124,24 @@ const URL_RE = /https?:\/\/[^\s"'<>)\]]+/;
 const CODE_RE = /\b[A-Z0-9]{4}-[A-Z0-9]{4}\b/;
 const ALIVE_POLL_MS = 1000;
 
+/**
+ * A Windows exit code that is an NTSTATUS crash (1073741845 says nothing to a person; 0x40000015 is «abort»): «код
+ * 1073741845 = 0x40000015, процесс CLI аварийно остановился сам (abort)». Other codes stay as they are.
+ */
+const CRASHES = {
+  0x40000015: 'процесс CLI аварийно остановился сам (abort): сбой внутри GigaCode, не харнесса',
+  0xc0000005: 'процесс CLI упал: нарушение доступа к памяти',
+  0xc0000409: 'процесс CLI аварийно остановился (fail fast)',
+  0xc00000fd: 'процесс CLI упал: переполнение стека',
+  0xc000013a: 'процесс CLI прерван (Ctrl+C или закрытие консоли)',
+  0xc0000142: 'процесс CLI не смог запуститься (ошибка инициализации DLL)',
+};
+export function exitCodeText(code) {
+  if (!Number.isInteger(code)) return String(code);
+  const u = code >>> 0;
+  return CRASHES[u] ? `${code} = 0x${u.toString(16).toUpperCase()}, ${CRASHES[u]}` : String(code);
+}
+
 export function isAlive(pid) {
   if (!pid) return false;
   try {

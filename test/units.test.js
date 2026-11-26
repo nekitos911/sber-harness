@@ -8,6 +8,7 @@ import { readRegistry } from '../server/registry.js';
 import { findLiteralSecrets } from '../server/config.js';
 import { expandCommand } from '../server/launchers.js';
 import { backgroundLaunch, backgroundResult, backgroundShell, backgroundSteps, outputFileIn, shellStatus } from '../server/background-agents.js';
+import { exitCodeText } from '../server/runner.js';
 import { tmpDir, rmrf } from './helpers.js';
 
 const dir = tmpDir();
@@ -206,4 +207,11 @@ test('a background shell launch: its id, pid and files; its status file in any l
   assert.deepEqual(shellStatus('{"status":"failed","exitCode":1}'), { status: 'failed', exitCode: 1 });
   assert.deepEqual(shellStatus('running\n'), { status: 'running', exitCode: null });
   assert.equal(shellStatus(''), null);
+});
+
+test('a Windows crash code says what it is; any other code stays a number', () => {
+  assert.equal(exitCodeText(1073741845), '1073741845 = 0x40000015, процесс CLI аварийно остановился сам (abort): сбой внутри GigaCode, не харнесса');
+  assert.match(exitCodeText(-1073741819), /0xC0000005, .*памяти/);
+  assert.equal(exitCodeText(1), '1');
+  assert.equal(exitCodeText(null), 'null');
 });

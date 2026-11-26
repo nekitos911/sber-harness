@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { endChild, readTail, spawnOptions } from './runner.js';
+import { endChild, exitCodeText, readTail, spawnOptions } from './runner.js';
 import { resolveInside } from './fs.js';
 
 const PROTOCOL_VERSION = 1;
@@ -339,7 +339,7 @@ export function createAcp({ onWarm = () => {}, onIdleEvents = () => {}, idleFull
         onWarm(o.sid, false);
       }
       log(`=== ACP process exited code=${code} signal=${signal}\n`);
-      c.rpc.failAll(Object.assign(new Error(`Процесс ACP-агента завершился (код ${code}${signal ? `, ${signal}` : ''})`), { exited: true }));
+      c.rpc.failAll(Object.assign(new Error(`Процесс ACP-агента завершился (код ${exitCodeText(code)}${signal ? `, ${signal}` : ''})`), { exited: true }));
       for (const resolve of c.held.values()) resolve({ outcome: { outcome: 'cancelled' } });
       c.held.clear();
     });
@@ -425,7 +425,7 @@ export function createAcp({ onWarm = () => {}, onIdleEvents = () => {}, idleFull
         // files stay the agent's own business by default: with the harness as its file system, GigaCode's «read before
         // edit» guard never saw the reads and refused every edit (agents.<id>.acpClientFs: true brings it back)
         patientRequest(c.rpc, 'initialize', { protocolVersion: PROTOCOL_VERSION, clientCapabilities: { fs: { readTextFile: !!o.clientFs, writeTextFile: !!o.clientFs }, terminal: false } }, { idleMs: o.initTimeoutMs || ACP_INIT_TIMEOUT_MS, errFile }),
-        exited.then(({ code }) => { throw new Error(`ACP-агент завершился при запуске (код ${code})`); }),
+        exited.then(({ code }) => { throw new Error(`ACP-агент завершился при запуске (код ${exitCodeText(code)})`); }),
       ]);
       const mcpServers = acpMcpServers(o.ctx.harnessMcp, { timeoutMs: o.ctx.mcpTimeoutMs });
       c.note = null;
@@ -457,7 +457,7 @@ export function createAcp({ onWarm = () => {}, onIdleEvents = () => {}, idleFull
       if (!c.sessionId) {
         const created = await Promise.race([
           patientRequest(c.rpc, 'session/new', { cwd: o.cwd, mcpServers }, { idleMs: o.initTimeoutMs || ACP_INIT_TIMEOUT_MS, errFile }),
-          exited.then(({ code }) => { throw new Error(`ACP-агент завершился при создании сессии (код ${code})`); }),
+          exited.then(({ code }) => { throw new Error(`ACP-агент завершился при создании сессии (код ${exitCodeText(code)})`); }),
         ]);
         c.sessionId = created.sessionId;
         c.models = created.models || null;
