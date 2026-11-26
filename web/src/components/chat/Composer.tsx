@@ -160,7 +160,7 @@ export function Composer({ session, active, force = false }: { session: Session;
         ref={ref}
         rows={1}
         className="composer-input"
-        placeholder={session.waitingFor === 'answer' ? 'Ответьте агенту здесь или в карточке вопроса выше' : running && !session.turnClosing ? 'Enter ставит в очередь, Ctrl+Enter отправляет сразу (шаг прервётся)' : session.status === 'stopped' ? 'Остановлено. Следующее сообщение продолжит работу' : 'Задайте вопрос. @ добавит файл, / вызовет команду'}
+        placeholder={session.waitingFor === 'answer' ? 'Ответьте агенту здесь или в карточке вопроса выше' : running && !session.turnClosing ? 'Enter ставит в очередь, Ctrl+Enter — сразу: агент допишет фразу или команду и прочитает' : session.status === 'stopped' ? 'Остановлено. Следующее сообщение продолжит работу' : 'Задайте вопрос. @ добавит файл, / вызовет команду'}
         aria-label="Сообщение агенту"
         value={text}
         onChange={(e) => { update(e.target.value); setCaret(e.target.selectionStart) }}
@@ -222,7 +222,7 @@ export function Composer({ session, active, force = false }: { session: Session;
           </button>
         ) : (
           <button type="button" className="composer-send" onClick={() => void send()} disabled={(!text.trim() && !atts.length) || sending} aria-label={sending ? 'Отправляется' : running ? 'Поставить в очередь' : 'Отправить'} aria-busy={sending || undefined}
-            data-tip={running ? `В очередь (Enter) · сразу агенту, прервав шаг: ${isMac ? "⌘" : "Ctrl"}+Enter` : 'Отправить (Enter)'}>
+            data-tip={running ? `В очередь (Enter) · сразу агенту: ${isMac ? "⌘" : "Ctrl"}+Enter — он допишет фразу или закончит команду и прочитает` : 'Отправить (Enter)'}>
             {sending ? <LoaderCircle className="spinner" aria-hidden /> : <ArrowUp />}
           </button>
         )}

@@ -1417,18 +1417,43 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
       // coordinator's reply, the person's writing that came before the call started — cannot be read in this turn
       // (ACP: one session/prompt): the call ends, the sub-agents go on in the background, and the step, done with its
       // own work, ends by itself — nothing is cut
-      if (s.queue?.some((q) => q.from === 'user')) cutStep(s.id);
+      if (s.queue?.some((q) => q.from === 'user')) cutStep(s.id, { why: 'deadline' });
       else hooks.endWaits?.(s);
     }, ms);
     r.steerTimer.unref?.();
   }
 
-  /** The step ends now, its own message first in the queue: the person's message starts the next turn on the same context. */
-  function cutStep(sid) {
+  /**
+   * The step ends now, its own message first in the queue: the person's message starts the next turn on the same context.
+   * `soft` (the person's «Сразу агенту»): not in the middle of a sentence or of a command — at the nearest boundary (the
+   * text paused CUT_QUIET_MS, the running tool answered), at most CUT_MAX_MS later. A wait (sub-agents, a question, a
+   * permission) is cut at once: nothing of the agent's own is half done there.
+   */
+  const CUT_QUIET_MS = 2500;
+  const CUT_MAX_MS = 20000;
+  function cutStep(sid, { soft = false, why = 'person' } = {}) {
     const s = find(sid);
     const r = runtime(sid);
     const found = s?.queue?.find((q) => q.from === 'user');
     if (!s || !r.running || !found) return false;
+    const midway = () => s.lastEventKind === 'tool_running' || (s.lastEventKind === 'text_delta' && Date.now() - (s.lastEventAt || 0) < CUT_QUIET_MS);
+    if (soft && !s.waitingFor && !(hooks.waits?.(s) > 0) && midway()) {
+      if (r.cutTimer) return true;
+      const turn = r.turn;
+      const since = Date.now();
+      r.cutTimer = setInterval(() => {
+        const x = find(sid);
+        const rr = runtime(sid);
+        const done = !x || !rr.running || rr.turn !== turn || !x.queue?.some((q) => q.from === 'user'); // ended by itself: nothing to cut
+        if (done || !midway() || x.waitingFor || Date.now() - since > CUT_MAX_MS) {
+          clearInterval(rr.cutTimer);
+          rr.cutTimer = null;
+          if (!done) cutStep(sid, { why });
+        }
+      }, 300);
+      r.cutTimer.unref?.();
+      return true;
+    }
     // a per-message process (not ACP) dies with the cut, and the CLI's background sub-agents with it: the step is not
     // cut (its own work goes on to its end, then the message comes; the sub-agent's answer comes too)
     if ((config.agents[s.agent]?.transport || 'headless') !== 'acp' && liveBackgrounds(sid).length) {
@@ -1437,12 +1462,22 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
       return false;
     }
     r.cutAt = r.turn; // the step's closing marks the message (finishTurn): its turn is told why it was cut
+    r.cutWhy = why;
     r.stopRequested = true;
     r.handle?.stop();
     r.slotWake?.();
     if (s.status === 'running') s.status = 'stopped';
     emit(s);
     return true;
+  }
+
+  /** Where a cut turn stopped, for its next prompt: the end of its last words, or the tool it was running. */
+  function stoppedAt(s, turn) {
+    const last = store.messages(s.id).findLast((m) => m.turn === turn && (m.kind === 'assistant' || m.kind === 'tool'));
+    if (!last) return '';
+    if (last.kind === 'tool') return `вызов ${last.tool?.name ?? 'инструмента'}${last.tool?.status === 'running' ? ' (не завершён)' : ''}`;
+    const t = last.text.trim().replace(/\s+/g, ' ');
+    return t ? `«…${t.slice(-300)}»` : '';
   }
 
   /** The process may linger after result (a queued message waits for it) at most agents.<id>.exitGraceMs. */
@@ -1696,7 +1731,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
         if (peers) prompt += '\n\n' + peers;
       }
       // the message that ended the previous step's long wait: the agent knows why its calls ended (a slash command stays first)
-      const notice = s.externalSessionId || retry ? '' : steerNotice(items[0], r);
+      const notice = retry || (s.externalSessionId && !items[0]?.steer?.person) ? '' : steerNotice(items[0], r);
       if (notice) prompt = cmd ? `${prompt}\n\n${notice}` : prompt.startsWith('/') ? `${prompt.split('\n', 1)[0]}\n\n${notice}\n\n${prompt.slice(prompt.indexOf('\n') + 1)}` : `${notice}\n\n${prompt}`;
       s.worktreeRulesSent = true;
       // the project's allow rules (allow_project) join the session's own on every turn
@@ -2033,9 +2068,10 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     r.cutAt = null;
     if (steered) {
       const item = s.queue?.find((q) => q.from === 'user');
-      if (item) item.steer = { cut: true, at: r.turn };
+      if (item) item.steer = { cut: true, at: r.turn, ...(r.cutWhy === 'person' ? { person: true, tail: stoppedAt(s, r.turn) } : {}) };
       r.steerAt = r.turn;
     }
+    r.cutWhy = null;
     const stopped = (res.stopped || r.stopRequested) && !paused && !woken && !steered;
     const unadopted = r.unadopted;
     r.stopRequested = false;
@@ -2726,7 +2762,7 @@ ${note.trim()}` : text });
         s.queue.unshift(s.queue.pop());
         s.queued = s.queue.length;
         emit(s);
-        return { queued: true, cut: cutStep(sid) };
+        return { queued: true, cut: cutStep(sid, { soft: true }) };
       }
       if (!r.running) {
         // its own turn takes this message; one that is already starting (startTurn marked it running) reads the queue

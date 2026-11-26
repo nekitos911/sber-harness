@@ -11,4 +11,11 @@ export const STEER_NOTICE = '[harness] Ход прерван: человек н�
  * @param {{ steer?: object, steerAt?: number }} item the first queued item of the turn
  * @param {{ steerAt?: number }} r runtime of the session
  */
-export const steerNotice = (item, r) => (item?.steer?.cut && r?.steerAt && item.steer.at === r.steerAt ? STEER_NOTICE : '');
+export const steerNotice = (item, r) => (!(item?.steer?.cut && r?.steerAt && item.steer.at === r.steerAt) ? ''
+  : item.steer.person ? personCutNotice(item.steer.tail) : STEER_NOTICE);
+
+/**
+ * The person cut the step with their message («Сразу агенту»): the CLI's own record may hold a half-written answer and
+ * nothing about why it stopped — the agent is told where it was and to go on from there, the message in mind.
+ */
+export const personCutNotice = (tail) => `[harness] Твой предыдущий ход прерван: человек написал сообщение ниже, не дожидаясь конца шага.${tail ? ` Ты остановился на: ${tail}.` : ''} Учти его сообщение и продолжай задачу с того места, где остановился, если человек не просит другого.`;

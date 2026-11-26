@@ -467,6 +467,18 @@ test('«Сразу агенту» (cut): the message ends the running step and o
   await waitFor(async () => (await state()).sessions.find((x) => x.id === s.id).status === 'idle', { timeout: 30000, what: 'idle' });
   const after = (await messages(s.id)).filter((m) => m.kind === 'user').map((m) => m.text);
   assert.deepEqual(after, ['#silent 60000', 'сразу агенту', 'в очередь, шаг идёт'], 'nothing was lost to the cut and nothing was doubled');
+  assert.ok((await messages(s.id)).some((m) => m.kind === 'assistant' && m.text.includes('знаю, что был прерван')), 'its next turn was told the step was cut');
+});
+
+test('«Сразу агенту» while the agent writes: it finishes its words first, nothing is cut mid-sentence', async () => {
+  const s = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', cwd: repo, prompt: '#slow' })).body;
+  await waitFor(async () => (await messages(s.id)).some((m) => m.kind === 'assistant' && /slow/.test(m.text)), { what: 'it writes' });
+  const r = await h.api('POST', `/api/sessions/${s.id}/messages`, { text: 'дополнение', cut: true });
+  assert.deepEqual([r.body.queued, r.body.cut], [true, true]);
+  await waitFor(async () => (await messages(s.id)).some((m) => m.kind === 'user' && m.text === 'дополнение'), { timeout: 30000, what: 'the message delivered' });
+  const first = (await messages(s.id)).find((m) => m.kind === 'assistant' && /slow/.test(m.text));
+  assert.equal(first.text.match(/slow/g).length, 20, 'the answer it was writing is whole');
+  await waitFor(async () => (await state()).sessions.find((x) => x.id === s.id).status === 'idle', { timeout: 30000, what: 'idle' });
 });
 
 test('the CLI reports the harness MCP server failed: a plain warning in the chat, once', async () => {

@@ -305,6 +305,8 @@ if (delivered) {
     emit({ type: 'tool_result', tool_id: 'bgsh_1', status: 'success', output: launch });
   }
 }
+// the harness told it the person cut its previous turn: it says so (the test sees the notice reached the agent)
+if (prompt.includes('Твой предыдущий ход прерван')) await say(' (знаю, что был прерван)');
 if (has(/#bigoutput\b/)) {
   emit({ type: 'tool_use', tool_name: 'run_shell_command', tool_id: 'big_1', parameters: { command: 'cat big.log' } });
   emit({ type: 'tool_result', tool_id: 'big_1', status: 'success', output: `${'строка лога\n'.repeat(10000)}КОНЕЦ` });
