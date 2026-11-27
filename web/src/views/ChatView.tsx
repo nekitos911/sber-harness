@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { ArrowDown, Bot, Check, Copy, Ellipsis, ExternalLink, FolderOpen, FolderPlus, LayoutList, Search, KeyRound, Link2, LoaderCircle, Minus, ShieldCheck, Wrench, X, GitCompareArrows, MessageSquare, PlugZap, RotateCcw, ScrollText, Square, Trash2, TriangleAlert } from 'lucide-react'
+import { ArrowDown, Bot, Check, Copy, Ellipsis, ExternalLink, FolderOpen, FolderPlus, LayoutList, Search, KeyRound, Link2, LoaderCircle, Circle, ShieldCheck, Wrench, X, GitCompareArrows, MessageSquare, PlugZap, RotateCcw, ScrollText, Square, Trash2, TriangleAlert } from 'lucide-react'
 import { api, errorText, tryApi } from '../api'
 import { closeTab, getState, openDialog, openScreen, openSession, openTask, setState, showPanel, toast, useFeature, useStore, upsertSession } from '../store'
 import { loadMessages, loadSubagents } from '../ws'
@@ -569,11 +569,11 @@ function McpChip({ sessionId }: { sessionId: string }) {
         MCP {unknown ? servers.length : `${ok}/${servers.length}`}
       </button>
       <Popover anchor={anchor} open={open} onClose={() => setOpen(false)} placement="bottom-end" label="MCP-серверы" className="mcp-pop">
-        <p className="field-hint">{parentId ? 'Как у родительского чата: встроенный субагент работает в его процессе.' : unknown ? 'Переданы агенту. В режиме ACP CLI не сообщает, какие подключились: ✓ — агент уже пользовался сервером.' : 'Как их сообщил CLI в начале последнего хода.'}</p>
+        <p className="field-hint">{parentId ? 'Как у родительского чата: встроенный субагент работает в его процессе.' : unknown ? 'Эти серверы переданы агенту. В режиме ACP GigaCode не сообщает, какие из них запустились, поэтому ✓ ставится, когда сервер ответил агенту; серая точка значит «ещё не пользовался», а не «не подключён».' : 'Как их сообщил CLI в начале последнего хода.'}</p>
         <ul className="mcp-pop-list">
           {servers.map((x) => (
-            <li key={x.name} data-bad={!x.ok || undefined}>
-              {x.ok ? <Check aria-hidden /> : x.ok === null ? <Minus aria-hidden /> : <X aria-hidden />}
+            <li key={x.name} data-bad={x.ok === false || undefined} data-unknown={x.ok === null || undefined}>
+              {x.ok ? <Check aria-hidden /> : x.ok === null ? <Circle aria-hidden /> : <X aria-hidden />}
               <span className="mono">{x.name}</span>
               {x.ok === false && <span className="muted">{x.reason ?? 'не запустился'}</span>}
             </li>
