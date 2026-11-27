@@ -1609,7 +1609,10 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
   }
   const CLI_LIVE_MS = 3 * 60000; // the adopt pass runs every minute: a CLI chat written to within this is still in use
   // not worth starting again by itself: the executable, the launcher or the config is wrong (the person fixes it)
-  const START_FATAL = /Не удалось запустить агента|ENOENT|нет режима ACP|не найден|неизвестный лаунчер|не настроен|не существует|недоступн|ждёт вход от GigaCode Desktop/i;
+  const START_FATAL = /Не удалось запустить агента|ENOENT|нет режима ACP|не найден|неизвестный лаунчер|не настроен|не существует|недоступн|ждёт вход от GigaCode Desktop|CLI closure is missing/i;
+  // GigaCode's own launcher cannot find its node or CLI files: an install half updated or broken (or a stale path to an
+  // old copy) — a retry every minute cannot fix it, the person has to look
+  const BROKEN_INSTALL = /bundled Node runtime or CLI closure is missing/i;
   const START_RETRY_SEC = [20, 60, 180];
   const times = (n) => `${n} ${n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20) ? 'раза' : 'раз'}`; // «4 раза», «5 раз»
   const START_STREAK_MAX = 4; // failed starts in a row (all retry kinds together) before the harness stops retrying
@@ -1851,7 +1854,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
         const why = String(res.error).split('\n')[0].slice(0, 200);
         res.error += `\nАгент не стартует ${times(s.startFailStreak)} подряд — больше сам не повторяю, чтобы не крутить перезапуски. «Повторить» запустит снова; сообщений в очереди: ${s.queue.length}.`;
         hooks.notify?.({ kind: 'escalation', sessionId: s.id, taskId: s.taskId ?? null, text: `${s.title}: агент не стартует ${times(s.startFailStreak)} подряд — ${why}`, actions: ['retry', 'open'] });
-      } else if (!res.action && !START_FATAL.test(res.error) && n < START_RETRY_SEC.length) {
+      } else if (!res.action && !START_FATAL.test(`${res.error}\n${res.stderrTail || ''}`) && n < START_RETRY_SEC.length) {
         r.startFails = n + 1;
         const sec = START_RETRY_SEC[n];
         const due = Date.now() + sec * 1000;
@@ -1864,6 +1867,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
         }, sec * 1000);
         t.unref?.();
       } else {
+        if (BROKEN_INSTALL.test(`${res.error}\n${res.stderrTail || ''}`)) res.error += '\nGigaCode на этой машине установлен не полностью: его лаунчер не находит свой node или файлы CLI (так бывает во время или после неудачного обновления, или когда харнесс запускает старую копию: путь в agents.gigacode.command). Сам больше не повторяю. Проверьте `gigacode --version` и `where gigacode` в терминале; когда GigaCode заработает, нажмите «Повторить».';
         res.error += `\nСообщений в очереди: ${s.queue.length} — уйдут со следующим сообщением или после смены модели.`;
       }
     }
