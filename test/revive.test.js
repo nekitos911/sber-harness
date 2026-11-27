@@ -115,17 +115,19 @@ test('a helper that never starts ends its caller\'s wait with «failed» — the
   assert.match(said.text, /Субагент не смог работать/);
 });
 
-test('«Прервать и отправить»: the running turn stops, the queued message goes at once', async () => {
+test('«Прервать и отправить»: the running step ends at its next boundary (not mid-word), the queued message goes', async () => {
   const s = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', cwd: root, prompt: 'привет' })).body;
   await waitFor(async () => (await session(s.id)).status === 'idle', { what: 'first turn' });
   await h.api('POST', `/api/sessions/${s.id}/messages`, { text: '#slow долго' });
   await waitFor(async () => (await session(s.id)).status === 'running', { what: 'running' });
+  await waitFor(async () => (await messages(s.id)).some((m) => m.kind === 'assistant' && /slow/.test(m.text)), { what: 'it writes' });
   await h.api('POST', `/api/sessions/${s.id}/messages`, { text: 'срочно вот это' });
   assert.equal((await session(s.id)).queued, 1);
   assert.equal((await h.api('POST', `/api/sessions/${s.id}/queue/send`, { interrupt: true })).status, 200);
   await waitFor(async () => { const ms = await messages(s.id); const i = ms.findIndex((m) => m.text === 'срочно вот это'); return i >= 0 && ms.slice(i).some((m) => m.kind === 'assistant'); }, { timeout: 20000, what: 'the queued message ran' });
   const ms = await messages(s.id);
-  assert.ok(ms.some((m) => m.text === 'Остановлено пользователем'));
+  assert.ok(!ms.some((m) => m.text === 'Остановлено пользователем'), 'not a Stop');
+  assert.equal(ms.find((m) => m.kind === 'assistant' && /slow/.test(m.text)).text.match(/slow/g).length, 20, 'the answer it was writing is whole');
   assert.equal((await session(s.id)).queued, 0);
 });
 

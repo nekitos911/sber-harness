@@ -29,7 +29,7 @@ test('the notice goes only to the turn of the message that cut the step', () => 
   assert.equal(steerNotice({ steer: { cut: true, at: 3 } }, {}), '', 'never cut');
   // the person cut it: the agent hears where it stopped and to go on from there
   const told = steerNotice({ steer: { cut: true, at: 3, person: true, tail: '«…проверил лог»' } }, r);
-  assert.match(told, /Ты остановился на: «…проверил лог»\. Учти его сообщение и продолжай/);
+  assert.match(told, /Ты остановился на: «…проверил лог»\. Учти их и продолжай/);
 });
 
 test('a call waiting for a sub-agent ends at chat.steerAfterMs and the message goes next turn', async () => {

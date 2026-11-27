@@ -274,7 +274,7 @@ ${q.text}` : q.text)
           <span>{running ? `В очереди: ${queue.length}. Уйдёт после текущего шага (раньше, если шаг только ждёт субагентов)` : `В очереди: ${queue.length}. Агент сейчас не работает`}</span>
         </button>
         {running
-          ? <button type="button" className="link-btn" data-tip="Остановить текущий шаг и отправить очередь сразу; контекст сохраняется, субагенты доработают и пришлют результат" onClick={() => void tryApi('POST', `/sessions/${session.id}/queue/send`, { interrupt: true })}>Прервать шаг и отправить очередь</button>
+          ? <button type="button" className="link-btn" data-tip="Агент допишет фразу или команду (не дольше 20 с) и сразу прочитает очередь; контекст сохраняется, ему скажут, на чём он остановился" onClick={() => void tryApi('POST', `/sessions/${session.id}/queue/send`, { interrupt: true })}>Прервать шаг и отправить очередь</button>
           : <button type="button" className="link-btn" onClick={() => void tryApi('POST', `/sessions/${session.id}/queue/send`)}>Отправить сейчас</button>}
       </div>
       {shown && queue.map((q) => (

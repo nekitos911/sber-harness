@@ -1434,10 +1434,11 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
    */
   const CUT_QUIET_MS = 2500;
   const CUT_MAX_MS = 20000;
-  function cutStep(sid, { soft = false, why = 'person' } = {}) {
+  function cutStep(sid, { soft = false, why = 'person', any = false, cap = true } = {}) {
     const s = find(sid);
     const r = runtime(sid);
-    const found = s?.queue?.find((q) => q.from === 'user');
+    // `any`: the person asked the whole queue to go now (a sub-agent's report too), not only a message of theirs
+    const found = s?.queue?.find((q) => any || q.from === 'user');
     if (!s || !r.running || !found) return false;
     const midway = () => s.lastEventKind === 'tool_running' || (s.lastEventKind === 'text_delta' && Date.now() - (s.lastEventAt || 0) < CUT_QUIET_MS);
     if (soft && !s.waitingFor && !(hooks.waits?.(s) > 0) && midway()) {
@@ -1447,11 +1448,11 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
       r.cutTimer = setInterval(() => {
         const x = find(sid);
         const rr = runtime(sid);
-        const done = !x || !rr.running || rr.turn !== turn || !x.queue?.some((q) => q.from === 'user'); // ended by itself: nothing to cut
-        if (done || !midway() || x.waitingFor || Date.now() - since > CUT_MAX_MS) {
+        const done = !x || !rr.running || rr.turn !== turn || !x.queue?.some((q) => any || q.from === 'user'); // ended by itself: nothing to cut
+        if (done || !midway() || x.waitingFor || (cap && Date.now() - since > CUT_MAX_MS)) {
           clearInterval(rr.cutTimer);
           rr.cutTimer = null;
-          if (!done) cutStep(sid, { why });
+          if (!done) cutStep(sid, { why, any });
         }
       }, 300);
       r.cutTimer.unref?.();
@@ -2074,8 +2075,8 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     const steered = r.turn === r.cutAt; // ended by the deadline of a message, not by the person
     r.cutAt = null;
     if (steered) {
-      const item = s.queue?.find((q) => q.from === 'user');
-      if (item) item.steer = { cut: true, at: r.turn, ...(r.cutWhy === 'person' ? { person: true, tail: stoppedAt(s, r.turn) } : {}) };
+      const item = s.queue?.find((q) => q.from === 'user') ?? (r.cutWhy === 'person' || r.cutWhy === 'report' ? s.queue?.[0] : undefined);
+      if (item) item.steer = { cut: true, at: r.turn, ...(r.cutWhy === 'person' || r.cutWhy === 'report' ? { person: true, by: r.cutWhy, tail: stoppedAt(s, r.turn) } : {}) };
       r.steerAt = r.turn;
     }
     r.cutWhy = null;
@@ -2793,6 +2794,11 @@ ${note.trim()}` : text });
       // one that does not (midTurn of a session whose call waited for this one already ended it) keeps the deadline
       else if (!asked) { if (hooks.personWrote?.(s) === false) armSteer(s); }
       else if (from !== 'user' && hooks.waits?.(s) > 0) armSteer(s); // a call it asked inside is still waited on
+      // a sub-agent's report or the harness's own word (a background command ended…) to an agent at work on its own:
+      // it does not wait for the whole step — the step ends at its next boundary (the phrase or the command it is in,
+      // however long that command runs), and the next turn reads it, told where it stopped. Not inside a wait (handled
+      // above), a question or permission (the person is asked), a turn the agent took by itself (it ends in seconds)
+      if ((report || from === 'harness') && !r.closedEarly && !r.selfTurn && !s.waitingFor && !(hooks.waits?.(s) > 0)) cutStep(sid, { soft: true, why: 'report', any: true, cap: false });
       emit(s);
       return { queued: true };
     },
@@ -2819,10 +2825,9 @@ ${note.trim()}` : text });
       if (!s.queue?.length) fail(409, 'очередь пуста');
       if (runtime(sid).running) {
         if (!interrupt) return emit(s); // it goes by itself after the current step
-        const keep = s.queue.slice();
-        api.stop(sid); // clears the queue: it is put back and goes when the stopped turn ends
-        s.queue = keep;
-        s.queued = keep.length;
+        // the step ends at its nearest boundary (the phrase or command it is in, at most CUT_MAX_MS), not mid-word as a
+        // Stop would; the next turn reads the queue and is told where it stopped
+        cutStep(sid, { soft: true, any: true });
         return emit(s);
       }
       startTurn(s);
