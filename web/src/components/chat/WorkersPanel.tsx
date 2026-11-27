@@ -7,7 +7,7 @@ import { basename, normPath, plural, tokens } from '../../lib/format'
 import { useCurrentTool, useElapsed } from '../../lib/live'
 import { stopSession } from '../../lib/sessionActions'
 import { sessionVisualState, STATE_LABEL } from '../../lib/sessionState'
-import { clock, dockRows, runningShells, type ShellRun } from '../../lib/overview'
+import { clock, dockRows, runningShells, watchedShells, type ShellRun } from '../../lib/overview'
 import { mcpParts, toolKind } from '../../lib/toolRun'
 import type { Session, SubAgent } from '../../types'
 import { StatusIcon, SubStateIcon, subStateLabel } from '../bits'
@@ -29,9 +29,11 @@ export function WorkersPanel({ sessionId }: { sessionId: string }) {
   const { live, done } = useMemo(() => dockRows(getState().sessions, sessionId), [key, sessionId]) // eslint-disable-line react-hooks/exhaustive-deps
   const sub = useStore((s) => s.subagents[sessionId])
   const internal = sub?.items ?? []
+  const own = useOwnShells(sessionId)
   const [open, setOpen] = useState(true)
   const [showHistory, setShowHistory] = useState(false)
-  const total = live.length + internal.length
+  const agents = live.length + internal.length
+  const total = agents + own.length
   if (!total && !done.length) return null
 
   const busy = live.filter((r) => r.s.status === 'running' && !r.s.waitingFor).length + internal.filter((a) => BUSY.has(a.state)).length
@@ -43,12 +45,13 @@ export function WorkersPanel({ sessionId }: { sessionId: string }) {
         <>
           <button type="button" className="dock-head" aria-expanded={open} onClick={() => setOpen(!open)}>
             <ChevronDown className="chev" aria-hidden />
-            <strong>{total} {plural(total, 'субагент', 'субагента', 'субагентов')}</strong>
+            <strong>{[agents > 0 && `${agents} ${plural(agents, 'субагент', 'субагента', 'субагентов')}`, own.length > 0 && `${own.length} ${plural(own.length, 'фоновая команда', 'фоновые команды', 'фоновых команд')}`].filter(Boolean).join(' · ')}</strong>
             {busy > 0 && <span className="dock-busy">в работе: {busy}</span>}
             {waiting > 0 && <span className="dock-wait">ждут вас: {waiting}</span>}
           </button>
           {open && (
             <div className="dock-list">
+              {own.map((r) => <ShellRow key={r.id} r={r} indent={0} />)}
               {live.map((r) => <AgentRow key={r.s.id} id={r.s.id} indent={Math.min(r.indent, MAX_INDENT)} />)}
               {internal.length > 0 && (
                 <>
@@ -140,9 +143,21 @@ function AgentRowView({ s, indent }: { s: Session; indent: number }) {
   )
 }
 
+/**
+ * This chat's own background commands the harness watches (mvn test…): they run after its turn ended, so they are
+ * listed here too — until their status file says they ended. A string key: output lines redraw only when they change.
+ */
+function useOwnShells(sid: string): ShellRun[] {
+  const ids = useStore((st) => st.sessions.find((x) => x.id === sid)?.bgShells?.join('|') ?? '')
+  useEffect(() => { if (ids) ensureMessages(sid) }, [ids, sid])
+  const key = useStore((st) => (ids && st.messages[sid] ? JSON.stringify(watchedShells(st.messages[sid], ids.split('|'))) : '[]'))
+  return useMemo(() => JSON.parse(key) as ShellRun[], [key])
+}
+
 /** Its shell commands running now, through a string key: a streamed word in its transcript does not redraw the row. */
 function useShells(s: Session): ShellRun[] {
-  const running = s.status === 'running'
+  // its turn may be over while a background command of its own still runs
+  const running = s.status === 'running' || !!s.bgShells?.length
   useEffect(() => { if (running) ensureMessages(s.id) }, [running, s.id])
   const key = useStore((st) => (running && st.messages[s.id] ? JSON.stringify(runningShells(st.messages[s.id])) : '[]'))
   return useMemo(() => JSON.parse(key) as ShellRun[], [key])
@@ -151,9 +166,10 @@ function useShells(s: Session): ShellRun[] {
 function ShellRow({ r, indent }: { r: ShellRun; indent: number }) {
   return (
     <div className="dock-row dock-shell" style={{ '--indent': indent } as CSSProperties}
-      data-tip={`${r.command}\nКоманда агента. Харнес не может остановить её отдельно: остановите агента.`}>
+      data-tip={`${r.command}${r.last ? `\nПоследняя строка вывода: ${r.last}` : ''}\nКоманда агента. Харнес не может остановить её отдельно: остановите агента.${r.background ? ' Когда фоновая команда закончится, агент получит итог сообщением.' : ''}`}>
       <SquareTerminal className="dock-shell-icon" aria-hidden />
       <span className="dock-title dock-cmd mono ellipsis">{r.command}</span>
+      {r.last && <span className="dock-doing ellipsis">{r.last}</span>}
       {r.background && <span className="dock-bg">в фоне</span>}
       <span className="dock-meta num"><Since at={r.at} /></span>
       <span className="dock-stop-slot" aria-hidden />

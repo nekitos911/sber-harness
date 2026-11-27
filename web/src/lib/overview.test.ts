@@ -1,7 +1,7 @@
 // Run: node --test web/src/lib/overview.test.ts
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { bucket, childOfCall, clock, descendants, dockRows, places, plainInline, runningShells, taskHead, taskText, timeline } from './overview.ts'
+import { bucket, childOfCall, clock, descendants, dockRows, places, plainInline, runningShells, taskHead, taskText, timeline, watchedShells } from './overview.ts'
 import type { Message, Session } from '../types'
 
 const s = (id: string, parentId: string | null, extra: Partial<Session> = {}) =>
@@ -86,6 +86,14 @@ test('running shells: running calls and this turn\'s background ones, not other 
     t('m5', 'run_shell_command', { command: 'npm test\n--watch' }, 'running'),
   ]
   assert.deepEqual(runningShells(list).map((r) => [r.command, r.background]), [['sleep 100', true], ['npm test', false]])
+})
+
+test('a background command the harness watches: listed while its status file says it runs, in any turn; its last output line', () => {
+  const sh = (id: string, state: string, turn: number) =>
+    m(id, 'tool', '', { turn, tool: { id, name: 'run_shell_command', input: { command: 'x' }, output: null, status: 'ok', bgShell: { id: null, command: 'mvn test', outputFile: null, statusFile: 's', state, startedAt: 5, tail: '[INFO] Building\n[INFO] Tests run: 42\n' } } })
+  const list = [sh('a', 'running', 1), sh('b', 'completed', 2), m('c', 'assistant', 'жду тесты', { turn: 2 })]
+  assert.deepEqual(runningShells(list).map((r) => [r.id, r.command, r.last]), [['a', 'mvn test', '[INFO] Tests run: 42']])
+  assert.deepEqual(watchedShells(list, ['a', 'b', 'gone']).map((r) => [r.id, r.at, r.background]), [['a', 5, true]])
 })
 
 test('clock', () => {

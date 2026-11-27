@@ -168,11 +168,12 @@ export function dockRows(sessions: Session[], id: string): { live: DockRow[]; do
 // the CLIs' shell tools (toolRun.ts KIND 'shell', plus «execute»); toolRun is not imported so this file stays pure
 const SHELL = /^(run_shell_command|bash|shell|exec_command|execute)$/i
 
-export interface ShellRun { id: string; command: string; at: number; background: boolean }
+export interface ShellRun { id: string; command: string; at: number; background: boolean; last?: string }
 
 /**
  * Shell commands a running agent has going right now: calls still running, and background ones started in its current
- * turn. shortcut: the CLI does not report when a background command ends, so it is listed until the turn ends.
+ * turn. A background command the harness watches (tool.bgShell) is listed while its status file says it runs, whatever
+ * the turn; for one it does not (shortcut: no status file known) the end of the turn is its end.
  */
 export function runningShells(list: Message[]): ShellRun[] {
   const out: ShellRun[] = []
@@ -180,12 +181,27 @@ export function runningShells(list: Message[]): ShellRun[] {
   for (let i = Math.max(0, list.length - 80); i < list.length; i++) {
     const t = list[i].tool
     if (list[i].kind !== 'tool' || !t || !SHELL.test(t.name)) continue
+    if (t.bgShell) {
+      if (t.bgShell.state === 'running') out.push(watchedRun(list[i]))
+      continue
+    }
     const input = (t.input ?? {}) as { command?: unknown; is_background?: unknown; run_in_background?: unknown }
     const background = input.is_background === true || input.run_in_background === true
     if (t.status !== 'running' && !(background && t.status === 'ok' && list[i].turn === turn)) continue
     out.push({ id: list[i].id, command: typeof input.command === 'string' ? firstLine(input.command) : t.name, at: list[i].at, background })
   }
   return out
+}
+
+/** A background command the harness watches (s.bgShells: its messages), still running: wherever it is in the transcript. */
+export function watchedShells(list: Message[], ids: string[]): ShellRun[] {
+  return ids.map((id) => list.find((m) => m.id === id)).filter((m): m is Message => m?.tool?.bgShell?.state === 'running').map(watchedRun)
+}
+function watchedRun(m: Message): ShellRun {
+  const sh = m.tool!.bgShell!
+  const input = (m.tool!.input ?? {}) as { command?: unknown }
+  const command = sh.command ?? (typeof input.command === 'string' ? input.command : m.tool!.name)
+  return { id: m.id, command: firstLine(command), at: sh.startedAt, background: true, last: sh.tail ? firstLine(sh.tail.split('\n').filter((l) => l.trim()).pop() ?? '') : undefined }
 }
 
 /** 39 с · 11 мин 39 с · 2 ч 05 мин: a running clock, finer than sessionState's dur(). */
