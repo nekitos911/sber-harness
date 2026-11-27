@@ -1124,7 +1124,12 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
    * the CLI did not report): a turn that ended «жду …» with nothing of its own at work in the harness gets a nudge after
    * chat.waitNudgeMin (default 10; 0 = off), at most WAIT_NUDGES times in a row — an agent never sits forever on a promise.
    */
-  const WAIT_RE = /(жду|подожду|ожидаю|дождусь|ждём|ждем|в фоне|придёт|придет|по готовности|когда закончит|waiting for|will wait)/i;
+  // the agent SAYS it waits (not a mention of something that ran in the background, nor «ничего не жду»), at the end
+  const WAIT_RE = /(?<!не )(?<!\p{L})(жду|подожду|ожидаю|дождусь|ждём|ждем|waiting for|will wait)(?!\p{L})/iu;
+  const waitsAtEnd = (text) => {
+    const end = String(text || '').slice(-300);
+    return WAIT_RE.test(end) && !/(ничего|никого|больше) не жду|не жду ничего|задача (завершена|выполнена)|всё готово/i.test(end);
+  };
   const WAIT_NUDGES = 3;
   function armWaitNudge(s) {
     const r = runtime(s.id);
@@ -1133,7 +1138,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     const min = config.chat?.waitNudgeMin ?? 10;
     if (!(min > 0) || s.virtual || s.kind !== 'chat') return;
     const last = store.messages(s.id).findLast((m) => m.kind === 'assistant');
-    if (!last || !WAIT_RE.test(last.text.slice(-600))) { r.waitNudges = 0; return; }
+    if (!last || !waitsAtEnd(last.text)) { r.waitNudges = 0; return; }
     if ((r.waitNudges || 0) >= WAIT_NUDGES) return;
     const at = s.lastActivityAt;
     r.waitNudge = setTimeout(() => {
@@ -1236,7 +1241,7 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
     const ws = p.shellWakes.splice(0);
     if (p.archived || p.status === 'stopped') return;
     const last = store.messages(p.id).findLast((x) => x.kind === 'assistant');
-    const send = ws.filter((w) => !w.during || (last && WAIT_RE.test(last.text.slice(-600))));
+    const send = ws.filter((w) => !w.during || (last && waitsAtEnd(last.text)));
     if (!send.length) return;
     try {
       api.deliver(p.id, { from: 'harness', text: send.map((w) => w.text).join('\n\n---\n\n') });

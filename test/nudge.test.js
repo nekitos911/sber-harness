@@ -21,8 +21,11 @@ const nudges = async (id) => (await messages(id)).filter((m) => m.kind === 'user
 test('«жду …» with nothing at work in the harness: nudged once the wait has gone quiet; a plain answer is not', async () => {
   const waiting = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', cwd: root, prompt: 'запусти #say Тесты идут в фоне, жду результат.' })).body;
   const plain = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', cwd: root, prompt: 'ответь #say Готово, всё сделано.' })).body;
+  // a mention of what ran in the background is no wait (seen on the target: a nudge after «прогон в фоне завершился»)
+  const told = (await h.api('POST', '/api/sessions', { kind: 'chat', agent: 'mock', cwd: root, prompt: 'ответь #say Фоновый прогон в фоне завершился с кодом 0, ничего нового делать не нужно. Ничего не жду — задача завершена.' })).body;
   await waitFor(async () => (await nudges(waiting.id)).length >= 1, { timeout: 20000, what: 'the nudge' });
   assert.equal((await nudges(plain.id)).length, 0, 'an answer that waits for nothing is left alone');
+  assert.equal((await nudges(told.id)).length, 0, 'nor one that only tells what ran in the background');
 });
 
 const shellWakes = async (id) => (await messages(id)).filter((m) => m.kind === 'user' && /Фоновая команда/.test(m.text));
