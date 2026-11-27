@@ -107,17 +107,17 @@ test('recovery lists leads only: cut sub-agents go under their orchestrator, whi
   const dataDir = path.join(root, 'данные лидеры');
   fs.mkdirSync(dataDir);
   const at = Date.now() - 60000;
-  const cut = { at, reason: 'reboot', lastActivity: 'Edit' };
+  const cut = { status: 'running' }; // running when the harness went down: this startup marks them «прервана»
   const chat = (id, extra = {}) => ({
     id, kind: 'chat', title: id, agent: 'mock', launcherId: 'mock', cwd, workspaceId: null, branch: null, role: 'solo', parentId: null,
     taskId: null, status: 'idle', externalSessionId: null, settingsPath: null, model: null, approvalMode: null, autoReport: false, queued: 0,
     queue: [], preview: '', command: null, pid: null, createdAt: at, lastActivityAt: at, everStarted: true, ...extra,
   });
   const sessions = [
-    chat('s_coord', { role: 'coordinator', interrupted: cut }),
-    chat('s_worker', { role: 'worker', parentId: 's_coord', interrupted: cut }),
+    chat('s_coord', { role: 'coordinator', ...cut }),
+    chat('s_worker', { role: 'worker', parentId: 's_coord', ...cut }),
     chat('s_lead', {}), // not cut itself: its cut helper is still its call
-    chat('s_helper', { role: 'worker', parentId: 's_lead', ephemeral: true, interrupted: cut }),
+    chat('s_helper', { role: 'worker', parentId: 's_lead', ephemeral: true, ...cut }),
     // a built-in background sub-agent left running by the crash: the lead's row says it was cut too
     chat('s_lead~call_bg', { virtual: true, background: true, parentId: 's_lead', status: 'running' }),
   ];
@@ -137,9 +137,51 @@ test('recovery lists leads only: cut sub-agents go under their orchestrator, whi
     assert.equal((await h.state()).sessions.find((s) => s.id === 's_lead~call_bg').status, 'failed', 'its chat is not «running» forever');
     const st = await h.state();
     assert.ok(['s_worker', 's_helper'].every((id) => !st.sessions.find((s) => s.id === id).interrupted), 'no longer listed');
-    assert.equal((await h.messages('s_worker')).length, 0, 'the sub-agent is not started by the harness');
+    assert.equal((await h.messages('s_worker')).filter((m) => m.kind !== 'system').length, 0, 'the sub-agent is not started by the harness (only its «ход прерван» line)');
     assert.equal((await h.api('GET', '/api/recovery')).body.sessions.length, 0);
   } finally {
     await h.srv.close();
+  }
+});
+
+test('after a restart nothing starts unasked: an old «прервана» is not offered again, a queued message waits in the dialog', async () => {
+  const at = Date.now() - 3600000;
+  const chat = (id, extra = {}) => ({
+    id, kind: 'chat', title: id, agent: 'mock', launcherId: 'mock', cwd, workspaceId: null, branch: null, role: 'solo', parentId: null,
+    taskId: null, status: 'idle', externalSessionId: null, settingsPath: null, model: null, approvalMode: null, autoReport: false, queued: 0,
+    queue: [], preview: '', command: null, pid: null, createdAt: at, lastActivityAt: at, everStarted: true, ...extra,
+  });
+  const db = () => ({ seq: { task: 0 }, tasks: [], workspaces: [], notifications: [], sessions: [
+    chat('s_old', { interrupted: { at, reason: 'reboot', lastActivity: 'Edit' } }), // offered by an earlier restart, ignored
+    chat('s_queued', { queue: [{ id: 'q1', from: 'harness', at, text: '[harness] Предыдущий ход оборвался. Продолжи.' }], queued: 1 }),
+  ] });
+  const dataDir = path.join(root, 'данные очередь');
+  fs.mkdirSync(dataDir);
+  fs.writeFileSync(path.join(dataDir, 'db.json'), JSON.stringify(db()));
+  const h = await harness(dataDir);
+  try {
+    const list = (await waitFor(async () => { const b = (await h.api('GET', '/api/recovery')).body; return b.sessions.length ? b : null; }, { what: 'listed' })).sessions;
+    assert.deepEqual(list.map((x) => [x.id, x.lastActivity]), [['s_queued', 'в очереди: 1']], 'the old one is not offered; the queued one is');
+    assert.equal((await h.state()).sessions.find((s) => s.id === 's_old').interrupted, null);
+    await new Promise((r) => setTimeout(r, 1500));
+    assert.equal((await h.messages('s_queued')).filter((m) => m.kind !== 'system').length, 0, 'its queue did not start by itself');
+    await h.api('POST', '/api/recovery/resume', { sessionIds: ['s_queued'] });
+    await waitFor(async () => (await h.messages('s_queued')).some((m) => m.kind === 'user' && /Предыдущий ход оборвался/.test(m.text)), { what: 'its queue went' });
+    assert.ok(!(await h.messages('s_queued')).some((m) => m.kind === 'user' && /^Был перезапуск/.test(m.text)), 'no «был перезапуск» text: it was not cut mid-turn');
+    await waitFor(async () => (await h.state()).sessions.find((s) => s.id === 's_queued').status !== 'running', { what: 'its turn over' }); // a hand-made db: the turn may fail, it ran
+  } finally {
+    await h.srv.close();
+  }
+  // «Продолжать прерванные сессии сами»: the queue goes without a question
+  const dataDir2 = path.join(root, 'данные очередь авто');
+  fs.mkdirSync(dataDir2);
+  fs.writeFileSync(path.join(dataDir2, 'db.json'), JSON.stringify(db()));
+  const h2 = await harness(dataDir2, { recovery: { autoResume: true } });
+  try {
+    await waitFor(async () => (await h2.messages('s_queued')).some((m) => m.kind === 'user' && /Предыдущий ход оборвался/.test(m.text)), { what: 'started by itself' });
+    assert.deepEqual((await h2.api('GET', '/api/recovery')).body.sessions, []);
+    await waitFor(async () => (await h2.state()).sessions.find((s) => s.id === 's_queued').status !== 'running', { what: 'its turn over' }); // a hand-made db: the turn may fail, it ran
+  } finally {
+    await h2.srv.close();
   }
 });

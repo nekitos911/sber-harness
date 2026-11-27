@@ -13,7 +13,8 @@ export async function loadRecovery(open = true) {
     const r = await api<RecoveryState>('GET', '/recovery')
     const list = Array.isArray(r?.sessions) ? r.sessions : []
     setState({ recovery: list.length ? { sessions: list, message: r.message ?? '' } : null })
-    if (!open || !list.length || getState().dialog) return
+    // «Продолжать прерванные сессии сами»: they go on without a question
+    if (!open || !list.length || getState().dialog || getState().settings?.recovery?.autoResume) return
     const batch = String(Math.max(...list.map((s) => s.at)))
     if (loadDraft<string>('recovery:shown') === batch) return
     saveDraft('recovery:shown', batch)

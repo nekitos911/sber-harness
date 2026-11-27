@@ -18,6 +18,7 @@
     "shortcut": "node scripts/shortcut.js",
     "check": "node server/index.js --check",
     "test": "node --test --test-force-exit --test-timeout=180000 \"test/*.test.js\"",
+    "test:web": "node --experimental-strip-types --test \"web/src/**/*.test.ts\"",
     "typecheck": "node scripts/ensure-bin.js && tsc -p web --noEmit",
     "demo": "node server/index.js --demo",
     "start:bg": "node scripts/background.js start",

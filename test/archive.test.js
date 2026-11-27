@@ -61,7 +61,8 @@ test('auto-archive on start: only idle, unwaited, uninterrupted sessions without
     chat('s_old'),
     chat('s_recent', { lastActivityAt: Date.now() }),
     chat('s_waiting', { waitingFor: 'answer' }),
-    chat('s_interrupted', { interrupted: { at: old, reason: 'crash', lastActivity: null } }),
+    chat('s_interrupted', { status: 'running' }), // cut by this restart: «прервана», waits for the person
+    chat('s_stale', { interrupted: { at: old, reason: 'crash', lastActivity: null } }), // a mark of an earlier restart, ignored since: an old idle chat like any
     chat('s_owner'),
     chat('s_coord', { role: 'coordinator' }),
     chat('s_worker', { role: 'worker', parentId: 's_coord', lastActivityAt: Date.now() }),
@@ -75,7 +76,7 @@ test('auto-archive on start: only idle, unwaited, uninterrupted sessions without
   try {
     const st = await (await fetch(`${srv.url}/api/state`, { headers: { 'x-harness-token': srv.token } })).json();
     const archived = st.sessions.filter((s) => s.archived).map((s) => s.id).sort();
-    assert.deepEqual(archived, ['s_old', 's_term']);
+    assert.deepEqual(archived, ['s_old', 's_stale', 's_term']);
     assert.equal((await (await fetch(`${srv.url}/api/settings`, { headers: { 'x-harness-token': srv.token } })).json()).sessions.autoArchiveDays, 7);
   } finally {
     await srv.close();

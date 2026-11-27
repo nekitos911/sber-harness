@@ -13,6 +13,7 @@ npm start            # server + UI at http://127.0.0.1:4777
 npm run desktop      # the same UI in a window of its own (Electron): no browser tab
 npm run dev          # same, with Vite hot reload of the UI
 npm test             # node:test, all tests must stay green
+npm run test:web     # UI logic tests (web/src/**/*.test.ts; --experimental-strip-types for Node 22)
 npm run typecheck    # UI types
 ```
 

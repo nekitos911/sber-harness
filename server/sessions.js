@@ -455,6 +455,9 @@ export function createSessions({ config, store, bus, getUrl, catalog = null, cra
   }
   const INTERRUPTED = 'Harness перезапущен, ход прерван — отправьте сообщение, чтобы продолжить (контекст сохраняется через --resume)';
   for (const s of db.sessions) {
+    // «прервана» left from an earlier restart (offered then, neither continued nor dismissed): not offered again — the
+    // recovery dialog lists only what this restart cut; the chat keeps its «ход прерван» line and goes on with a message
+    if (s.interrupted && !(s.interrupted.at >= startupAt)) s.interrupted = null;
     if (s.kind === 'chat') {
       s.queue = Array.isArray(s.queue) ? s.queue : []; // persisted deliveries survive a restart
       if ('runResult' in s) { // db from before `report`
@@ -3083,7 +3086,7 @@ ${note.trim()}` : text });
       const ours = await Promise.all(runs.map((s) => sameProcess(s.pid, s.pidStartedAt).catch(() => false)));
       const drains = runs.map((s, i) => (find(s.id) ? reattach(s, ours[i]) : null));
       await Promise.all(drains.filter((d, i) => d && !ours[i])); // not adopted: only the file is read, at once
-      const cut = db.sessions.filter((s) => s.interrupted && s.interrupted.at >= startupAt);
+      const cut = db.sessions.filter((s) => s.interrupted && s.interrupted.at >= startupAt && !s.interrupted.queued);
       if (cut.length) {
         // counted as the recovery dialog lists them: one per lead agent, its cut sub-agents with it
         const groups = recoveryGroups(cut.filter((s) => !s.virtual));
@@ -3091,7 +3094,16 @@ ${note.trim()}` : text });
         hooks.notify?.({ kind: 'recovery', text: `Прервано агентов: ${groups.length}${subs ? ` (и их субагентов: ${subs})` : ''}` });
         if (config.recovery?.autoResume) api.recoveryResume(cut.map((s) => s.id));
       }
-      for (const s of db.sessions) if (s.kind === 'chat' && !s.virtual && s.queue?.length && !runtime(s.id).running) startTurn(s);
+      // messages queued before the restart (the person's, or the harness's own «продолжи» after a broken turn) start by
+      // themselves only with recovery.autoResume; otherwise the chat is in the recovery dialog: nothing starts unasked
+      for (const s of db.sessions) {
+        if (s.kind !== 'chat' || s.virtual || s.archived || !s.queue?.length || runtime(s.id).running) continue;
+        if (config.recovery?.autoResume) startTurn(s);
+        else if (!s.interrupted) {
+          s.interrupted = { at: Date.now(), reason: 'harness_restart', lastActivity: `в очереди: ${s.queue.length}`, queued: true };
+          emit(s);
+        }
+      }
       for (const s of db.sessions) if (s.bgShells?.length && !s.archived) watchShells(s);
       await Promise.all(toRespawn.splice(0).filter((s) => find(s.id)).map(respawnTerminal));
     },
@@ -3197,7 +3209,14 @@ ${note.trim()}` : text });
           // a built-in sub-agent lived inside the CLI process that is gone: it cannot be continued, only run again
           builtin.length ? `[harness] Встроенные субагенты оборвались вместе с процессом и ответа не дали: ${builtin.map((x) => `«${x.title}»`).join(', ')}. Продолжить их нельзя — если результат ещё нужен, запусти заново.` : '',
         ].filter(Boolean).join('\n\n');
-        api.deliver(lead.id, { from: 'user', text: [lead.interrupted ? text : '', note].filter(Boolean).join('\n\n') });
+        const body = [lead.interrupted && !lead.interrupted.queued ? text : '', note].filter(Boolean).join('\n\n');
+        if (body) api.deliver(lead.id, { from: 'user', text: body });
+        else {
+          // only its queue waited: it goes now
+          lead.interrupted = null;
+          emit(lead);
+          if (!runtime(lead.id).running && lead.queue?.length) startTurn(lead);
+        }
       }
       return { resumed: groups.map((g) => g.lead.id) };
     },
